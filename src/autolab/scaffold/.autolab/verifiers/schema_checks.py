@@ -38,6 +38,8 @@ SCHEMAS: dict[str, str] = {
     "run_manifest": "run_manifest.schema.json",
     "metrics": "metrics.schema.json",
     "decision_result": "decision_result.schema.json",
+    "todo_state": "todo_state.schema.json",
+    "todo_focus": "todo_focus.schema.json",
 }
 REVIEW_RESULT_REQUIRED_CHECKS = (
     "tests",
@@ -399,6 +401,34 @@ def _resolve_stage(state: dict[str, Any], stage_override: str | None) -> str:
     return str(state.get("stage", "")).strip()
 
 
+def _validate_todo_state(state: dict[str, Any]) -> list[str]:
+    path = REPO_ROOT / ".autolab" / "todo_state.json"
+    assistant_mode = str(state.get("assistant_mode", "")).strip().lower() == "on"
+    if not path.exists():
+        if assistant_mode:
+            return [f"{path} is required when assistant_mode=on"]
+        return []
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="todo_state", path=path)
+
+
+def _validate_todo_focus(state: dict[str, Any]) -> list[str]:
+    path = REPO_ROOT / ".autolab" / "todo_focus.json"
+    assistant_mode = str(state.get("assistant_mode", "")).strip().lower() == "on"
+    if not path.exists():
+        if assistant_mode:
+            return [f"{path} is required when assistant_mode=on"]
+        return []
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="todo_focus", path=path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
@@ -426,6 +456,8 @@ def main() -> int:
     failures.extend(_validate_run_manifest(state, stage=stage))
     failures.extend(_validate_metrics(state, stage=stage))
     failures.extend(_validate_decision_result(state, stage=stage))
+    failures.extend(_validate_todo_state(state))
+    failures.extend(_validate_todo_focus(state))
 
     if failures:
         print("schema_checks: FAIL")

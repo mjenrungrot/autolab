@@ -38,7 +38,7 @@ FALLBACK_SCOPE_LOCAL = "policy:no_task_fallback:local"
 FALLBACK_SCOPE_SLURM = "policy:no_task_fallback:slurm"
 FALLBACK_TASK_TEXT_LOCAL = (
     "No remaining actionable tasks were detected on local execution context. "
-    "Propose and implement a concrete codebase improvement in src/ or scripts/ "
+    "Propose and implement a concrete codebase improvement in src/, scripts/, or experiments/ "
     "(reliability, maintainability, performance, or developer ergonomics)."
 )
 FALLBACK_TASK_TEXT_SLURM = (
@@ -145,6 +145,72 @@ def _fallback_candidates_for_host(host_mode: str | None) -> list[_GeneratedCandi
             text=FALLBACK_TASK_TEXT_LOCAL,
         )
     ]
+
+
+def _coerce_policy_fallback_candidate(
+    raw_section: Any,
+    *,
+    default_stage: str,
+    default_scope: str,
+    default_text: str,
+    iteration_implementation_path: str,
+) -> _GeneratedCandidate:
+    if not isinstance(raw_section, dict):
+        return _GeneratedCandidate(stage=default_stage, scope=default_scope, text=default_text)
+    raw_stage = _normalize_space(str(raw_section.get("stage", ""))).lower()
+    stage = raw_stage if raw_stage in ALL_STAGES else default_stage
+    scope = _normalize_space(str(raw_section.get("scope", ""))) or default_scope
+    text = _normalize_space(str(raw_section.get("text", ""))) or default_text
+    if iteration_implementation_path and iteration_implementation_path not in text:
+        text = (
+            f"{text} Scope guardrail: keep experiment-specific implementation under "
+            f"`{iteration_implementation_path}` to avoid unrelated file edits."
+        )
+    return _GeneratedCandidate(stage=stage, scope=scope, text=text)
+
+
+def _fallback_candidates_for_host_with_policy(
+    repo_root: Path,
+    host_mode: str | None,
+    *,
+    iteration_implementation_path: str,
+) -> list[_GeneratedCandidate]:
+    defaults = _fallback_candidates_for_host(host_mode)
+    default = defaults[0] if defaults else _GeneratedCandidate(
+        stage="implementation",
+        scope=FALLBACK_SCOPE_LOCAL,
+        text=FALLBACK_TASK_TEXT_LOCAL,
+    )
+    default_text = default.text
+    if iteration_implementation_path and iteration_implementation_path not in default_text:
+        default_text = (
+            f"{default_text} Scope guardrail: keep experiment-specific implementation under "
+            f"`{iteration_implementation_path}` to avoid unrelated file edits."
+        )
+        default = _GeneratedCandidate(stage=default.stage, scope=default.scope, text=default_text)
+    normalized_host_mode = _normalize_host_mode(host_mode)
+
+    try:
+        from autolab.config import _load_verifier_policy
+
+        policy = _load_verifier_policy(repo_root)
+    except Exception:
+        policy = {}
+
+    autorun = policy.get("autorun") if isinstance(policy, dict) else {}
+    todo_fallback = autorun.get("todo_fallback") if isinstance(autorun, dict) else {}
+    if not isinstance(todo_fallback, dict):
+        return [default]
+
+    raw_section = todo_fallback.get(normalized_host_mode)
+    resolved = _coerce_policy_fallback_candidate(
+        raw_section,
+        default_stage=default.stage,
+        default_scope=default.scope,
+        default_text=default.text,
+        iteration_implementation_path=iteration_implementation_path,
+    )
+    return [resolved]
 
 
 def _has_actionable_decision_candidates(candidates: list[_GeneratedCandidate]) -> bool:
@@ -314,30 +380,53 @@ def _extract_sections(todo_text: str) -> tuple[list[str], list[str], bool]:
 
 
 def _parse_bullets(tasks_lines: list[str]) -> list[_ParsedBullet]:
+    bullet_pattern = re.compile(r"^([ \t]*)([-*+]|(?:\d+[\.\)]))\s+(.*)$")
     bullets: list[str] = []
     current: str | None = None
+    base_indent: int | None = None
+    in_comment = False
 
     for raw_line in tasks_lines:
         stripped = raw_line.strip()
         if not stripped:
             continue
+
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
         if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
             continue
 
-        match = re.match(r"^[-*]\s+(.*)$", stripped)
+        match = bullet_pattern.match(raw_line)
         if match:
+            indent_raw = match.group(1).replace("\t", "    ")
+            indent = len(indent_raw)
+            body = match.group(3).strip()
+            if base_indent is None or indent < base_indent:
+                base_indent = indent
+            top_level = indent <= int(base_indent or 0)
+            if top_level:
+                if current is not None:
+                    bullets.append(current)
+                current = body
+            else:
+                if current is None:
+                    current = body
+                else:
+                    current = _normalize_space(f"{current} {body}")
+            continue
+
+        if stripped.startswith("#"):
             if current is not None:
                 bullets.append(current)
-            current = match.group(1).strip()
-            continue
-
-        if current is not None and (raw_line.startswith("  ") or raw_line.startswith("\t")):
-            current = _normalize_space(f"{current} {stripped}")
+                current = None
             continue
 
         if current is not None:
-            bullets.append(current)
-            current = None
+            current = _normalize_space(f"{current} {stripped}")
 
     if current is not None:
         bullets.append(current)
@@ -452,6 +541,18 @@ def _resolve_iteration_dir(
 
     fallback_type = preferred_type or DEFAULT_EXPERIMENT_TYPE
     return experiments_root / fallback_type / normalized_iteration
+
+
+def _resolve_iteration_implementation_path(repo_root: Path, state: dict[str, Any] | None) -> str:
+    iteration_id = _normalize_space(str((state or {}).get("iteration_id", "")))
+    if not iteration_id or iteration_id.startswith("<"):
+        return ""
+    iteration_dir = _resolve_iteration_dir(repo_root, iteration_id=iteration_id, backlog_payload=None)
+    try:
+        relative = iteration_dir.relative_to(repo_root).as_posix()
+    except Exception:
+        relative = iteration_dir.as_posix()
+    return f"{relative}/implementation"
 
 
 def _is_iteration_completed_in_backlog(backlog_payload: dict[str, Any], iteration_id: str) -> bool:
@@ -857,6 +958,7 @@ def _sync_internal(
     changed_files: list[Path] = []
     removed_count = 0
     resolved_host_mode = _normalize_host_mode(host_mode)
+    iteration_implementation_path = _resolve_iteration_implementation_path(repo_root, state)
     assistant_mode = _normalize_space(str((state or {}).get("assistant_mode", ""))).lower() == "on"
 
     todo_path = repo_root / "docs" / "todo.md"
@@ -886,7 +988,13 @@ def _sync_internal(
         and not manual_has_actionable_decision
         and not _has_actionable_decision_candidates(generated_candidates)
     ):
-        generated_candidates.extend(_fallback_candidates_for_host(resolved_host_mode))
+        generated_candidates.extend(
+            _fallback_candidates_for_host_with_policy(
+                repo_root,
+                resolved_host_mode,
+                iteration_implementation_path=iteration_implementation_path,
+            )
+        )
     max_generated_tasks = _load_max_generated_todo_tasks(repo_root)
     if len(generated_candidates) > max_generated_tasks:
         generated_candidates = generated_candidates[:max_generated_tasks]
@@ -969,7 +1077,11 @@ def _sync_internal(
 
     open_tasks = _open_tasks_sorted(todo_state)
     if not open_tasks and assistant_mode and current_stage not in TERMINAL_STAGES:
-        for candidate in _fallback_candidates_for_host(resolved_host_mode):
+        for candidate in _fallback_candidates_for_host_with_policy(
+            repo_root,
+            resolved_host_mode,
+            iteration_implementation_path=iteration_implementation_path,
+        ):
             _upsert_task(
                 todo_state,
                 source="generated",

@@ -122,3 +122,12 @@ autorun:
       - "docs/todo.md"
       - "docs/wiki/**"
       - "experiments/*/*/docs_update.md"
+  todo_fallback:
+    local:
+      stage: "implementation"
+      scope: "policy:no_task_fallback:local"
+      text: "No remaining actionable tasks were detected on local execution context. Propose and implement a concrete codebase improvement in src/, scripts/, or experiments/. Prefer the iteration-local implementation subtree (for example `experiments/<type>/<iteration_id>/implementation/`) for experiment-specific changes to avoid unrelated file edits."
+    slurm:
+      stage: "hypothesis"
+      scope: "policy:no_task_fallback:slurm"
+      text: "No remaining actionable tasks were detected on remote SLURM execution context. Define a new experiment or analysis direction first, then plan implementation improvements only after that experiment/analysis path is explicit."

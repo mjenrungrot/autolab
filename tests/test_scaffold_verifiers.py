@@ -222,3 +222,31 @@ def test_prompt_lint_fails_on_unsupported_token(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "unsupported token" in result.stdout
+
+
+def test_schema_checks_fail_for_invalid_todo_state_schema(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    (repo / ".autolab" / "todo_state.json").write_text(
+        json.dumps({"version": "one", "next_order": 1, "tasks": {}}),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "todo_state.json" in result.stdout
+
+
+def test_schema_checks_require_todo_files_when_assistant_mode_on(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    state_path = repo / ".autolab" / "state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["assistant_mode"] = "on"
+    state_path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "todo_state.json is required when assistant_mode=on" in result.stdout

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TodoFocus",
+  "type": "object",
+  "required": ["generated_at", "stage", "open_task_count", "focus_tasks"],
+  "properties": {
+    "generated_at": {"type": "string", "format": "date-time"},
+    "stage": {
+      "type": "string",
+      "enum": [
+        "hypothesis",
+        "design",
+        "implementation",
+        "implementation_review",
+        "launch",
+        "extract_results",
+        "update_docs",
+        "decide_repeat",
+        "human_review",
+        "stop"
+      ]
+    },
+    "open_task_count": {"type": "integer", "minimum": 0},
+    "focus_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task_id", "stage", "source", "text"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "stage": {"type": "string"},
+          "source": {"type": "string"},
+          "text": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

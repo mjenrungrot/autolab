@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +29,55 @@ from autolab.utils import (
     _persist_agent_result,
     _safe_todo_post_sync,
     _safe_todo_pre_sync,
+    _utc_now,
     _write_json,
 )
 from autolab.validators import _run_verification_step
 from autolab.todo_sync import mark_task_completed, select_open_task
+
+
+def _append_task_ledger(
+    repo_root: Path,
+    *,
+    event: str,
+    task_id: str,
+    stage_before: str,
+    stage_after: str,
+    transitioned: bool,
+    status: str,
+    exit_code: int,
+    message: str,
+    verification_passed: bool | None = None,
+    verification_message: str = "",
+    commit_allowed: bool | None = None,
+    commit_reason: str = "",
+) -> None:
+    entry: dict[str, Any] = {
+        "timestamp": _utc_now(),
+        "event": str(event).strip(),
+        "task_id": str(task_id).strip(),
+        "stage_before": str(stage_before).strip(),
+        "stage_after": str(stage_after).strip(),
+        "transitioned": bool(transitioned),
+        "status": str(status).strip(),
+        "exit_code": int(exit_code),
+        "message": str(message).strip(),
+    }
+    if verification_passed is not None:
+        entry["verification"] = {
+            "passed": bool(verification_passed),
+            "message": str(verification_message).strip(),
+        }
+    if commit_allowed is not None:
+        entry["commit_decision"] = {
+            "allowed": bool(commit_allowed),
+            "reason": str(commit_reason).strip(),
+        }
+
+    ledger_path = repo_root / ".autolab" / "task_history.jsonl"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
 def _assistant_target_stage(task: dict[str, Any]) -> str:
@@ -101,6 +147,22 @@ def _run_once_assistant(
             summary=summary,
             changed_files=[state_path, *pre_sync_changed, *post_sync_changed],
         )
+        try:
+            _append_task_ledger(
+                repo_root,
+                event="blocked_completed",
+                task_id="",
+                stage_before=current_stage,
+                stage_after="stop",
+                transitioned=True,
+                status="complete",
+                exit_code=0,
+                message=summary,
+                commit_allowed=False,
+                commit_reason="completed backlog experiment",
+            )
+        except Exception as exc:
+            _append_log(repo_root, f"assistant task ledger write failed: {exc}")
         _append_log(repo_root, f"assistant blocked completed experiment from stage {current_stage}")
         return RunOutcome(
             exit_code=0,
@@ -131,6 +193,10 @@ def _run_once_assistant(
         commit_allowed: bool = False,
         commit_cycle_stage: str = "",
         commit_paths: tuple[str, ...] = (),
+        verification_passed: bool | None = None,
+        verification_message: str = "",
+        commit_reason: str = "",
+        ledger_event: str = "",
     ) -> RunOutcome:
         _append_state_history(
             state,
@@ -157,6 +223,24 @@ def _run_once_assistant(
             summary=summary,
             changed_files=[state_path, *changed_files, *pre_sync_changed, *post_sync_changed],
         )
+        try:
+            _append_task_ledger(
+                repo_root,
+                event=ledger_event or commit_cycle_stage or cycle_stage or "assistant",
+                task_id=current_task_id,
+                stage_before=stage_before,
+                stage_after=stage_after,
+                transitioned=transitioned,
+                status=status,
+                exit_code=exit_code,
+                message=summary,
+                verification_passed=verification_passed,
+                verification_message=verification_message,
+                commit_allowed=commit_allowed,
+                commit_reason=commit_reason,
+            )
+        except Exception as exc:
+            _append_log(repo_root, f"assistant task ledger write failed: {exc}")
         return RunOutcome(
             exit_code=exit_code,
             transitioned=transitioned,
@@ -199,6 +283,8 @@ def _run_once_assistant(
                 stage_after="stop",
                 commit_allowed=False,
                 commit_cycle_stage="done",
+                commit_reason="no actionable tasks remained",
+                ledger_event="done",
             )
 
         current_task_id = str(task.get("task_id", "")).strip()
@@ -217,6 +303,8 @@ def _run_once_assistant(
             stage_after=target_stage,
             commit_allowed=False,
             commit_cycle_stage="select",
+            commit_reason="task selected for implementation cycle",
+            ledger_event="select",
         )
 
     if cycle_stage == "verify":
@@ -235,6 +323,10 @@ def _run_once_assistant(
             exit_code=0,
             commit_allowed=False,
             commit_cycle_stage="verify",
+            verification_passed=verified,
+            verification_message=verify_message,
+            commit_reason="verification gate",
+            ledger_event="verify",
         )
 
     if cycle_stage == "review":
@@ -269,6 +361,10 @@ def _run_once_assistant(
                 commit_allowed=True,
                 commit_cycle_stage="review",
                 commit_paths=scoped_commit_paths,
+                verification_passed=verification_passed,
+                verification_message="review gate considered last verification state",
+                commit_reason="meaningful-change gate passed",
+                ledger_event="review",
             )
 
         repeat_guard["no_progress_decisions"] = int(repeat_guard.get("no_progress_decisions", 0)) + 1
@@ -289,6 +385,10 @@ def _run_once_assistant(
                 exit_code=1,
                 commit_allowed=False,
                 commit_cycle_stage="review",
+                verification_passed=verification_passed,
+                verification_message="review gate",
+                commit_reason="guardrail breach",
+                ledger_event="review",
             )
 
         state["task_cycle_stage"] = "implement"
@@ -309,6 +409,10 @@ def _run_once_assistant(
             stage_after=str(state.get("stage", stage_before)),
             commit_allowed=False,
             commit_cycle_stage="review",
+            verification_passed=verification_passed,
+            verification_message="review gate",
+            commit_reason=", ".join(details),
+            ledger_event="review",
         )
 
     outcome = _run_once_standard(
@@ -357,4 +461,20 @@ def _run_once_assistant(
             commit_task_id=current_task_id,
             commit_cycle_stage="implement",
         )
+    try:
+        _append_task_ledger(
+            repo_root,
+            event="implement",
+            task_id=current_task_id,
+            stage_before=outcome.stage_before,
+            stage_after=outcome.stage_after,
+            transitioned=outcome.transitioned,
+            status="complete" if outcome.exit_code == 0 else "failed",
+            exit_code=outcome.exit_code,
+            message=outcome.message,
+            commit_allowed=outcome.commit_allowed,
+            commit_reason="implementation cycle execution",
+        )
+    except Exception as exc:
+        _append_log(repo_root, f"assistant task ledger write failed: {exc}")
     return outcome
