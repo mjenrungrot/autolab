@@ -16,6 +16,7 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 2. Workers (human or agent) produce stage artifacts; they do not manually set `state.stage`.
 3. Policy (`.autolab/verifier_policy.yaml`) defines required checks by stage.
 4. `autolab verify` is the canonical CLI for stage-relevant verification summaries.
+5. Assistant-mode scaffold prompts can be customized under `.autolab/prompts/assistant_*.md` for `select`, `implement`, `verify`, and `review` phases.
 
 ## Recommended Usage
 

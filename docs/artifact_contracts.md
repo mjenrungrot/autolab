@@ -36,7 +36,7 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 - **Path**: `experiments/<type>/<iteration_id>/implementation_plan.md`
 - **Format**: Markdown
 - **Required section**: `## Change Summary`
-- **Optional task blocks** (`### T1: ...`) require: `depends_on`, `location`, `description`, `validation`, `status`
+- **Optional task blocks** (`### T1: ...`) require: `depends_on`, `location`, `description`, `touches`, `scope_ok`, `validation`, `status`
 - **Verified by**: `implementation_plan_lint.py`
 - **Producing stage**: implementation
 - **Consuming stages**: implementation_review
@@ -108,6 +108,22 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
   - `evidence` must be non-empty array of `{source, pointer, summary}` objects
 - **Producing stage**: decide_repeat
 - **Consuming stages**: run_standard (decision application)
+
+## run_context.json
+
+- **Path**: `.autolab/run_context.json`
+- **Format**: JSON
+- **Fields**: `schema_version`, `generated_at`, `iteration_id`, `experiment_id`, `stage`, `run_id`
+- **Produced when**: launch stage begins (system-owned run id allocation)
+- **Consumed by**: prompt rendering / launch stage runner context
+
+## auto_decision.json
+
+- **Path**: `.autolab/auto_decision.json`
+- **Format**: JSON
+- **Fields**: `schema_version`, `generated_at`, `iteration_id`, `experiment_id`, `stage`, `inputs`, `outputs`
+- **Produced when**: decide_repeat applies a decision (manual or automated)
+- **Consumed by**: unattended-run audits and debugging workflows
 
 ## block_reason.json
 
