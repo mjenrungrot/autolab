@@ -3,4 +3,9 @@
 - If the mapped experiment is closed, stop and request human intervention instead of editing artifacts.
 - `runs//...` in policy/docs is a pattern key, not a real filesystem path.
 - Never create literal placeholder paths (for example `experiments//design.yaml` or `runs//metrics.json`).
-- Never leave unresolved template markers in required outputs (`{{...}}`, `TODO`, `TBD`, `FIXME`, or angle-bracket placeholder markers).
+- **No unresolved placeholders**: Never leave template markers in required outputs. Forbidden markers include:
+  - Double-brace tokens (mustache-style template markers like `{` `{token}` `}`)
+  - `<PLACEHOLDER>`, `<VALUE>` --angle-bracket placeholders
+  - `TODO`, `TODO:`, `TBD`, `FIXME` --deferred-work markers
+  - Empty JSON string values (`""`) for required fields
+  - Ellipsis stand-ins (`...`, `<...>`) used as content substitutes

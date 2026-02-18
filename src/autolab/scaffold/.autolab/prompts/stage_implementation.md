@@ -28,7 +28,6 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 {{shared:skill_playbook.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - Updated repo files for this iteration
@@ -47,14 +46,38 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 - If `verifier_policy.yaml` is missing, stop and request scaffold/policy restoration.
 - If prior review feedback is unavailable, continue and note that remediation context was unavailable.
 
+## SCHEMA GOTCHAS -- implementation_plan_lint.py
+When task blocks (`### T1: ...`) are present, the linter **requires** these fields per task:
+- `depends_on`: list (e.g. `[T1]` or `[]`) -- **required**
+- `location`: file paths -- **required**
+- `description`: what the task does -- **required**
+- `validation`: how to verify -- **required**
+- `status`: one of `Not Completed`, `Completed`, `In Progress`, `Blocked` -- **required**
+
+Optional fields (not checked by linter but useful):
+- `touches`: `[file paths/globs]` -- used for wave overlap detection
+- `conflict_group`: group name -- prevents same-wave co-scheduling
+- `log`: execution notes
+- `files edited/created`: changed file list
+
+Canonical minimal task block:
+```markdown
+### T1: Add loss function
+- **depends_on**: []
+- **location**: src/model/loss.py
+- **description**: Implement focal loss per design spec
+- **validation**: `pytest tests/test_loss.py` passes
+- **status**: Not Completed
+```
+
 ## STEPS
 1. Implement only design-relevant changes; avoid unrelated edits.
 2. Keep experiment-local artifacts under `{{iteration_path}}/implementation/` unless code is reusable across iterations.
 3. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
 4. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
 5. Include short bounded excerpts for failing commands and explain remediation.
-6. Run `autolab verify --stage implementation` and fix failures.
-7. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -131,5 +154,5 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 - [ ] Run `{{python_bin}} .autolab/verifiers/implementation_plan_lint.py --stage implementation` passes when task blocks are present.
 
 ## FAILURE / RETRY BEHAVIOR
-- If verifiers fail, fix artifacts/code and rerun this stage.
+- If any verification step fails, fix artifacts/code and rerun from the verification ritual.
 - Retry/escalation is orchestrator-managed via `state.stage_attempt`; do not update `state.json` manually.

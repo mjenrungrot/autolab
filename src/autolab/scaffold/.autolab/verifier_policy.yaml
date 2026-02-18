@@ -1,9 +1,29 @@
+# =============================================================================
+# Autolab Verifier Policy
+# =============================================================================
+# This file controls verification behavior for each stage transition.
+# Customize commands, stage requirements, and runner settings for your project.
+
+# ---------------------------------------------------------------------------
+# Tool paths
+# ---------------------------------------------------------------------------
 python_bin: "python3"
 
+# ---------------------------------------------------------------------------
+# Verification commands
+# ---------------------------------------------------------------------------
+# test_command: invoked when a stage requires tests (see requirements_by_stage).
 test_command: "{{python_bin}} -m pytest"
-# Replace this stub with a real dry-run command for your project.
-dry_run_command: "{{python_bin}} -c \"print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml')\""
 
+# dry_run_command: invoked when a stage requires dry_run.
+# DEFAULT: exits non-zero so that dry-run verification fails until you
+# configure a real command.  Replace with your project's smoke-test, e.g.:
+#   dry_run_command: "{{python_bin}} -m myproject.dry_run"
+dry_run_command: "{{python_bin}} -c \"import sys; print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml'); sys.exit(1)\""
+
+# ---------------------------------------------------------------------------
+# Template-fill verifier
+# ---------------------------------------------------------------------------
 template_fill:
   enabled: true
   command: "{{python_bin}} .autolab/verifiers/template_fill.py"
@@ -27,6 +47,15 @@ template_fill_by_stage:
   update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
   decide_repeat: "{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat"
 
+# ---------------------------------------------------------------------------
+# Per-stage verification requirements
+# ---------------------------------------------------------------------------
+# Each key toggles a verification category for that stage.
+#   tests            – run test_command
+#   dry_run          – run dry_run_command
+#   schema           – run schema_checks.py
+#   env_smoke        – run run_health.py + result_sanity.py
+#   docs_target_update – run docs_targets.py
 requirements_by_stage:
   hypothesis:
     tests: false
@@ -77,12 +106,26 @@ requirements_by_stage:
     env_smoke: false
     docs_target_update: false
 
+# ---------------------------------------------------------------------------
+# Implementation plan linter
+# ---------------------------------------------------------------------------
 implementation_plan_lint:
   enabled: true
   command: "{{python_bin}} .autolab/verifiers/implementation_plan_lint.py"
   stages:
     implementation: true
 
+# ---------------------------------------------------------------------------
+# Schema validation options
+# ---------------------------------------------------------------------------
+schema_validation:
+  # When true, schemas are patched at runtime to set additionalProperties: false
+  # on all object definitions, rejecting any unexpected keys.  Default: off.
+  strict_additional_properties: false
+
+# ---------------------------------------------------------------------------
+# Agent runner configuration
+# ---------------------------------------------------------------------------
 agent_runner:
   enabled: false
   runner: codex  # Options: codex, claude, custom
@@ -109,6 +152,9 @@ agent_runner:
     ensure_iteration_dir: true
   timeout_seconds: 3600
 
+# ---------------------------------------------------------------------------
+# Autorun settings (used by `autolab loop --auto`)
+# ---------------------------------------------------------------------------
 autorun:
   guardrails:
     max_same_decision_streak: 3
@@ -116,8 +162,19 @@ autorun:
     max_update_docs_cycles: 3
     max_generated_todo_tasks: 5
     on_breach: "human_review"
+
+  # Strict-mode toggles for unattended loops.
+  # forbid_auto_stop: when true, auto-decision will never select "stop"
+  #   without human confirmation — it escalates to human_review instead.
+  # require_human_review_for_stop: when true, any "stop" decision in auto
+  #   mode is rewritten to "human_review" so a human confirms termination.
+  strict_mode:
+    forbid_auto_stop: false
+    require_human_review_for_stop: false
+
   auto_commit:
     mode: "meaningful_only"
+
   meaningful_change:
     require_implementation_progress: true
     require_git_for_progress: true
@@ -128,6 +185,7 @@ autorun:
       - "docs/todo.md"
       - "docs/wiki/**"
       - "experiments/*/*/docs_update.md"
+
   todo_fallback:
     local:
       stage: "implementation"

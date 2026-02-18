@@ -30,6 +30,7 @@ from autolab.utils import (
     _is_git_worktree,
     _snapshot_delta_paths,
 )
+from autolab.config import _load_meaningful_change_config
 from autolab.state import _ensure_iteration_skeleton
 
 
@@ -75,6 +76,48 @@ def _write_runner_execution_report(
     report_path = repo_root / ".autolab" / "runner_execution_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _collect_filesystem_snapshot(repo_root: Path) -> dict[str, tuple[float, int]]:
+    """Walk the repo and collect (mtime, size) for every file.
+
+    Used as a fallback when ``_is_git_worktree()`` is False so that scope
+    violations can still be detected after agent execution.
+    """
+    snapshot: dict[str, tuple[float, int]] = {}
+    root = repo_root.resolve()
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Skip hidden dirs and __pycache__
+        dirnames[:] = [
+            d for d in dirnames
+            if not d.startswith(".") and d != "__pycache__" and d != "node_modules"
+        ]
+        for fname in filenames:
+            fpath = Path(dirpath) / fname
+            try:
+                stat = fpath.stat()
+                rel = fpath.relative_to(root).as_posix()
+                snapshot[rel] = (stat.st_mtime, stat.st_size)
+            except (OSError, ValueError):
+                continue
+    return snapshot
+
+
+def _filesystem_snapshot_delta_paths(
+    before: dict[str, tuple[float, int]],
+    after: dict[str, tuple[float, int]],
+) -> list[str]:
+    """Compare two filesystem snapshots and return paths that changed."""
+    changed: set[str] = set()
+    for path, (mtime, size) in after.items():
+        prev = before.get(path)
+        if prev is None or prev != (mtime, size):
+            changed.add(path)
+    # Deleted files
+    for path in before:
+        if path not in after:
+            changed.add(path)
+    return sorted(changed)
 
 
 def _is_within_scope(path: str, allowed_roots: tuple[str, ...]) -> bool:
@@ -312,7 +355,17 @@ def _invoke_agent_runner(
         workspace_dir=workspace_dir,
         core_add_dirs=core_add_dirs,
     )
-    baseline_snapshot = _collect_change_snapshot(repo_root) if _is_git_worktree(repo_root) else None
+    use_git_scope = _is_git_worktree(repo_root)
+    baseline_snapshot = _collect_change_snapshot(repo_root) if use_git_scope else None
+    fs_baseline_snapshot: dict[str, tuple[float, int]] | None = None
+    if not use_git_scope:
+        meaningful_config = _load_meaningful_change_config(repo_root)
+        if meaningful_config.on_non_git_behavior == "fail":
+            raise StageCheckError(
+                "agent runner requires a git worktree for scope checking; "
+                "set meaningful_change.on_non_git_behavior to 'warn_and_continue' to use filesystem snapshot fallback"
+            )
+        fs_baseline_snapshot = _collect_filesystem_snapshot(repo_root)
     workspace_rel = workspace_dir.relative_to(repo_root).as_posix()
     allowed_roots = tuple(
         sorted(
@@ -494,6 +547,23 @@ def _invoke_agent_runner(
             )
             raise StageCheckError(
                 "agent runner edited paths outside allowed edit scope; "
+                f"out_of_scope={sample}"
+            )
+    elif fs_baseline_snapshot is not None:
+        fs_current_snapshot = _collect_filesystem_snapshot(repo_root)
+        fs_delta_paths = _filesystem_snapshot_delta_paths(fs_baseline_snapshot, fs_current_snapshot)
+        fs_out_of_scope = sorted(path for path in fs_delta_paths if not _is_within_scope(path, allowed_roots))
+        if fs_out_of_scope:
+            sample = ", ".join(fs_out_of_scope[:8])
+            _append_log(
+                repo_root,
+                (
+                    "agent runner scope violation (filesystem snapshot): changed paths outside allowed dirs "
+                    f"allowed={allowed_roots} out_of_scope={sample}"
+                ),
+            )
+            raise StageCheckError(
+                "agent runner edited paths outside allowed edit scope (detected via filesystem snapshot); "
                 f"out_of_scope={sample}"
             )
 

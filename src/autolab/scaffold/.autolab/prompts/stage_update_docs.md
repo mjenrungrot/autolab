@@ -25,7 +25,7 @@ Update iteration documentation and configured paper targets after result extract
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
+{{shared:run_artifacts.md}}
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/docs_update.md`
@@ -52,8 +52,8 @@ Update iteration documentation and configured paper targets after result extract
 4. Include a one-line target-attainment statement based on `{{target_comparison}}`.
 5. Verify SLURM ledger for SLURM runs:
    `autolab slurm-job-list verify --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-6. Run `autolab verify --stage update_docs` and fix failures.
-7. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -86,5 +86,5 @@ Update iteration documentation and configured paper targets after result extract
 - [ ] SLURM ledger verification is executed for SLURM manifests.
 
 ## FAILURE / RETRY BEHAVIOR
-- If verifiers fail, correct docs artifacts and rerun update_docs.
+- If any verification step fails, correct docs artifacts and rerun from the verification ritual.
 - Keep state transitions orchestrator-driven; do not manually change `state.json`.

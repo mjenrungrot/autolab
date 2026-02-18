@@ -149,3 +149,108 @@ When answering users:
 - Prefer `--max-iterations` and `--max-hours` in automation.
 - Keep guardrails enabled.
 - Use `meaningful_only` commit mode unless the user explicitly wants otherwise.
+
+## Common Failures
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `stage_attempt` keeps incrementing, never advances | Verification fails repeatedly | Check verifier output: `autolab verify --stage <stage>`. Fix artifacts, not state. |
+| `decide_repeat` blocks with "requires --decision" | No decision source configured | Add `--auto-decision` or provide `decision_result.json` or pass `--decision=<target>` |
+| `human_review` reached unexpectedly | Guardrail threshold breached | Inspect `repeat_guard` in state. Tune guardrails in policy or fix root cause. |
+| Agent runner produces no changes | Runner not enabled or stage not in runner stages list | Set `agent_runner.enabled: true` and check `agent_runner.stages` in policy |
+| "prompt template has unsupported token(s)" | Prompt uses a token not in the context payload | Check `.autolab/prompts/rendered/<stage>.context.json` for available tokens |
+| Schema validation fails on design.yaml | Missing required field or wrong type | Check `design.schema.json` -- common issues: missing `schema_version: "1.0"`, wrong `compute.location` enum, empty `baselines` |
+| Implementation progress check fails | No meaningful file changes detected | Ensure implementation edits are outside excluded paths (`.autolab/**`, `docs/todo.md`) |
+| Lock prevents run | Stale lock from crashed process | Run `autolab lock status` then `autolab lock break --reason "stale"` |
+| Assistant mode stops immediately | No open tasks in todo | Add tasks to `docs/todo.md` or check backlog for open experiments |
+
+## Runner Execution Artifacts
+
+Files written during agent runner execution (under `.autolab/`):
+
+| File | Purpose | Written By |
+|------|---------|------------|
+| `agent_result.json` | Runner completion status, summary, changed files | Every run |
+| `run.lock` | Prevents concurrent execution | `autolab loop --auto` |
+| `block_reason.json` | Why the experiment was blocked | Completed-experiment guard |
+| `state.json` | Stage, attempt, history | Every transition |
+| `todo_state.json` | Task tracking state | Todo sync |
+| `todo_focus.json` | Current task focus for agent | Assistant mode |
+| `prompts/rendered/<stage>.md` | Rendered prompt for runner | Prompt render |
+| `prompts/rendered/<stage>.context.json` | Resolved context payload | Prompt render |
+| `verification_result.json` | Last verification outcome | `autolab verify` |
+
+## Policy Setup Snippets
+
+### Claude runner with iteration+core scope
+```yaml
+agent_runner:
+  enabled: true
+  runner: claude
+  claude_dangerously_skip_permissions: false
+  stages:
+    - hypothesis
+    - design
+    - implementation
+    - implementation_review
+    - launch
+    - extract_results
+    - update_docs
+  edit_scope:
+    mode: "iteration_plus_core"
+    core_dirs: ["src", "scripts", ".autolab", "docs", "paper", "tests"]
+    ensure_iteration_dir: true
+  timeout_seconds: 3600
+```
+
+### Strict verification for all stages
+```yaml
+requirements_by_stage:
+  implementation:
+    tests: true
+    dry_run: true
+    schema: true
+  implementation_review:
+    tests: true
+    dry_run: true
+    schema: true
+    env_smoke: true
+    docs_target_update: true
+```
+
+### SLURM dry-run command
+```yaml
+dry_run_command: "{{python_bin}} -m myproject.dry_run --config experiments/plan/iter1/design.yaml"
+```
+
+### Meaningful-change config (strict)
+```yaml
+autorun:
+  meaningful_change:
+    require_implementation_progress: true
+    require_git_for_progress: true
+    on_non_git_behavior: "fail"
+    require_verification: true
+    exclude_paths:
+      - ".autolab/**"
+      - "docs/todo.md"
+```
+
+## Assistant Mode Completion Semantics
+
+In assistant mode (`--assistant`), the task cycle follows:
+
+1. **Task selection**: Picks the highest-priority open task from `docs/todo.md` (manual tasks first, then generated)
+2. **Implementation**: Runs the agent for the task's stage
+3. **Verification**: If `require_verification: true`, runs verifiers before marking complete
+4. **Review gate**: Checks for meaningful changes; if none detected, task stays open
+5. **Completion**: Marks task done, syncs todo state, optionally auto-commits
+
+Auto-stop behavior:
+- When no open tasks remain and no generated fallback tasks apply, assistant mode selects `stop`
+- The `strict_mode.forbid_auto_stop` policy can override this to `human_review`
+- Guardrail escalation applies: repeated same-decision or no-progress streaks trigger `on_breach`
+
+Blocked-experiment behavior:
+- If the active experiment is marked completed in `backlog.yaml`, the run writes `block_reason.json` and transitions to `stop`
+- Re-open the experiment in backlog to resume work

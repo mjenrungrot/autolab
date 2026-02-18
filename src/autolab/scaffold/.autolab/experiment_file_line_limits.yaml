@@ -1,4 +1,14 @@
+# =============================================================================
+# Experiment File & Line Limits Policy
+# =============================================================================
+# Controls maximum sizes for iteration artifacts verified by template_fill.py.
+# Each entry maps a relative path (within the iteration directory) to a limit.
+
 line_limits:
+  # ---------------------------------------------------------------------------
+  # Fixed line limits per artifact
+  # ---------------------------------------------------------------------------
+  # These are hard caps on the number of lines for each file type.
   fixed_max_lines:
     hypothesis.md: 90
     design.yaml: 220
@@ -10,10 +20,24 @@ line_limits:
     analysis/summary.md: 140
     docs_update.md: 160
     runs/<RUN_ID>/metrics.json: 260
+
+  # ---------------------------------------------------------------------------
+  # Dynamic manifest line budget
+  # ---------------------------------------------------------------------------
+  # For run_manifest.json the line budget scales with the number of items
+  # resolved via count_paths.  The formula is:
+  #   budget = clamp(base_lines + per_item_lines * item_count,
+  #                  min_cap_lines, max_cap_lines)
+  #
+  # count_paths: JSON-path expressions evaluated against the manifest payload.
+  #   Each expression uses "key[]" to iterate arrays and "key" for dict lookup.
+  #   Example: "variants" counts the length of the top-level "variants" array.
+  #   If your manifest does not have a dynamic item list, keep a single
+  #   documented path here so the verifier accepts the policy file.
   run_manifest_dynamic:
     min_cap_lines: 2500
     max_cap_lines: 12000
     base_lines: 1200
     per_item_lines: 75
     count_paths:
-      - "videos[].k_results"
+      - "variants"

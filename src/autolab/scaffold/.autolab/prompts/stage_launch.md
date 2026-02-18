@@ -25,7 +25,7 @@ Execute the approved run and write launch artifacts:
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
+{{shared:run_artifacts.md}}
 
 ## OUTPUTS (STRICT)
 - One launch script (`run_local.sh` or `run_slurm.sbatch`)
@@ -57,8 +57,8 @@ Execute the approved run and write launch artifacts:
 5. Write `run_manifest.json` that matches schema.
 6. For SLURM, append ledger entry:
    `autolab slurm-job-list append --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-7. Run `autolab verify --stage launch` and fix failures.
-8. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage launch` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## RUN MANIFEST TEMPLATE (schema-aligned)
 ```json
@@ -95,5 +95,5 @@ Run-manifest dynamic cap counts configured list-like fields in `.autolab/experim
 - [ ] SLURM launches include ledger entry with a concrete job identifier.
 
 ## FAILURE / RETRY BEHAVIOR
-- If launch verifiers fail, fix artifacts and rerun launch.
+- If any verification step fails, fix artifacts and rerun from the verification ritual.
 - Do not force stage advancement in state; orchestrator applies retry/escalation behavior.

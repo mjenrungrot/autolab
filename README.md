@@ -19,7 +19,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 For stable CI or release installs, pin to a tag:
 
 ```bash
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.0
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.1
 ```
 
 After upgrading the package from GitHub, refresh local workflow defaults:

@@ -33,6 +33,7 @@ from autolab.models import (
     GuardrailConfig,
     MeaningfulChangeConfig,
     StageCheckError,
+    StrictModeConfig,
     _coerce_bool,
 )
 
@@ -111,6 +112,20 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
         require_git_for_progress=require_git_for_progress,
         on_non_git_behavior=on_non_git_behavior,
         exclude_paths=tuple(patterns),
+    )
+
+
+def _load_strict_mode_config(repo_root: Path) -> StrictModeConfig:
+    policy = _load_verifier_policy(repo_root)
+    autorun = policy.get("autorun")
+    strict = autorun.get("strict_mode") if isinstance(autorun, dict) else {}
+    if not isinstance(strict, dict):
+        strict = {}
+    return StrictModeConfig(
+        forbid_auto_stop=_coerce_bool(strict.get("forbid_auto_stop"), default=False),
+        require_human_review_for_stop=_coerce_bool(
+            strict.get("require_human_review_for_stop"), default=False
+        ),
     )
 
 

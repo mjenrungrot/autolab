@@ -56,9 +56,11 @@
           "first_seen_order": {"type": "integer", "minimum": 1},
           "first_seen_at": {"type": "string", "format": "date-time"},
           "last_seen_at": {"type": "string", "format": "date-time"},
-          "last_evidence_at": {"type": "string"}
-        },
-        "additionalProperties": false
+          "last_evidence_at": {"type": "string"},
+          "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+          "owner": {"type": "string", "minLength": 1},
+          "labels": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
       }
     }
   },

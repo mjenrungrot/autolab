@@ -308,6 +308,44 @@ def _target_comparison_text(
     return (comparison, suggestion)
 
 
+def _suggest_decision_from_metrics(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> str | None:
+    """Suggest a decide_repeat decision based on metrics vs target comparison.
+
+    Returns one of 'stop', 'design', or None if evidence is insufficient.
+    """
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    if not iteration_id:
+        return None
+    iteration_dir, _type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    run_id = str(state.get("last_run_id", "")).strip()
+    if not run_id:
+        return None
+    metrics_payload = _load_metrics_payload(iteration_dir, run_id)
+    if not isinstance(metrics_payload, dict):
+        return None
+    hypothesis_target_delta = _extract_hypothesis_target_delta(iteration_dir)
+    design_target_delta = _extract_design_target_delta(iteration_dir)
+    _comparison, suggestion = _target_comparison_text(
+        metrics_payload=metrics_payload,
+        hypothesis_target_delta=hypothesis_target_delta,
+        design_target_delta=design_target_delta,
+        run_id=run_id,
+    )
+    if "stop" in suggestion:
+        return "stop"
+    if "design" in suggestion:
+        return "design"
+    return None
+
+
 def _build_prompt_context(
     repo_root: Path,
     *,

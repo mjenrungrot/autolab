@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from autolab.constants import (
+    ACTIVE_STAGES,
+    ALL_STAGES,
     DECISION_STAGES,
     DEFAULT_BACKLOG_TEMPLATE,
     DEFAULT_EXPERIMENT_TYPE,
@@ -25,10 +27,13 @@ from autolab.run_standard import _run_once_standard
 from autolab.run_assistant import _run_once_assistant
 from autolab.state import (
     _acquire_lock,
+    _append_state_history,
     _bootstrap_iteration_id,
     _default_agent_result,
     _default_state,
+    _force_break_lock,
     _heartbeat_lock,
+    _inspect_lock,
     _load_state,
     _mark_backlog_experiment_completed,
     _normalize_state,
@@ -217,7 +222,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
         "iteration_id",
         "experiment_id",
         "stage",
-        "stage_attempt",
         "last_run_id",
         "sync_status",
         "assistant_mode",
@@ -230,6 +234,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     ):
         value = state.get(key, "<missing>")
         print(f"{key}: {value}")
+    attempt = state.get("stage_attempt", 0)
+    max_attempts = state.get("max_stage_attempts", 5)
+    print(f"stage_attempt: {attempt}/{max_attempts}")
 
     # Phase 7b: human_review banner
     if state.get("stage") == "human_review":
@@ -838,6 +845,127 @@ def _cmd_review(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Lock management
+# ---------------------------------------------------------------------------
+
+
+def _cmd_lock(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    lock_path = repo_root / ".autolab" / "run.lock"
+    action = args.action
+
+    if action == "status":
+        info = _inspect_lock(lock_path)
+        if info is None:
+            print("autolab lock: no active lock")
+            return 0
+        print("autolab lock: active")
+        for key in ("pid", "host", "owner_uuid", "started_at", "last_heartbeat_at", "command", "state_file"):
+            print(f"  {key}: {info.get(key, '<unknown>')}")
+        age = info.get("age_seconds")
+        if age is not None:
+            print(f"  age: {age:.0f}s")
+        return 0
+
+    if action == "break":
+        reason = getattr(args, "reason", "") or "manual break"
+        message = _force_break_lock(lock_path, reason=reason)
+        _append_log(repo_root, f"lock break: {message}")
+        print(f"autolab lock: {message}")
+        return 0
+
+    print(f"autolab lock: unknown action '{action}'", file=sys.stderr)
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# Skip stage
+# ---------------------------------------------------------------------------
+
+
+def _cmd_skip(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _load_state(state_path)
+    except RuntimeError as exc:
+        print(f"autolab skip: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    current_stage = str(state.get("stage", "")).strip()
+    target_stage = args.stage
+    reason = args.reason
+
+    if current_stage in TERMINAL_STAGES:
+        print(f"autolab skip: ERROR current stage '{current_stage}' is terminal; cannot skip", file=sys.stderr)
+        return 1
+
+    if target_stage in TERMINAL_STAGES:
+        print(f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'", file=sys.stderr)
+        return 1
+
+    # Validate forward-only skip within ACTIVE_STAGES + decide_repeat
+    ordered_stages = list(ACTIVE_STAGES) + ["decide_repeat"]
+    if current_stage not in ordered_stages:
+        print(f"autolab skip: ERROR current stage '{current_stage}' is not skippable", file=sys.stderr)
+        return 1
+    if target_stage not in ordered_stages:
+        print(f"autolab skip: ERROR target stage '{target_stage}' is not a valid skip target", file=sys.stderr)
+        return 1
+    current_idx = ordered_stages.index(current_stage)
+    target_idx = ordered_stages.index(target_stage)
+    if target_idx <= current_idx:
+        print(
+            f"autolab skip: ERROR can only skip forward (current={current_stage}, target={target_stage})",
+            file=sys.stderr,
+        )
+        return 1
+
+    state["stage"] = target_stage
+    state["stage_attempt"] = 0
+    _append_state_history(
+        state,
+        stage_before=current_stage,
+        stage_after=target_stage,
+        status="manual_skip",
+        summary=f"manual skip from {current_stage} to {target_stage}: {reason}",
+    )
+    _write_json(state_path, state)
+    _append_log(repo_root, f"skip: {current_stage} -> {target_stage} reason={reason}")
+    print(f"autolab skip: {current_stage} -> {target_stage}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Lint (alias for verify)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_lint(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _load_state(state_path)
+    except RuntimeError as exc:
+        print(f"autolab lint: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    stage_override = getattr(args, "stage", None)
+    stage = stage_override or str(state.get("stage", "")).strip()
+    if not stage:
+        print("autolab lint: ERROR unable to determine stage", file=sys.stderr)
+        return 1
+
+    passed, detail_message, _details = _run_verification_step_detailed(repo_root, state, stage_override=stage_override)
+    status = "PASS" if passed else "FAIL"
+    print(f"autolab lint: {status} stage={stage}")
+    if detail_message:
+        print(detail_message)
+    return 0 if passed else 1
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1069,6 +1197,58 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--status", required=True, choices=("pass", "retry", "stop"),
                         help="Review decision: pass (continue), retry (back to implementation), stop (end experiment)")
     review.set_defaults(handler=_cmd_review)
+
+    # Lock management
+    lock = subparsers.add_parser("lock", help="Inspect or break the autolab run lock")
+    lock.add_argument(
+        "action",
+        choices=("status", "break"),
+        help="Action: status (show lock info) or break (force remove lock)",
+    )
+    lock.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    lock.add_argument(
+        "--reason",
+        default="manual break",
+        help="Reason for breaking the lock (used in audit log)",
+    )
+    lock.set_defaults(handler=_cmd_lock)
+
+    # Skip stage
+    skip = subparsers.add_parser("skip", help="Skip the current stage forward with audit trail")
+    skip.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    skip.add_argument(
+        "--stage",
+        required=True,
+        help="Target stage to skip to (must be a forward stage in the pipeline)",
+    )
+    skip.add_argument(
+        "--reason",
+        required=True,
+        help="Reason for skipping (recorded in state history)",
+    )
+    skip.set_defaults(handler=_cmd_skip)
+
+    # Lint (user-friendly verify alias)
+    lint = subparsers.add_parser("lint", help="Run stage verifiers with user-friendly output")
+    lint.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    lint.add_argument(
+        "--stage",
+        default=None,
+        help="Override stage for linting (default: state.stage)",
+    )
+    lint.set_defaults(handler=_cmd_lint)
 
     return parser
 

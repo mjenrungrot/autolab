@@ -25,7 +25,7 @@ Convert run artifacts into structured outputs:
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
+{{shared:run_artifacts.md}}
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
@@ -51,13 +51,20 @@ Convert run artifacts into structured outputs:
 - Use `status: partial` when only part of required evidence is available; include explicit missing artifact list in `analysis/summary.md`.
 - Use `status: failed` when extraction cannot produce trustworthy metrics; include root cause and blocking artifacts.
 
+## SCHEMA GOTCHAS
+- `primary_metric.value` must be a **number** (not a string like `"0.85"`). Use `0.85`, not `"0.85"`.
+- `primary_metric.delta_vs_baseline` must also be a **number**.
+- `status` must be one of: `"completed"`, `"partial"`, `"failed"` -- no other values accepted.
+- All of `iteration_id`, `run_id`, `status`, `primary_metric` are **required** top-level fields.
+- For failed runs where metrics are unavailable, use `status: "failed"` and set `value`/`delta_vs_baseline` to `0` (or `null` if nullable metrics policy is enabled).
+
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
 3. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
 4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
-5. Run `autolab verify --stage extract_results` and fix failures.
-6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## METRICS TEMPLATE (schema-aligned)
 ```json
@@ -87,5 +94,5 @@ Convert run artifacts into structured outputs:
 - [ ] Missing tables/figures are explicitly marked `not available` with rationale.
 
 ## FAILURE / RETRY BEHAVIOR
-- If verifier checks fail, fix extraction outputs and rerun extract stage.
+- If any verification step fails, fix extraction outputs and rerun from the verification ritual.
 - Autolab owns stage transitions/retries; do not edit `state.json` manually.

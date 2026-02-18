@@ -102,10 +102,40 @@ def _format_error_path(error_path: Iterable[Any]) -> str:
     return "".join(pieces)
 
 
+def _patch_strict_additional_properties(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively set additionalProperties: false on all object schemas."""
+    import copy
+    patched = copy.deepcopy(schema)
+    _patch_object_schema(patched)
+    return patched
+
+
+def _patch_object_schema(node: Any) -> None:
+    if not isinstance(node, dict):
+        return
+    if node.get("type") == "object" and "additionalProperties" not in node:
+        node["additionalProperties"] = False
+    if "properties" in node and isinstance(node["properties"], dict):
+        for _key, prop_schema in node["properties"].items():
+            _patch_object_schema(prop_schema)
+    if "items" in node:
+        _patch_object_schema(node["items"])
+
+
+def _is_strict_schema_mode() -> bool:
+    policy = _load_policy()
+    schema_validation = policy.get("schema_validation")
+    if not isinstance(schema_validation, dict):
+        return False
+    return bool(schema_validation.get("strict_additional_properties", False))
+
+
 def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
     if Draft202012Validator is None:
         return ["jsonschema dependency is required (install: pip install jsonschema)"]
     schema = _load_schema(schema_key)
+    if _is_strict_schema_mode():
+        schema = _patch_strict_additional_properties(schema)
     validator = Draft202012Validator(schema)
     failures: list[str] = []
     for error in sorted(validator.iter_errors(payload), key=lambda item: _format_error_path(item.path)):

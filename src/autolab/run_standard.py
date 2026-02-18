@@ -8,6 +8,7 @@ from autolab.models import EvalResult, RunOutcome, StageCheckError
 from autolab.config import (
     _load_guardrail_config,
     _load_meaningful_change_config,
+    _load_strict_mode_config,
     _resolve_run_agent_mode,
 )
 from autolab.evaluate import _evaluate_stage
@@ -35,10 +36,12 @@ from autolab.utils import (
     _safe_todo_post_sync,
     _safe_todo_pre_sync,
     _todo_open_count,
+    _write_block_reason,
     _write_json,
 )
 from autolab.models import StateError
 from autolab.state import _resolve_repo_root
+from autolab.prompts import _suggest_decision_from_metrics
 from autolab.todo_sync import select_decision_from_todo
 from autolab.validators import _run_verification_step
 
@@ -78,6 +81,45 @@ def _decision_from_artifact(
     if not rationale:
         return (None, f"{decision_path} must include a non-empty rationale")
     return (decision, "")
+
+
+def _compute_next_stage_attempt(
+    *,
+    stage_before: str,
+    next_stage: str,
+    prior_attempt: int,
+    max_stage_attempts: int,
+    needs_retry: bool,
+) -> tuple[int, str | None, str | None]:
+    """Compute the stage_attempt value after a stage transition.
+
+    Returns (new_attempt, override_stage, override_summary).
+    override_stage/override_summary are set only when retry budget is exhausted.
+    """
+    retry_cycle_increment = (
+        stage_before == "implementation_review"
+        and next_stage == "implementation"
+        and needs_retry
+    )
+    retry_cycle_carry = (
+        stage_before == "implementation"
+        and next_stage == "implementation_review"
+        and prior_attempt > 0
+    )
+
+    if retry_cycle_increment:
+        new_attempt = prior_attempt + 1
+        if new_attempt >= max_stage_attempts:
+            return (
+                new_attempt,
+                "human_review",
+                f"implementation review retry budget exhausted ({new_attempt}/{max_stage_attempts})"
+                " -- handing off to human review",
+            )
+        return (new_attempt, None, None)
+    if retry_cycle_carry:
+        return (prior_attempt, None, None)
+    return (0, None, None)
 
 
 def _handle_stage_failure(
@@ -222,6 +264,12 @@ def _run_once_standard(
         if state_bootstrap_changed:
             pre_sync_changed = [*state_bootstrap_changed, *pre_sync_changed]
         message = f"blocked completed experiment edits: {completion_summary}; re-open experiment in backlog to resume"
+        _write_block_reason(
+            repo_root,
+            reason=completion_summary,
+            stage_at_block=original_stage,
+            action_required="re-open experiment in backlog to resume",
+        )
         outcome = RunOutcome(
             exit_code=0,
             transitioned=True,
@@ -311,10 +359,28 @@ def _run_once_standard(
             )
             if selected_decision is not None:
                 decision_source = "auto_todo"
+        if selected_decision is None and auto_decision:
+            metrics_suggestion = _suggest_decision_from_metrics(repo_root, state)
+            if metrics_suggestion is not None:
+                selected_decision = metrics_suggestion
+                decision_source = "auto_metrics"
+                _append_log(repo_root, f"decide_repeat auto_metrics suggestion: {metrics_suggestion}")
         if selected_decision is None and auto_decision and auto_mode:
             selected_decision = "stop"
             decision_source = "auto_default"
-        auto_selected = decision is None and decision_source in {"auto_todo", "auto_default"}
+        auto_selected = decision is None and decision_source in {"auto_todo", "auto_metrics", "auto_default"}
+
+        # Item 6: strict mode overrides for unattended loops
+        if auto_mode and selected_decision is not None:
+            strict_config = _load_strict_mode_config(repo_root)
+            if selected_decision == "stop" and strict_config.forbid_auto_stop:
+                selected_decision = "human_review"
+                decision_source = "strict_override"
+                _append_log(repo_root, "strict_mode.forbid_auto_stop overrode 'stop' to 'human_review'")
+            elif selected_decision == "stop" and strict_config.require_human_review_for_stop:
+                selected_decision = "human_review"
+                decision_source = "strict_override"
+                _append_log(repo_root, "strict_mode.require_human_review_for_stop overrode 'stop' to 'human_review'")
 
         if selected_decision is None:
             message = (
@@ -619,33 +685,18 @@ def _run_once_standard(
 
     if not guardrail_stage_override:
         state["stage"] = next_stage
-        prior_attempt = int(state["stage_attempt"])
-        max_stage_attempts = int(state["max_stage_attempts"])
-        retry_cycle_increment = (
-            stage_before == "implementation_review"
-            and next_stage == "implementation"
-            and eval_result.needs_retry
+        new_attempt, override_stage, override_summary = _compute_next_stage_attempt(
+            stage_before=stage_before,
+            next_stage=next_stage,
+            prior_attempt=int(state["stage_attempt"]),
+            max_stage_attempts=int(state["max_stage_attempts"]),
+            needs_retry=eval_result.needs_retry,
         )
-        retry_cycle_carry = (
-            stage_before == "implementation"
-            and next_stage == "implementation_review"
-            and prior_attempt > 0
-        )
-
-        if retry_cycle_increment:
-            state["stage_attempt"] = prior_attempt + 1
-            if state["stage_attempt"] >= max_stage_attempts:
-                state["stage"] = "human_review"
-                agent_status = "failed"
-                summary = (
-                    f"implementation review retry budget exhausted "
-                    f"({state['stage_attempt']}/{max_stage_attempts}) "
-                    f"— handing off to human review"
-                )
-        elif retry_cycle_carry:
-            state["stage_attempt"] = prior_attempt
-        else:
-            state["stage_attempt"] = 0
+        state["stage_attempt"] = new_attempt
+        if override_stage is not None:
+            state["stage"] = override_stage
+            agent_status = "failed"
+            summary = override_summary or summary
 
     _append_state_history(
         state,
