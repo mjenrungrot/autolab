@@ -130,7 +130,7 @@ experiments:
 
 - `hypothesis`: `hypothesis.md`
 - `design`: `design.yaml`
-- `implementation`: `implementation_plan.md`
+- `implementation`: `implementation_plan.md`, `implementation/` (experiment-specific code/notebooks)
 - `implementation_review`: `implementation_review.md`, `review_result.json`
 - `launch`: `launch/run_local.sh` or `launch/run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`
 - `extract_results`: `runs/<run_id>/metrics.json`, `analysis/summary.md`
