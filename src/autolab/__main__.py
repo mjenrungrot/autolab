@@ -3011,6 +3011,8 @@ def _run_once_standard(
         repeat_guard["same_decision_streak"] = same_decision_streak
         repeat_guard["last_open_task_count"] = open_count
         repeat_guard["no_progress_decisions"] = no_progress_decisions
+        if selected_decision not in TERMINAL_STAGES:
+            repeat_guard["update_docs_cycle_count"] = 0
         state["repeat_guard"] = repeat_guard
         state["stage"] = selected_decision
         state["stage_attempt"] = 0
@@ -3385,10 +3387,20 @@ def _run_once_assistant(
             state["stage"] = "stop"
             state["stage_attempt"] = 0
             _write_json(state_path, state)
+            changed: list[Path] = [state_path]
+            completion_msg = ""
+            completed, backlog_path, completion_summary = _mark_backlog_experiment_completed(
+                repo_root,
+                str(state.get("experiment_id", "")).strip(),
+            )
+            if completed and backlog_path is not None:
+                changed.append(backlog_path)
+                completion_msg = f"; {completion_summary}"
+            _append_log(repo_root, completion_summary)
             return _persist_simple(
                 status="complete",
-                message="assistant cycle complete: no actionable tasks remain",
-                changed_files=[state_path],
+                message=f"assistant cycle complete: no actionable tasks remain{completion_msg}",
+                changed_files=changed,
                 transitioned=stage_before != "stop",
                 stage_after="stop",
                 commit_allowed=False,
