@@ -547,6 +547,88 @@ def test_schema_checks_pass_with_valid_plan_execution_summary(tmp_path: Path) ->
     assert "schema_checks: PASS" in result.stdout
 
 
+# ---------------------------------------------------------------------------
+# prompts helper tests (Items 3, 4, 13)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_signed_delta_prioritizes_signed_value() -> None:
+    from autolab.prompts import _parse_signed_delta
+    assert _parse_signed_delta("80 +5.0%") == 5.0
+    assert _parse_signed_delta("2.0 -0.3") == -0.3
+    assert _parse_signed_delta("5.0") == 5.0
+    assert _parse_signed_delta("+10") == 10.0
+    assert _parse_signed_delta("") is None
+
+
+def test_target_comparison_text_all_mode_combinations() -> None:
+    from autolab.prompts import _target_comparison_text
+    payload = {"primary_metric": {"name": "m", "delta_vs_baseline": 6.0}}
+    # maximize met
+    _, s = _target_comparison_text(
+        metrics_payload=payload, hypothesis_target_delta=5.0,
+        design_target_delta="", run_id="r1", metric_mode="maximize",
+    )
+    assert "stop" in s
+    # maximize not met
+    _, s = _target_comparison_text(
+        metrics_payload=payload, hypothesis_target_delta=10.0,
+        design_target_delta="", run_id="r1", metric_mode="maximize",
+    )
+    assert "design" in s
+    # minimize met
+    payload_min = {"primary_metric": {"name": "m", "delta_vs_baseline": -3.0}}
+    _, s = _target_comparison_text(
+        metrics_payload=payload_min, hypothesis_target_delta=-2.0,
+        design_target_delta="", run_id="r1", metric_mode="minimize",
+    )
+    assert "stop" in s
+    # minimize not met
+    payload_min2 = {"primary_metric": {"name": "m", "delta_vs_baseline": -1.0}}
+    _, s = _target_comparison_text(
+        metrics_payload=payload_min2, hypothesis_target_delta=-2.0,
+        design_target_delta="", run_id="r1", metric_mode="minimize",
+    )
+    assert "design" in s
+
+
+def test_suggest_decision_minimize_mode_via_design(tmp_path: Path) -> None:
+    import json as _json
+    from autolab.prompts import _suggest_decision_from_metrics
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "decide_repeat",
+        "stage_attempt": 0,
+        "last_run_id": "run_001",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+    (repo / ".autolab").mkdir(parents=True, exist_ok=True)
+    (repo / ".autolab" / "state.json").write_text(_json.dumps(state), encoding="utf-8")
+    backlog = {"experiments": [{"id": "e1", "hypothesis_id": "h1", "status": "open", "iteration_id": "iter1"}]}
+    (repo / ".autolab" / "backlog.yaml").write_text(yaml.safe_dump(backlog), encoding="utf-8")
+
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "hypothesis.md").write_text("# H\n- target_delta: -2.0\n", encoding="utf-8")
+    design = {
+        "metrics": {"primary": {"name": "loss", "unit": "nats", "mode": "minimize"}, "success_delta": "-2.0"},
+    }
+    (iteration_dir / "design.yaml").write_text(yaml.safe_dump(design), encoding="utf-8")
+    run_dir = iteration_dir / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metrics = {"status": "complete", "primary_metric": {"name": "loss", "value": 1.0, "delta_vs_baseline": -3.0}}
+    (run_dir / "metrics.json").write_text(_json.dumps(metrics), encoding="utf-8")
+
+    result = _suggest_decision_from_metrics(repo, state)
+    assert result == "stop"
+
+
 def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
     _write_plan(repo, (

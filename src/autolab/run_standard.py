@@ -36,6 +36,7 @@ from autolab.utils import (
     _safe_todo_post_sync,
     _safe_todo_pre_sync,
     _todo_open_count,
+    _utc_now,
     _write_block_reason,
     _write_json,
 )
@@ -457,6 +458,20 @@ def _run_once_standard(
                 no_progress_decisions += 1
             else:
                 no_progress_decisions = 0
+
+            last_change_baseline = repeat_guard.get("last_change_baseline")
+            if not isinstance(last_change_baseline, dict):
+                last_change_baseline = standard_baseline_snapshot
+            meaningful_config = _load_meaningful_change_config(repo_root)
+            meaningful_changed, _delta, _meaningful, current_snapshot = _evaluate_meaningful_change(
+                repo_root,
+                meaningful_config,
+                baseline_snapshot=last_change_baseline,
+            )
+            if meaningful_changed:
+                no_progress_decisions = 0
+            repeat_guard["last_change_baseline"] = current_snapshot
+
             if (
                 same_decision_streak > guardrails.max_same_decision_streak
                 or no_progress_decisions >= guardrails.max_no_progress_decisions
@@ -483,9 +498,31 @@ def _run_once_standard(
             decision=selected_decision,
         )
         _write_json(state_path, state)
+        try:
+            _write_json(
+                repo_root / ".autolab" / "decision_trace.json",
+                {
+                    "timestamp": _utc_now(),
+                    "decision": selected_decision,
+                    "decision_source": decision_source,
+                    "auto_selected": auto_selected,
+                    "iteration_id": str(state.get("iteration_id", "")).strip(),
+                    "experiment_id": str(state.get("experiment_id", "")).strip(),
+                    "repeat_guard": repeat_guard,
+                },
+            )
+        except Exception:
+            pass
         message = f"decision applied: decide_repeat -> {selected_decision}"
         if auto_selected:
-            message = f"{message} (auto-selected from docs/todo.md)"
+            _source_labels = {
+                "auto_todo": "(auto-selected from docs/todo.md)",
+                "auto_metrics": "(auto-selected from metrics comparison)",
+                "auto_default": "(auto-selected: default stop)",
+            }
+            message = f"{message} {_source_labels.get(decision_source, '(auto-selected)')}"
+        elif decision_source == "strict_override":
+            message = f"{message} (overridden by strict_mode policy)"
         elif decision_source == "artifact":
             message = f"{message} (from decision_result.json)"
         if selected_decision == "hypothesis":

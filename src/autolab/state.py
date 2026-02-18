@@ -606,6 +606,7 @@ def _ensure_iteration_skeleton(
     _ensure_text_file(
         iteration_dir / "design.yaml",
         (
+            'schema_version: "1.0"\n'
             f'id: "e1"\n'
             f'iteration_id: "{iteration_id}"\n'
             'hypothesis_id: "h1"\n'

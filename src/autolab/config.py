@@ -129,6 +129,19 @@ def _load_strict_mode_config(repo_root: Path) -> StrictModeConfig:
     )
 
 
+def _load_assistant_auto_complete_policy(repo_root: Path) -> bool:
+    """Return whether assistant mode should auto-complete when no tasks remain.
+
+    Default is True for backwards compatibility.
+    """
+    policy = _load_verifier_policy(repo_root)
+    autorun = policy.get("autorun")
+    assistant = autorun.get("assistant") if isinstance(autorun, dict) else {}
+    if not isinstance(assistant, dict):
+        return True
+    return bool(assistant.get("auto_complete_backlog", True))
+
+
 def _load_auto_commit_config(repo_root: Path) -> AutoCommitConfig:
     policy = _load_verifier_policy(repo_root)
     autorun = policy.get("autorun")

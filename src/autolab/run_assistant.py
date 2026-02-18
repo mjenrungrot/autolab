@@ -6,6 +6,7 @@ from typing import Any
 from autolab.constants import ACTIVE_STAGES, TERMINAL_STAGES
 from autolab.models import RunOutcome, StateError
 from autolab.config import (
+    _load_assistant_auto_complete_policy,
     _load_guardrail_config,
     _load_meaningful_change_config,
 )
@@ -266,6 +267,25 @@ def _run_once_assistant(
             prioritize_implementation=(detected_host_mode == "local"),
         )
         if task is None:
+            auto_complete = _load_assistant_auto_complete_policy(repo_root)
+            if not auto_complete:
+                state["current_task_id"] = ""
+                state["task_cycle_stage"] = "done"
+                state["task_change_baseline"] = {}
+                state["stage"] = "human_review"
+                state["stage_attempt"] = 0
+                _write_json(state_path, state)
+                return _persist_simple(
+                    status="complete",
+                    message="assistant cycle: no actionable tasks remain; escalating to human_review (auto_complete_backlog=false)",
+                    changed_files=[state_path],
+                    transitioned=stage_before != "human_review",
+                    stage_after="human_review",
+                    commit_allowed=False,
+                    commit_cycle_stage="done",
+                    commit_reason="auto_complete_backlog policy is false",
+                    ledger_event="done",
+                )
             state["current_task_id"] = ""
             state["task_cycle_stage"] = "done"
             state["task_change_baseline"] = {}
