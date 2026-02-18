@@ -33,17 +33,17 @@ Use this skill when the user explicitly asks for `$llm-council` and wants strong
    - `planner_1.md`, `planner_2.md`, `planner_3.md` (or more)
    - `judge.md`
    - `final-plan.md`
-   - `run_summary.json`
+   - `run_summary.json` (include `parallelizability_score`, `conflict_risk_score`, `total_task_count` alongside standard fields)
 
 ## Planner phase
 
 1. Spawn multiple planner subagents in parallel.
 2. Planner prompts must prohibit follow-up questions and require strict template output.
 3. Keep planners independent; do not share intermediate planner outputs between planners.
-4. Validate each plan for required sections:
+4. Planner output must use the unified `implementation_plan.md` format:
    - Overview
-   - Task breakdown with dependencies
-   - Validation strategy
+   - Tasks (with full task block fields including `depends_on`, `location`, `description`, `touches`, `validation`, `status`)
+   - Parallel Execution Groups (wave table)
    - Risks and edge cases
    - Rollback or mitigation
 5. Retry invalid planner output up to 2 times.
@@ -59,11 +59,20 @@ Use this skill when the user explicitly asks for `$llm-council` and wants strong
    - test completeness
    - clarity/actionability
    - conciseness
+   - parallelizability: atomic tasks with explicit deps
+   - conflict_risk: quality of `touches`/`conflict_group` annotations
+   - verifier_alignment: plan satisfies Autolab policy checks
 4. Judge output must include:
    - scoring table
    - comparative analysis
    - missing steps and contradictions
-   - merged final plan
+   - merged final plan in the unified `implementation_plan.md` format
+
+## Bridge to swarm-planner
+
+The merged `final-plan.md` must use the unified `implementation_plan.md` format so it can be:
+- Used as direct input to `$swarm-planner` for refinement or dependency validation.
+- Used as direct input to `$parallel-task` for execution.
 
 ## Safety rules
 

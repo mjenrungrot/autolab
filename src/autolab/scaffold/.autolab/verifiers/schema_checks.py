@@ -40,6 +40,8 @@ SCHEMAS: dict[str, str] = {
     "decision_result": "decision_result.schema.json",
     "todo_state": "todo_state.schema.json",
     "todo_focus": "todo_focus.schema.json",
+    "plan_metadata": "plan_metadata.schema.json",
+    "plan_execution_summary": "plan_execution_summary.schema.json",
 }
 REVIEW_RESULT_REQUIRED_CHECKS = (
     "tests",
@@ -429,6 +431,32 @@ def _validate_todo_focus(state: dict[str, Any]) -> list[str]:
     return _schema_validate(payload, schema_key="todo_focus", path=path)
 
 
+def _validate_plan_metadata(state: dict[str, Any]) -> list[str]:
+    """Validate plan_metadata.json if it exists (optional artifact)."""
+    iteration_dir = _iteration_dir(state)
+    path = iteration_dir / "plan_metadata.json"
+    if not path.exists():
+        return []
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="plan_metadata", path=path)
+
+
+def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
+    """Validate plan_execution_summary.json if it exists (optional artifact)."""
+    iteration_dir = _iteration_dir(state)
+    path = iteration_dir / "plan_execution_summary.json"
+    if not path.exists():
+        return []
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
@@ -458,6 +486,8 @@ def main() -> int:
     failures.extend(_validate_decision_result(state, stage=stage))
     failures.extend(_validate_todo_state(state))
     failures.extend(_validate_todo_focus(state))
+    failures.extend(_validate_plan_metadata(state))
+    failures.extend(_validate_plan_execution_summary(state))
 
     if failures:
         print("schema_checks: FAIL")

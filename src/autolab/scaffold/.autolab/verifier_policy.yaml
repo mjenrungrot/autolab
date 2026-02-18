@@ -77,6 +77,12 @@ requirements_by_stage:
     env_smoke: false
     docs_target_update: false
 
+implementation_plan_lint:
+  enabled: true
+  command: "{{python_bin}} .autolab/verifiers/implementation_plan_lint.py"
+  stages:
+    implementation: true
+
 agent_runner:
   enabled: false
   runner: codex  # Options: codex, claude, custom

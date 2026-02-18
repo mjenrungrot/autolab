@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan Execution Summary",
+  "description": "Execution summary emitted by parallel-task after running a plan",
+  "type": "object",
+  "required": ["schema_version", "iteration_id", "plan_file", "tasks_total", "tasks_completed", "tasks_failed", "tasks_blocked"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tasks_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tasks_completed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tasks_failed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tasks_blocked": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "waves_executed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "task_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "task_id": {"type": "string"},
+          "status": {"type": "string"},
+          "wave": {"type": "integer"},
+          "files_changed": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
