@@ -1,4 +1,6 @@
 ## RESOLVED RUNTIME CONTEXT
+{{stage_context}}
+
 Autolab resolves stage placeholders before runner execution and writes:
 
 - `.autolab/prompts/rendered/{{stage}}.md`

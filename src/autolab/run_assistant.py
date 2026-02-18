@@ -10,6 +10,7 @@ from autolab.config import (
 )
 from autolab.run_standard import _run_once_standard
 from autolab.state import (
+    _append_state_history,
     _is_active_experiment_completed,
     _load_state,
     _mark_backlog_experiment_completed,
@@ -131,6 +132,14 @@ def _run_once_assistant(
         commit_cycle_stage: str = "",
         commit_paths: tuple[str, ...] = (),
     ) -> RunOutcome:
+        _append_state_history(
+            state,
+            stage_before=stage_before,
+            stage_after=stage_after,
+            status=status,
+            summary=message,
+        )
+        _write_json(state_path, state)
         post_sync_changed, post_sync_message = _safe_todo_post_sync(
             repo_root,
             state,
@@ -146,7 +155,7 @@ def _run_once_assistant(
             repo_root,
             status=status,
             summary=summary,
-            changed_files=[*changed_files, *pre_sync_changed, *post_sync_changed],
+            changed_files=[state_path, *changed_files, *pre_sync_changed, *post_sync_changed],
         )
         return RunOutcome(
             exit_code=exit_code,

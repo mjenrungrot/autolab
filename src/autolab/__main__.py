@@ -118,6 +118,7 @@ from autolab.utils import (  # noqa: F401
 
 from autolab.state import (  # noqa: F401
     _acquire_lock,
+    _append_state_history,
     _bootstrap_iteration_id,
     _default_agent_result,
     _default_state,

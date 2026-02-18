@@ -99,6 +99,7 @@ def _run_once(
     decision: str | None,
     *,
     run_agent_mode: str = "policy",
+    verify_before_evaluate: bool = False,
     assistant: bool = False,
     auto_mode: bool = False,
     auto_decision: bool = False,
@@ -110,6 +111,7 @@ def _run_once(
         state_path,
         decision,
         run_agent_mode=run_agent_mode,
+        verify_before_evaluate=verify_before_evaluate,
         auto_decision=auto_decision,
         auto_mode=auto_mode,
         strict_implementation_progress=strict_implementation_progress,
@@ -539,6 +541,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         state_path,
         args.decision,
         run_agent_mode=run_agent_mode,
+        verify_before_evaluate=bool(getattr(args, "verify", False)),
         assistant=assistant_mode,
         auto_mode=False,
         auto_decision=bool(getattr(args, "auto_decision", False)),
@@ -556,6 +559,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(f"state_file: {state_path}")
     print(f"run_agent_mode: {run_agent_mode}")
     print(f"assistant: {bool(getattr(args, 'assistant', False))}")
+    print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
     print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
     print(f"stage_before: {outcome.stage_before}")
     print(f"stage_after: {outcome.stage_after}")
@@ -615,6 +619,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     assistant_mode = bool(getattr(args, "assistant", False))
     print(f"run_agent_mode: {run_agent_mode}")
     print(f"assistant: {assistant_mode}")
+    print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
     if args.auto:
         print("auto: true")
         print(f"max_hours: {max_hours}")
@@ -655,6 +660,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 state_path,
                 decision if args.auto else None,
                 run_agent_mode=run_agent_mode,
+                verify_before_evaluate=bool(getattr(args, "verify", False)),
                 assistant=assistant_mode,
                 auto_mode=bool(args.auto),
                 auto_decision=auto_decision_enabled,
@@ -862,6 +868,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow decide_repeat to auto-select from todo/backlog when --decision is not provided.",
     )
     run.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run policy-driven verification before stage evaluation in this run.",
+    )
+    run.add_argument(
         "--strict-implementation-progress",
         dest="strict_implementation_progress",
         action="store_true",
@@ -913,6 +924,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--assistant",
         action="store_true",
         help="Enable engineer-assistant task cycle mode for unattended feature delivery.",
+    )
+    loop.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run policy-driven verification before stage evaluation on each loop iteration.",
     )
     loop.add_argument(
         "--strict-implementation-progress",

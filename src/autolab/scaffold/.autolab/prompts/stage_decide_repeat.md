@@ -24,6 +24,9 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json` (if available)
 - `{{iteration_path}}/review_result.json` (if available)
 - `{{iteration_path}}/docs_update.md` (if available)
+- Metrics summary context: `{{metrics_summary}}`
+- Target comparison context: `{{target_comparison}}`
+- Suggested next decision context: `{{decision_suggestion}}`
 
 ## MISSING-INPUT FALLBACKS
 - If backlog is missing/unreadable, choose `human_review` and report blocker.
@@ -40,7 +43,8 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 ## STEPS
 1. Summarize latest run/review/doc evidence in 3-6 bullets.
 2. Select exactly one decision from the allowed set.
-3. Provide a short rationale with explicit risks and any required human actions.
+3. Compare measured deltas vs target deltas (when available) and state whether target is met.
+4. Provide a short rationale with explicit risks and any required human actions.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 import time
@@ -68,6 +69,82 @@ def _load_dict_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise StageCheckError(f"{label} must contain a JSON object at {path}")
     return payload
+
+
+_HYPOTHESIS_KEY_PATTERN = re.compile(r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+)$")
+_HYPOTHESIS_PRIMARY_METRIC_PATTERN = re.compile(
+    r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+_MARKDOWN_DRY_RUN_SECTION_PATTERN = re.compile(r"^#{2,6}\s*dry[\s_-]?run\b", flags=re.IGNORECASE | re.MULTILINE)
+
+
+def _extract_markdown_key_values(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = _HYPOTHESIS_KEY_PATTERN.match(line)
+        if not match:
+            continue
+        raw_key = match.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        raw_value = match.group(2).strip()
+        if raw_key and raw_value and raw_key not in values:
+            values[raw_key] = raw_value
+    return values
+
+
+def _validate_hypothesis(path: Path) -> None:
+    _require_non_empty(path, "hypothesis.md")
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    key_values = _extract_markdown_key_values(text)
+
+    has_metric = (
+        "metric" in key_values
+        or "primary_metric" in key_values
+        or bool(_HYPOTHESIS_PRIMARY_METRIC_PATTERN.search(text))
+    )
+    has_target_delta = (
+        "target_delta" in key_values
+        or "expected_delta" in key_values
+        or "success_delta" in key_values
+        or "target delta" in lowered
+        or "expected delta" in lowered
+    )
+    has_criteria = (
+        "criteria" in key_values
+        or "success_criteria" in key_values
+        or "operational_success_criteria" in key_values
+        or "operational success criteria" in lowered
+        or "success criteria" in lowered
+    )
+
+    missing: list[str] = []
+    if not has_metric:
+        missing.append("metric")
+    if not has_target_delta:
+        missing.append("target_delta")
+    if not has_criteria:
+        missing.append("criteria")
+    if missing:
+        raise StageCheckError(
+            "hypothesis.md is missing required hypothesis contract field(s): "
+            f"{', '.join(missing)}"
+        )
+
+
+def _validate_implementation_plan(path: Path, *, require_dry_run: bool) -> None:
+    _require_non_empty(path, "implementation_plan.md")
+    if not require_dry_run:
+        return
+    text = path.read_text(encoding="utf-8")
+    if not _MARKDOWN_DRY_RUN_SECTION_PATTERN.search(text):
+        raise StageCheckError(
+            "implementation_plan.md must include a dedicated dry-run section heading "
+            "because verifier policy requires dry_run for this stage"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -214,11 +291,27 @@ def _validate_extract(iteration_dir: Path, run_id: str) -> None:
 
 
 def _validate_update_docs(repo_root: Path, iteration_dir: Path, run_id: str) -> None:
-    _require_non_empty(iteration_dir / "docs_update.md", "docs_update.md")
+    docs_update_path = iteration_dir / "docs_update.md"
+    _require_non_empty(docs_update_path, "docs_update.md")
     _require_non_empty(iteration_dir / "analysis" / "summary.md", "analysis/summary.md")
+    docs_update_text = docs_update_path.read_text(encoding="utf-8")
     normalized_run_id = str(run_id).strip()
     if not normalized_run_id or normalized_run_id.startswith("<"):
         return
+    if normalized_run_id not in docs_update_text:
+        raise StageCheckError(
+            "docs_update.md must reference state.last_run_id to keep documentation traceable"
+        )
+    metrics_artifact = f"runs/{normalized_run_id}/metrics.json"
+    if metrics_artifact not in docs_update_text and "metrics.json" not in docs_update_text:
+        raise StageCheckError(
+            "docs_update.md must reference metrics artifacts (expected runs/<run_id>/metrics.json)"
+        )
+    manifest_artifact = f"runs/{normalized_run_id}/run_manifest.json"
+    if manifest_artifact not in docs_update_text and "run_manifest.json" not in docs_update_text:
+        raise StageCheckError(
+            "docs_update.md must reference run artifacts (expected runs/<run_id>/run_manifest.json)"
+        )
     manifest_path = iteration_dir / "runs" / normalized_run_id / "run_manifest.json"
     manifest_payload = _load_dict_json(manifest_path, "runs/<run_id>/run_manifest.json")
     _validate_slurm_job_ledger_entry(
@@ -427,6 +520,14 @@ def _build_verification_command_specs(
             ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py")
         )
     if stage_requirements["schema"]:
+        prompt_lint_path = repo_root / ".autolab" / "verifiers" / "prompt_lint.py"
+        if prompt_lint_path.exists():
+            command_specs.append(
+                (
+                    "prompt_lint",
+                    f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {shlex.quote(stage)}",
+                )
+            )
         command_specs.append(
             (
                 "schema_checks",

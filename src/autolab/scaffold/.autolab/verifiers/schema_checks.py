@@ -18,6 +18,11 @@ try:
 except Exception:  # pragma: no cover
     Draft202012Validator = None
 
+try:
+    from autolab.config import _resolve_stage_requirements as _shared_resolve_stage_requirements
+except Exception:  # pragma: no cover
+    _shared_resolve_stage_requirements = None  # type: ignore[assignment]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
@@ -105,6 +110,20 @@ def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
 
 
 def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
+    if _shared_resolve_stage_requirements is not None:
+        try:
+            shared = _shared_resolve_stage_requirements(policy, stage)
+        except Exception:
+            shared = None
+        if isinstance(shared, dict):
+            return {
+                "tests": bool(shared.get("tests", False)),
+                "dry_run": bool(shared.get("dry_run", False)),
+                "schema": bool(shared.get("schema", False)),
+                "env_smoke": bool(shared.get("env_smoke", False)),
+                "docs_target_update": bool(shared.get("docs_target_update", False)),
+            }
+
     output: dict[str, bool] = {
         "tests": False,
         "dry_run": False,

@@ -17,6 +17,11 @@
 - `python -m pkg.train --config configs/train_golden.yaml --dry-run`
 - `python .autolab/verifiers/template_fill.py --stage implementation`
 
+## Dry Run
+- command: `python -m pkg.train --config configs/train_golden.yaml --dry-run`
+- status: pass
+- evidence: `experiments/plan/iter_golden/implementation/commands.log`
+
 ## Evidence Paths
 - `.autolab/logs/run.log`
 - `experiments/plan/iter_golden/implementation/commands.log`

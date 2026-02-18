@@ -147,7 +147,17 @@ def _seed_iteration(repo: Path, iteration_id: str = "iter_test_001") -> Path:
 
 
 def _seed_hypothesis(iteration_dir: Path) -> None:
-    (iteration_dir / "hypothesis.md").write_text("# Hypothesis\nWe hypothesize X.", encoding="utf-8")
+    (iteration_dir / "hypothesis.md").write_text(
+        (
+            "# Hypothesis Statement\n\n"
+            "## Primary Metric\n"
+            "PrimaryMetric: accuracy; Unit: %; Success: baseline +2.0\n\n"
+            "- metric: accuracy\n"
+            "- target_delta: 2.0\n"
+            "- criteria: improve top-1 accuracy by at least 2.0 points\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> None:
@@ -264,7 +274,15 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
-    (iteration_dir / "docs_update.md").write_text("# Docs Update\nUpdated.", encoding="utf-8")
+    (iteration_dir / "docs_update.md").write_text(
+        (
+            "# Docs Update\n\n"
+            "- run_id: run_001\n"
+            "- metrics artifact: runs/run_001/metrics.json\n"
+            "- manifest artifact: runs/run_001/run_manifest.json\n"
+        ),
+        encoding="utf-8",
+    )
     analysis_dir = iteration_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
     (analysis_dir / "summary.md").write_text("# Summary\nResults.", encoding="utf-8")
@@ -2082,3 +2100,65 @@ class TestGapAssistantVerifyReviewCycle:
         persisted = _read_state(repo)
         assert persisted["task_cycle_stage"] == "review"
         assert persisted["repeat_guard"]["last_verification_passed"] is True
+
+
+class TestStageGateContracts:
+
+    def test_standard_run_records_state_history(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
+        _seed_hypothesis(it_dir)
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 0
+        persisted = _read_state(repo)
+        history = persisted.get("history", [])
+        assert isinstance(history, list)
+        assert history, "expected at least one history entry"
+        latest = history[-1]
+        assert latest.get("stage_before") == "hypothesis"
+        assert latest.get("stage_after") == "design"
+        assert latest.get("status") == "complete"
+
+    def test_hypothesis_requires_metric_target_and_criteria(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
+        (it_dir / "hypothesis.md").write_text("# Hypothesis\n\nnon-empty but incomplete", encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 1
+        assert "missing required hypothesis contract field" in outcome.message
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "hypothesis"
+
+    def test_implementation_requires_dry_run_heading_when_policy_demands_it(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation")
+        _seed_implementation(it_dir)
+
+        policy_path = repo / ".autolab" / "verifier_policy.yaml"
+        policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        policy["requirements_by_stage"] = {
+            "implementation": {"dry_run": True}
+        }
+        policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 1
+        assert "dry-run section" in outcome.message
+
+    def test_update_docs_requires_run_artifact_references(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="update_docs")
+        _seed_update_docs(it_dir)
+        _seed_launch(it_dir, run_id="run_001")
+        state = _read_state(repo)
+        state["last_run_id"] = "run_001"
+        _write_state(repo, state)
+
+        # Deliberately omit run_id + artifact references.
+        (it_dir / "docs_update.md").write_text("# Documentation Update\n\nNo references here.\n", encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 1
+        assert "must reference state.last_run_id" in outcome.message

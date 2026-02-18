@@ -25,6 +25,10 @@ Common tokens available in prompts:
 - `{{verifier_outputs}}`
 - `{{dry_run_output}}`
 - `{{launch_mode}}`
+- `{{metrics_summary}}`
+- `{{target_comparison}}`
+- `{{decision_suggestion}}`
+- `{{stage_context}}`
 
 Do not leave unresolved placeholders in required outputs.
 

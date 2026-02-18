@@ -6,6 +6,8 @@ import json
 import os
 import shutil
 import socket
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -128,6 +130,18 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         if path and signature:
             baseline_snapshot[path] = signature
     normalized["task_change_baseline"] = baseline_snapshot
+
+    history_raw = normalized.get("history", [])
+    history: list[dict[str, Any]] = []
+    if isinstance(history_raw, list):
+        for entry in history_raw[-200:]:
+            if not isinstance(entry, dict):
+                continue
+            serialized: dict[str, Any] = {}
+            for key, value in entry.items():
+                serialized[str(key)] = value
+            history.append(serialized)
+    normalized["history"] = history
     return normalized
 
 
@@ -515,6 +529,7 @@ def _default_state(iteration_id: str) -> dict[str, Any]:
             "last_verification_passed": False,
         },
         "task_change_baseline": {},
+        "history": [],
     }
 
 
@@ -525,6 +540,42 @@ def _default_agent_result() -> dict[str, Any]:
         "changed_files": [],
         "completion_token_seen": True,
     }
+
+
+def _append_state_history(
+    state: dict[str, Any],
+    *,
+    stage_before: str,
+    stage_after: str,
+    status: str,
+    summary: str,
+    decision: str = "",
+    verification: dict[str, Any] | None = None,
+    max_entries: int = 200,
+) -> None:
+    history_raw = state.get("history", [])
+    history: list[dict[str, Any]]
+    if isinstance(history_raw, list):
+        history = [entry for entry in history_raw if isinstance(entry, dict)]
+    else:
+        history = []
+    entry: dict[str, Any] = {
+        "timestamp_utc": _utc_now(),
+        "stage_before": str(stage_before).strip(),
+        "stage_after": str(stage_after).strip(),
+        "status": str(status).strip(),
+        "summary": str(summary).strip(),
+        "stage_attempt": int(state.get("stage_attempt", 0) or 0),
+    }
+    normalized_decision = str(decision).strip()
+    if normalized_decision:
+        entry["decision"] = normalized_decision
+    if isinstance(verification, dict):
+        entry["verification"] = verification
+    history.append(entry)
+    if len(history) > max_entries:
+        history = history[-max_entries:]
+    state["history"] = history
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +593,14 @@ def _ensure_iteration_skeleton(
     iteration_dir = repo_root / "experiments" / normalized_type / iteration_id
     _ensure_text_file(
         iteration_dir / "hypothesis.md",
-        "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
+        (
+            "# Hypothesis Statement\n\n"
+            "## Primary Metric\n"
+            "PrimaryMetric: primary_metric; Unit: unit; Success: baseline +0.0\n\n"
+            "- metric: primary_metric\n"
+            "- target_delta: 0.0\n"
+            "- criteria: define operational success criteria for design stage\n"
+        ),
         created,
     )
     _ensure_text_file(
@@ -641,63 +699,106 @@ def _ensure_iteration_skeleton(
 # ---------------------------------------------------------------------------
 
 
+def _read_lock_payload(lock_path: Path) -> dict[str, Any]:
+    if not lock_path.exists():
+        return {}
+    try:
+        loaded = json.loads(lock_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return loaded
+
+
+def _lock_age_seconds(existing: dict[str, Any], *, now: datetime) -> float | None:
+    heartbeat = _parse_utc(str(existing.get("last_heartbeat_at", "")))
+    if heartbeat is None:
+        return None
+    return max(0.0, (now - heartbeat).total_seconds())
+
+
+def _write_lock_payload_exclusive(lock_path: Path, payload: dict[str, Any]) -> None:
+    rendered = json.dumps(payload, indent=2) + "\n"
+    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(rendered)
+
+
 def _acquire_lock(lock_path: Path, *, state_file: Path, command: str, stale_seconds: int) -> tuple[bool, str]:
     now = datetime.now(timezone.utc)
+    started_at = _utc_now()
+    monotonic_now = time.monotonic()
+    owner_uuid = uuid.uuid4().hex
     lock_payload: dict[str, Any] = {
         "pid": os.getpid(),
         "host": socket.gethostname(),
-        "started_at": _utc_now(),
-        "last_heartbeat_at": _utc_now(),
+        "owner_uuid": owner_uuid,
+        "started_at": started_at,
+        "last_heartbeat_at": started_at,
+        "started_monotonic": monotonic_now,
+        "last_heartbeat_monotonic": monotonic_now,
         "command": command,
         "state_file": str(state_file),
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     stale_replaced = False
-    if lock_path.exists():
-        existing: dict[str, Any] = {}
+    for _ in range(3):
         try:
-            loaded = json.loads(lock_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                existing = loaded
-        except Exception:
-            existing = {}
-        heartbeat = _parse_utc(str(existing.get("last_heartbeat_at", "")))
-        if heartbeat is not None and now - heartbeat <= timedelta(seconds=stale_seconds):
+            _write_lock_payload_exclusive(lock_path, lock_payload)
+            if stale_replaced:
+                return (True, f"replaced stale lock at {lock_path}")
+            return (True, f"lock acquired at {lock_path}")
+        except FileExistsError:
+            existing = _read_lock_payload(lock_path)
+            age_seconds = _lock_age_seconds(existing, now=now)
             holder_pid = existing.get("pid", "<unknown>")
             holder_host = existing.get("host", "<unknown>")
-            return (
-                False,
-                f"active lock exists at {lock_path} (pid={holder_pid}, host={holder_host})",
-            )
-        stale_replaced = True
+            holder_owner = existing.get("owner_uuid", "<unknown>")
+            holder_state = existing.get("state_file", "<unknown>")
+            holder_command = existing.get("command", "<unknown>")
+            heartbeat = _parse_utc(str(existing.get("last_heartbeat_at", "")))
+            if heartbeat is not None and now - heartbeat <= timedelta(seconds=stale_seconds):
+                age_text = f"{age_seconds:.0f}s" if age_seconds is not None else "unknown"
+                return (
+                    False,
+                    (
+                        f"active lock exists at {lock_path} "
+                        f"(pid={holder_pid}, host={holder_host}, owner_uuid={holder_owner}, "
+                        f"age={age_text}, state_file={holder_state}, command={holder_command})"
+                    ),
+                )
 
-    _write_json(lock_path, lock_payload)
-    if stale_replaced:
-        return (True, f"replaced stale lock at {lock_path}")
-    return (True, f"lock acquired at {lock_path}")
+            stale_path = lock_path.with_suffix(f"{lock_path.suffix}.stale.{owner_uuid[:8]}")
+            try:
+                os.replace(lock_path, stale_path)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return (False, f"failed to replace stale lock at {lock_path}")
+            stale_replaced = True
+            continue
+        except OSError as exc:
+            return (False, f"failed to acquire lock at {lock_path}: {exc}")
+    return (False, f"failed to acquire lock at {lock_path} after retries")
 
 
 def _heartbeat_lock(lock_path: Path) -> None:
     if not lock_path.exists():
         return
-    try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    if not isinstance(payload, dict):
+    payload = _read_lock_payload(lock_path)
+    if not payload:
         return
     payload["last_heartbeat_at"] = _utc_now()
+    payload["last_heartbeat_monotonic"] = time.monotonic()
     _write_json(lock_path, payload)
 
 
 def _release_lock(lock_path: Path) -> None:
     if not lock_path.exists():
         return
-    try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except Exception:
-        payload = {}
+    payload = _read_lock_payload(lock_path)
     if isinstance(payload, dict):
         holder_pid = int(payload.get("pid", -1)) if str(payload.get("pid", "")).isdigit() else -1
         if holder_pid not in {-1, os.getpid()}:

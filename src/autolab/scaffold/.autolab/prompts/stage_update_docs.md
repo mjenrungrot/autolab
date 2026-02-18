@@ -22,6 +22,8 @@ Update iteration documentation and configured paper targets after result extract
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
 - configured `paper_targets` context: `{{paper_targets}}`
+- computed metrics summary: `{{metrics_summary}}`
+- target comparison summary: `{{target_comparison}}`
 
 ## MISSING-INPUT FALLBACKS
 - If analysis/metrics are missing, stop and request extract-results completion.
@@ -32,9 +34,10 @@ Update iteration documentation and configured paper targets after result extract
 1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.
 2. Update configured paper targets with durable result content when applicable.
 3. If no target updates are needed, include explicit `No changes needed` rubric with evidence-backed rationale.
-4. Verify SLURM ledger for SLURM runs:
+4. Include a one-line target-attainment statement based on `{{target_comparison}}`.
+5. Verify SLURM ledger for SLURM runs:
    `autolab slurm-job-list verify --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
+6. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -46,6 +49,8 @@ Update iteration documentation and configured paper targets after result extract
 - run_id: {{run_id}}
 - job id: ...
 - sync status: ...
+- metrics artifact: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- manifest artifact: `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 
 ## Recommendation
 - ...

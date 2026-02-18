@@ -70,6 +70,7 @@ Use these configurations based on how much control vs automation you want:
 | Configuration | Use case |
 | --- | --- |
 | `autolab run` | Single controlled transition while iterating locally. |
+| `autolab run --verify` | Run policy-driven verification before stage evaluation during a standard run. |
 | `autolab loop --max-iterations N` | Bounded multi-step execution without unattended auto-decisions. |
 | `autolab loop --auto --max-hours H` | Unattended operation with lock management, guardrails, and automatic decision handling. |
 | `--decision <stage>` (at `decide_repeat`) | Force explicit human choice for the next stage. |
@@ -109,6 +110,7 @@ Use these configurations based on how much control vs automation you want:
 | `autorun.guardrails.max_same_decision_streak` | Prevent loops that keep choosing the same next-stage decision. |
 | `autorun.guardrails.max_no_progress_decisions` | Escalate when repeated cycles show no open-task reduction or meaningful progress. |
 | `autorun.guardrails.max_update_docs_cycles` | Prevent repeated `extract_results`/`update_docs` churn without forward progress. |
+| `autorun.guardrails.max_generated_todo_tasks` | Cap auto-generated todo tasks to keep focus lists bounded and actionable. |
 | `autorun.guardrails.on_breach: human_review` (default) | Safe escalation target when automation is stuck or quality gates cannot be satisfied. |
 
 ## Source layout
@@ -124,13 +126,13 @@ Autolab uses this stage graph for each iteration:
 
 | Stage | Primary outputs | Exit behavior |
 | --- | --- | --- |
-| `hypothesis` | `hypothesis.md` | advances to `design` when non-empty |
+| `hypothesis` | `hypothesis.md` | advances to `design` when metric/target/criteria contract fields are present |
 | `design` | `design.yaml` | advances to `implementation` when required keys are present |
-| `implementation` | `implementation_plan.md` and code changes | advances to `implementation_review` |
+| `implementation` | `implementation_plan.md` and code changes | advances to `implementation_review` (requires Dry Run section when policy sets `dry_run: true`) |
 | `implementation_review` | `implementation_review.md`, `review_result.json` | `pass` → `launch`; `needs_retry` → `implementation`; `failed` → `human_review` |
 | `launch` | `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json` | advances to `extract_results` |
 | `extract_results` | `runs/<run_id>/metrics.json`, `analysis/summary.md` | advances to `update_docs` |
-| `update_docs` | `docs_update.md` | advances to `decide_repeat` |
+| `update_docs` | `docs_update.md` | advances to `decide_repeat` when run evidence references are present |
 | `decide_repeat` | no artifacts | decides next iteration / next state action |
 | `human_review` | none (manual intervention) | terminal |
 | `stop` | none (complete) | terminal |
@@ -155,6 +157,9 @@ Autolab uses this stage graph for each iteration:
 
 Required fields in state are:
 `iteration_id`, `stage`, `stage_attempt`, `last_run_id`, `sync_status`, `max_stage_attempts`, `max_total_iterations`.
+
+Optional but recommended:
+`history` (recent stage transition records with verifier summary and timestamps).
 
 Example:
 
@@ -204,6 +209,7 @@ experiments:
 ## Verifiers and schema checks
 
 - `template_fill.py` enforces placeholder cleanup and artifact budget checks per stage.
+- `prompt_lint.py` enforces stage prompt structure/token contracts.
 - `schema_checks.py` validates stage artifacts against JSON Schemas (including `.autolab/state.json` and `.autolab/backlog.yaml`).
 - Stage prompts should run: `{{python_bin}} .autolab/verifiers/template_fill.py --stage <stage>`.
 - Verifier commands are policy-driven and can use `python_bin` (default `python3`) for interpreter portability.

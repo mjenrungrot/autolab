@@ -12,6 +12,7 @@ from autolab.config import (
 from autolab.evaluate import _evaluate_stage
 from autolab.runners import _invoke_agent_runner
 from autolab.state import (
+    _append_state_history,
     _infer_unique_experiment_id_from_backlog,
     _is_active_experiment_completed,
     _load_state,
@@ -48,6 +49,7 @@ def _handle_stage_failure(
     stage_before: str,
     pre_sync_changed: list[Path],
     detail: str,
+    verification: dict[str, Any] | None = None,
 ) -> RunOutcome:
     state["stage_attempt"] = int(state["stage_attempt"]) + 1
     exhausted = state["stage_attempt"] >= int(state["max_stage_attempts"])
@@ -61,6 +63,14 @@ def _handle_stage_failure(
             f"{detail}; retrying stage {stage_before} "
             f"({state['stage_attempt']}/{state['max_stage_attempts']})"
         )
+    _append_state_history(
+        state,
+        stage_before=stage_before,
+        stage_after=str(state.get("stage", stage_before)),
+        status="failed",
+        summary=message,
+        verification=verification,
+    )
     _write_json(state_path, state)
     changed = [state_path]
     outcome = RunOutcome(
@@ -97,6 +107,7 @@ def _run_once_standard(
     decision: str | None,
     *,
     run_agent_mode: str = "policy",
+    verify_before_evaluate: bool = False,
     auto_decision: bool = False,
     auto_mode: bool = False,
     commit_task_id: str = "",
@@ -159,6 +170,13 @@ def _run_once_standard(
         state["current_task_id"] = ""
         state["task_cycle_stage"] = "done"
         state["task_change_baseline"] = {}
+        _append_state_history(
+            state,
+            stage_before=original_stage,
+            stage_after="stop",
+            status="complete",
+            summary=f"blocked completed experiment edits: {completion_summary}; re-open experiment in backlog to resume",
+        )
         _write_json(state_path, state)
         state_bootstrap_changed.append(state_path)
         pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
@@ -199,8 +217,17 @@ def _run_once_standard(
     standard_baseline_snapshot = _collect_change_snapshot(repo_root)
 
     stage_before = state["stage"]
+    verification_summary: dict[str, Any] | None = None
     if stage_before in TERMINAL_STAGES:
         message = f"stage '{stage_before}' is terminal; nothing to do"
+        _append_state_history(
+            state,
+            stage_before=stage_before,
+            stage_after=stage_before,
+            status="noop",
+            summary=message,
+        )
+        _write_json(state_path, state)
         outcome = RunOutcome(
             exit_code=0,
             transitioned=False,
@@ -218,7 +245,7 @@ def _run_once_standard(
             repo_root,
             status="complete",
             summary=summary,
-            changed_files=[*pre_sync_changed, *post_sync_changed],
+            changed_files=[state_path, *pre_sync_changed, *post_sync_changed],
         )
         _append_log(repo_root, f"run no-op at terminal stage {stage_before}")
         return RunOutcome(
@@ -242,6 +269,14 @@ def _run_once_standard(
 
         if selected_decision is None:
             message = "stage 'decide_repeat' requires --decision (or --auto-decision) to transition. Rerun with --decision=<hypothesis|design|stop|human_review> or enable --auto-decision."
+            _append_state_history(
+                state,
+                stage_before=stage_before,
+                stage_after=stage_before,
+                status="blocked",
+                summary=message,
+            )
+            _write_json(state_path, state)
             outcome = RunOutcome(
                 exit_code=0,
                 transitioned=False,
@@ -259,7 +294,7 @@ def _run_once_standard(
                 repo_root,
                 status="complete",
                 summary=summary,
-                changed_files=[*pre_sync_changed, *post_sync_changed],
+                changed_files=[state_path, *pre_sync_changed, *post_sync_changed],
             )
             _append_log(repo_root, "run paused at decide_repeat (no decision)")
             return RunOutcome(
@@ -304,6 +339,14 @@ def _run_once_standard(
         state["repeat_guard"] = repeat_guard
         state["stage"] = selected_decision
         state["stage_attempt"] = 0
+        _append_state_history(
+            state,
+            stage_before=stage_before,
+            stage_after=selected_decision,
+            status="complete",
+            summary=f"decision applied: decide_repeat -> {selected_decision}",
+            decision=selected_decision,
+        )
         _write_json(state_path, state)
         message = f"decision applied: decide_repeat -> {selected_decision}"
         if auto_selected:
@@ -383,14 +426,18 @@ def _run_once_standard(
                     detail=f"agent runner error: {exc}",
                 )
 
-    if auto_mode:
+    if auto_mode or verify_before_evaluate:
         verified, verify_message = _run_verification_step(repo_root, state)
+        verification_summary = {
+            "passed": bool(verified),
+            "message": verify_message,
+            "mode": "auto" if auto_mode else "manual",
+        }
         repeat_guard = state.get("repeat_guard", {})
         if not isinstance(repeat_guard, dict):
             repeat_guard = {}
         repeat_guard["last_verification_passed"] = bool(verified)
         state["repeat_guard"] = repeat_guard
-        _write_json(state_path, state)
         if not verified:
             return _handle_stage_failure(
                 repo_root,
@@ -399,8 +446,12 @@ def _run_once_standard(
                 stage_before=stage_before,
                 pre_sync_changed=pre_sync_changed,
                 detail=verify_message,
+                verification=verification_summary,
             )
-        _append_log(repo_root, f"auto verification passed stage={stage_before}: {verify_message}")
+        if auto_mode:
+            _append_log(repo_root, f"auto verification passed stage={stage_before}: {verify_message}")
+        else:
+            _append_log(repo_root, f"pre-evaluate verification passed stage={stage_before}: {verify_message}")
 
     try:
         eval_result = _evaluate_stage(repo_root, state)
@@ -525,6 +576,14 @@ def _run_once_standard(
         else:
             state["stage_attempt"] = 0
 
+    _append_state_history(
+        state,
+        stage_before=stage_before,
+        stage_after=str(state.get("stage", next_stage)),
+        status=agent_status,
+        summary=summary,
+        verification=verification_summary,
+    )
     _write_json(state_path, state)
     changed = [state_path]
     exit_code = 1 if agent_status == "failed" else 0

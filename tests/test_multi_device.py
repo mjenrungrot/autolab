@@ -166,7 +166,17 @@ def _seed_iteration(repo: Path, iteration_id: str = "iter_test_001") -> Path:
 
 
 def _seed_hypothesis(iteration_dir: Path) -> None:
-    (iteration_dir / "hypothesis.md").write_text("# Hypothesis\nWe hypothesize X.", encoding="utf-8")
+    (iteration_dir / "hypothesis.md").write_text(
+        (
+            "# Hypothesis Statement\n\n"
+            "## Primary Metric\n"
+            "PrimaryMetric: accuracy; Unit: %; Success: baseline +2.0\n\n"
+            "- metric: accuracy\n"
+            "- target_delta: 2.0\n"
+            "- criteria: improve top-1 accuracy by at least 2.0 points\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> None:
@@ -266,7 +276,15 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
-    (iteration_dir / "docs_update.md").write_text("# Docs Update\nUpdated.", encoding="utf-8")
+    (iteration_dir / "docs_update.md").write_text(
+        (
+            "# Docs Update\n\n"
+            "- run_id: run_001\n"
+            "- metrics artifact: runs/run_001/metrics.json\n"
+            "- manifest artifact: runs/run_001/run_manifest.json\n"
+        ),
+        encoding="utf-8",
+    )
     analysis_dir = iteration_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
     (analysis_dir / "summary.md").write_text("# Summary\nResults.", encoding="utf-8")
@@ -527,6 +545,8 @@ class TestLockLimitations:
         assert ok
         payload = json.loads(lock_path.read_text(encoding="utf-8"))
         assert payload["host"] == socket.gethostname()
+        assert str(payload.get("owner_uuid", "")).strip()
+        assert "last_heartbeat_monotonic" in payload
         # Cleanup
         _release_lock(lock_path)
 
