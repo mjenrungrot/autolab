@@ -553,14 +553,25 @@ def _ensure_iteration_skeleton(
             'hypothesis_id: "h1"\n'
             "entrypoint:\n"
             '  module: "tinydesk_v4.train"\n'
-            "  args: {}\n"
+            "  args:\n"
+            '    config: "TODO: set config path"\n'
             "compute:\n"
             '  location: "local"\n'
+            '  walltime_estimate: "00:30:00"\n'
+            '  memory_estimate: "64GB"\n'
+            "  gpu_count: 0\n"
             "metrics:\n"
-            '  primary: "primary_metric"\n'
+            "  primary:\n"
+            '    name: "primary_metric"\n'
+            '    unit: "unit"\n'
+            '    mode: "maximize"\n'
+            "  secondary: []\n"
+            '  success_delta: "TODO: define target delta"\n'
+            '  aggregation: "mean"\n'
+            '  baseline_comparison: "TODO: define baseline comparison"\n'
             "baselines:\n"
             '  - name: "baseline_current"\n'
-            "    config_overrides: {}\n"
+            '    description: "TODO: describe current baseline"\n'
         ),
         created,
     )

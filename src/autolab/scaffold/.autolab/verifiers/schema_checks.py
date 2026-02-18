@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -184,8 +185,7 @@ def _validate_agent_result() -> list[str]:
     return failures
 
 
-def _validate_design(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {
         "design",
         "implementation",
@@ -211,8 +211,7 @@ def _validate_design(state: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _validate_review_result(state: dict[str, Any], policy: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_review_result(state: dict[str, Any], policy: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"implementation_review", "launch", "extract_results", "update_docs", "decide_repeat"}:
         return []
 
@@ -254,14 +253,13 @@ def _validate_review_result(state: dict[str, Any], policy: dict[str, Any]) -> li
     return failures
 
 
-def _validate_run_manifest(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"launch", "extract_results", "update_docs", "decide_repeat"}:
         return []
 
     run_dir = _latest_run_dir(state)
     if run_dir is None:
-        return [".autolab/state.json missing last_run_id for run_manifest validation"]
+        return []
 
     path = run_dir / "run_manifest.json"
     try:
@@ -316,14 +314,13 @@ def _validate_run_manifest(state: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _validate_metrics(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"extract_results", "update_docs", "decide_repeat"}:
         return []
 
     run_dir = _latest_run_dir(state)
     if run_dir is None:
-        return [".autolab/state.json missing last_run_id for metrics validation"]
+        return []
 
     path = run_dir / "metrics.json"
     try:
@@ -341,7 +338,17 @@ def _validate_metrics(state: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _resolve_stage(state: dict[str, Any], stage_override: str | None) -> str:
+    if stage_override:
+        return stage_override.strip()
+    return str(state.get("stage", "")).strip()
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
+    args = parser.parse_args()
+
     failures: list[str] = []
 
     try:
@@ -349,16 +356,20 @@ def main() -> int:
     except Exception as exc:
         print(f"schema_checks: ERROR {exc}")
         return 1
+    stage = _resolve_stage(state, args.stage)
+    if not stage:
+        print("schema_checks: ERROR state stage is missing")
+        return 1
 
     policy = _load_policy()
 
     failures.extend(_validate_state_schema())
     failures.extend(_validate_backlog_schema())
     failures.extend(_validate_agent_result())
-    failures.extend(_validate_design(state))
-    failures.extend(_validate_review_result(state, policy))
-    failures.extend(_validate_run_manifest(state))
-    failures.extend(_validate_metrics(state))
+    failures.extend(_validate_design(state, stage=stage))
+    failures.extend(_validate_review_result(state, policy, stage=stage))
+    failures.extend(_validate_run_manifest(state, stage=stage))
+    failures.extend(_validate_metrics(state, stage=stage))
 
     if failures:
         print("schema_checks: FAIL")

@@ -27,15 +27,15 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 ## STEPS
 1. Write one hypothesis with sections: `Hypothesis Statement`, `Motivation`, `Scope In`, `Scope Out`, `Primary Metric`, `Expected Delta`, `Operational Success Criteria`, `Risks and Failure Modes`, `Constraints for Design Stage`.
 2. Include exactly one metric-definition line:
-   `PrimaryMetric: <name>; Unit: <unit>; Success: baseline +<abs> or +<relative>%`.
-3. Run `python3 .autolab/verifiers/template_fill.py --stage hypothesis` and fix failures.
+   `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`.
+3. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```markdown
 # Hypothesis Statement
 
 ## Primary Metric
-PrimaryMetric: <name>; Unit: <unit>; Success: baseline +<abs> or +<relative>%
+PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%
 ```
 
 ## FILE LENGTH BUDGET

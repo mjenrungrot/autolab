@@ -56,6 +56,7 @@ from autolab.utils import (
     _write_json,
 )
 from autolab.prompts import _default_stage_prompt_text
+from autolab.validators import _run_verification_step_detailed
 from autolab.slurm_job_list import (
     append_entry_idempotent,
     canonical_slurm_job_bullet,
@@ -475,6 +476,59 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_verify(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    raw_stage = getattr(args, "stage", None)
+    stage_override = str(raw_stage).strip() if raw_stage is not None else None
+    if not stage_override:
+        stage_override = None
+
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab verify: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    passed, message, details = _run_verification_step_detailed(
+        repo_root,
+        state,
+        stage_override=stage_override,
+    )
+    effective_stage = str(details.get("stage", "")).strip() or str(state.get("stage", "")).strip() or "unknown"
+    safe_stage = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in effective_stage) or "unknown"
+    timestamp = _utc_now().replace("-", "").replace(":", "").replace(".", "")
+    summary_path = repo_root / ".autolab" / "logs" / f"verification_{timestamp}_{safe_stage}.json"
+    summary_payload = {
+        "generated_at": _utc_now(),
+        "state_file": str(state_path),
+        "stage_requested": stage_override or str(state.get("stage", "")).strip(),
+        "stage_effective": effective_stage,
+        "passed": bool(passed),
+        "message": message,
+        "details": details,
+    }
+    _write_json(summary_path, summary_payload)
+    _append_log(
+        repo_root,
+        (
+            f"verify stage={effective_stage} passed={passed} "
+            f"summary={summary_path} message={message}"
+        ),
+    )
+
+    print("autolab verify")
+    print(f"state_file: {state_path}")
+    print(f"stage: {effective_stage}")
+    print(f"passed: {passed}")
+    print(f"message: {message}")
+    print(f"summary: {summary_path}")
+    if not passed:
+        print(f"autolab verify: ERROR {message}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -530,6 +584,14 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
+    effective_max_iterations = int(args.max_iterations)
+    try:
+        state_for_limit = _normalize_state(_load_state(state_path))
+        state_limit = int(state_for_limit.get("max_total_iterations", effective_max_iterations))
+        if state_limit > 0:
+            effective_max_iterations = min(effective_max_iterations, state_limit)
+    except StateError:
+        state_for_limit = None
     autolab_dir = _resolve_autolab_dir(state_path, repo_root)
     lock_path = autolab_dir / "lock"
     max_hours = float(args.max_hours)
@@ -545,7 +607,9 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 
     print("autolab loop")
     print(f"state_file: {state_path}")
-    print(f"max_iterations: {args.max_iterations}")
+    print(f"max_iterations: {effective_max_iterations}")
+    if effective_max_iterations != int(args.max_iterations):
+        print(f"max_iterations_clamped_by_state: {state_for_limit['max_total_iterations']}")
     run_agent_mode = _resolve_run_agent_mode(getattr(args, "run_agent_mode", "policy"))
     auto_decision_enabled = bool(args.auto or run_agent_mode == "force_on")
     assistant_mode = bool(getattr(args, "assistant", False))
@@ -567,7 +631,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
         _append_log(repo_root, f"auto loop lock acquired: {lock_msg}")
 
     try:
-        for index in range(1, args.max_iterations + 1):
+        for index in range(1, effective_max_iterations + 1):
             if args.auto and (time.monotonic() - started_monotonic) >= max_hours * 3600:
                 terminal_reason = "time_budget_reached"
                 print("autolab loop: stop (time budget reached)")
@@ -761,6 +825,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     reset.set_defaults(handler=_cmd_reset)
+
+    verify = subparsers.add_parser("verify", help="Run stage-relevant verifier checks and write a summary artifact")
+    verify.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    verify.add_argument(
+        "--stage",
+        default=None,
+        help="Override stage for verification command resolution (default: state.stage)",
+    )
+    verify.set_defaults(handler=_cmd_verify)
 
     run = subparsers.add_parser("run", help="Run one deterministic stage transition")
     run.add_argument(

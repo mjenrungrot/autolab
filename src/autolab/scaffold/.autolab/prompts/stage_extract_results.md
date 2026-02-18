@@ -31,11 +31,17 @@ Convert run artifacts into structured outputs:
 ## REQUIRED PRECHECK
 `run_manifest.json.artifact_sync_to_local.status` must be success-like (`ok|completed|success|passed`) before extraction.
 
+## STATUS SEMANTICS
+- Use `status: completed` when required metrics and evidence are fully present.
+- Use `status: partial` when only part of required evidence is available; include explicit missing artifact list in `analysis/summary.md`.
+- Use `status: failed` when extraction cannot produce trustworthy metrics; include root cause and blocking artifacts.
+
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
 3. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
-4. Run `python3 .autolab/verifiers/template_fill.py --stage extract_results` and fix failures.
+4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
+5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results` and fix failures.
 
 ## METRICS TEMPLATE (schema-aligned)
 ```json

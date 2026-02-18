@@ -14,25 +14,27 @@ Update iteration documentation and configured paper targets after result extract
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/docs_update.md`
-- paper target updates referenced by `.autolab/state.json` (`paper_targets`) or explicit `No changes needed` rationale
+- paper target updates referenced by `.autolab/state.json` (`paper_targets={{paper_targets}}`) or explicit `No changes needed` rationale
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `{{iteration_path}}/analysis/summary.md`
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- configured `paper_targets` context: `{{paper_targets}}`
 
 ## MISSING-INPUT FALLBACKS
 - If analysis/metrics are missing, stop and request extract-results completion.
-- If `paper_targets` is not configured, write explicit `No changes needed` or `No target configured` rationale in `docs_update.md`.
+- If `paper_targets` is not configured, write explicit `No target configured` rationale including metrics delta summary.
 - If a configured paper target file is missing, record it in `docs_update.md` and set follow-up action.
 
 ## STEPS
-1. Update `docs_update.md` with what changed, run evidence, and next-step recommendation.
+1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.
 2. Update configured paper targets with durable result content when applicable.
-3. Verify SLURM ledger for SLURM runs:
+3. If no target updates are needed, include explicit `No changes needed` rubric with evidence-backed rationale.
+4. Verify SLURM ledger for SLURM runs:
    `autolab slurm-job-list verify --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-4. Run `python3 .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
+5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -47,6 +49,10 @@ Update iteration documentation and configured paper targets after result extract
 
 ## Recommendation
 - ...
+
+## No-Change Rationale (when applicable)
+- metrics delta summary: ...
+- why configured paper targets do not require updates: ...
 ```
 
 ## FILE LENGTH BUDGET

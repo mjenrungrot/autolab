@@ -205,7 +205,7 @@ experiments:
 
 - `template_fill.py` enforces placeholder cleanup and artifact budget checks per stage.
 - `schema_checks.py` validates stage artifacts against JSON Schemas (including `.autolab/state.json` and `.autolab/backlog.yaml`).
-- Stage prompts should run: `python3 .autolab/verifiers/template_fill.py --stage <stage>`.
+- Stage prompts should run: `{{python_bin}} .autolab/verifiers/template_fill.py --stage <stage>`.
 - Verifier commands are policy-driven and can use `python_bin` (default `python3`) for interpreter portability.
 - `dry_run_command` should be non-empty whenever any stage sets `dry_run: true` in `requirements_by_stage` (scaffold provides a replace-me stub).
 - Dynamic run-manifest caps use `line_limits.run_manifest_dynamic` with `min_cap_lines`/`max_cap_lines` (cap bounds, not required minimum output length).
@@ -213,6 +213,12 @@ experiments:
 ## Prompt authoring
 
 See `docs/prompt_authoring_guide.md` for scaffold prompt conventions, shared includes, and stage-prompt wiring.
+See `docs/workflow_modes.md` for explicit manual vs agent-runner vs assistant responsibility contracts.
+
+## Golden examples
+
+A complete stage-by-stage artifact example lives under `examples/golden_iteration/`.
+Use it as a reference for schema-compliant outputs and verifier-friendly formatting.
 
 ## Install the Autolab skill template
 

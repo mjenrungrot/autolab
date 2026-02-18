@@ -1,0 +1,22 @@
+{
+  "iteration_id": "iter_golden",
+  "run_id": "20260201T120000Z_demo",
+  "status": "completed",
+  "primary_metric": {
+    "name": "validation_accuracy",
+    "value": 83.6,
+    "delta_vs_baseline": 1.2
+  },
+  "baseline_results": [
+    {
+      "name": "baseline_current",
+      "value": 82.4
+    }
+  ],
+  "variant_results": [
+    {
+      "name": "aug_schedule_calibrated",
+      "value": 83.6
+    }
+  ]
+}

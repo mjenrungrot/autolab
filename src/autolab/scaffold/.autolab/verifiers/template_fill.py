@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 EXPERIMENT_TYPES = ("plan", "in_progress", "done")
 DEFAULT_EXPERIMENT_TYPE = "plan"
-TEMPLATE_ROOT = REPO_ROOT / "experiments" / DEFAULT_EXPERIMENT_TYPE / "<ITERATION_ID>"
+TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
 RUN_MANIFEST_POLICY_KEY = "runs/<RUN_ID>/run_manifest.json"
@@ -46,6 +46,56 @@ PLACEHOLDER_PATTERNS = (
 )
 
 COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")
+
+BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
+    "hypothesis.md": "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
+    "design.yaml": (
+        'id: "e1"\n'
+        'iteration_id: "<ITERATION_ID>"\n'
+        'hypothesis_id: "h1"\n'
+        "entrypoint:\n"
+        '  module: "tinydesk_v4.train"\n'
+        "  args:\n"
+        '    config: "TODO: set config path"\n'
+        "compute:\n"
+        '  location: "local"\n'
+        '  walltime_estimate: "00:30:00"\n'
+        '  memory_estimate: "64GB"\n'
+        "  gpu_count: 0\n"
+        "metrics:\n"
+        "  primary:\n"
+        '    name: "primary_metric"\n'
+        '    unit: "unit"\n'
+        '    mode: "maximize"\n'
+        "  secondary: []\n"
+        '  success_delta: "TODO: define target delta"\n'
+        '  aggregation: "mean"\n'
+        '  baseline_comparison: "TODO: define baseline comparison"\n'
+        "baselines:\n"
+        '  - name: "baseline_current"\n'
+        '    description: "TODO: describe current baseline"\n'
+    ),
+    "implementation_plan.md": "# Implementation Plan\n\n- Implement the design requirements.\n",
+    "implementation_review.md": "# Implementation Review\n\nReview notes.\n",
+    "review_result.json": (
+        "{\n"
+        '  "status": "pass",\n'
+        '  "blocking_findings": [],\n'
+        '  "required_checks": {\n'
+        '    "tests": "skip",\n'
+        '    "dry_run": "skip",\n'
+        '    "schema": "pass",\n'
+        '    "env_smoke": "skip",\n'
+        '    "docs_target_update": "skip"\n'
+        "  },\n"
+        '  "reviewed_at": "1970-01-01T00:00:00Z"\n'
+        "}\n"
+    ),
+    "launch/run_local.sh": "#!/usr/bin/env bash\nset -euo pipefail\n# local launch placeholder\n",
+    "launch/run_slurm.sbatch": "#!/usr/bin/env bash\nset -euo pipefail\n# slurm launch placeholder\n",
+    "analysis/summary.md": "# Analysis Summary\n\nInitial summary.\n",
+    "docs_update.md": "# Documentation Update\n\nNo changes needed.\n",
+}
 
 
 @dataclass
@@ -253,6 +303,9 @@ def _contains_placeholder(text: str, template_text: str = "") -> Optional[str]:
 
 
 def _template_text(relative_path: Path) -> str:
+    key = relative_path.as_posix()
+    if key in BOOTSTRAP_TEMPLATE_TEXT_BY_PATH:
+        return BOOTSTRAP_TEMPLATE_TEXT_BY_PATH[key]
     candidate = TEMPLATE_ROOT / relative_path
     if not candidate.exists():
         return ""
@@ -461,7 +514,7 @@ def _check_hypothesis(path: Path) -> list[Failure]:
         failures.append(
             Failure(
                 str(path),
-                "PrimaryMetric line must match 'PrimaryMetric: <name>; Unit: <unit>; Success: ...' format",
+                "PrimaryMetric line must match 'PrimaryMetric: metric_name; Unit: unit_name; Success: ...' format",
             )
         )
     return failures

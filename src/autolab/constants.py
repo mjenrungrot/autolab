@@ -148,11 +148,11 @@ agent_runner:
 LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_MAX_HOURS = 8.0
 AGENT_RUNNER_PRESETS: dict[str, str] = {
-    "codex": "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
-    "claude": "cat {prompt_path} | env -u CLAUDECODE claude -p --output-format text --verbose -",
+    "codex": "codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
+    "claude": "env -u CLAUDECODE claude -p --output-format text --verbose -",
 }
 AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = (
-    "cat {prompt_path} | env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
+    "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
 )
 DEFAULT_AGENT_RUNNER_NAME = "codex"
 DEFAULT_AGENT_RUNNER_COMMAND = (

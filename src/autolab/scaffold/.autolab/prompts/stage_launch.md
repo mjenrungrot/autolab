@@ -33,14 +33,17 @@ Execute the approved run and write launch artifacts:
 ## PRE-LAUNCH GATES
 - `review_result.json.status` must be `pass`.
 - `design.yaml.compute.location` must match resolved launch host mode.
+- Mint `run_id` as `YYYYMMDDTHHMMSSZ_suffix` (UTC timestamp + short suffix).
 
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
-2. Execute with the appropriate script and capture command/resource details.
-3. Write `run_manifest.json` that matches schema.
-4. For SLURM, append ledger entry:
+2. Mint a new `run_id` (`YYYYMMDDTHHMMSSZ_suffix`) before writing launch outputs.
+3. Execute with the appropriate script and capture command/resource details.
+4. Set `run_manifest.resource_request.memory` from design memory planning using the high-memory rule (`{{recommended_memory_estimate}}` when capacity allows).
+5. Write `run_manifest.json` that matches schema.
+6. For SLURM, append ledger entry:
    `autolab slurm-job-list append --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-5. Run `python3 .autolab/verifiers/template_fill.py --stage launch` and fix failures.
+7. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage launch` and fix failures.
 
 ## RUN MANIFEST TEMPLATE (schema-aligned)
 ```json
@@ -52,7 +55,7 @@ Execute the approved run and write launch artifacts:
   "command": "python -m package.entry --config ...",
   "resource_request": {
     "cpus": 4,
-    "memory": "16GB",
+    "memory": "{{recommended_memory_estimate}}",
     "gpu_count": 0
   },
   "artifact_sync_to_local": {
@@ -67,6 +70,7 @@ Execute the approved run and write launch artifacts:
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
+Run-manifest dynamic cap counts configured list-like fields in `.autolab/experiment_file_line_limits.yaml`; keep manifests concise and evidence-focused.
 
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}
