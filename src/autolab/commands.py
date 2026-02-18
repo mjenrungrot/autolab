@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.resources as importlib_resources
 import json
 import shutil
 import sys
@@ -64,6 +65,28 @@ from autolab.slurm_job_list import (
     required_run_id,
     required_slurm_job_id,
 )
+
+
+# ---------------------------------------------------------------------------
+# Skill installer helpers
+# ---------------------------------------------------------------------------
+
+def _load_packaged_skill_template_text(provider: str) -> str:
+    normalized_provider = str(provider).strip().lower()
+    if normalized_provider != "codex":
+        raise RuntimeError(f"unsupported skill provider '{provider}'")
+
+    resource = importlib_resources.files("autolab").joinpath(
+        "skills",
+        normalized_provider,
+        "autolab",
+        "SKILL.md",
+    )
+    if not resource.is_file():
+        raise RuntimeError(
+            "bundled skill template is unavailable at package://autolab/skills/codex/autolab/SKILL.md"
+        )
+    return resource.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +244,32 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
     print(f"skipped_files: {skipped}")
     if not args.force and skipped and copied == 0:
         print("No files copied. Add --force to overwrite existing files.")
+    return 0
+
+
+def _cmd_install_skill(args: argparse.Namespace) -> int:
+    provider = str(getattr(args, "provider", "")).strip().lower()
+    project_root = Path(getattr(args, "project_root", ".")).expanduser().resolve()
+    destination = project_root / ".codex" / "skills" / "autolab" / "SKILL.md"
+
+    try:
+        template_text = _load_packaged_skill_template_text(provider)
+    except Exception as exc:
+        print(f"autolab install-skill: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(template_text, encoding="utf-8")
+    except Exception as exc:
+        print(f"autolab install-skill: ERROR writing {destination}: {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab install-skill")
+    print(f"provider: {provider}")
+    print("source: package://autolab/skills/codex/autolab/SKILL.md")
+    print(f"destination: {destination}")
+    print("status: installed (overwritten if existing)")
     return 0
 
 
@@ -848,6 +897,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Overwrite existing scaffold files.",
     )
     sync_scaffold.set_defaults(handler=_cmd_sync_scaffold)
+
+    install_skill = subparsers.add_parser(
+        "install-skill",
+        help="Install bundled skill templates into the project-local .codex directory.",
+    )
+    install_skill.add_argument(
+        "provider",
+        choices=("codex",),
+        help="Skill provider to install (currently only: codex).",
+    )
+    install_skill.add_argument(
+        "--project-root",
+        default=".",
+        help="Project root where .codex/skills will be created (default: current directory).",
+    )
+    install_skill.set_defaults(handler=_cmd_install_skill)
 
     slurm_job_list = subparsers.add_parser(
         "slurm-job-list",
