@@ -145,3 +145,17 @@ autolab sync-scaffold --force
 ```
 
 This writes/refreshes `.autolab/` in the current repository from the canonical scaffold assets.
+
+## Reset autolab workflow state
+
+To restore `.autolab/` files to the current packaged defaults (including after upgrading autolab) and reset the workflow state:
+
+```bash
+autolab reset
+```
+
+Use `--state-file` to target a different state path if needed:
+
+```bash
+autolab reset --state-file .autolab/state.json
+```

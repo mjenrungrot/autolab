@@ -201,10 +201,6 @@ STAGE_PROMPT_FILES = {
     "extract_results": "stage_extract_results.md",
     "update_docs": "stage_update_docs.md",
 }
-STAGE_PROMPT_FILES_LEGACY = {
-    "extract_results": "stage_extract.md",
-    "update_docs": "stage_docs.md",
-}
 SLURM_JOB_LIST_PATH = Path("docs/slurm_job_list.md")
 PROMPT_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 PROMPT_LITERAL_TOKENS = ("<ITERATION_ID>", "<RUN_ID>")
@@ -334,9 +330,6 @@ def _resolve_repo_root(state_path: Path) -> Path:
 def _resolve_scaffold_source() -> Path:
     if PACKAGE_SCAFFOLD_DIR.exists():
         return PACKAGE_SCAFFOLD_DIR
-    legacy = Path(__file__).resolve().parent.parent / "dotautolab" / ".autolab"
-    if legacy.exists():
-        return legacy
     raise RuntimeError("bundled autolab scaffold is unavailable in this installation")
 
 
@@ -1435,14 +1428,6 @@ def _resolve_stage_prompt_path(repo_root: Path, stage: str) -> Path:
     candidate = repo_root / ".autolab" / "prompts" / prompt_name
     if candidate.exists():
         return candidate
-    legacy_prompt_name = STAGE_PROMPT_FILES_LEGACY.get(stage)
-    if legacy_prompt_name:
-        legacy_candidate = repo_root / ".autolab" / "prompts" / legacy_prompt_name
-        if legacy_candidate.exists():
-            return legacy_candidate
-        raise StageCheckError(
-            f"stage prompt is missing (new='{candidate.name}', legacy='{legacy_candidate.name}')"
-        )
     raise StageCheckError(f"stage prompt is missing for '{stage}' ({candidate})")
 
 
@@ -3994,6 +3979,48 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reset(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+
+    try:
+        source_root = _resolve_scaffold_source()
+    except RuntimeError as exc:
+        print(f"autolab reset: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    if autolab_dir.exists():
+        try:
+            shutil.rmtree(autolab_dir)
+        except Exception as exc:
+            print(f"autolab reset: ERROR removing {autolab_dir}: {exc}", file=sys.stderr)
+            return 1
+
+    copied, skipped = _sync_scaffold_bundle(
+        source_root,
+        autolab_dir,
+        overwrite=True,
+    )
+    backlog_path = autolab_dir / "backlog.yaml"
+    iteration_id = _parse_iteration_from_backlog(backlog_path)
+    if not iteration_id:
+        iteration_id = _bootstrap_iteration_id()
+
+    try:
+        _write_json(state_path, _default_state(iteration_id))
+    except OSError as exc:
+        print(f"autolab reset: ERROR writing state file {state_path}: {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab reset")
+    print(f"state_file: {state_path}")
+    print(f"autolab_dir: {autolab_dir}")
+    print(f"copied_files: {copied}")
+    print(f"skipped_files: {skipped}")
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -4215,6 +4242,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     init.set_defaults(handler=_cmd_init)
+
+    reset = subparsers.add_parser("reset", help="Reset autolab scaffold and state to defaults")
+    reset.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    reset.set_defaults(handler=_cmd_reset)
 
     run = subparsers.add_parser("run", help="Run one deterministic stage transition")
     run.add_argument(
