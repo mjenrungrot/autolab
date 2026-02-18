@@ -5,12 +5,12 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 if command -v python3 >/dev/null 2>&1; then
-  python3 scripts/bump_version.py
+  python_bin="python3"
 elif command -v python >/dev/null 2>&1; then
-  python scripts/bump_version.py
+  python_bin="python"
 else
-  echo "pre-commit: ERROR python interpreter not found" >&2
+  echo "post-commit: ERROR python interpreter not found" >&2
   exit 1
 fi
 
-git add pyproject.toml README.md
+"$python_bin" scripts/sync_release_tags.py --keep 10 || true
