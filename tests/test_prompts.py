@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from autolab.constants import PROMPT_TOKEN_PATTERN
 from autolab.models import StageCheckError
 from autolab.prompts import _render_stage_prompt
 
@@ -85,3 +86,34 @@ def test_render_prompt_rejects_legacy_literal_placeholder_tokens(tmp_path: Path)
 
     with pytest.raises(StageCheckError, match="unresolved placeholders"):
         _render_stage_prompt(repo, stage="hypothesis", state=state, template_path=template_path, runner_scope={})
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "hypothesis",
+        "design",
+        "implementation",
+        "implementation_review",
+        "launch",
+        "extract_results",
+        "update_docs",
+        "decide_repeat",
+    ],
+)
+def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage: str) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage=stage)
+    if stage in {"extract_results", "update_docs"}:
+        state["last_run_id"] = "run_001"
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / f"stage_{stage}.md"
+    bundle = _render_stage_prompt(repo, stage=stage, state=state, template_path=template_path, runner_scope={})
+
+    unresolved_tokens = {match.group(1).strip() for match in PROMPT_TOKEN_PATTERN.finditer(bundle.prompt_text)}
+    assert not unresolved_tokens
+    assert "<ITERATION_ID>" not in bundle.prompt_text
+    assert "## Runtime Stage Context" in bundle.prompt_text

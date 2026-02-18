@@ -182,6 +182,132 @@ def _resolve_prompt_run_id(*, stage: str, state: dict[str, Any]) -> str:
     return "run_pending"
 
 
+def _coerce_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _parse_numeric_delta(value: str) -> float | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    return _coerce_float(match.group(0))
+
+
+def _load_metrics_payload(iteration_dir: Path, run_id: str) -> dict[str, Any] | None:
+    metrics_path = iteration_dir / "runs" / run_id / "metrics.json"
+    payload = _load_json_if_exists(metrics_path)
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _metrics_summary_text(metrics_payload: dict[str, Any] | None, *, run_id: str) -> str:
+    if not isinstance(metrics_payload, dict):
+        return f"unavailable: runs/{run_id}/metrics.json is missing or unreadable"
+    status = str(metrics_payload.get("status", "")).strip() or "unknown"
+    primary_metric = metrics_payload.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        return f"run_id={run_id}; status={status}; primary metric unavailable"
+    name = str(primary_metric.get("name", "")).strip() or "unknown_metric"
+    value = primary_metric.get("value")
+    delta = primary_metric.get("delta_vs_baseline")
+    return (
+        f"run_id={run_id}; status={status}; "
+        f"primary_metric={name}; value={value}; delta_vs_baseline={delta}"
+    )
+
+
+def _extract_hypothesis_target_delta(hypothesis_text: str) -> float | None:
+    for line in hypothesis_text.splitlines():
+        compact = line.strip()
+        if not compact:
+            continue
+        lowered = compact.lower()
+        if "target_delta" in lowered or lowered.startswith("target delta"):
+            parsed = _parse_numeric_delta(compact)
+            if parsed is not None:
+                return parsed
+    primary_metric_match = re.search(
+        r"PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*(.+)",
+        hypothesis_text,
+        flags=re.IGNORECASE,
+    )
+    if primary_metric_match:
+        return _parse_numeric_delta(primary_metric_match.group(1))
+    return None
+
+
+def _extract_design_target_delta(iteration_dir: Path) -> str:
+    design_payload = None
+    if yaml is not None:
+        design_path = iteration_dir / "design.yaml"
+        if design_path.exists():
+            try:
+                loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = None
+            if isinstance(loaded, dict):
+                design_payload = loaded
+    if not isinstance(design_payload, dict):
+        return ""
+    metrics = design_payload.get("metrics")
+    if not isinstance(metrics, dict):
+        return ""
+    return str(metrics.get("success_delta", "")).strip()
+
+
+def _target_comparison_text(
+    *,
+    metrics_payload: dict[str, Any] | None,
+    hypothesis_target_delta: float | None,
+    design_target_delta: str,
+    run_id: str,
+) -> tuple[str, str]:
+    if not isinstance(metrics_payload, dict):
+        return (
+            f"unavailable: target comparison requires runs/{run_id}/metrics.json",
+            "insufficient evidence in metrics/hypothesis; prefer human_review when risk is unclear",
+        )
+    primary_metric = metrics_payload.get("primary_metric")
+    metric_delta = None
+    if isinstance(primary_metric, dict):
+        metric_delta = _coerce_float(primary_metric.get("delta_vs_baseline"))
+        if metric_delta is None:
+            metric_delta = _parse_numeric_delta(str(primary_metric.get("delta_vs_baseline", "")))
+    if metric_delta is None:
+        return (
+            "target comparison unavailable: primary_metric.delta_vs_baseline is missing/non-numeric",
+            "results lack numeric delta evidence; choose design or human_review based on risk",
+        )
+    target_delta = hypothesis_target_delta
+    target_source = "hypothesis.target_delta"
+    if target_delta is None:
+        target_delta = _parse_numeric_delta(design_target_delta)
+        target_source = "design.metrics.success_delta"
+    if target_delta is None:
+        return (
+            "target comparison unavailable: no numeric target_delta found in hypothesis/design",
+            "targets are unspecified; avoid stop decisions without explicit human confirmation",
+        )
+    met_target = metric_delta >= target_delta
+    comparison = (
+        f"run_id={run_id}; measured_delta={metric_delta:.4f}; "
+        f"target_delta={target_delta:.4f} ({target_source}); met_target={str(met_target).lower()}"
+    )
+    suggestion = (
+        "suggested decision: stop (target met)"
+        if met_target
+        else "suggested decision: design (target not met; iterate before escalation)"
+    )
+    return (comparison, suggestion)
+
+
 def _build_prompt_context(
     repo_root: Path,
     *,
@@ -225,6 +351,24 @@ def _build_prompt_context(
             iteration_path = iteration_dir.relative_to(repo_root).as_posix()
         except ValueError:
             iteration_path = f"experiments/{DEFAULT_EXPERIMENT_TYPE}/{iteration_id}"
+
+    metrics_payload = None
+    metrics_summary = "unavailable: metrics summary not available for this stage"
+    target_comparison = "unavailable: target comparison not available for this stage"
+    decision_suggestion = "insufficient evidence in metrics/hypothesis; prefer human_review when risk is unclear"
+    if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
+        metrics_payload = _load_metrics_payload(iteration_dir, run_id)
+        metrics_summary = _metrics_summary_text(metrics_payload, run_id=run_id)
+        hypothesis_text = _safe_read_text(iteration_dir / "hypothesis.md", max_chars=12000)
+        hypothesis_target_delta = _extract_hypothesis_target_delta(hypothesis_text)
+        design_target_delta = _extract_design_target_delta(iteration_dir)
+        target_comparison, decision_suggestion = _target_comparison_text(
+            metrics_payload=metrics_payload,
+            hypothesis_target_delta=hypothesis_target_delta,
+            design_target_delta=design_target_delta,
+            run_id=run_id,
+        )
+
     todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")
     agent_result_payload = _load_json_if_exists(repo_root / ".autolab" / "agent_result.json")
     review_result_payload = _load_json_if_exists(iteration_dir / "review_result.json") if iteration_id else None
@@ -327,6 +471,9 @@ def _build_prompt_context(
         "verifier_errors": verifier_errors,
         "verifier_outputs": verifier_outputs,
         "dry_run_output": dry_run_output,
+        "metrics_summary": metrics_summary,
+        "target_comparison": target_comparison,
+        "decision_suggestion": decision_suggestion,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,
@@ -362,6 +509,9 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "diff_summary": _to_text(context.get("diff_summary"), "diff_summary"),
         "verifier_outputs": _to_text(context.get("verifier_outputs"), "verifier_outputs"),
         "dry_run_output": _to_text(context.get("dry_run_output"), "dry_run_output"),
+        "metrics_summary": _to_text(context.get("metrics_summary"), "metrics_summary"),
+        "target_comparison": _to_text(context.get("target_comparison"), "target_comparison"),
+        "decision_suggestion": _to_text(context.get("decision_suggestion"), "decision_suggestion"),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
     }
 

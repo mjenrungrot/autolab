@@ -260,26 +260,13 @@ def _load_todo_state(path: Path) -> dict[str, Any]:
 
 
 def _load_max_generated_todo_tasks(repo_root: Path) -> int:
-    policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
-    if yaml is None or not policy_path.exists():
-        return DEFAULT_MAX_GENERATED_TODO_TASKS
     try:
-        payload = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        from autolab.config import _load_guardrail_config
+
+        loaded = _load_guardrail_config(repo_root).max_generated_todo_tasks
+        return loaded if loaded >= 1 else 1
     except Exception:
         return DEFAULT_MAX_GENERATED_TODO_TASKS
-    if not isinstance(payload, dict):
-        return DEFAULT_MAX_GENERATED_TODO_TASKS
-    autorun = payload.get("autorun")
-    guardrails = autorun.get("guardrails") if isinstance(autorun, dict) else {}
-    if not isinstance(guardrails, dict):
-        return DEFAULT_MAX_GENERATED_TODO_TASKS
-    try:
-        limit = int(guardrails.get("max_generated_todo_tasks", DEFAULT_MAX_GENERATED_TODO_TASKS))
-    except Exception:
-        limit = DEFAULT_MAX_GENERATED_TODO_TASKS
-    if limit < 1:
-        return 1
-    return limit
 
 
 def _extract_sections(todo_text: str) -> tuple[list[str], list[str], bool]:

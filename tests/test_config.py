@@ -1,0 +1,30 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+from autolab.config import _load_guardrail_config
+
+
+def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "autorun": {
+            "guardrails": {
+                "max_same_decision_streak": 3,
+                "max_no_progress_decisions": 2,
+                "max_update_docs_cycles": 3,
+                "max_generated_todo_tasks": 11,
+                "on_breach": "human_review",
+            }
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    guardrails = _load_guardrail_config(repo)
+
+    assert guardrails.max_generated_todo_tasks == 11

@@ -125,6 +125,20 @@ def _run_schema_checks(repo: Path, *, stage: str | None = None) -> subprocess.Co
     )
 
 
+def _run_prompt_lint(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "prompt_lint.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
+    return subprocess.run(
+        command,
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _setup_review_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -174,3 +188,36 @@ def test_schema_checks_extract_results_skips_run_checks_when_run_id_missing(tmp_
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "schema_checks: PASS" in result.stdout
+
+
+def test_prompt_lint_passes_for_scaffold_prompts(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_fails_on_unsupported_token(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path.write_text(
+        (
+            "# Stage: design\n\n"
+            "## ROLE\nx\n\n"
+            "## PRIMARY OBJECTIVE\nx\n\n"
+            "{{shared:guardrails.md}}\n{{shared:repo_scope.md}}\n{{shared:runtime_context.md}}\n\n"
+            "## OUTPUTS (STRICT)\n- x\n\n"
+            "## REQUIRED INPUTS\n- x {{unknown_token}}\n\n"
+            "## FILE CHECKLIST (machine-auditable)\n{{shared:checklist.md}}\n\n"
+            "## FAILURE / RETRY BEHAVIOR\n- x\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "unsupported token" in result.stdout

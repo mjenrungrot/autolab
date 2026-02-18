@@ -6,6 +6,8 @@
 - run_id: 20260201T120000Z_demo
 - host mode: local
 - sync status: completed
+- metrics artifact: `experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`
+- manifest artifact: `experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
 
 ## Recommendation
 - Proceed with replication runs before marking hypothesis complete.

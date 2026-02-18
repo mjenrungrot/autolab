@@ -64,6 +64,7 @@ Behavior summary:
 ## Run cadence
 
 - `autolab run`: one controlled transition
+- `autolab run --verify`: run policy verification before stage evaluation
 - `autolab loop --max-iterations N`: bounded multi-step sequence
 - `autolab loop --auto --max-hours H`: unattended execution with lock and guardrails
 
@@ -99,6 +100,7 @@ Use:
 - `autorun.guardrails.max_same_decision_streak`
 - `autorun.guardrails.max_no_progress_decisions`
 - `autorun.guardrails.max_update_docs_cycles`
+- `autorun.guardrails.max_generated_todo_tasks`
 - `autorun.guardrails.on_breach` (commonly `human_review`)
 
 Tune conservatively; prefer explicit escalation over silent infinite loops.
@@ -129,6 +131,8 @@ When answering users:
 ## Safe defaults
 
 - Do not manually edit `.autolab/state.json` just to force transitions.
+- Keep `docs/todo.md` as Markdown; do not migrate todo tracking to YAML/JSON formats.
+- Mention this explicitly in recommendations/reviews to avoid repeated review flags.
 - Prefer `--max-iterations` and `--max-hours` in automation.
 - Keep guardrails enabled.
 - Use `meaningful_only` commit mode unless the user explicitly wants otherwise.

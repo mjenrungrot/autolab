@@ -106,3 +106,28 @@ def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     latest = json.loads(summaries[-1].read_text(encoding="utf-8"))
     assert latest["passed"] is True
     assert latest["stage_effective"] == "design"
+
+
+def test_run_with_verify_blocks_stage_transition_on_verification_failure(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    # Intentionally skip design.yaml to force verifier failure.
+
+    exit_code = commands_module.main(
+        [
+            "run",
+            "--state-file",
+            str(state_path),
+            "--verify",
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 1
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["stage"] == "design"
+    assert state["stage_attempt"] == 1

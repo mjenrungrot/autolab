@@ -59,6 +59,7 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
     max_same = int(guardrails.get("max_same_decision_streak", 3) or 3)
     max_no_progress = int(guardrails.get("max_no_progress_decisions", 2) or 2)
     max_update_docs = int(guardrails.get("max_update_docs_cycles", 3) or 3)
+    max_generated_todo_tasks = int(guardrails.get("max_generated_todo_tasks", 5) or 5)
     on_breach = str(guardrails.get("on_breach", "human_review")).strip() or "human_review"
     if on_breach not in TERMINAL_STAGES:
         on_breach = "human_review"
@@ -68,10 +69,13 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
         max_no_progress = 1
     if max_update_docs < 1:
         max_update_docs = 1
+    if max_generated_todo_tasks < 1:
+        max_generated_todo_tasks = 1
     return GuardrailConfig(
         max_same_decision_streak=max_same,
         max_no_progress_decisions=max_no_progress,
         max_update_docs_cycles=max_update_docs,
+        max_generated_todo_tasks=max_generated_todo_tasks,
         on_breach=on_breach,
     )
 

@@ -6,7 +6,7 @@ This document clarifies who is responsible for artifact edits, verifier executio
 
 | Mode | Who edits artifacts | Who runs verifiers | Who advances stage |
 | --- | --- | --- | --- |
-| Manual (`autolab run`, no runner) | Human | Human via stage prompt and/or `autolab verify` | Autolab state machine |
+| Manual (`autolab run`, no runner) | Human | Human via stage prompt, `autolab verify`, and optionally `autolab run --verify` | Autolab state machine |
 | Agent runner (`agent_runner.enabled: true`) | Runner agent within allowed edit scope | Runner agent via stage prompt; Autolab can enforce via `autolab verify` / auto loop verification | Autolab state machine |
 | Assistant (`--assistant`) | Assistant task cycle (`select -> implement -> verify -> review`) | Assistant verify phase + policy checks | Autolab assistant orchestration |
 
@@ -21,7 +21,7 @@ This document clarifies who is responsible for artifact edits, verifier executio
 
 1. Manual development:
    - Run stage work.
-   - Execute `autolab verify --stage <stage>`.
+   - Execute `autolab verify --stage <stage>` (or use `autolab run --verify`).
    - Run `autolab run` to apply transition logic.
 2. Agent runner development:
    - Keep `agent_runner.edit_scope` strict.

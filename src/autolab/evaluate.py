@@ -18,6 +18,8 @@ from autolab.validators import (
     _require_non_empty,
     _validate_design,
     _validate_extract,
+    _validate_hypothesis,
+    _validate_implementation_plan,
     _validate_launch,
     _validate_review_result,
     _validate_slurm_job_ledger_entry,
@@ -39,7 +41,7 @@ def _eval_hypothesis(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
-    _require_non_empty(iteration_dir / "hypothesis.md", "hypothesis.md")
+    _validate_hypothesis(iteration_dir / "hypothesis.md")
     return EvalResult("design", "complete", "'hypothesis' checks passed")
 
 
@@ -59,7 +61,13 @@ def _eval_implementation(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
-    _require_non_empty(iteration_dir / "implementation_plan.md", "implementation_plan.md")
+    policy_requirements = _resolve_stage_requirements(
+        _load_verifier_policy(repo_root), "implementation"
+    )
+    _validate_implementation_plan(
+        iteration_dir / "implementation_plan.md",
+        require_dry_run=bool(policy_requirements.get("dry_run", False)),
+    )
     return EvalResult("implementation_review", "complete", "'implementation' checks passed")
 
 

@@ -92,6 +92,7 @@ class GuardrailConfig:
     max_same_decision_streak: int
     max_no_progress_decisions: int
     max_update_docs_cycles: int
+    max_generated_todo_tasks: int
     on_breach: str
 
 
