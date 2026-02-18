@@ -19,7 +19,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 For stable CI or release installs, pin to a tag:
 
 ```bash
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.0.4
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.0
 ```
 
 After upgrading the package from GitHub, refresh local workflow defaults:
@@ -71,8 +71,8 @@ Use these configurations based on how much control vs automation you want:
 
 | Configuration | Use case |
 | --- | --- |
-| Standard mode (default; no `--assistant`) | Deterministic stage-by-stage orchestration (`hypothesis` → `design` → ...). Best for debugging stage verifiers and manual checkpoints. |
-| Assistant mode (`--assistant`) | Task-driven delivery from `docs/todo.md` / backlog (`select` → `implement` → `verify` → `review`). Best for autonomous feature completion. |
+| Standard mode (default; no `--assistant`) | Deterministic stage-by-stage orchestration (`hypothesis` -> `design` -> ...). Best for debugging stage verifiers and manual checkpoints. |
+| Assistant mode (`--assistant`) | Task-driven delivery from `docs/todo.md` / backlog (`select` -> `implement` -> `verify` -> `review`). Best for autonomous feature completion. |
 
 ### Run cadence and decision handling
 
@@ -140,7 +140,7 @@ Autolab uses this stage graph for each iteration:
 | `hypothesis` | `hypothesis.md` | advances to `design` when metric/target/criteria contract fields are present |
 | `design` | `design.yaml` | advances to `implementation` when required keys are present |
 | `implementation` | `implementation_plan.md` and code changes | advances to `implementation_review` (requires Dry Run section when policy sets `dry_run: true`) |
-| `implementation_review` | `implementation_review.md`, `review_result.json` | `pass` → `launch`; `needs_retry` → `implementation`; `failed` → `human_review` |
+| `implementation_review` | `implementation_review.md`, `review_result.json` | `pass` -> `launch`; `needs_retry` -> `implementation`; `failed` -> `human_review` |
 | `launch` | `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json` | advances to `extract_results` |
 | `extract_results` | `runs/<run_id>/metrics.json`, `analysis/summary.md` | advances to `update_docs` |
 | `update_docs` | `docs_update.md` | advances to `decide_repeat` when run evidence references are present |
