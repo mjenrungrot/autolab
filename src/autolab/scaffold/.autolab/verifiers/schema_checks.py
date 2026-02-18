@@ -546,7 +546,7 @@ def main() -> int:
                         hint = f" Hint: {schema_hint}"
                         break
                 print(f"  {i}. {failure_text}{hint}")
-            print("\nNext steps: fix the above issues and rerun `autolab verify --stage <stage>`")
+            print(f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`")
         return 1
 
     print("schema_checks: PASS")

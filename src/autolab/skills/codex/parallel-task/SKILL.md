@@ -94,3 +94,22 @@ Return:
 - validation coverage summary
 
 Emit `plan_execution_summary.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `plan_file`, `tasks_total`, `tasks_completed`, `tasks_failed`, `tasks_blocked`. Optional: `waves_executed`, `task_details[]`.
+
+Example `plan_execution_summary.json`:
+```json
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_001",
+  "plan_file": "experiments/iter_001/implementation_plan.md",
+  "tasks_total": 8,
+  "tasks_completed": 7,
+  "tasks_failed": 1,
+  "tasks_blocked": 0,
+  "waves_executed": 3,
+  "task_details": [
+    {"id": "T1", "status": "Completed", "wave": 1},
+    {"id": "T2", "status": "Completed", "wave": 1},
+    {"id": "T3", "status": "Failed", "wave": 2, "error": "validation failed"}
+  ]
+}
+```

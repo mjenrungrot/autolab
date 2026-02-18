@@ -37,6 +37,13 @@ When recording the review, the system writes `human_review_result.json`:
 }
 ```
 
+## Quick Inspection Commands
+- `autolab status` -- view current stage, iteration, and attempt counters
+- `cat .autolab/state.json | python3 -m json.tool` -- full state snapshot
+- `cat {{iteration_path}}/review_result.json | python3 -m json.tool` -- structured review result
+- `cat {{iteration_path}}/runs/{{run_id}}/metrics.json | python3 -m json.tool` -- run metrics
+- `autolab verify --stage implementation_review` -- re-run verifiers to check artifact quality
+
 ## STEPS
 1. Read and summarize the current experiment state.
 2. List the evidence available for review (metrics, review result, analysis).

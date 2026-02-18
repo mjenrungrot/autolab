@@ -57,6 +57,44 @@ def test_template_fill_fails_hypothesis_placeholder_content(tmp_path: Path) -> N
     assert "contains placeholder pattern" in result.stdout
 
 
+def test_template_fill_detects_ellipsis_placeholder(tmp_path: Path) -> None:
+    """#8: ASCII ellipsis (...) is flagged as a placeholder pattern."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="hypothesis")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "hypothesis.md").write_text(
+        "# Hypothesis\n\nPrimaryMetric: accuracy; Unit: %; Success: +5%\n\nWe expect that ... will improve results.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="hypothesis")
+
+    assert result.returncode == 1
+    assert "placeholder pattern" in result.stdout
+
+
+def test_template_fill_detects_unicode_ellipsis_placeholder(tmp_path: Path) -> None:
+    """#8: Unicode ellipsis (\u2026) is flagged as a placeholder pattern."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="hypothesis")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "hypothesis.md").write_text(
+        "# Hypothesis\n\nPrimaryMetric: accuracy; Unit: %; Success: +5%\n\nWe expect that\u2026 will improve results.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="hypothesis")
+
+    assert result.returncode == 1
+    assert "placeholder pattern" in result.stdout
+
+
 def test_template_fill_detects_exact_bootstrap_implementation_template(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

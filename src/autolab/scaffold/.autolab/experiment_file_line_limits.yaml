@@ -35,9 +35,11 @@ line_limits:
   #   If your manifest does not have a dynamic item list, keep a single
   #   documented path here so the verifier accepts the policy file.
   run_manifest_dynamic:
-    min_cap_lines: 2500
-    max_cap_lines: 12000
-    base_lines: 1200
-    per_item_lines: 75
+    min_cap_lines: 800
+    max_cap_lines: 4000
+    base_lines: 400
+    per_item_lines: 50
+    max_chars: 200000
+    max_bytes: 250000
     count_paths:
       - "variants"

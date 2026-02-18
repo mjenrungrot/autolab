@@ -49,6 +49,12 @@ Execute the approved run and write launch artifacts:
 - `design.yaml.compute.location` must match resolved launch host mode.
 - Mint `run_id` as `YYYYMMDDTHHMMSSZ_suffix` (UTC timestamp + short suffix).
 
+## SCHEMA GOTCHAS
+- `host_mode` must match `design.yaml` `compute.location` value (`local` or `slurm`).
+- `timestamps.started_at` is required in `run_manifest.json`.
+- SLURM launches require `job_id` in the manifest.
+- `artifact_sync_to_local` is required with at least a `status` field.
+
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
 2. Mint a new `run_id` (`YYYYMMDDTHHMMSSZ_suffix`) before writing launch outputs.

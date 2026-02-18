@@ -336,7 +336,7 @@ def _invoke_agent_runner(
     runner_scope = {
         "mode": runner.edit_scope.mode,
         "workspace_dir": str(workspace_dir),
-        "allowed_dirs": [str(path.relative_to(repo_root)) for path in resolved_core_dirs],
+        "allowed_edit_dirs": [str(path.relative_to(repo_root)) for path in resolved_core_dirs],
     }
     prompt_bundle = _render_stage_prompt(
         repo_root,

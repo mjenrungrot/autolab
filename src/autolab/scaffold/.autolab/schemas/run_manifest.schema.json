@@ -5,8 +5,8 @@
   "required": ["schema_version", "run_id", "iteration_id", "host_mode", "command", "resource_request", "timestamps", "artifact_sync_to_local"],
   "properties": {
     "schema_version": {"type": "string", "const": "1.0"},
-    "run_id": {"type": "string"},
-    "iteration_id": {"type": "string"},
+    "run_id": {"type": "string", "minLength": 1},
+    "iteration_id": {"type": "string", "minLength": 1},
     "launch_mode": {"type": "string", "enum": ["local", "slurm"]},
     "host_mode": {"type": "string", "enum": ["local", "slurm"]},
     "command": {"type": "string", "minLength": 1},

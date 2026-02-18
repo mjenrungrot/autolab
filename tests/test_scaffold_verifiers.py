@@ -629,6 +629,133 @@ def test_suggest_decision_minimize_mode_via_design(tmp_path: Path) -> None:
     assert result == "stop"
 
 
+def test_implementation_plan_lint_fails_ellipsis_placeholder(tmp_path: Path) -> None:
+    """#8: Ellipsis patterns are detected as placeholders."""
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/foo.py\n"
+        "- **description**: Create foo module with ... details\n"
+        "- **touches**: [src/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "placeholder" in result.stdout.lower() or "ellipsis" in result.stdout.lower()
+
+
+def test_implementation_plan_lint_fails_unicode_ellipsis_placeholder(tmp_path: Path) -> None:
+    """#8: Unicode ellipsis \u2026 is detected as a placeholder."""
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/foo.py\n"
+        "- **description**: Create foo module with\u2026 details\n"
+        "- **touches**: [src/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "placeholder" in result.stdout.lower() or "ellipsis" in result.stdout.lower()
+
+
+def test_implementation_plan_lint_scope_enforcement_warn_mode(tmp_path: Path) -> None:
+    """#18: Out-of-scope touches produce warnings (not failures) by default."""
+    repo = _setup_lint_repo(tmp_path)
+    # Write context.json with allowed_edit_dirs
+    context_dir = repo / ".autolab" / "prompts" / "rendered"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "implementation.context.json").write_text(
+        json.dumps({"runner_scope": {"allowed_edit_dirs": ["src"]}}),
+        encoding="utf-8",
+    )
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: outside/foo.py\n"
+        "- **description**: Create foo\n"
+        "- **touches**: [outside/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WARN" in result.stdout
+
+
+def test_implementation_plan_lint_scope_enforcement_fail_mode(tmp_path: Path) -> None:
+    """#18: Out-of-scope touches fail when fail_on_out_of_scope_touches is true."""
+    repo = _setup_lint_repo(tmp_path)
+    # Write context.json with allowed_edit_dirs
+    context_dir = repo / ".autolab" / "prompts" / "rendered"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "implementation.context.json").write_text(
+        json.dumps({"runner_scope": {"allowed_edit_dirs": ["src"]}}),
+        encoding="utf-8",
+    )
+    # Set policy to fail on scope violations
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    policy.setdefault("implementation_plan_lint", {})["scope_enforcement"] = {
+        "fail_on_out_of_scope_touches": True,
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: outside/foo.py\n"
+        "- **description**: Create foo\n"
+        "- **touches**: [outside/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "outside allowed scope" in result.stdout
+
+
+def test_allowed_edit_dirs_field_name_in_context(tmp_path: Path) -> None:
+    """#4: Verify allowed_edit_dirs is the canonical field name used in context JSON."""
+    from autolab.prompts import _build_runtime_stage_context_block
+    context = {
+        "stage": "implementation",
+        "iteration_id": "iter1",
+        "iteration_path": "experiments/plan/iter1",
+        "host_mode": "local",
+        "state_snapshot": {"stage_attempt": 0, "max_stage_attempts": 3},
+        "runner_scope": {"mode": "iteration_plus_core", "workspace_dir": "/w", "allowed_edit_dirs": ["src", "tests"]},
+    }
+    block = _build_runtime_stage_context_block(context)
+    assert "src" in block
+    assert "tests" in block
+    assert "allowed_edit_dirs" in block
+
+
 def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
     _write_plan(repo, (

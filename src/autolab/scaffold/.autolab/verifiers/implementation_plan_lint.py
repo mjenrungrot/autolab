@@ -9,6 +9,11 @@ import re
 from pathlib import Path
 from typing import Iterable, Optional
 
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 EXPERIMENT_TYPES = ("plan", "in_progress", "done")
@@ -59,6 +64,8 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bTBD\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),
+    re.compile(r"(?<!\.)\.\.\.(?!\.)"),  # ASCII ellipsis (not part of longer run)
+    re.compile(r"\u2026"),                # Unicode ellipsis …
 )
 
 VALID_STATUSES = {"not completed", "completed", "in progress", "blocked"}
@@ -283,7 +290,7 @@ def _load_allowed_dirs() -> list[str] | None:
     try:
         data = json.loads(context_path.read_text(encoding="utf-8"))
         runner_scope = data.get("runner_scope", {})
-        allowed = runner_scope.get("allowed_dirs") or runner_scope.get("allowed_edit_dirs")
+        allowed = runner_scope.get("allowed_edit_dirs")
         if isinstance(allowed, list):
             return [str(d).strip() for d in allowed if str(d).strip()]
     except Exception:
@@ -291,8 +298,20 @@ def _load_allowed_dirs() -> list[str] | None:
     return None
 
 
+def _load_policy() -> dict:
+    """Load verifier_policy.yaml from repo root."""
+    policy_path = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
+    if not policy_path.exists() or yaml is None:
+        return {}
+    try:
+        payload = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _check_scope(task_touches: dict[str, list[str]], allowed_dirs: list[str]) -> list[str]:
-    """Warn (not fail) if task touches are outside allowed scope."""
+    """Return messages for tasks with touches outside allowed scope."""
     warnings: list[str] = []
     for task_id, touches in task_touches.items():
         for touch in touches:
@@ -349,14 +368,23 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             print(f"  {issue}")
         return 1
 
-    # Optional scope validation (warnings only)
+    # Optional scope validation (warn or fail based on policy)
     allowed_dirs = _load_allowed_dirs()
     if allowed_dirs:
+        policy = _load_policy()
+        lint_policy = policy.get("implementation_plan_lint", {})
+        scope_cfg = lint_policy.get("scope_enforcement", {}) if isinstance(lint_policy, dict) else {}
+        fail_on_scope = bool(scope_cfg.get("fail_on_out_of_scope_touches", False)) if isinstance(scope_cfg, dict) else False
         task_sections = _split_task_sections(plan_text)
         task_touches: dict[str, list[str]] = {}
         for task_id, section in task_sections.items():
             task_touches[task_id] = _parse_touches_from_section(section)
         scope_warnings = _check_scope(task_touches, allowed_dirs)
+        if scope_warnings and fail_on_scope:
+            print(f"implementation_plan_lint: FAIL scope issues={len(scope_warnings)}")
+            for warning in scope_warnings:
+                print(f"  {warning}")
+            return 1
         for warning in scope_warnings:
             print(f"  WARN: {warning}")
 

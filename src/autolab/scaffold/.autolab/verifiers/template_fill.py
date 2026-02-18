@@ -48,6 +48,8 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bTBD\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),
+    re.compile(r"(?<!\.)\.\.\.(?!\.)"),  # ASCII ellipsis (not part of longer run)
+    re.compile(r"\u2026"),                # Unicode ellipsis …
 )
 
 COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")

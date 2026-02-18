@@ -42,12 +42,27 @@ Write the plan to:
 
 Emit `plan_metadata.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `generated_at`, `skill_used` ("swarm-planner"), `task_count`. Optional: `wave_count`, `dependency_depth`, `conflict_groups`, `total_touches_count`.
 
+Example `plan_metadata.json`:
+```json
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_001",
+  "generated_at": "2026-01-15T10:30:00Z",
+  "skill_used": "swarm-planner",
+  "task_count": 8,
+  "wave_count": 3,
+  "dependency_depth": 2,
+  "conflict_groups": ["db_schema", "config_files"],
+  "total_touches_count": 14
+}
+```
+
 Every task must include:
 - `id`
 - `depends_on`
 - `location`
 - `description`
-- `touches` (list of file paths/globs the task edits)
+- `touches` (list of file paths/globs the task edits) — **required** for wave safety validation. Plans without `touches` produce weaker wave overlap detection.
 - `validation`
 - `status` (default `Not Completed`)
 - `log` (empty placeholder)
@@ -110,6 +125,12 @@ After drafting the plan:
 ## Evidence Paths
 - `path/to/log_or_output`
 
+## Change Summary
+<concise summary of what this plan changes and why>
+
+## Files Updated
+<list of files to be created or modified>
+
 ## Tasks
 
 ### T1: <name>
@@ -149,6 +170,13 @@ After drafting the plan:
 ## Assumptions and Defaults
 <assumptions>
 ```
+
+## Linter Constraints
+- `status` must be one of: `Not Completed`, `Completed`, `In Progress`, `Blocked`
+- `## Change Summary` section is required by `implementation_plan_lint.py`
+- Tasks in the same wave must not have overlapping `touches` paths
+- Tasks in the same wave must not share a `conflict_group`
+- Circular dependencies will fail validation
 
 ## Failure handling
 
