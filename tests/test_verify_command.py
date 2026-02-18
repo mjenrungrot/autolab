@@ -142,3 +142,38 @@ def test_run_with_verify_blocks_stage_transition_on_verification_failure(tmp_pat
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["stage"] == "design"
     assert state["stage_attempt"] == 1
+
+
+def test_run_blocks_on_stage_readiness_when_run_id_missing(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = repo / ".autolab" / "state.json"
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "extract_results",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    _write_backlog(repo)
+    _write_agent_result(repo)
+
+    exit_code = commands_module.main(
+        [
+            "run",
+            "--state-file",
+            str(state_path),
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 1
+    next_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert next_state["stage"] == "extract_results"
+    assert next_state["stage_attempt"] == 1

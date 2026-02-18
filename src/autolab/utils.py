@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -111,6 +112,12 @@ def _detect_priority_host_mode() -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _generate_run_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    suffix = uuid.uuid4().hex[:6]
+    return f"{timestamp}_{suffix}"
 
 
 def _parse_utc(value: str) -> datetime | None:

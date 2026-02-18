@@ -174,13 +174,32 @@ def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id:
     return "h1"
 
 
-def _resolve_prompt_run_id(*, stage: str, state: dict[str, Any]) -> str:
+def _resolve_prompt_run_id(*, repo_root: Path, stage: str, state: dict[str, Any]) -> str:
+    if stage == "launch":
+        pending_run_id = str(state.get("pending_run_id", "")).strip()
+        if pending_run_id and not pending_run_id.startswith("<"):
+            return pending_run_id
+        run_context_path = repo_root / ".autolab" / "run_context.json"
+        run_context_payload = _load_json_if_exists(run_context_path)
+        if isinstance(run_context_payload, dict):
+            context_stage = str(run_context_payload.get("stage", "")).strip()
+            context_iteration = str(run_context_payload.get("iteration_id", "")).strip()
+            state_iteration = str(state.get("iteration_id", "")).strip()
+            context_run_id = str(run_context_payload.get("run_id", "")).strip()
+            if (
+                context_stage == "launch"
+                and context_iteration
+                and context_iteration == state_iteration
+                and context_run_id
+                and not context_run_id.startswith("<")
+            ):
+                return context_run_id
     run_id = str(state.get("last_run_id", "")).strip()
     if run_id and not run_id.startswith("<"):
         return run_id
-    if stage in {"extract_results", "update_docs"}:
+    if stage in {"launch", "extract_results", "update_docs"}:
         raise StageCheckError(
-            f"prompt token '{{{{run_id}}}}' requires state.last_run_id for stage '{stage}'"
+            f"prompt token '{{{{run_id}}}}' requires a resolved run_id for stage '{stage}'"
         )
     return "run_pending"
 
@@ -421,7 +440,7 @@ def _build_prompt_context(
         paper_targets = str(paper_targets_raw or "").strip()
     if not paper_targets:
         paper_targets = "unavailable: paper_targets not configured"
-    run_id = _resolve_prompt_run_id(stage=stage, state=state)
+    run_id = _resolve_prompt_run_id(repo_root=repo_root, stage=stage, state=state)
     hypothesis_id = _resolve_hypothesis_id(
         repo_root,
         iteration_id=iteration_id,

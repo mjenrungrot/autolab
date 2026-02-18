@@ -41,6 +41,9 @@
     "last_run_id": {
       "type": "string"
     },
+    "pending_run_id": {
+      "type": "string"
+    },
     "sync_status": {
       "type": "string"
     },

@@ -138,9 +138,13 @@ def _eval_launch(
     _validate_launch(iteration_dir)
 
     # -- run manifest & sync status ------------------------------------------
+    preferred_run_id = (
+        str(state.get("pending_run_id", "")).strip()
+        or str(state.get("last_run_id", "")).strip()
+    )
     run_id, sync_status = _resolve_latest_run_state(
         iteration_dir,
-        preferred_run_id=str(state.get("last_run_id", "")).strip(),
+        preferred_run_id=preferred_run_id,
     )
     if run_id:
         state["last_run_id"] = run_id

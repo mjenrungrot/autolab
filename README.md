@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.6
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.7
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -29,6 +29,7 @@ Enable auto version bump on each commit:
 
 This also syncs the pinned release tag in `README.md` and keeps only the latest 10
 `vX.Y.Z` tags on GitHub (`origin`) after each commit.
+These local hooks are optional; CI workflows under `.github/workflows/` are authoritative.
 
 After install, invoke with `autolab --help` or `python -m autolab --help`.
 
@@ -57,6 +58,9 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Commit and quality gates.** `auto_commit.mode` controls commit behavior (`meaningful_only` default, `always`, `disabled`). `meaningful_change` settings gate implementation progress, verification success, and git-based checks. Override with `--no-strict-implementation-progress` for experiments. See `docs/runner_reference.md`.
 
 **Guardrails.** `autorun.guardrails` caps same-decision streaks, no-progress cycles, update-docs churn, and generated todo count. Breach action defaults to `human_review`. Fallback tasks are configurable per host mode (`local` / `slurm`). See `docs/workflow_modes.md`.
+
+**Policy presets.** Apply bundled policy overlays with:
+`autolab policy apply preset <local_dev|ci_strict|slurm>`.
 
 ## Source layout
 
@@ -108,6 +112,8 @@ Workflow bootstrap expects `hypotheses` and `experiments` lists with `id`, `stat
 - `template_fill.py` -- placeholder cleanup and artifact budget checks per stage.
 - `prompt_lint.py` -- stage prompt structure and token contract enforcement.
 - `schema_checks.py` -- JSON Schema validation for stage artifacts, `state.json`, and `backlog.yaml`.
+- `registry_consistency.py` -- ensures policy requirements are supported by workflow registry capabilities.
+- `consistency_checks.py` -- validates cross-artifact consistency (design/manifest/metrics/review).
 - Canonical command: `autolab verify --stage <stage>`.
 - Latest result persisted to `.autolab/verification_result.json`.
 - Verifier commands are policy-driven; `python_bin` (default `python3`) controls interpreter portability.
@@ -133,6 +139,12 @@ Sync scaffold assets into a repo (also useful after upgrading):
 
 ```bash
 autolab sync-scaffold --force
+```
+
+Bootstrap a new workspace and configure policy defaults interactively:
+
+```bash
+autolab init --interactive
 ```
 
 Reset `.autolab/` to packaged defaults and clear workflow state:

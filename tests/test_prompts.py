@@ -56,6 +56,7 @@ def _write_state(repo: Path, *, stage: str) -> dict[str, object]:
         "stage": stage,
         "stage_attempt": 0,
         "last_run_id": "",
+        "pending_run_id": "",
         "sync_status": "na",
         "max_stage_attempts": 3,
         "max_total_iterations": 20,
@@ -137,6 +138,8 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage
     repo.mkdir()
     _copy_scaffold(repo)
     state = _write_state(repo, stage=stage)
+    if stage == "launch":
+        state["pending_run_id"] = "20260101T000000Z_ab12cd"
     if stage in {"extract_results", "update_docs"}:
         state["last_run_id"] = "run_001"
     _write_backlog(repo)

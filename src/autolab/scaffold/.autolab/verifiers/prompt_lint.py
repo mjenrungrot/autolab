@@ -54,7 +54,7 @@ DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {
     "design": {"iteration_id", "iteration_path", "hypothesis_id"},
     "implementation": {"iteration_id", "iteration_path"},
     "implementation_review": {"iteration_id", "iteration_path"},
-    "launch": {"iteration_id", "iteration_path"},
+    "launch": {"iteration_id", "iteration_path", "run_id"},
     "extract_results": {"iteration_id", "iteration_path", "run_id"},
     "update_docs": {"iteration_id", "iteration_path", "run_id"},
     "decide_repeat": {"iteration_id", "iteration_path"},
@@ -63,11 +63,13 @@ DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {
 
 def _resolve_stage_prompt_files() -> dict[str, str]:
     try:
-        from autolab.constants import STAGE_PROMPT_FILES as CANONICAL_STAGE_PROMPT_FILES
+        from autolab.registry import load_registry, registry_prompt_files
 
+        registry = load_registry(REPO_ROOT)
+        mapping = registry_prompt_files(registry) if registry else {}
         mapping = {
             str(stage).strip(): str(filename).strip()
-            for stage, filename in dict(CANONICAL_STAGE_PROMPT_FILES).items()
+            for stage, filename in dict(mapping).items()
             if str(stage).strip() and str(filename).strip()
         }
         if mapping:
@@ -85,10 +87,12 @@ def _resolve_stage_prompt_files() -> dict[str, str]:
 
 def _resolve_required_tokens_by_stage() -> dict[str, set[str]]:
     try:
-        from autolab.constants import PROMPT_REQUIRED_TOKENS_BY_STAGE as CANONICAL_REQUIRED_TOKENS
+        from autolab.registry import load_registry, registry_required_tokens
 
-        resolved: dict[str, set[str]] = {}
-        for stage, raw_tokens in dict(CANONICAL_REQUIRED_TOKENS).items():
+        registry = load_registry(REPO_ROOT)
+        required_tokens = registry_required_tokens(registry) if registry else {}
+        resolved = {}
+        for stage, raw_tokens in dict(required_tokens).items():
             stage_name = str(stage).strip()
             if not stage_name:
                 continue
@@ -141,7 +145,8 @@ def _lint_stage_prompt(
     if "## file checklist" in lowered and "{{shared:checklist.md}}" not in text:
         failures.append(f"{prompt_path} checklist section must include {{shared:checklist.md}}")
 
-    if stage in {"launch", "extract_results", "update_docs", "decide_repeat"} and "{{run_id}}" not in text:
+    required_tokens = required_tokens_by_stage.get(stage, set())
+    if "run_id" in required_tokens and "{{run_id}}" not in text:
         failures.append(f"{prompt_path} must reference {{run_id}} for run-scoped stages")
 
     tokens_in_prompt = {match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)}
@@ -149,7 +154,6 @@ def _lint_stage_prompt(
     if unsupported_tokens:
         failures.append(f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}")
 
-    required_tokens = required_tokens_by_stage.get(stage, set())
     missing_required_tokens = sorted(token for token in required_tokens if token not in tokens_in_prompt)
     if missing_required_tokens:
         failures.append(
