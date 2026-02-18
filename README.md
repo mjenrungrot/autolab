@@ -28,6 +28,12 @@ After upgrading the package from GitHub, refresh local workflow defaults:
 autolab sync-scaffold --force
 ```
 
+Enable auto version bump on each commit:
+
+```bash
+./scripts/install-hooks.sh
+```
+
 After install, invoke with:
 
 ```bash

@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/bump_version.py
+elif command -v python >/dev/null 2>&1; then
+  python scripts/bump_version.py
+else
+  echo "pre-commit: ERROR python interpreter not found" >&2
+  exit 1
+fi
+
+git add pyproject.toml
