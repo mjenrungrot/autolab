@@ -25,6 +25,7 @@ REQUIRED_SHARED_INCLUDES = (
     "{{shared:repo_scope.md}}",
     "{{shared:runtime_context.md}}",
 )
+TERMINAL_STAGES = {"human_review", "stop"}
 ALLOWED_TOKENS = {
     "iteration_id",
     "iteration_path",
@@ -115,6 +116,9 @@ def _lint_stage_prompt(
 
     failures: list[str] = []
     lowered = text.lower()
+
+    if stage in TERMINAL_STAGES:
+        return failures
 
     for include in REQUIRED_SHARED_INCLUDES:
         if include not in text:

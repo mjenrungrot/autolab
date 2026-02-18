@@ -636,7 +636,7 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         runner_scope = {}
     scope_mode = str(runner_scope.get("mode", "")).strip() or "unknown"
     scope_workspace = str(runner_scope.get("workspace_dir", "")).strip() or "unknown"
-    allowed_dirs = runner_scope.get("allowed_dirs")
+    allowed_dirs = runner_scope.get("allowed_edit_dirs")
     if isinstance(allowed_dirs, list):
         allowed_dirs_text = ", ".join(str(item).strip() for item in allowed_dirs if str(item).strip())
     else:

@@ -45,6 +45,10 @@ Update iteration documentation and configured paper targets after result extract
 - If `paper_targets` is not configured, write explicit `No target configured` rationale including metrics delta summary.
 - If a configured paper target file is missing, record it in `docs_update.md` and set follow-up action.
 
+## SCHEMA GOTCHAS
+- The `template_fill` verifier checks for unresolved placeholders (e.g. double-brace tokens, angle-bracket tokens, `TODO`, `TBD`, `FIXME`, `...`) and trivial/boilerplate content.
+- Ensure all template tokens are replaced with real values before finalizing outputs.
+
 ## STEPS
 1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.
 2. Update configured paper targets with durable result content when applicable.

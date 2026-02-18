@@ -25,6 +25,7 @@ Gate launch readiness and produce:
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:run_artifacts.md}}
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/implementation_review.md`
@@ -53,6 +54,11 @@ Gate launch readiness and produce:
 
 When `review_result.status` is `pass`, any checks required by policy for `implementation_review`
 under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_review` must be `pass`.
+
+## SCHEMA GOTCHAS
+- `required_checks` must include all 5 keys: `tests`, `dry_run`, `schema`, `env_smoke`, `docs_target_update`.
+- `status` enum is `pass|skip|fail` for individual checks and `pass|needs_retry|failed` for overall status.
+- When overall `status` is `pass`, all policy-required checks must individually be `pass`.
 
 ## STEPS
 1. Validate implementation against design and launch constraints.

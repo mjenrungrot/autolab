@@ -19,7 +19,7 @@ test_command: "{{python_bin}} -m pytest"
 # DEFAULT: exits non-zero so that dry-run verification fails until you
 # configure a real command.  Replace with your project's smoke-test, e.g.:
 #   dry_run_command: "{{python_bin}} -m myproject.dry_run"
-dry_run_command: "{{python_bin}} -c \"import sys; print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml'); sys.exit(1)\""
+dry_run_command: "{{python_bin}} -c \"import sys; print('AUTOLAB DRY-RUN STUB: No dry_run_command configured. Set dry_run_command in .autolab/verifier_policy.yaml or set requirements_by_stage.implementation.dry_run: false to skip.'); sys.exit(1)\""
 
 # ---------------------------------------------------------------------------
 # Template-fill verifier
@@ -114,6 +114,8 @@ implementation_plan_lint:
   command: "{{python_bin}} .autolab/verifiers/implementation_plan_lint.py"
   stages:
     implementation: true
+  scope_enforcement:
+    fail_on_out_of_scope_touches: false
 
 # ---------------------------------------------------------------------------
 # Schema validation options
@@ -121,7 +123,7 @@ implementation_plan_lint:
 schema_validation:
   # When true, schemas are patched at runtime to set additionalProperties: false
   # on all object definitions, rejecting any unexpected keys.  Default: off.
-  strict_additional_properties: false
+  strict_additional_properties: true
 
 # ---------------------------------------------------------------------------
 # Agent runner configuration

@@ -42,7 +42,9 @@ Use this skill when the user explicitly asks for `$llm-council` and wants strong
 3. Keep planners independent; do not share intermediate planner outputs between planners.
 4. Planner output must use the unified `implementation_plan.md` format:
    - Overview
-   - Tasks (with full task block fields including `depends_on`, `location`, `description`, `touches`, `validation`, `status`)
+   - Change Summary (concise summary of what the plan changes and why)
+   - Files Updated (list of files to be created or modified)
+   - Tasks (with full task block fields including `depends_on`, `location`, `description`, `touches` — **required** for wave safety validation, `validation`, `status`)
    - Parallel Execution Groups (wave table)
    - Risks and edge cases
    - Rollback or mitigation
@@ -86,6 +88,13 @@ If user provides no council configuration:
 - run 3 planner agents
 - run 1 judge agent
 - vary planner instructions to diversify approaches (e.g., safety-first, speed-first, maintainability-first)
+
+## Linter Constraints
+- `status` must be one of: `Not Completed`, `Completed`, `In Progress`, `Blocked`
+- `## Change Summary` section is required by `implementation_plan_lint.py`
+- Tasks in the same wave must not have overlapping `touches` paths
+- Tasks in the same wave must not share a `conflict_group`
+- Circular dependencies will fail validation
 
 ## Failure handling
 
