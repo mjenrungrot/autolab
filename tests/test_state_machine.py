@@ -1406,3 +1406,584 @@ class TestLocalLaunchVsSlurm:
 
         assert outcome.transitioned
         assert outcome.stage_after == "decide_repeat"
+
+
+# ---------------------------------------------------------------------------
+# Multi-iteration end-to-end test (Gap 1)
+# ---------------------------------------------------------------------------
+
+class TestMultiIterationEndToEnd:
+    """Two full iterations: local run with review retry, then SLURM with sync retry."""
+
+    def test_full_two_iteration_journey(self, tmp_path: Path) -> None:
+        """Walk through 19 transitions across 2 iterations.
+
+        Iteration 1 (local, review retry cycle):
+          1. hypothesis → design
+          2. design → implementation
+          3. implementation → implementation_review
+          4. implementation_review (needs_retry) → implementation  (retry)
+          5. implementation → implementation_review
+          6. implementation_review (pass) → launch
+          7. launch → extract_results
+          8. extract_results → update_docs
+          9. update_docs → decide_repeat
+         10. decide_repeat → hypothesis  (loop-back)
+
+        Iteration 2 (SLURM with sync retry):
+         11. hypothesis → design
+         12. design → implementation
+         13. implementation → implementation_review
+         14. implementation_review (pass) → launch
+         15. launch (SLURM sync pending) → launch  (retry / stage_attempt++)
+         16. launch (SLURM sync completed) → extract_results
+         17. extract_results → update_docs
+         18. update_docs → decide_repeat
+         19. decide_repeat → stop
+        """
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
+        iteration_id = "iter_test_001"
+
+        # === ITERATION 1 (local) ===
+
+        # 1. hypothesis → design
+        _seed_hypothesis(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "design"
+
+        # 2. design → implementation
+        _seed_design(it_dir, iteration_id)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation"
+
+        # 3. implementation → implementation_review
+        _seed_implementation(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation_review"
+
+        # 4. implementation_review (needs_retry) → implementation
+        _seed_review_retry(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation"
+        persisted = _read_state(repo)
+        assert persisted["stage_attempt"] == 1
+
+        # 5. implementation → implementation_review (carries attempt)
+        _seed_implementation(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation_review"
+        persisted = _read_state(repo)
+        assert persisted["stage_attempt"] == 1
+
+        # 6. implementation_review (pass) → launch
+        _seed_review_pass(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "launch"
+
+        # 7. launch → extract_results
+        _seed_launch(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
+        persisted = _read_state(repo)
+        assert persisted["last_run_id"] == "run_001"
+
+        # 8. extract_results → update_docs
+        _seed_extract(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "update_docs"
+        persisted = _read_state(repo)
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 1
+
+        # 9. update_docs → decide_repeat
+        _seed_update_docs(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "decide_repeat"
+
+        # 10. decide_repeat → hypothesis (loop-back)
+        outcome = _run(state_path, decision="hypothesis")
+        assert outcome.stage_after == "hypothesis"
+        persisted = _read_state(repo)
+        assert persisted["stage_attempt"] == 0
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 0
+
+        # === ITERATION 2 (SLURM with sync retry) ===
+
+        # 11. hypothesis → design
+        _seed_hypothesis(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "design"
+
+        # 12. design → implementation
+        _seed_design(it_dir, iteration_id)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation"
+
+        # 13. implementation → implementation_review
+        _seed_implementation(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation_review"
+
+        # 14. implementation_review (pass) → launch
+        _seed_review_pass(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "launch"
+
+        # 15. launch (SLURM sync pending) → launch (retry)
+        _seed_slurm_launch(it_dir, sync_status="pending")
+        _write_slurm_ledger(repo, "run_001")
+        outcome = _run(state_path)
+        assert outcome.exit_code == 1
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "launch"
+        assert persisted["stage_attempt"] == 1
+
+        # 16. launch (SLURM sync completed) → extract_results
+        _seed_slurm_launch(it_dir, sync_status="completed")
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
+        persisted = _read_state(repo)
+        assert persisted["sync_status"] == "completed"
+        assert persisted["stage_attempt"] == 0
+
+        # 17. extract_results → update_docs
+        _seed_slurm_extract(it_dir, "run_001")
+        outcome = _run(state_path)
+        assert outcome.stage_after == "update_docs"
+        persisted = _read_state(repo)
+        # Cycle count was reset at step 10; this is the first extract→update_docs
+        # in iteration 2, so it should be 1 (not 2).
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 1
+
+        # 18. update_docs → decide_repeat
+        _seed_update_docs(it_dir)
+        _write_slurm_ledger(repo, "run_001")  # refresh ledger for SLURM validation
+        outcome = _run(state_path)
+        assert outcome.stage_after == "decide_repeat"
+
+        # 19. decide_repeat → stop
+        outcome = _run(state_path, decision="stop")
+        assert outcome.stage_after == "stop"
+
+        # Final assertions
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "stop"
+        backlog = yaml.safe_load((repo / ".autolab" / "backlog.yaml").read_text())
+        assert backlog["experiments"][0]["status"] in {"done", "completed"}
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: review_result.json status "failed" → human_review
+# ---------------------------------------------------------------------------
+
+class TestGapReviewFailed:
+    """Seed review_result.json with status: 'failed' and verify escalation."""
+
+    def _seed_review_failed(self, iteration_dir: Path) -> None:
+        (iteration_dir / "implementation_review.md").write_text(
+            "# Review\nFailed.", encoding="utf-8",
+        )
+        review = {
+            "status": "failed",
+            "blocking_findings": ["critical_issue"],
+            "required_checks": ["tests"],
+            "reviewed_at": "2026-01-01T00:00:00Z",
+        }
+        (iteration_dir / "review_result.json").write_text(
+            json.dumps(review, indent=2), encoding="utf-8",
+        )
+
+    def test_failed_review_escalates_to_human_review(self, tmp_path: Path) -> None:
+        """status: 'failed' should go straight to human_review (not retry)."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="implementation_review", stage_attempt=0,
+        )
+        self._seed_review_failed(it_dir)
+
+        outcome = _run(state_path)
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "human_review"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "human_review"
+
+    def test_failed_review_does_not_consume_retry_budget(self, tmp_path: Path) -> None:
+        """status: 'failed' escalation should not increment stage_attempt."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="implementation_review", stage_attempt=0,
+        )
+        self._seed_review_failed(it_dir)
+
+        outcome = _run(state_path)
+
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "human_review"
+        # stage_attempt should be 0 (reset on transition), not incremented
+        assert persisted["stage_attempt"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: Auto-decision from TODO tasks
+# ---------------------------------------------------------------------------
+
+class TestGapAutoDecisionFromTodo:
+    """Test auto_decision=True integration with real TODO state."""
+
+    def _write_todo_with_stage_tasks(
+        self, repo: Path, *, stages: list[str],
+    ) -> None:
+        """Write TODO bullets with [stage:X] tags for auto-decision selection."""
+        bullets = "\n".join(
+            f"- [ ] [{stage}] Task for {stage}" for stage in stages
+        )
+        _write_todo_md(repo, f"# Tasks\n{bullets}\n")
+        _write_todo_state(repo, {})  # fresh state; pre-sync will ingest bullets
+
+    def test_auto_decision_selects_design_from_todo(self, tmp_path: Path) -> None:
+        """Auto-decision with a [design] task in TODO selects 'design'."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="decide_repeat",
+        )
+        self._write_todo_with_stage_tasks(repo, stages=["design"])
+
+        outcome = _run(
+            state_path,
+            auto_mode=True,
+            auto_decision=True,
+        )
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "design"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "design"
+
+    def test_auto_decision_selects_hypothesis_from_todo(self, tmp_path: Path) -> None:
+        """Auto-decision with a [hypothesis] task in TODO selects 'hypothesis'."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="decide_repeat",
+        )
+        self._write_todo_with_stage_tasks(repo, stages=["hypothesis"])
+
+        outcome = _run(
+            state_path,
+            auto_mode=True,
+            auto_decision=True,
+        )
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "hypothesis"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "hypothesis"
+
+
+# ---------------------------------------------------------------------------
+# Gap 4: Completed experiment protection (backlog done → force stop)
+# ---------------------------------------------------------------------------
+
+class TestGapCompletedExperimentProtection:
+    """When backlog experiment is already 'done'/'completed', force-stop from active stages."""
+
+    def test_force_stop_from_active_stage(self, tmp_path: Path) -> None:
+        """An active stage with completed experiment should be forced to stop."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="implementation",
+            backlog_experiment_status="completed",
+        )
+        _seed_implementation(it_dir)
+
+        outcome = _run(state_path)
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "stop"
+        assert "blocked completed experiment" in outcome.message
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "stop"
+
+    def test_noop_from_terminal_stage(self, tmp_path: Path) -> None:
+        """A terminal stage with completed experiment should NOT be force-stopped (already terminal)."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="stop",
+            backlog_experiment_status="completed",
+        )
+
+        outcome = _run(state_path)
+
+        # Terminal stage → standard noop behavior
+        assert not outcome.transitioned
+        assert outcome.stage_after == "stop"
+
+    def test_force_stop_from_decide_repeat(self, tmp_path: Path) -> None:
+        """decide_repeat with completed experiment should force-stop."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="decide_repeat",
+            backlog_experiment_status="completed",
+        )
+
+        outcome = _run(state_path)
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "stop"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "stop"
+
+
+# ---------------------------------------------------------------------------
+# Gap 5: update_docs_cycle_count reset durability across iterations
+# ---------------------------------------------------------------------------
+
+class TestGapUpdateDocsCycleCountResetAcrossIterations:
+    """Verify update_docs_cycle_count resets on loop-back and doesn't accumulate."""
+
+    def test_cycle_count_does_not_accumulate_across_iterations(self, tmp_path: Path) -> None:
+        """Full sequence: extract→update_docs (count=1), decide_repeat→hypothesis
+        (count=0), full cycle back to extract→update_docs (count=1, not 2)."""
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="extract_results")
+        iteration_id = "iter_test_001"
+        _seed_extract(it_dir)
+        state = _read_state(repo)
+        state["last_run_id"] = "run_001"
+        _write_state(repo, state)
+
+        # extract_results → update_docs (cycle count becomes 1)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "update_docs"
+        persisted = _read_state(repo)
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 1
+
+        # update_docs → decide_repeat
+        _seed_update_docs(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "decide_repeat"
+
+        # decide_repeat → hypothesis (resets cycle count to 0)
+        outcome = _run(state_path, decision="hypothesis")
+        assert outcome.stage_after == "hypothesis"
+        persisted = _read_state(repo)
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 0
+
+        # Walk back to extract_results
+        _seed_hypothesis(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "design"
+
+        _seed_design(it_dir, iteration_id)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation"
+
+        _seed_implementation(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "implementation_review"
+
+        _seed_review_pass(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "launch"
+
+        _seed_launch(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
+
+        _seed_extract(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "update_docs"
+
+        # Critical assertion: count should be 1, not 2
+        persisted = _read_state(repo)
+        assert persisted["repeat_guard"]["update_docs_cycle_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: Multiple experiments in backlog (only matching one marked done)
+# ---------------------------------------------------------------------------
+
+class TestGapMultipleExperimentsBacklog:
+    """Two experiments in backlog; stopping with experiment_id='e2' marks only e2 done."""
+
+    def _write_multi_experiment_backlog(self, repo: Path) -> None:
+        backlog = {
+            "hypotheses": [
+                {"id": "h1", "status": "open", "title": "Hyp 1",
+                 "success_metric": "m", "target_delta": 0.0},
+            ],
+            "experiments": [
+                {"id": "e1", "hypothesis_id": "h1", "status": "open",
+                 "iteration_id": "iter_test_001"},
+                {"id": "e2", "hypothesis_id": "h1", "status": "open",
+                 "iteration_id": "iter_test_002"},
+            ],
+        }
+        path = repo / ".autolab" / "backlog.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8")
+
+    def test_only_matching_experiment_marked_completed(self, tmp_path: Path) -> None:
+        """Stopping experiment e2 marks only e2 completed; e1 stays open."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="decide_repeat",
+            experiment_id="e2",
+            iteration_id="iter_test_002",
+        )
+        self._write_multi_experiment_backlog(repo)
+
+        outcome = _run(state_path, decision="stop")
+
+        assert outcome.stage_after == "stop"
+        backlog = yaml.safe_load((repo / ".autolab" / "backlog.yaml").read_text())
+        experiments = {e["id"]: e["status"] for e in backlog["experiments"]}
+        assert experiments["e1"] == "open"
+        assert experiments["e2"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Gap 7: Combined no_progress + same_decision_streak guardrails
+# ---------------------------------------------------------------------------
+
+class TestGapDecideRepeatStreakAndNoProgressCombined:
+    """Verify interaction between no_progress and same_decision_streak guardrails."""
+
+    def test_no_progress_fires_before_streak_limit(self, tmp_path: Path) -> None:
+        """no_progress_decisions hits max before same_decision_streak does."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="decide_repeat",
+            repeat_guard={
+                "last_decision": "hypothesis",
+                "same_decision_streak": 1,     # below max (3)
+                "last_open_task_count": 5,
+                "no_progress_decisions": 1,     # one more with same/higher count → 2 >= max(2)
+                "update_docs_cycle_count": 0,
+                "last_verification_passed": False,
+            },
+        )
+        # Ensure open task count stays >= last_open_task_count (5)
+        _write_todo_md(repo, "# Tasks\n" + "".join(
+            f"- [ ] [hypothesis] task{i}\n" for i in range(6)
+        ))
+        _write_todo_state(repo, {})
+
+        outcome = _run(
+            state_path,
+            decision="design",       # different decision, so streak resets to 1
+            auto_mode=True,
+            auto_decision=True,
+        )
+
+        assert outcome.stage_after == "human_review"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "human_review"
+
+    def test_streak_fires_before_no_progress(self, tmp_path: Path) -> None:
+        """same_decision_streak hits max before no_progress_decisions does."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="decide_repeat",
+            repeat_guard={
+                "last_decision": "design",
+                "same_decision_streak": 3,     # one more same → 4 > max(3)
+                "last_open_task_count": 20,
+                "no_progress_decisions": 0,    # well below max
+                "update_docs_cycle_count": 0,
+                "last_verification_passed": False,
+            },
+        )
+        # Ensure open count < last_open_task_count (20) so no_progress resets
+        _write_todo_md(repo, "# Tasks\n- [ ] [design] task1\n")
+        _write_todo_state(repo, {})
+
+        outcome = _run(
+            state_path,
+            decision="design",       # same decision → streak = 4 > 3
+            auto_mode=True,
+            auto_decision=True,
+        )
+
+        assert outcome.stage_after == "human_review"
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "human_review"
+
+
+# ---------------------------------------------------------------------------
+# Gap 8: Assistant mode verify → fail → implement → verify → pass → review
+# ---------------------------------------------------------------------------
+
+def _write_policy_with_test_command(
+    repo: Path,
+    *,
+    test_command: str = "true",
+    require_tests: bool = True,
+    require_verification: bool = False,
+) -> None:
+    """Write a verifier_policy.yaml with a specific test_command."""
+    policy = {
+        "test_command": test_command,
+        "dry_run_command": "true",
+        "require_tests": require_tests,
+        "require_dry_run": False,
+        "require_env_smoke": False,
+        "require_docs_target_update": False,
+        "template_fill": {"enabled": False},
+        "agent_runner": {"enabled": False, "stages": []},
+        "autorun": {
+            "guardrails": {
+                "max_same_decision_streak": 3,
+                "max_no_progress_decisions": 2,
+                "max_update_docs_cycles": 3,
+                "on_breach": "human_review",
+            },
+            "auto_commit": {"mode": "off"},
+            "meaningful_change": {
+                "require_implementation_progress": False,
+                "require_git_for_progress": False,
+                "on_non_git_behavior": "warn_and_continue",
+                "require_verification": require_verification,
+                "exclude_paths": [],
+            },
+        },
+    }
+    path = repo / ".autolab" / "verifier_policy.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+
+class TestGapAssistantVerifyReviewCycle:
+    """Test that assistant mode verify cycle routes correctly on pass/fail."""
+
+    def test_failed_verification_returns_to_implement(self, tmp_path: Path) -> None:
+        """When verification fails, task_cycle_stage goes back to 'implement'."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="implementation",
+            assistant_mode="on",
+            current_task_id="task_001",
+            task_cycle_stage="verify",
+            hypothesis_status="done",
+        )
+        # Use a test_command that will fail
+        _write_policy_with_test_command(repo, test_command="false", require_tests=True)
+
+        outcome = _run(state_path, assistant=True)
+
+        persisted = _read_state(repo)
+        assert persisted["task_cycle_stage"] == "implement"
+        assert persisted["repeat_guard"]["last_verification_passed"] is False
+
+    def test_passed_verification_advances_to_review(self, tmp_path: Path) -> None:
+        """When verification passes, task_cycle_stage goes to 'review'."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path,
+            stage="implementation",
+            assistant_mode="on",
+            current_task_id="task_001",
+            task_cycle_stage="verify",
+            hypothesis_status="done",
+        )
+        # Use a test_command that succeeds
+        _write_policy_with_test_command(repo, test_command="true", require_tests=True)
+
+        outcome = _run(state_path, assistant=True)
+
+        persisted = _read_state(repo)
+        assert persisted["task_cycle_stage"] == "review"
+        assert persisted["repeat_guard"]["last_verification_passed"] is True
