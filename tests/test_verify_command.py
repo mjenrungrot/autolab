@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import yaml
@@ -13,6 +14,12 @@ def _copy_scaffold(repo: Path) -> None:
     source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
+    policy_path = target / "verifier_policy.yaml"
+    policy_text = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        policy_text.replace('python_bin: "python3"', f'python_bin: "{sys.executable}"', 1),
+        encoding="utf-8",
+    )
 
 
 def _write_state(repo: Path) -> Path:
@@ -69,6 +76,7 @@ def _write_agent_result(repo: Path) -> None:
 
 def _write_design(repo: Path) -> None:
     payload = {
+        "schema_version": "1.0",
         "id": "e1",
         "iteration_id": "iter1",
         "hypothesis_id": "h1",
@@ -106,6 +114,9 @@ def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     latest = json.loads(summaries[-1].read_text(encoding="utf-8"))
     assert latest["passed"] is True
     assert latest["stage_effective"] == "design"
+    canonical = json.loads((repo / ".autolab" / "verification_result.json").read_text(encoding="utf-8"))
+    assert canonical["passed"] is True
+    assert canonical["stage_effective"] == "design"
 
 
 def test_run_with_verify_blocks_stage_transition_on_verification_failure(tmp_path: Path) -> None:

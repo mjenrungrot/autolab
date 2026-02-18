@@ -208,6 +208,7 @@ from autolab.commands import (  # noqa: F401
     _cmd_slurm_job_list,
     _cmd_status,
     _cmd_sync_scaffold,
+    _cmd_lint_scaffold_sync,
     _cmd_review,
     _run_once,
     _write_overnight_summary,

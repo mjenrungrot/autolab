@@ -435,6 +435,32 @@ def _resolve_verification_stage(state: dict[str, Any], stage_override: str | Non
     return stage
 
 
+def _persist_verification_result(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    stage_requested: str,
+    stage_effective: str,
+    passed: bool,
+    message: str,
+    details: dict[str, Any],
+) -> None:
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "iteration_id": str(state.get("iteration_id", "")).strip(),
+        "experiment_id": str(state.get("experiment_id", "")).strip(),
+        "state_stage": str(state.get("stage", "")).strip(),
+        "stage_requested": stage_requested,
+        "stage_effective": stage_effective,
+        "passed": bool(passed),
+        "message": str(message).strip(),
+        "details": details,
+    }
+    result_path = repo_root / ".autolab" / "verification_result.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _build_verification_command_specs(
     repo_root: Path,
     state: dict[str, Any],
@@ -548,21 +574,29 @@ def _run_verification_step_detailed(
 ) -> tuple[bool, str, dict[str, Any]]:
     from autolab.utils import _append_log, _compact_log_text
 
+    stage_requested = str(stage_override or state.get("stage", "")).strip()
     try:
         stage, stage_requirements, command_specs = _build_verification_command_specs(
             repo_root, state, stage_override=stage_override
         )
     except StageCheckError as exc:
         stage = str(stage_override or state.get("stage", "")).strip()
-        return (
-            False,
-            f"verification failed: {exc}",
-            {
-                "stage": stage,
-                "requirements": {},
-                "commands": [],
-            },
+        details = {
+            "stage": stage,
+            "requirements": {},
+            "commands": [],
+        }
+        message = f"verification failed: {exc}"
+        _persist_verification_result(
+            repo_root,
+            state=state,
+            stage_requested=stage_requested,
+            stage_effective=stage,
+            passed=False,
+            message=message,
+            details=details,
         )
+        return (False, message, details)
 
     results: list[dict[str, Any]] = []
     for command_name, command in command_specs:
@@ -593,15 +627,22 @@ def _run_verification_step_detailed(
                     "detail": detail,
                 }
             )
-            return (
-                False,
-                f"verification failed: {detail}",
-                {
-                    "stage": stage,
-                    "requirements": stage_requirements,
-                    "commands": results,
-                },
+            details = {
+                "stage": stage,
+                "requirements": stage_requirements,
+                "commands": results,
+            }
+            message = f"verification failed: {detail}"
+            _persist_verification_result(
+                repo_root,
+                state=state,
+                stage_requested=stage_requested,
+                stage_effective=stage,
+                passed=False,
+                message=message,
+                details=details,
             )
+            return (False, message, details)
         except OSError as exc:
             detail = _compact_log_text(f"verification command failed to start: {exc}")
             _append_log(repo_root, f"verification command failed command={command_name} detail={detail}")
@@ -615,15 +656,22 @@ def _run_verification_step_detailed(
                     "detail": detail,
                 }
             )
-            return (
-                False,
-                f"verification failed: {detail}",
-                {
-                    "stage": stage,
-                    "requirements": stage_requirements,
-                    "commands": results,
-                },
+            details = {
+                "stage": stage,
+                "requirements": stage_requirements,
+                "commands": results,
+            }
+            message = f"verification failed: {detail}"
+            _persist_verification_result(
+                repo_root,
+                state=state,
+                stage_requested=stage_requested,
+                stage_effective=stage,
+                passed=False,
+                message=message,
+                details=details,
             )
+            return (False, message, details)
 
         stdout = (process.stdout or "").strip()
         stderr = (process.stderr or "").strip()
@@ -644,25 +692,39 @@ def _run_verification_step_detailed(
 
         if process.returncode != 0:
             _append_log(repo_root, f"verification failed command={command_name} detail={detail}")
-            return (
-                False,
-                f"verification failed: {detail or 'verification command returned non-zero'}",
-                {
-                    "stage": stage,
-                    "requirements": stage_requirements,
-                    "commands": results,
-                },
+            details = {
+                "stage": stage,
+                "requirements": stage_requirements,
+                "commands": results,
+            }
+            message = f"verification failed: {detail or 'verification command returned non-zero'}"
+            _persist_verification_result(
+                repo_root,
+                state=state,
+                stage_requested=stage_requested,
+                stage_effective=stage,
+                passed=False,
+                message=message,
+                details=details,
             )
+            return (False, message, details)
 
-    return (
-        True,
-        f"verification passed ({len(results)} command(s))",
-        {
-            "stage": stage,
-            "requirements": stage_requirements,
-            "commands": results,
-        },
+    details = {
+        "stage": stage,
+        "requirements": stage_requirements,
+        "commands": results,
+    }
+    message = f"verification passed ({len(results)} command(s))"
+    _persist_verification_result(
+        repo_root,
+        state=state,
+        stage_requested=stage_requested,
+        stage_effective=stage,
+        passed=True,
+        message=message,
+        details=details,
     )
+    return (True, message, details)
 
 
 def _run_verification_step(
