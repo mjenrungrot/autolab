@@ -2736,6 +2736,15 @@ def _ensure_iteration_skeleton(repo_root: Path, iteration_id: str, created: list
         created,
     )
     _ensure_text_file(
+        iteration_dir / "implementation" / "README.md",
+        (
+            "# Experiment Implementation\n\n"
+            "Store experiment-specific implementation artifacts in this directory.\n"
+            "Notebook and other per-iteration code artifacts should stay here by default.\n"
+        ),
+        created,
+    )
+    _ensure_text_file(
         iteration_dir / "implementation_review.md",
         "# Implementation Review\n\nReview notes.\n",
         created,

@@ -22,6 +22,7 @@ Execute the selected task from `design.yaml` and emit:
 3. Use configurable output locations from launch settings (do not hardcode `runs/{{run_id}}`).
 4. Update all changed files and note rationale + risks in `implementation_plan.md`.
 5. Record verifier results for each required check from policy.
+6. Keep experiment-specific implementation artifacts and notebooks under `experiments/{{iteration_id}}/implementation/`.
 
 ## OUTPUT TEMPLATE
 ```markdown
