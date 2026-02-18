@@ -2920,15 +2920,47 @@ def _mark_backlog_experiment_completed(
         return (
             False,
             None,
-            "manual policy: state.experiment_id is unset and autolab does not auto-transition experiment type/status",
+            "state.experiment_id is unset; backlog completion could not be applied",
+        )
+
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    payload, load_error = _load_backlog_yaml(backlog_path)
+    if payload is None:
+        return (False, None, load_error)
+
+    entry, resolve_error = _find_backlog_experiment_entry(
+        payload,
+        experiment_id=normalized_experiment_id,
+        iteration_id="",
+    )
+    if entry is None:
+        return (False, None, resolve_error)
+
+    status = _normalize_backlog_status(entry.get("status"))
+    experiment_type = _normalize_experiment_type(entry.get("type"))
+    already_completed = _is_backlog_status_completed(status) and experiment_type == "done"
+    if already_completed:
+        return (
+            False,
+            None,
+            f"backlog experiment '{normalized_experiment_id}' is already completed",
+        )
+
+    entry["status"] = "completed"
+    entry["type"] = "done"
+    changed, write_error = _write_backlog_yaml(backlog_path, payload)
+    if write_error:
+        return (False, None, write_error)
+    if not changed:
+        return (
+            False,
+            None,
+            f"backlog experiment '{normalized_experiment_id}' completion was already up to date",
         )
     return (
-        False,
-        None,
-        (
-            f"manual policy: autolab does not auto-transition backlog experiment '{normalized_experiment_id}'; "
-            "set `.autolab/backlog.yaml` experiments[].type to `done` explicitly when ready"
-        ),
+        True,
+        backlog_path,
+        f"marked backlog experiment '{normalized_experiment_id}' as completed (type=done)",
     )
 
 
@@ -3226,20 +3258,25 @@ def _evaluate_stage(repo_root: Path, state: dict[str, Any]) -> tuple[str, str, s
             return ("implementation", "complete", "implementation review requested retry")
         return ("human_review", "failed", "implementation review failed")
     if stage == "launch":
-        review_status = _validate_review_result(
-            iteration_dir / "review_result.json",
-            policy_requirements=_resolve_stage_requirements(_load_verifier_policy(repo_root), "implementation_review"),
-        )
-        if review_status != "pass":
-            raise StageCheckError("launch requires review_result.json status=pass")
-        if yaml is None:
-            raise StageCheckError("launch validation requires PyYAML")
-        try:
-            design_payload = yaml.safe_load((iteration_dir / "design.yaml").read_text(encoding="utf-8"))
-        except Exception as exc:
-            raise StageCheckError(f"launch validation could not parse design.yaml: {exc}") from exc
-        compute = design_payload.get("compute", {}) if isinstance(design_payload, dict) else {}
-        design_location = str(compute.get("location", "")).strip().lower()
+        review_result_path = iteration_dir / "review_result.json"
+        if review_result_path.exists():
+            review_status = _validate_review_result(
+                review_result_path,
+                policy_requirements=_resolve_stage_requirements(_load_verifier_policy(repo_root), "implementation_review"),
+            )
+            if review_status != "pass":
+                raise StageCheckError("launch requires review_result.json status=pass")
+        design_location = ""
+        design_path = iteration_dir / "design.yaml"
+        if design_path.exists():
+            if yaml is None:
+                raise StageCheckError("launch validation requires PyYAML")
+            try:
+                design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise StageCheckError(f"launch validation could not parse design.yaml: {exc}") from exc
+            compute = design_payload.get("compute", {}) if isinstance(design_payload, dict) else {}
+            design_location = str(compute.get("location", "")).strip().lower()
         _validate_launch(iteration_dir)
         run_id, sync_status = _resolve_latest_run_state(iteration_dir)
         if run_id:
