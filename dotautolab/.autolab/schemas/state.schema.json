@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutolabState",
+  "type": "object",
+  "required": [
+    "iteration_id",
+    "stage",
+    "stage_attempt",
+    "last_run_id",
+    "sync_status",
+    "max_stage_attempts",
+    "max_total_iterations"
+  ],
+  "properties": {
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "hypothesis",
+        "design",
+        "implementation",
+        "implementation_review",
+        "launch",
+        "extract_results",
+        "update_docs",
+        "decide_repeat",
+        "human_review",
+        "stop"
+      ]
+    },
+    "stage_attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_run_id": {
+      "type": "string"
+    },
+    "sync_status": {
+      "type": "string"
+    },
+    "max_stage_attempts": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_total_iterations": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "assistant_mode": {
+      "type": "string",
+      "enum": ["off", "on"]
+    },
+    "current_task_id": {
+      "type": "string"
+    },
+    "task_cycle_stage": {
+      "type": "string",
+      "enum": ["select", "implement", "verify", "review", "done"]
+    },
+    "paper_targets": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
+    },
+    "repeat_guard": {
+      "type": "object",
+      "properties": {
+        "last_decision": {"type": "string"},
+        "same_decision_streak": {"type": "integer"},
+        "last_open_task_count": {"type": "integer"},
+        "no_progress_decisions": {"type": "integer"},
+        "update_docs_cycle_count": {"type": "integer"},
+        "last_verification_passed": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "task_change_baseline": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

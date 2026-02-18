@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutolabBacklog",
+  "type": "object",
+  "required": ["hypotheses", "experiments"],
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "title", "success_metric", "target_delta"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1},
+          "success_metric": {"type": "string", "minLength": 1},
+          "target_delta": {
+            "oneOf": [
+              {"type": "number"},
+              {"type": "string", "minLength": 1}
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "hypothesis_id", "status", "iteration_id"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "hypothesis_id": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "type": {"type": "string"},
+          "iteration_id": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

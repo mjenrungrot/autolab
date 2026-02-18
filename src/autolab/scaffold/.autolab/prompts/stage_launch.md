@@ -1,63 +1,79 @@
-# Background & Goal
-Execute approved experiment runs and persist deterministic launch metadata.
+# Stage: launch
 
 ## ROLE
 You are the **Launch Orchestrator**.
 
 ## PRIMARY OBJECTIVE
-Run a verified experiment and write:
+Execute the approved run and write launch artifacts:
 - `experiments/{{iteration_id}}/launch/run_local.sh` or `run_slurm.sbatch`
 - `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
-- `docs/slurm_job_list.md` (for SLURM execution)
+- `docs/slurm_job_list.md` for SLURM mode
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 
-## INPUT DATA
+## OUTPUTS (STRICT)
+- One launch script (`run_local.sh` or `run_slurm.sbatch`)
+- `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
+- SLURM ledger update when host mode is SLURM
+
+## REQUIRED INPUTS
+- `.autolab/state.json`
+- `.autolab/schemas/run_manifest.schema.json`
 - `experiments/{{iteration_id}}/design.yaml`
 - `experiments/{{iteration_id}}/review_result.json`
-- `.autolab/state.json`
-- Launch mode context: `{{launch_mode}}` (`local` or `slurm`)
+- Launch mode context `{{launch_mode}}`
 
-## INPUT NORMALIZATION
-- Resolve host mode using command + binary + environment checks:
-  - binary checks: `sinfo`, `squeue`, `sbatch`
-  - command probes: `sinfo -V`, `squeue -V`
-  - fallback to SLURM if `SLURM_*` env is present with at least one positive probe.
-- Poll `squeue` with exponential backoff (30s/60s/120s... with 300s cap) and max elapsed guard (for example 45m).
-- On polling timeout, continue with `sacct -j <job_id>` for final state and do not block indefinitely.
-- If command probes fail but SLURM env variables are present, still treat as potential SLURM and proceed through fallback rules above.
+## MISSING-INPUT FALLBACKS
+- If `design.yaml` is missing, stop and request design-stage completion.
+- If `review_result.json` is missing or not `status: pass`, stop and request implementation-review resolution.
+- If schema file is missing, stop and request scaffold/schema restoration.
 
-## PRE-LAUNCH GATE
+## PRE-LAUNCH GATES
 - `review_result.json.status` must be `pass`.
-- `design.yaml.compute.location` must match resolved launch mode.
+- `design.yaml.compute.location` must match resolved launch host mode.
 
-## TASK
-1. Local path: write and run `run_local.sh`.
-2. SLURM path: write and run `run_slurm.sbatch`, capture `job_id`, then poll `squeue -j <job_id>` until exit, validate with `sacct`.
-3. Populate `run_manifest.json` with host mode, command, resource request, sync status, verifier snapshot, and timestamps.
-4. Maintain SLURM ledger using `autolab slurm-job-list`:
-   - append after submission confirmation
-   - verify after completion when applicable
+## STEPS
+1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
+2. Execute with the appropriate script and capture command/resource details.
+3. Write `run_manifest.json` that matches schema.
+4. For SLURM, append ledger entry:
+   `autolab slurm-job-list append --manifest experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
+5. Run `python3 .autolab/verifiers/template_fill.py --stage launch` and fix failures.
 
-Use:
-`autolab slurm-job-list append --manifest experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-
-## SLURM README CONTRACT
-- `run_manifest.json` must include:
-  - `iteration_id`, `run_id`, `launch_mode`/`host_mode`
-  - execution command
-  - resource request
-  - verifier snapshots
-  - sync metadata under `artifact_sync_to_local`
-- For local runs, ledger commands are no-ops.
+## RUN MANIFEST TEMPLATE (schema-aligned)
+```json
+{
+  "run_id": "{{run_id}}",
+  "iteration_id": "{{iteration_id}}",
+  "launch_mode": "local",
+  "host_mode": "local",
+  "command": "python -m package.entry --config ...",
+  "resource_request": {
+    "cpus": 4,
+    "memory": "16GB",
+    "gpu_count": 0
+  },
+  "artifact_sync_to_local": {
+    "status": "ok"
+  },
+  "timestamps": {
+    "started_at": "2026-01-01T00:00:00Z",
+    "completed_at": "2026-01-01T00:05:00Z"
+  }
+}
+```
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
 
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}
-- [ ] `run_manifest.json` indicates launch command, host mode, resource request, and sync status.
-- [ ] `run_manifest.json` and any selected script are committed with no unresolved placeholders.
-- [ ] SLURM runs include a valid job_id and are present in ledger.
+- [ ] `run_manifest.json` includes `run_id`, `iteration_id`, `host_mode`, `command`, `resource_request`, `timestamps`, `artifact_sync_to_local`.
+- [ ] Launch script and manifest contain no unresolved placeholders.
+- [ ] SLURM launches include ledger entry with a concrete job identifier.
+
+## FAILURE / RETRY BEHAVIOR
+- If launch verifiers fail, fix artifacts and rerun launch.
+- Do not force stage advancement in state; orchestrator applies retry/escalation behavior.

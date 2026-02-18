@@ -41,15 +41,18 @@ Autolab supports multiple agent runners via the `runner` field in `.autolab/veri
 
 ```yaml
 agent_runner:
-  enabled: true
+  enabled: false  # default
   runner: claude  # Options: codex, claude, custom
+  claude_dangerously_skip_permissions: false
 ```
 
-- **codex** (default): Uses `codex exec` with sandboxed `--add-dir` flags.
-- **claude**: Uses Claude Code in non-interactive mode (`claude -p`). Operates from the repo root.
+- **codex** (default runner preset): Uses `codex exec` with sandboxed `--add-dir` flags.
+- **claude**: Uses Claude Code in non-interactive mode (`claude -p`) and operates from repo root.
 - **custom**: Set `runner: custom` and provide your own `command:` template.
 
+Agent runner execution is disabled by default (`enabled: false`).
 When `runner` is set, the `command` field is auto-populated from the preset. You can still override `command` explicitly for any runner.
+`claude_dangerously_skip_permissions` is an explicit opt-in for `--dangerously-skip-permissions` and should only be enabled in trusted automation contexts.
 
 ## Source layout
 
@@ -83,6 +86,11 @@ Autolab uses this stage graph for each iteration:
   - `status: pass` (continue)
   - `status: needs_retry` (return to implementation)
   - `status: failed` (escalate `human_review`)
+
+### State ownership
+
+- `.autolab/state.json` is orchestration-owned. Stage agents should not manually advance stages by editing state.
+- Agents should emit stage artifacts; Autolab applies transition, retry, and escalation logic.
 
 ## Key state and backlog contracts
 
@@ -135,6 +143,19 @@ experiments:
 - `launch`: `launch/run_local.sh` or `launch/run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`
 - `extract_results`: `runs/<run_id>/metrics.json`, `analysis/summary.md`
 - `update_docs`: `docs_update.md`, plus configured paper target files from `.autolab/state.json`
+
+## Verifiers and schema checks
+
+- `template_fill.py` enforces placeholder cleanup and artifact budget checks per stage.
+- `schema_checks.py` validates stage artifacts against JSON Schemas (including `.autolab/state.json` and `.autolab/backlog.yaml`).
+- Stage prompts should run: `python3 .autolab/verifiers/template_fill.py --stage <stage>`.
+- Verifier commands are policy-driven and can use `python_bin` (default `python3`) for interpreter portability.
+- `dry_run_command` should be non-empty whenever any stage sets `dry_run: true` in `requirements_by_stage` (scaffold provides a replace-me stub).
+- Dynamic run-manifest caps use `line_limits.run_manifest_dynamic` with `min_cap_lines`/`max_cap_lines` (cap bounds, not required minimum output length).
+
+## Prompt authoring
+
+See `docs/prompt_authoring_guide.md` for scaffold prompt conventions, shared includes, and stage-prompt wiring.
 
 ## Syncing into a repo
 

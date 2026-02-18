@@ -172,7 +172,13 @@ def _seed_review_pass(iteration_dir: Path) -> None:
     review = {
         "status": "pass",
         "blocking_findings": [],
-        "required_checks": ["tests"],
+        "required_checks": {
+            "tests": "pass",
+            "dry_run": "skip",
+            "schema": "pass",
+            "env_smoke": "skip",
+            "docs_target_update": "skip",
+        },
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
     (iteration_dir / "review_result.json").write_text(json.dumps(review, indent=2), encoding="utf-8")
@@ -183,13 +189,23 @@ def _seed_review_retry(iteration_dir: Path) -> None:
     review = {
         "status": "needs_retry",
         "blocking_findings": ["issue1"],
-        "required_checks": ["tests"],
+        "required_checks": {
+            "tests": "fail",
+            "dry_run": "skip",
+            "schema": "pass",
+            "env_smoke": "skip",
+            "docs_target_update": "skip",
+        },
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
     (iteration_dir / "review_result.json").write_text(json.dumps(review, indent=2), encoding="utf-8")
 
 
 def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
+    if not (iteration_dir / "design.yaml").exists():
+        _seed_design(iteration_dir, iteration_id=iteration_dir.name)
+    if not (iteration_dir / "review_result.json").exists():
+        _seed_review_pass(iteration_dir)
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
     (launch_dir / "run_local.sh").write_text("#!/bin/bash\necho run", encoding="utf-8")
@@ -197,8 +213,18 @@ def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "run_id": run_id,
+        "iteration_id": iteration_dir.name,
         "launch_mode": "local",
+        "host_mode": "local",
+        "command": "bash launch/run_local.sh",
+        "resource_request": {},
         "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:05:00Z",
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
     }
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -208,11 +234,33 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "run_id": run_id,
+        "iteration_id": iteration_dir.name,
         "launch_mode": "local",
+        "host_mode": "local",
+        "command": "bash launch/run_local.sh",
+        "resource_request": {},
         "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:05:00Z",
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
     }
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    (run_dir / "metrics.json").write_text(json.dumps({"loss": 0.5}), encoding="utf-8")
+    metrics = {
+        "iteration_id": iteration_dir.name,
+        "run_id": run_id,
+        "status": "completed",
+        "primary_metric": {
+            "name": "loss",
+            "value": 0.5,
+            "delta_vs_baseline": 0.0,
+        },
+        "baseline_results": [],
+        "variant_results": [],
+    }
+    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
@@ -882,6 +930,19 @@ def _seed_slurm_launch(
     sync_status: str = "completed",
 ) -> None:
     """Seed a SLURM launch with run_manifest, sbatch script, and sync status."""
+    if not (iteration_dir / "design.yaml").exists():
+        _seed_design(iteration_dir, iteration_id=iteration_dir.name)
+    design_path = iteration_dir / "design.yaml"
+    design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    if isinstance(design_payload, dict):
+        compute = design_payload.get("compute")
+        if not isinstance(compute, dict):
+            compute = {}
+        compute["location"] = "slurm"
+        design_payload["compute"] = compute
+        design_path.write_text(yaml.safe_dump(design_payload, sort_keys=False), encoding="utf-8")
+    if not (iteration_dir / "review_result.json").exists():
+        _seed_review_pass(iteration_dir)
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
     (launch_dir / "run_slurm.sbatch").write_text(
@@ -893,10 +954,18 @@ def _seed_slurm_launch(
         "run_id": run_id,
         "iteration_id": iteration_id,
         "launch_mode": "slurm",
+        "host_mode": "slurm",
+        "command": "sbatch launch/run_slurm.sbatch",
+        "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:05:00Z",
         "status": "completed",
         "slurm": {"job_id": job_id},
         "artifact_sync_to_local": {"status": sync_status},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
     }
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -915,13 +984,33 @@ def _seed_slurm_extract(
         "run_id": run_id,
         "iteration_id": iteration_id,
         "launch_mode": "slurm",
+        "host_mode": "slurm",
+        "command": "sbatch launch/run_slurm.sbatch",
+        "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:05:00Z",
         "status": "completed",
         "slurm": {"job_id": job_id},
         "artifact_sync_to_local": {"status": "completed"},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
     }
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    (run_dir / "metrics.json").write_text(json.dumps({"loss": 0.42}), encoding="utf-8")
+    metrics = {
+        "iteration_id": iteration_id,
+        "run_id": run_id,
+        "status": "completed",
+        "primary_metric": {
+            "name": "loss",
+            "value": 0.42,
+            "delta_vs_baseline": 0.0,
+        },
+        "baseline_results": [],
+        "variant_results": [],
+    }
+    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
 def _write_slurm_ledger(repo: Path, run_id: str, *, job_id: str = "12345", iteration_id: str = "iter_test_001") -> None:
@@ -1585,7 +1674,13 @@ class TestGapReviewFailed:
         review = {
             "status": "failed",
             "blocking_findings": ["critical_issue"],
-            "required_checks": ["tests"],
+            "required_checks": {
+                "tests": "fail",
+                "dry_run": "skip",
+                "schema": "pass",
+                "env_smoke": "skip",
+                "docs_target_update": "skip",
+            },
             "reviewed_at": "2026-01-01T00:00:00Z",
         }
         (iteration_dir / "review_result.json").write_text(

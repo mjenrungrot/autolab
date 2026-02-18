@@ -9,7 +9,10 @@ description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["autolab", "workflow", "experiment", "orchestration"]
-dependencies = ["PyYAML>=6"]
+dependencies = [
+  "PyYAML>=6",
+  "jsonschema>=4.18.0",
+]
 
 [project.scripts]
 autolab = "autolab.__main__:main"
