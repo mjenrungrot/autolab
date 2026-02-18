@@ -17,6 +17,9 @@ except Exception:
     yaml = None
 
 from autolab.constants import (
+    ACTIVE_STAGES,
+    PROMPT_SHARED_INCLUDE_PATTERN,
+    PROMPT_TOKEN_PATTERN,
     REVIEW_RESULT_CHECK_STATUSES,
     REVIEW_RESULT_REQUIRED_CHECKS,
     SLURM_JOB_LIST_PATH,
@@ -69,6 +72,133 @@ def _load_dict_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise StageCheckError(f"{label} must contain a JSON object at {path}")
     return payload
+
+
+def _collect_prompt_token_origins(
+    repo_root: Path,
+    *,
+    prompt_path: Path,
+    stage: str,
+    seen_paths: set[Path] | None = None,
+) -> dict[str, set[str]]:
+    """Collect template token origin files (including shared includes)."""
+    seen = seen_paths if seen_paths is not None else set()
+    if prompt_path in seen:
+        return {}
+    seen.add(prompt_path)
+
+    try:
+        text = prompt_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise StageCheckError(
+            f"stage readiness could not read prompt template '{prompt_path}': {exc}"
+        ) from exc
+
+    try:
+        prompt_label = prompt_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        prompt_label = str(prompt_path)
+
+    origins: dict[str, set[str]] = {}
+    for match in PROMPT_TOKEN_PATTERN.finditer(text):
+        token = match.group(1).strip()
+        if not token:
+            continue
+        origins.setdefault(token, set()).add(prompt_label)
+
+    for include in PROMPT_SHARED_INCLUDE_PATTERN.finditer(text):
+        shared_name = include.group(1).strip()
+        if not shared_name:
+            continue
+        shared_path = repo_root / ".autolab" / "prompts" / "shared" / shared_name
+        if not shared_path.exists():
+            raise StageCheckError(
+                f"stage readiness missing shared prompt include '{shared_name}' for stage '{stage}'"
+            )
+        nested = _collect_prompt_token_origins(
+            repo_root,
+            prompt_path=shared_path,
+            stage=stage,
+            seen_paths=seen,
+        )
+        for token, sources in nested.items():
+            if token not in origins:
+                origins[token] = set()
+            origins[token].update(sources)
+    return origins
+
+
+def _validate_stage_readiness(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    stage_override: str | None = None,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Validate prompt-token readiness before runner execution/evaluation."""
+    from autolab.prompts import _build_prompt_context, _resolve_stage_prompt_path
+    from autolab.registry import load_registry, registry_required_tokens
+
+    stage = _resolve_verification_stage(state, stage_override=stage_override)
+    if stage in {"decide_repeat", "human_review", "stop"}:
+        return (True, "readiness check skipped for non-active stage", {"stage": stage, "missing_tokens": []})
+    if stage not in ACTIVE_STAGES:
+        return (True, "readiness check skipped for unsupported stage", {"stage": stage, "missing_tokens": []})
+
+    registry = load_registry(repo_root)
+    if not registry:
+        return (
+            True,
+            "readiness check skipped: workflow registry not found",
+            {
+                "stage": stage,
+                "missing_tokens": [],
+                "reason": "workflow_registry_missing",
+            },
+        )
+
+    template_path = _resolve_stage_prompt_path(repo_root, stage)
+    origins = _collect_prompt_token_origins(
+        repo_root,
+        prompt_path=template_path,
+        stage=stage,
+    )
+
+    required_by_stage = registry_required_tokens(registry)
+    required_tokens = sorted(required_by_stage.get(stage, {"iteration_id"}))
+
+    context_payload = _build_prompt_context(
+        repo_root,
+        state=state,
+        stage=stage,
+        runner_scope=None,
+    )
+
+    missing: list[dict[str, Any]] = []
+    for token in required_tokens:
+        raw = context_payload.get(token)
+        value = str(raw if raw is not None else "").strip()
+        if not value or value.startswith("unavailable:"):
+            source_files = sorted(origins.get(token, {template_path.as_posix()}))
+            missing.append(
+                {
+                    "token": token,
+                    "source_files": source_files,
+                }
+            )
+
+    details: dict[str, Any] = {
+        "stage": stage,
+        "template_path": template_path.as_posix(),
+        "missing_tokens": missing,
+        "required_tokens": required_tokens,
+    }
+    if missing:
+        return (
+            False,
+            "stage readiness failed: required prompt token(s) unresolved",
+            details,
+        )
+    return (True, "stage readiness passed", details)
 
 
 _HYPOTHESIS_KEY_PATTERN = re.compile(r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+)$")
@@ -371,11 +501,16 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
     manifests: list[Path]
     if preferred:
         preferred_manifest = iteration_dir / "runs" / preferred / "run_manifest.json"
-        if not preferred_manifest.exists():
-            raise StageCheckError(
-                f"state.last_run_id='{preferred}' but run manifest is missing at {preferred_manifest}"
-            )
-        manifests = [preferred_manifest]
+        if preferred_manifest.exists():
+            manifests = [preferred_manifest]
+        else:
+            # Backward compatibility: older artifacts may not use orchestrator-owned
+            # run IDs yet. Fall back to latest available manifest when present.
+            manifests = sorted(iteration_dir.glob("runs/*/run_manifest.json"))
+            if not manifests:
+                raise StageCheckError(
+                    f"state.last_run_id='{preferred}' but run manifest is missing at {preferred_manifest}"
+                )
     else:
         manifests = sorted(iteration_dir.glob("runs/*/run_manifest.json"))
         if not manifests:
@@ -566,6 +701,16 @@ def _build_verification_command_specs(
         )
     if template_fill_enabled and template_fill_command:
         command_specs.append(("template_fill", f"{template_fill_command} --json"))
+
+    registry_consistency_path = repo_root / ".autolab" / "verifiers" / "registry_consistency.py"
+    if registry_consistency_path.exists():
+        command_specs.append(
+            (
+                "registry_consistency",
+                f"{python_bin} .autolab/verifiers/registry_consistency.py --stage {shlex.quote(stage)} --json",
+            )
+        )
+
     closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
     if closed_guard_path.exists():
         command_specs.append(
@@ -581,6 +726,15 @@ def _build_verification_command_specs(
         command_specs.append(
             ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py --json")
         )
+    if stage_requirements.get("consistency", False):
+        consistency_checks_path = repo_root / ".autolab" / "verifiers" / "consistency_checks.py"
+        if consistency_checks_path.exists():
+            command_specs.append(
+                (
+                    "consistency_checks",
+                    f"{python_bin} .autolab/verifiers/consistency_checks.py --stage {shlex.quote(stage)} --json",
+                )
+            )
     docs_drift_path = repo_root / ".autolab" / "verifiers" / "docs_drift.py"
     if docs_drift_path.exists() and stage == "update_docs":
         command_specs.append(
@@ -594,15 +748,28 @@ def _build_verification_command_specs(
                 f"{python_bin} .autolab/verifiers/implementation_plan_lint.py --stage {shlex.quote(stage)} --json",
             )
         )
-    if stage_requirements["schema"]:
+    prompt_lint_mode = "enforce"
+    prompt_lint_config = policy.get("prompt_lint", {})
+    prompt_lint_stage_enabled = True
+    if isinstance(prompt_lint_config, dict):
+        raw_mode = str(prompt_lint_config.get("mode", "enforce")).strip().lower()
+        if raw_mode in {"warn", "enforce"}:
+            prompt_lint_mode = raw_mode
+        enabled_by_stage = prompt_lint_config.get("enabled_by_stage", {})
+        if isinstance(enabled_by_stage, dict) and stage in enabled_by_stage:
+            prompt_lint_stage_enabled = _coerce_bool(enabled_by_stage.get(stage), default=True)
+
+    if stage_requirements.get("prompt_lint", False) and prompt_lint_stage_enabled:
         prompt_lint_path = repo_root / ".autolab" / "verifiers" / "prompt_lint.py"
         if prompt_lint_path.exists():
+            lint_name = "prompt_lint_warn" if prompt_lint_mode == "warn" else "prompt_lint"
             command_specs.append(
                 (
-                    "prompt_lint",
+                    lint_name,
                     f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {shlex.quote(stage)} --json",
                 )
             )
+    if stage_requirements["schema"]:
         command_specs.append(
             (
                 "schema_checks",
@@ -648,6 +815,7 @@ def _run_verification_step_detailed(
         return (False, message, details)
 
     results: list[dict[str, Any]] = []
+    warning_count = 0
     for command_name, command in command_specs:
         if not command.strip():
             continue
@@ -725,7 +893,8 @@ def _run_verification_step_detailed(
         stdout = (process.stdout or "").strip()
         stderr = (process.stderr or "").strip()
         detail = _compact_log_text((stderr or stdout or "").strip())
-        status = "pass" if process.returncode == 0 else "fail"
+        non_blocking_warning = command_name == "prompt_lint_warn"
+        status = "pass" if process.returncode == 0 else ("warn" if non_blocking_warning else "fail")
         result_payload = {
             "name": command_name,
             "command": command,
@@ -745,6 +914,14 @@ def _run_verification_step_detailed(
         except (json.JSONDecodeError, ValueError):
             pass
         results.append(result_payload)
+
+        if process.returncode != 0 and non_blocking_warning:
+            warning_count += 1
+            _append_log(
+                repo_root,
+                f"verification warning command={command_name} detail={detail or 'prompt lint warning mode'}",
+            )
+            continue
 
         if process.returncode != 0:
             _append_log(repo_root, f"verification failed command={command_name} detail={detail}")
@@ -772,6 +949,8 @@ def _run_verification_step_detailed(
         "commands": results,
     }
     message = f"verification passed ({len(results)} command(s))"
+    if warning_count > 0:
+        message = f"{message}; warnings={warning_count}"
     _persist_verification_result(
         repo_root,
         state=state,

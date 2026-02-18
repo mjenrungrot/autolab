@@ -23,6 +23,8 @@ stages:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: false
       env_smoke: false
       docs_target_update: false
     classifications:
@@ -40,6 +42,8 @@ stages:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: false
       env_smoke: false
       docs_target_update: false
     classifications:
@@ -57,6 +61,8 @@ stages:
       tests: false
       dry_run: true
       schema: true
+      prompt_lint: true
+      consistency: false
       env_smoke: false
       docs_target_update: false
     classifications:
@@ -74,6 +80,8 @@ stages:
       tests: false
       dry_run: true
       schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: true
       docs_target_update: true
     classifications:
@@ -84,13 +92,15 @@ stages:
 
   launch:
     prompt_file: stage_launch.md
-    required_tokens: [iteration_id, iteration_path]
+    required_tokens: [iteration_id, iteration_path, run_id]
     required_outputs: [run_manifest.json]
     next_stage: extract_results
     verifier_categories:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: true
       docs_target_update: false
     classifications:
@@ -108,6 +118,8 @@ stages:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: true
       docs_target_update: false
     classifications:
@@ -125,6 +137,8 @@ stages:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: false
       docs_target_update: true
     classifications:
@@ -142,6 +156,8 @@ stages:
       tests: false
       dry_run: false
       schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: false
       docs_target_update: false
     classifications:
@@ -159,6 +175,8 @@ stages:
       tests: false
       dry_run: false
       schema: false
+      prompt_lint: false
+      consistency: false
       env_smoke: false
       docs_target_update: false
     classifications:
@@ -176,6 +194,8 @@ stages:
       tests: false
       dry_run: false
       schema: false
+      prompt_lint: false
+      consistency: false
       env_smoke: false
       docs_target_update: false
     classifications:

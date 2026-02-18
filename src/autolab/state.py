@@ -91,6 +91,7 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         raise StateError("state.max_total_iterations must be > 0")
 
     normalized["last_run_id"] = str(normalized.get("last_run_id", "")).strip()
+    normalized["pending_run_id"] = str(normalized.get("pending_run_id", "")).strip()
     normalized["sync_status"] = str(normalized.get("sync_status", "")).strip()
     normalized["experiment_id"] = str(normalized.get("experiment_id", "")).strip()
     assistant_mode = str(normalized.get("assistant_mode", "off")).strip().lower()
@@ -514,6 +515,7 @@ def _default_state(iteration_id: str) -> dict[str, Any]:
         "stage": "hypothesis",
         "stage_attempt": 0,
         "last_run_id": "",
+        "pending_run_id": "",
         "sync_status": "na",
         "max_stage_attempts": 5,
         "max_total_iterations": 50,

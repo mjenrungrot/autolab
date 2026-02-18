@@ -137,3 +137,15 @@ def test_registry_verifier_categories(tmp_path: Path) -> None:
     assert impl_review.verifier_categories["dry_run"] is True
     assert impl_review.verifier_categories["env_smoke"] is True
     assert impl_review.verifier_categories["tests"] is False
+    assert impl_review.verifier_categories["prompt_lint"] is True
+    assert impl_review.verifier_categories["consistency"] is True
+
+
+def test_launch_requires_run_id_token(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    registry = load_registry(repo)
+    launch = registry.get("launch")
+    assert launch is not None
+    assert "run_id" in launch.required_tokens

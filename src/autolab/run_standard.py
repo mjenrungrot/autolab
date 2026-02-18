@@ -39,6 +39,7 @@ from autolab.utils import (
     _safe_todo_pre_sync,
     _todo_open_count,
     _utc_now,
+    _generate_run_id,
     _write_block_reason,
     _write_guardrail_breach,
     _write_json,
@@ -47,7 +48,7 @@ from autolab.models import StateError
 from autolab.state import _resolve_repo_root
 from autolab.prompts import _suggest_decision_from_metrics
 from autolab.todo_sync import select_decision_from_todo
-from autolab.validators import _run_verification_step
+from autolab.validators import _run_verification_step, _validate_stage_readiness
 
 
 def _decision_from_artifact(
@@ -234,6 +235,65 @@ def _handle_stage_failure(
     )
 
 
+def _write_auto_decision_artifact(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    selected_decision: str,
+    decision_source: str,
+    auto_selected: bool,
+    requested_decision: str | None,
+    artifact_error: str,
+    repeat_guard: dict[str, Any],
+    metrics_evidence: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": _utc_now(),
+        "iteration_id": str(state.get("iteration_id", "")).strip(),
+        "experiment_id": str(state.get("experiment_id", "")).strip(),
+        "stage": "decide_repeat",
+        "inputs": {
+            "requested_decision": requested_decision,
+            "artifact_error": artifact_error,
+            "metrics_evidence": metrics_evidence or {},
+        },
+        "outputs": {
+            "selected_decision": selected_decision,
+            "decision_source": decision_source,
+            "auto_selected": auto_selected,
+            "guardrails": repeat_guard,
+        },
+    }
+    _write_json(repo_root / ".autolab" / "auto_decision.json", payload)
+
+
+def _prepare_launch_run_context(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    state_path: Path,
+) -> Path:
+    run_id = _generate_run_id()
+    state["pending_run_id"] = run_id
+    _write_json(state_path, state)
+
+    context_path = repo_root / ".autolab" / "run_context.json"
+    _write_json(
+        context_path,
+        {
+            "schema_version": "1.0",
+            "generated_at": _utc_now(),
+            "iteration_id": str(state.get("iteration_id", "")).strip(),
+            "experiment_id": str(state.get("experiment_id", "")).strip(),
+            "stage": "launch",
+            "run_id": run_id,
+        },
+    )
+    _append_log(repo_root, f"launch run_id prepared by orchestrator: {run_id}")
+    return context_path
+
+
 def _run_once_standard(
     state_path: Path,
     decision: str | None,
@@ -398,6 +458,7 @@ def _run_once_standard(
         selected_decision = decision
         decision_source = "cli"
         artifact_decision_error = ""
+        metrics_evidence: dict[str, Any] = {}
         if selected_decision is None:
             artifact_decision, artifact_decision_error = _decision_from_artifact(repo_root, state)
             if artifact_decision is not None:
@@ -412,6 +473,8 @@ def _run_once_standard(
                 decision_source = "auto_todo"
         if selected_decision is None and auto_decision:
             metrics_suggestion, _metrics_evidence = _suggest_decision_from_metrics(repo_root, state)
+            if isinstance(_metrics_evidence, dict):
+                metrics_evidence = _metrics_evidence
             if metrics_suggestion is not None:
                 selected_decision = metrics_suggestion
                 decision_source = "auto_metrics"
@@ -575,6 +638,20 @@ def _run_once_standard(
             )
         except Exception:
             pass
+        try:
+            _write_auto_decision_artifact(
+                repo_root,
+                state=state,
+                selected_decision=selected_decision,
+                decision_source=decision_source,
+                auto_selected=auto_selected,
+                requested_decision=decision,
+                artifact_error=artifact_decision_error,
+                repeat_guard=repeat_guard,
+                metrics_evidence=metrics_evidence,
+            )
+        except Exception:
+            pass
         if auto_selected:
             try:
                 _iter_dir, _iter_type = _resolve_iteration_directory(
@@ -664,6 +741,52 @@ def _run_once_standard(
             commit_task_id=commit_task_id,
             commit_cycle_stage=commit_cycle_stage,
         )
+
+    if stage_before == "launch":
+        try:
+            run_context_path = _prepare_launch_run_context(
+                repo_root,
+                state=state,
+                state_path=state_path,
+            )
+            pre_sync_changed.append(run_context_path)
+            pre_sync_changed.append(state_path)
+        except StageCheckError as exc:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=f"launch run_id preparation failed: {exc}",
+                verification=verification_summary,
+            )
+
+    try:
+        ready, readiness_message, readiness_details = _validate_stage_readiness(repo_root, state)
+    except StageCheckError as exc:
+        return _handle_stage_failure(
+            repo_root,
+            state_path=state_path,
+            state=state,
+            stage_before=stage_before,
+            pre_sync_changed=pre_sync_changed,
+            detail=f"stage readiness failed: {exc}",
+            verification=verification_summary,
+        )
+
+    if not ready:
+        details_json = json.dumps(readiness_details, sort_keys=True)
+        return _handle_stage_failure(
+            repo_root,
+            state_path=state_path,
+            state=state,
+            stage_before=stage_before,
+            pre_sync_changed=pre_sync_changed,
+            detail=f"{readiness_message}; details={details_json}",
+            verification=verification_summary,
+        )
+    _append_log(repo_root, f"stage readiness passed stage={stage_before}")
 
     if _resolve_run_agent_mode(run_agent_mode) != "force_off":
         open_todo_count = _todo_open_count(repo_root)
@@ -840,6 +963,9 @@ def _run_once_standard(
             state["stage"] = override_stage
             agent_status = "failed"
             summary = override_summary or summary
+
+    if stage_before == "launch" and str(state.get("stage", "")) != "launch":
+        state["pending_run_id"] = ""
 
     _append_state_history(
         state,
