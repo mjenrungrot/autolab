@@ -23,6 +23,18 @@ try:
 except Exception:  # pragma: no cover
     _shared_resolve_stage_requirements = None  # type: ignore[assignment]
 
+try:
+    from autolab.constants import REVIEW_RESULT_REQUIRED_CHECKS, REVIEW_RESULT_CHECK_STATUSES
+except Exception:  # pragma: no cover
+    REVIEW_RESULT_REQUIRED_CHECKS = (  # type: ignore[misc]
+        "tests",
+        "dry_run",
+        "schema",
+        "env_smoke",
+        "docs_target_update",
+    )
+    REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}  # type: ignore[misc]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
@@ -43,14 +55,6 @@ SCHEMAS: dict[str, str] = {
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
 }
-REVIEW_RESULT_REQUIRED_CHECKS = (
-    "tests",
-    "dry_run",
-    "schema",
-    "env_smoke",
-    "docs_target_update",
-)
-REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
 SYNC_SUCCESS_STATUSES = {"ok", "completed", "success", "passed"}
 
 
@@ -523,6 +527,26 @@ def main() -> int:
         print("schema_checks: FAIL")
         for reason in failures:
             print(reason)
+        top_n = failures[:3]
+        if top_n:
+            print("\n--- Top failures summary ---")
+            schema_hints: dict[str, str] = {
+                "state": "Check .autolab/state.json keys match state.schema.json",
+                "backlog": "Verify .autolab/backlog.yaml experiments list structure",
+                "design": "Ensure design.yaml has schema_version, id, iteration_id, metrics, baselines",
+                "review_result": "Confirm review_result.json has all required_checks keys with valid statuses",
+                "agent_result": "Check .autolab/agent_result.json status is complete|needs_retry|failed",
+                "todo_state": "Validate .autolab/todo_state.json version field is an integer",
+                "metrics": "Ensure metrics.json has schema_version and primary_metric",
+            }
+            for i, failure_text in enumerate(top_n, 1):
+                hint = ""
+                for schema_key, schema_hint in schema_hints.items():
+                    if schema_key in failure_text.lower():
+                        hint = f" Hint: {schema_hint}"
+                        break
+                print(f"  {i}. {failure_text}{hint}")
+            print("\nNext steps: fix the above issues and rerun `autolab verify --stage <stage>`")
         return 1
 
     print("schema_checks: PASS")

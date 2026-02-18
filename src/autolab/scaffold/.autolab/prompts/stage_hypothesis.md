@@ -58,6 +58,11 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 
 ## Primary Metric
 PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%
+
+## Structured Metadata (machine-parsed)
+- target_delta: <signed numeric value>
+- metric_name: <metric name>
+- metric_mode: <maximize or minimize>
 ```
 
 ## FILE LENGTH BUDGET
@@ -66,6 +71,7 @@ PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +re
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}
 - [ ] Exactly one `PrimaryMetric:` line is present and matches the required format.
+- [ ] Structured metadata block has target_delta, metric_name, metric_mode as key-value lines.
 - [ ] `hypothesis.md` is non-empty and contains explicit scope-in and scope-out boundaries.
 
 ## FAILURE / RETRY BEHAVIOR

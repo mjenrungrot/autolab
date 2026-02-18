@@ -199,6 +199,14 @@ def _parse_numeric_delta(value: str) -> float | None:
     return _coerce_float(match.group(0))
 
 
+def _parse_signed_delta(text: str) -> float | None:
+    """Extract explicitly signed delta (e.g., +5.0 or -2.3%) from Success field."""
+    match = re.search(r"[+-]\s*\d+(?:\.\d+)?", text)
+    if match:
+        return _coerce_float(match.group(0).replace(" ", ""))
+    return _parse_numeric_delta(text)
+
+
 def _load_metrics_payload(iteration_dir: Path, run_id: str) -> dict[str, Any] | None:
     metrics_path = iteration_dir / "runs" / run_id / "metrics.json"
     payload = _load_json_if_exists(metrics_path)
@@ -239,8 +247,33 @@ def _extract_hypothesis_target_delta(hypothesis_text: str) -> float | None:
         flags=re.IGNORECASE,
     )
     if primary_metric_match:
-        return _parse_numeric_delta(primary_metric_match.group(1))
+        return _parse_signed_delta(primary_metric_match.group(1))
     return None
+
+
+def _extract_design_metric_mode(iteration_dir: Path) -> str:
+    """Read metrics.primary.mode from design.yaml (default 'maximize')."""
+    if yaml is None:
+        return "maximize"
+    design_path = iteration_dir / "design.yaml"
+    if not design_path.exists():
+        return "maximize"
+    try:
+        loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "maximize"
+    if not isinstance(loaded, dict):
+        return "maximize"
+    metrics = loaded.get("metrics")
+    if not isinstance(metrics, dict):
+        return "maximize"
+    primary = metrics.get("primary")
+    if not isinstance(primary, dict):
+        return "maximize"
+    mode = str(primary.get("mode", "maximize")).strip().lower()
+    if mode in ("maximize", "minimize"):
+        return mode
+    return "maximize"
 
 
 def _extract_design_target_delta(iteration_dir: Path) -> str:
@@ -268,6 +301,7 @@ def _target_comparison_text(
     hypothesis_target_delta: float | None,
     design_target_delta: str,
     run_id: str,
+    metric_mode: str = "maximize",
 ) -> tuple[str, str]:
     if not isinstance(metrics_payload, dict):
         return (
@@ -295,10 +329,14 @@ def _target_comparison_text(
             "target comparison unavailable: no numeric target_delta found in hypothesis/design",
             "targets are unspecified; avoid stop decisions without explicit human confirmation",
         )
-    met_target = metric_delta >= target_delta
+    if metric_mode == "minimize":
+        met_target = metric_delta <= target_delta
+    else:
+        met_target = metric_delta >= target_delta
     comparison = (
         f"run_id={run_id}; measured_delta={metric_delta:.4f}; "
-        f"target_delta={target_delta:.4f} ({target_source}); met_target={str(met_target).lower()}"
+        f"target_delta={target_delta:.4f} ({target_source}); "
+        f"metric_mode={metric_mode}; met_target={str(met_target).lower()}"
     )
     suggestion = (
         "suggested decision: stop (target met)"
@@ -331,13 +369,16 @@ def _suggest_decision_from_metrics(
     metrics_payload = _load_metrics_payload(iteration_dir, run_id)
     if not isinstance(metrics_payload, dict):
         return None
-    hypothesis_target_delta = _extract_hypothesis_target_delta(iteration_dir)
+    hypothesis_text = _safe_read_text(iteration_dir / "hypothesis.md", max_chars=12000)
+    hypothesis_target_delta = _extract_hypothesis_target_delta(hypothesis_text)
     design_target_delta = _extract_design_target_delta(iteration_dir)
+    metric_mode = _extract_design_metric_mode(iteration_dir)
     _comparison, suggestion = _target_comparison_text(
         metrics_payload=metrics_payload,
         hypothesis_target_delta=hypothesis_target_delta,
         design_target_delta=design_target_delta,
         run_id=run_id,
+        metric_mode=metric_mode,
     )
     if "stop" in suggestion:
         return "stop"
@@ -400,11 +441,13 @@ def _build_prompt_context(
         hypothesis_text = _safe_read_text(iteration_dir / "hypothesis.md", max_chars=12000)
         hypothesis_target_delta = _extract_hypothesis_target_delta(hypothesis_text)
         design_target_delta = _extract_design_target_delta(iteration_dir)
+        metric_mode = _extract_design_metric_mode(iteration_dir)
         target_comparison, decision_suggestion = _target_comparison_text(
             metrics_payload=metrics_payload,
             hypothesis_target_delta=hypothesis_target_delta,
             design_target_delta=design_target_delta,
             run_id=run_id,
+            metric_mode=metric_mode,
         )
 
     todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")

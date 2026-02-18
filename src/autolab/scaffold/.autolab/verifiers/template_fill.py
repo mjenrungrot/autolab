@@ -15,6 +15,18 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
+try:
+    from autolab.constants import REVIEW_RESULT_REQUIRED_CHECKS, REVIEW_RESULT_CHECK_STATUSES
+except Exception:  # pragma: no cover
+    REVIEW_RESULT_REQUIRED_CHECKS = (  # type: ignore[misc]
+        "tests",
+        "dry_run",
+        "schema",
+        "env_smoke",
+        "docs_target_update",
+    )
+    REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}  # type: ignore[misc]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
@@ -24,14 +36,6 @@ TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
 RUN_MANIFEST_POLICY_KEY = "runs/<RUN_ID>/run_manifest.json"
-REVIEW_RESULT_REQUIRED_CHECKS = (
-    "tests",
-    "dry_run",
-    "schema",
-    "env_smoke",
-    "docs_target_update",
-)
-REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
 DECISION_RESULT_ALLOWED = {"hypothesis", "design", "stop", "human_review"}
 PRIMARY_METRIC_LINE_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$"
