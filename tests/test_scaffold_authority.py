@@ -20,6 +20,7 @@ def test_sync_scaffold_copies_from_canonical_scaffold(tmp_path: Path) -> None:
         "prompts/stage_hypothesis.md",
         "schemas/state.schema.json",
         "verifiers/template_fill.py",
+        "policy/local_dev.yaml",
     ):
         source = source_root / relative
         target = destination / relative
@@ -40,6 +41,8 @@ def test_init_bootstraps_from_canonical_scaffold(tmp_path: Path) -> None:
         "prompts/stage_implementation.md",
         "schemas/backlog.schema.json",
         "verifiers/schema_checks.py",
+        "verifiers/registry_consistency.py",
+        "verifiers/consistency_checks.py",
     ):
         source = source_root / relative
         target = repo / ".autolab" / relative

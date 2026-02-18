@@ -1,0 +1,53 @@
+requirements_by_stage:
+  implementation:
+    tests: true
+    dry_run: true
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  implementation_review:
+    tests: true
+    dry_run: true
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: true
+  launch:
+    tests: true
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  extract_results:
+    tests: true
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  update_docs:
+    tests: true
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: false
+    docs_target_update: true
+
+prompt_lint:
+  mode: enforce
+
+safe_automation_protected_files: true
+
+autorun:
+  todo_fallback:
+    slurm:
+      stage: "hypothesis"
+      scope: "policy:no_task_fallback:slurm"
+      text: "No remaining actionable tasks were detected on remote SLURM execution context. Define a new experiment or analysis direction first, then plan implementation improvements only after that experiment/analysis path is explicit."

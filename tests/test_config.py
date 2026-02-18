@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from autolab.config import _load_guardrail_config
+from autolab.config import _load_guardrail_config, _load_protected_files
 
 
 def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) -> None:
@@ -28,3 +28,20 @@ def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) ->
     guardrails = _load_guardrail_config(repo)
 
     assert guardrails.max_generated_todo_tasks == 11
+
+
+def test_load_protected_files_applies_safe_profile() -> None:
+    policy = {
+        "protected_files": [".autolab/state.json"],
+        "safe_automation_protected_files": True,
+        "protected_file_profiles": {
+            "safe_automation": [
+                ".autolab/prompts/**",
+                ".autolab/schemas/**",
+            ]
+        },
+    }
+    protected = _load_protected_files(policy)
+    assert ".autolab/state.json" in protected
+    assert ".autolab/prompts/**" in protected
+    assert ".autolab/schemas/**" in protected
