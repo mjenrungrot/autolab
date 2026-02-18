@@ -50,10 +50,9 @@ Update iteration documentation and configured paper targets after result extract
 - Ensure all template tokens are replaced with real values before finalizing outputs.
 
 ## VERIFIER MAPPING
-- `verifier`: schema_checks; `checks`: JSON schema validation of artifacts; `common_failure_fix`: Ensure all required artifacts match their schemas.
 - `verifier`: docs_target_update; `checks`: `docs_targets.py` paper target checks; `common_failure_fix`: Update configured paper targets or provide explicit no-change rationale.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+- `verifier`: consistency_checks; `checks`: Cross-artifact checks on design/run_manifest/metrics/docs consistency; `common_failure_fix`: Ensure run-scoped references and metric names match upstream artifacts.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.
@@ -98,11 +97,16 @@ Update iteration documentation and configured paper targets after result extract
 - [ ] SLURM ledger verification is executed for SLURM manifests.
 
 ## EVIDENCE POINTERS
-When updating docs, reference specific artifacts with `{path, what_it_proves}`:
-- `{{iteration_path}}/runs/{{run_id}}/metrics.json` -- proves measured metric values
-- `{{iteration_path}}/analysis/summary.md` -- proves interpretation and context
-- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json` -- proves run configuration and sync
-- configured paper target files -- proves current state of documentation
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+  what_it_proves: measured metrics and deltas referenced in docs updates
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/analysis/summary.md`
+  what_it_proves: interpretation context and caveats for doc edits
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
+  what_it_proves: run metadata and sync status for traceability
+  verifier_output_pointer: `.autolab/verification_result.json`
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, correct docs artifacts and rerun from the verification ritual.

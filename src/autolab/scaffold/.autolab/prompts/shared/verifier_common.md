@@ -1,0 +1,3 @@
+- `verifier`: schema_checks; `checks`: JSON schema validation of stage artifacts; `common_failure_fix`: Ensure required fields and value types match `.autolab/schemas/*.schema.json`.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence, basic budget/triviality checks; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD`, `FIXME`, and placeholder literals.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution and section contract checks; `common_failure_fix`: Ensure referenced prompt tokens resolve and required sections/includes remain present.

@@ -55,7 +55,6 @@ When task blocks (`### T1: ...`) are present, the linter **requires** these fiel
 - `status`: one of `Not Completed`, `Completed`, `In Progress`, `Blocked` -- **required**
 
 Optional fields (not checked by linter but useful):
-- `touches`: `[file paths/globs]` -- used for wave overlap detection
 - `conflict_group`: group name -- prevents same-wave co-scheduling
 - `log`: execution notes
 - `files edited/created`: changed file list
@@ -66,16 +65,16 @@ Canonical minimal task block:
 - **depends_on**: []
 - **location**: src/model/loss.py
 - **description**: Implement focal loss per design spec
+- **touches**: [src/model/loss.py]
+- **scope_ok**: true
 - **validation**: `pytest tests/test_loss.py` passes
 - **status**: Not Completed
 ```
 
 ## VERIFIER MAPPING
 - `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Configure `dry_run_command` in `verifier_policy.yaml` or fix runtime errors.
-- `verifier`: schema_checks; `checks`: JSON schema validation; `common_failure_fix`: Ensure all required artifacts match their schemas.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
-- `verifier`: implementation_plan_lint; `checks`: Task block structure in `implementation_plan.md`; `common_failure_fix`: Ensure each task has `depends_on`, `location`, `description`, `validation`, `status`.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+- `verifier`: implementation_plan_lint; `checks`: Task block structure in `implementation_plan.md`; `common_failure_fix`: Ensure each task has `depends_on`, `location`, `description`, `touches`, `scope_ok`, `validation`, `status`.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Implement only design-relevant changes; avoid unrelated edits.
@@ -120,6 +119,7 @@ Canonical minimal task block:
 - **location**: src/model/loss.py
 - **description**: Implement focal loss per design spec
 - **touches**: [src/model/loss.py]
+- **scope_ok**: true
 - **conflict_group**: model_changes
 - **validation**: `pytest tests/test_loss.py` passes
 - **status**: Not Completed
@@ -131,6 +131,7 @@ Canonical minimal task block:
 - **location**: src/training/trainer.py
 - **description**: Wire focal loss into the training step
 - **touches**: [src/training/trainer.py]
+- **scope_ok**: true
 - **conflict_group**: model_changes
 - **validation**: `pytest tests/test_trainer.py` passes
 - **status**: Not Completed
@@ -156,7 +157,7 @@ Canonical minimal task block:
 - [ ] `implementation_plan.md` records exact commands and evidence locations.
 - [ ] `implementation_plan.md` includes `## Dry Run` when policy requires `dry_run` for implementation.
 - [ ] Output paths avoid unresolved placeholders and literal `runs//...` style paths.
-- [ ] If task blocks exist, each has depends_on, location, description, validation, status fields.
+- [ ] If task blocks exist, each has depends_on, location, description, touches, scope_ok, validation, status fields.
 - [ ] Parallel execution groups are consistent with task dependencies.
 - [ ] Run `{{python_bin}} .autolab/verifiers/implementation_plan_lint.py --stage implementation` passes when task blocks are present.
 

@@ -62,11 +62,10 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 
 ## VERIFIER MAPPING
 - `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Fix dry-run failures before marking review as pass.
-- `verifier`: schema_checks; `checks`: `review_result.json` schema validation; `common_failure_fix`: Ensure all 5 required_checks keys present with valid status values.
 - `verifier`: env_smoke; `checks`: `run_health.py` + `result_sanity.py` checks; `common_failure_fix`: Fix environment or result consistency issues.
 - `verifier`: docs_target_update; `checks`: `docs_targets.py` paper target checks; `common_failure_fix`: Update configured paper targets or provide no-change rationale.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+- `verifier`: consistency_checks; `checks`: Cross-artifact consistency on design/review/run references; `common_failure_fix`: Ensure review gate and artifact IDs align with iteration state.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Validate implementation against design and launch constraints.
@@ -104,11 +103,16 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 - [ ] `status=pass` is only used when policy-required checks are `pass`.
 
 ## EVIDENCE POINTERS
-When writing findings, reference specific artifacts with `{path, what_it_proves}`:
-- `{{iteration_path}}/design.yaml` -- proves implementation aligns with design spec
-- `{{iteration_path}}/implementation_plan.md` -- proves files changed and verifier outcomes
-- `{{iteration_path}}/runs/*/` -- proves dry-run or test execution evidence
-- `.autolab/verifier_policy.yaml` -- proves which checks are policy-required
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/design.yaml`
+  what_it_proves: design requirements being reviewed
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/implementation_plan.md`
+  what_it_proves: implementation changes and verifier evidence pointers
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `.autolab/verifier_policy.yaml`
+  what_it_proves: required checks policy for pass/needs_retry gating
+  verifier_output_pointer: `.autolab/verification_result.json`
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, set `status: needs_retry` with actionable findings and rerun from the verification ritual.
