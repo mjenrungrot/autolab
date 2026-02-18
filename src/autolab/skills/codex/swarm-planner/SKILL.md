@@ -54,7 +54,7 @@ Every task must include:
 - `files edited/created` (empty placeholder)
 
 Optional per task:
-- `conflict_group` — tasks sharing a group must not run in the same wave
+- `conflict_group` -- tasks sharing a group must not run in the same wave
 
 Include:
 - overview

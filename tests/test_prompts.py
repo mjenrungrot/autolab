@@ -4,12 +4,26 @@ import json
 import shutil
 from pathlib import Path
 
+import re
+
 import pytest
 import yaml
 
 from autolab.constants import PROMPT_TOKEN_PATTERN
 from autolab.models import StageCheckError
 from autolab.prompts import _render_stage_prompt
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SCAFFOLD_PROMPTS_DIR = _REPO_ROOT / "src" / "autolab" / "scaffold" / ".autolab" / "prompts"
+_SKILLS_DIR = _REPO_ROOT / "src" / "autolab" / "skills"
+_ALL_PROMPT_MDS = sorted(_SCAFFOLD_PROMPTS_DIR.rglob("*.md"))
+
+_ASCII_ENFORCED_MDS: list[Path] = []
+_ASCII_ENFORCED_MDS.extend(_ALL_PROMPT_MDS)
+_ASCII_ENFORCED_MDS.extend(sorted(_SKILLS_DIR.rglob("*.md")))
+_readme = _REPO_ROOT / "README.md"
+if _readme.exists():
+    _ASCII_ENFORCED_MDS.append(_readme)
 
 
 def _copy_scaffold(repo: Path) -> None:
@@ -117,3 +131,27 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage
     assert not unresolved_tokens
     assert "<ITERATION_ID>" not in bundle.prompt_text
     assert "## Runtime Stage Context" in bundle.prompt_text
+
+
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
+
+
+@pytest.mark.parametrize(
+    "md_path",
+    _ASCII_ENFORCED_MDS,
+    ids=[str(p.relative_to(_REPO_ROOT)) for p in _ASCII_ENFORCED_MDS],
+)
+def test_prompt_markdown_contains_only_ascii(md_path: Path) -> None:
+    """All prompt, skill, and README markdown files must use standard ASCII only (no Unicode)."""
+    content = md_path.read_text(encoding="utf-8")
+    violations: list[str] = []
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        for match in _NON_ASCII_RE.finditer(line):
+            char = match.group()
+            violations.append(
+                f"  {md_path.name}:{lineno} col {match.start() + 1}: "
+                f"U+{ord(char):04X} {repr(char)}"
+            )
+    assert not violations, (
+        f"Non-ASCII characters found in {md_path.name}:\n" + "\n".join(violations)
+    )
