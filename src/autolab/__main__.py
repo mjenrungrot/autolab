@@ -198,6 +198,7 @@ from autolab.run_assistant import (  # noqa: F401
 from autolab.commands import (  # noqa: F401
     _build_parser,
     _cmd_init,
+    _cmd_install_skill,
     _cmd_loop,
     _cmd_reset,
     _cmd_run,

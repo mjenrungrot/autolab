@@ -33,4 +33,5 @@ autolab = [
   "scaffold/.autolab/prompts/shared/.gitkeep",
   "scaffold/.autolab/schemas/*.json",
   "scaffold/.autolab/verifiers/*.py",
+  "skills/*/*/*.md",
 ]

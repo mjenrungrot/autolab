@@ -218,7 +218,22 @@ See `docs/prompt_authoring_guide.md` for scaffold prompt conventions, shared inc
 
 This repo includes a reusable skill file at `docs/skills/autolab/SKILL.md`.
 
-To install it locally for Codex-style skill loading:
+Preferred project-local install:
+
+```bash
+autolab install-skill codex
+```
+
+This installs to:
+`<project-root>/.codex/skills/autolab/SKILL.md`
+
+You can target a different project directory with:
+
+```bash
+autolab install-skill codex --project-root /path/to/project
+```
+
+Manual global install fallback:
 
 ```bash
 mkdir -p ~/.codex/skills/autolab
