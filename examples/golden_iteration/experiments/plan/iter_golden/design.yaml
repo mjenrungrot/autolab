@@ -1,3 +1,4 @@
+schema_version: "1.0"
 id: "e_golden"
 iteration_id: "iter_golden"
 hypothesis_id: "h_golden"

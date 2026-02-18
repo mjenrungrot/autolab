@@ -2,6 +2,8 @@
 
 This document clarifies who is responsible for artifact edits, verifier execution, and stage progression in each operating mode.
 
+Operator playbooks live in `docs/skills/autolab/SKILL.md`.
+
 ## Mode Summary
 
 | Mode | Who edits artifacts | Who runs verifiers | Who advances stage |
@@ -36,3 +38,8 @@ This document clarifies who is responsible for artifact edits, verifier executio
 1. Verifier failure: stage retries until attempt budget is exhausted.
 2. Attempt budget exhausted: escalates to `human_review`.
 3. Guardrail breach (`max_same_decision_streak`, `max_no_progress_decisions`, etc.): escalates per policy (`human_review` by default).
+
+## See Also
+
+- `docs/skills/autolab/SKILL.md` for copy/paste operating commands by mode.
+- `examples/golden_iteration/README.md` for canonical stage artifacts and expected layout.

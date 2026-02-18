@@ -1,4 +1,5 @@
 {
+  "schema_version": "1.0",
   "run_id": "20260201T120000Z_demo",
   "iteration_id": "iter_golden",
   "launch_mode": "local",

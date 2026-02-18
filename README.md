@@ -26,6 +26,7 @@ After upgrading the package from GitHub, refresh local workflow defaults:
 
 ```bash
 autolab sync-scaffold --force
+autolab lint-scaffold-sync
 ```
 
 After install, invoke with:
@@ -133,7 +134,7 @@ Autolab uses this stage graph for each iteration:
 | `launch` | `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json` | advances to `extract_results` |
 | `extract_results` | `runs/<run_id>/metrics.json`, `analysis/summary.md` | advances to `update_docs` |
 | `update_docs` | `docs_update.md` | advances to `decide_repeat` when run evidence references are present |
-| `decide_repeat` | no artifacts | decides next iteration / next state action |
+| `decide_repeat` | `decision_result.json` | decides next iteration / next state action |
 | `human_review` | none (manual intervention) | terminal |
 | `stop` | none (complete) | terminal |
 
@@ -205,13 +206,16 @@ experiments:
 - `launch`: `launch/run_local.sh` or `launch/run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`
 - `extract_results`: `runs/<run_id>/metrics.json`, `analysis/summary.md`
 - `update_docs`: `docs_update.md`, plus configured paper target files from `.autolab/state.json`
+- `decide_repeat`: `decision_result.json`
 
 ## Verifiers and schema checks
 
 - `template_fill.py` enforces placeholder cleanup and artifact budget checks per stage.
 - `prompt_lint.py` enforces stage prompt structure/token contracts.
 - `schema_checks.py` validates stage artifacts against JSON Schemas (including `.autolab/state.json` and `.autolab/backlog.yaml`).
-- Stage prompts should run: `{{python_bin}} .autolab/verifiers/template_fill.py --stage <stage>`.
+- Canonical stage command: `autolab verify --stage <stage>`.
+- Low-level fallback: `{{python_bin}} .autolab/verifiers/template_fill.py --stage <stage>`.
+- Latest verification summary is always persisted to `.autolab/verification_result.json`.
 - Verifier commands are policy-driven and can use `python_bin` (default `python3`) for interpreter portability.
 - `dry_run_command` should be non-empty whenever any stage sets `dry_run: true` in `requirements_by_stage` (scaffold provides a replace-me stub).
 - Dynamic run-manifest caps use `line_limits.run_manifest_dynamic` with `min_cap_lines`/`max_cap_lines` (cap bounds, not required minimum output length).
