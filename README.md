@@ -4,16 +4,22 @@ This repository provides the shared `autolab` workflow package used across proje
 
 ## Install
 
-From this directory (`~/Workspaces/autolab`):
+From this directory (`~/Workspaces/autolab`), editable install:
 
 ```bash
 python -m pip install -e .
 ```
 
-From a different location:
+From a different location / shared usage:
 
 ```bash
-python -m pip install /Users/tjenrung/Workspaces/autolab
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
+```
+
+For stable CI or release installs, pin to a tag:
+
+```bash
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.0.0
 ```
 
 After install, invoke with:
