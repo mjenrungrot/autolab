@@ -160,7 +160,7 @@ def _write_todo_md(repo: Path, content: str = "") -> None:
 
 
 def _seed_iteration(repo: Path, iteration_id: str = "iter_test_001") -> Path:
-    iteration_dir = repo / "experiments" / iteration_id
+    iteration_dir = repo / "experiments" / "plan" / iteration_id
     iteration_dir.mkdir(parents=True, exist_ok=True)
     return iteration_dir
 
