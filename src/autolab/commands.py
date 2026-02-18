@@ -89,6 +89,8 @@ from autolab.slurm_job_list import (
     required_slurm_job_id,
 )
 
+POLICY_PRESET_NAMES = ("local_dev", "ci_strict", "slurm")
+
 
 # ---------------------------------------------------------------------------
 # Skill installer helpers
@@ -122,6 +124,29 @@ def _load_packaged_skill_template_text(provider: str, skill_name: str) -> str:
             f"bundled skill template is unavailable at package://autolab/skills/{normalized_provider}/{skill_name}/SKILL.md"
         )
     return resource.read_text(encoding="utf-8")
+
+
+def _deep_merge_dict(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(dict(merged[key]), value)  # type: ignore[arg-type]
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    if _yaml_mod is None:
+        raise RuntimeError("PyYAML is required for policy preset operations")
+    if not path.exists():
+        return {}
+    payload = _yaml_mod.safe_load(path.read_text(encoding="utf-8"))
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{path} must contain a YAML mapping")
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +671,127 @@ def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
         return 1
 
 
+def _apply_init_policy_defaults(
+    policy_path: Path,
+    *,
+    interactive: bool,
+) -> tuple[bool, str]:
+    if _yaml_mod is None or not policy_path.exists():
+        return (False, "")
+    try:
+        policy = _load_yaml_mapping(policy_path)
+    except Exception as exc:
+        return (False, f"autolab init: WARN could not parse policy for defaults: {exc}")
+
+    original = _yaml_mod.safe_dump(policy, sort_keys=False)
+    selected_command = ""
+    if interactive:
+        print("")
+        print("autolab init policy setup")
+        print("Configure a dry-run command now (leave empty to skip dry-run for implementation stages).")
+        try:
+            selected_command = input("dry_run_command> ").strip()
+        except EOFError:
+            selected_command = ""
+
+    requirements_by_stage = policy.get("requirements_by_stage", {})
+    if not isinstance(requirements_by_stage, dict):
+        requirements_by_stage = {}
+        policy["requirements_by_stage"] = requirements_by_stage
+
+    implementation_cfg = requirements_by_stage.get("implementation", {})
+    if not isinstance(implementation_cfg, dict):
+        implementation_cfg = {}
+    implementation_review_cfg = requirements_by_stage.get("implementation_review", {})
+    if not isinstance(implementation_review_cfg, dict):
+        implementation_review_cfg = {}
+
+    warning = ""
+    if selected_command:
+        policy["dry_run_command"] = selected_command
+        implementation_cfg["dry_run"] = True
+        implementation_review_cfg["dry_run"] = True
+    else:
+        implementation_cfg["dry_run"] = False
+        implementation_review_cfg["dry_run"] = False
+        warning = (
+            "autolab init: WARN dry_run_command is not configured. "
+            "Set verifier_policy.yaml dry_run_command before enabling dry_run requirements."
+        )
+
+    requirements_by_stage["implementation"] = implementation_cfg
+    requirements_by_stage["implementation_review"] = implementation_review_cfg
+    policy["requirements_by_stage"] = requirements_by_stage
+
+    rendered = _yaml_mod.safe_dump(policy, sort_keys=False)
+    changed = rendered != original
+    if changed:
+        policy_path.write_text(rendered, encoding="utf-8")
+    return (changed, warning)
+
+
+def _cmd_policy_apply_preset(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    preset_name = str(args.preset).strip()
+
+    if preset_name not in POLICY_PRESET_NAMES:
+        print(
+            f"autolab policy apply preset: ERROR unsupported preset '{preset_name}'",
+            file=sys.stderr,
+        )
+        return 1
+
+    if _yaml_mod is None:
+        print("autolab policy apply preset: ERROR PyYAML is required", file=sys.stderr)
+        return 1
+
+    try:
+        scaffold_source = _resolve_scaffold_source()
+    except RuntimeError as exc:
+        print(f"autolab policy apply preset: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    preset_path = scaffold_source / "policy" / f"{preset_name}.yaml"
+    if not preset_path.exists():
+        print(
+            f"autolab policy apply preset: ERROR preset file missing at {preset_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    policy_path = autolab_dir / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    current_policy: dict[str, Any] = {}
+    if policy_path.exists():
+        try:
+            current_policy = _load_yaml_mapping(policy_path)
+        except Exception as exc:
+            print(
+                f"autolab policy apply preset: ERROR could not parse current policy: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+    try:
+        preset_policy = _load_yaml_mapping(preset_path)
+    except Exception as exc:
+        print(
+            f"autolab policy apply preset: ERROR could not parse preset: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    merged = _deep_merge_dict(current_policy, preset_policy)
+    policy_path.write_text(_yaml_mod.safe_dump(merged, sort_keys=False), encoding="utf-8")
+
+    print("autolab policy apply preset")
+    print(f"preset: {preset_name}")
+    print(f"policy_file: {policy_path}")
+    print("status: applied")
+    return 0
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -696,6 +842,16 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     _ensure_text_file(backlog_path, DEFAULT_BACKLOG_TEMPLATE.format(iteration_id=iteration_id), created)
     _ensure_text_file(verifier_policy_path, DEFAULT_VERIFIER_POLICY, created)
+    interactive = bool(getattr(args, "interactive", False))
+    no_interactive = bool(getattr(args, "no_interactive", False))
+    if not interactive and not no_interactive:
+        interactive = sys.stdin.isatty()
+    policy_updated, policy_warning = _apply_init_policy_defaults(
+        verifier_policy_path,
+        interactive=interactive and not no_interactive,
+    )
+    if policy_updated and verifier_policy_path not in created:
+        created.append(verifier_policy_path)
     _ensure_json_file(agent_result_path, _default_agent_result(), created)
     if scaffold_source is None:
         for stage, prompt_file in STAGE_PROMPT_FILES.items():
@@ -739,6 +895,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print("\nReminder: Review and customize the following before your first run:")
     print("  - .autolab/backlog.yaml (update hypothesis titles and metrics)")
     print("  - .autolab/prompts/stage_*.md (add project-specific instructions)")
+    if policy_warning:
+        print(f"\n{policy_warning}")
 
     return 0
 
@@ -1370,6 +1528,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
+    init_interactive = init.add_mutually_exclusive_group()
+    init_interactive.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Prompt for policy bootstrap values during init.",
+    )
+    init_interactive.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Disable interactive prompts during init.",
+    )
     init.set_defaults(handler=_cmd_init)
 
     configure_parser = subparsers.add_parser("configure", help="Validate and configure autolab settings")
@@ -1669,6 +1838,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override stage for linting (default: state.stage)",
     )
     lint.set_defaults(handler=_cmd_lint)
+
+    policy = subparsers.add_parser(
+        "policy",
+        help="Manage verifier policy profiles",
+    )
+    policy_subparsers = policy.add_subparsers(dest="policy_command")
+
+    policy_apply = policy_subparsers.add_parser("apply", help="Apply policy changes")
+    policy_apply_subparsers = policy_apply.add_subparsers(dest="policy_apply_command")
+    policy_preset = policy_apply_subparsers.add_parser(
+        "preset",
+        help="Apply a bundled policy preset",
+    )
+    policy_preset.add_argument(
+        "preset",
+        choices=POLICY_PRESET_NAMES,
+        help="Preset name to apply.",
+    )
+    policy_preset.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    policy_preset.set_defaults(handler=_cmd_policy_apply_preset)
 
     return parser
 

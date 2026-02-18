@@ -309,18 +309,41 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
 def _load_protected_files(policy: dict[str, Any]) -> list[str]:
     """Return normalized protected file paths from verifier policy.
 
-    Reads ``policy["protected_files"]`` and returns a list of forward-slash
-    normalized, stripped path strings.  Returns an empty list when the key is
-    absent or not a list.
+    Supports:
+    - ``protected_files`` legacy list
+    - ``protected_file_profiles`` with optional ``protected_profile`` selector
+    - ``safe_automation_protected_files`` toggle (profile: ``safe_automation``)
     """
-    raw = policy.get("protected_files", [])
-    if not isinstance(raw, list):
-        return []
-    result: list[str] = []
-    for entry in raw:
-        normalized = str(entry).strip().replace("\\", "/")
-        if normalized and normalized not in result:
-            result.append(normalized)
+    def _normalize_list(raw_values: Any) -> list[str]:
+        if not isinstance(raw_values, list):
+            return []
+        normalized_paths: list[str] = []
+        for raw_entry in raw_values:
+            normalized = str(raw_entry).strip().replace("\\", "/")
+            if normalized and normalized not in normalized_paths:
+                normalized_paths.append(normalized)
+        return normalized_paths
+
+    result = _normalize_list(policy.get("protected_files", []))
+
+    profile_name = str(policy.get("protected_profile", "default")).strip() or "default"
+    if _coerce_bool(policy.get("safe_automation_protected_files"), default=False):
+        profile_name = "safe_automation"
+
+    profile_map = policy.get("protected_file_profiles", {})
+    if isinstance(profile_map, dict):
+        profile_values = profile_map.get(profile_name)
+        if isinstance(profile_values, list):
+            for path in _normalize_list(profile_values):
+                if path not in result:
+                    result.append(path)
+
+    safe_profile = policy.get("safe_automation_protected_files_list")
+    if _coerce_bool(policy.get("safe_automation_protected_files"), default=False):
+        for path in _normalize_list(safe_profile):
+            if path not in result:
+                result.append(path)
+
     return result
 
 
@@ -346,6 +369,8 @@ def _resolve_stage_requirements(
         "tests": False,
         "dry_run": False,
         "schema": False,
+        "prompt_lint": False,
+        "consistency": False,
         "env_smoke": False,
         "docs_target_update": False,
     }
@@ -361,6 +386,8 @@ def _resolve_stage_requirements(
         "tests": "require_tests",
         "dry_run": "require_dry_run",
         "schema": "require_schema",
+        "prompt_lint": "require_prompt_lint",
+        "consistency": "require_consistency",
         "env_smoke": "require_env_smoke",
         "docs_target_update": "require_docs_target_update",
     }

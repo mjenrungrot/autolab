@@ -28,6 +28,7 @@ from autolab.utils import (
     _append_log,
     _collect_change_snapshot,
     _is_git_worktree,
+    _path_matches_any,
     _snapshot_delta_paths,
 )
 from autolab.config import _load_meaningful_change_config
@@ -575,10 +576,10 @@ def _invoke_agent_runner(
         policy = _load_verifier_policy(repo_root)
         protected_files = _load_protected_files(policy)
         if protected_files:
-            protected_set = set(protected_files)
+            protected_patterns = tuple(protected_files)
             violated = sorted(
                 path for path in effective_delta_paths
-                if path.replace("\\", "/") in protected_set
+                if _path_matches_any(path.replace("\\", "/"), protected_patterns)
             )
             if violated:
                 sample = ", ".join(violated[:8])
