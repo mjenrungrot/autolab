@@ -65,9 +65,8 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - `risks` is a required array of non-empty strings (can be empty array `[]`).
 
 ## VERIFIER MAPPING
-- `verifier`: schema_checks; `checks`: `decision_result.json` schema validation; `common_failure_fix`: Ensure `evidence` is non-empty array with `source`, `pointer`, `summary` fields.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+- `verifier`: consistency_checks; `checks`: Cross-artifact consistency on run IDs, metric names, and review gate assumptions; `common_failure_fix`: Align decision evidence pointers with current run artifacts.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Summarize latest run/review/doc evidence in 3-6 bullets.
@@ -113,11 +112,16 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - [ ] `decision_result.json` exists and matches `.autolab/schemas/decision_result.schema.json`.
 
 ## EVIDENCE POINTERS
-When making the decision, reference specific artifacts with `{path, what_it_proves}`:
-- `{{iteration_path}}/runs/{{run_id}}/metrics.json` -- proves measured vs target delta
-- `{{iteration_path}}/review_result.json` -- proves review gate status
-- `{{iteration_path}}/docs_update.md` -- proves docs were updated with results
-- `.autolab/backlog.yaml` -- proves experiment status and completion criteria
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+  what_it_proves: measured metric deltas vs target
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/review_result.json`
+  what_it_proves: review gate status before decision
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/docs_update.md`
+  what_it_proves: documentation update context for iteration outcomes
+  verifier_output_pointer: `.autolab/verification_result.json`
 
 ## FAILURE / RETRY BEHAVIOR
 - If required decision evidence is missing or contradictory, escalate with `human_review` instead of guessing.

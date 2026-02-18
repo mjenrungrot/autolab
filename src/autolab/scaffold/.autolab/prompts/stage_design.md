@@ -56,9 +56,7 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 - `memory_estimate` should include units (e.g. `"64GB"`).
 
 ## VERIFIER MAPPING
-- `verifier`: schema_checks; `checks`: `design.yaml` schema validation; `common_failure_fix`: Ensure `schema_version: "1.0"`, valid `compute.location`, non-empty `baselines`.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with concrete values.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Translate hypothesis intent into reproducible fields with concrete values.

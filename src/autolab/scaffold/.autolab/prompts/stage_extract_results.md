@@ -59,10 +59,9 @@ Convert run artifacts into structured outputs:
 - For failed runs where metrics are unavailable, use `status: "failed"` and set `value`/`delta_vs_baseline` to `0` (or `null` if nullable metrics policy is enabled).
 
 ## VERIFIER MAPPING
-- `verifier`: schema_checks; `checks`: `metrics.json` schema validation; `common_failure_fix`: Ensure `primary_metric.value` is a number, `status` is valid enum.
 - `verifier`: env_smoke; `checks`: `run_health.py` + `result_sanity.py` checks; `common_failure_fix`: Fix environment or metric consistency issues.
-- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
-- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
+- `verifier`: consistency_checks; `checks`: Cross-artifact checks on design/run_manifest/metrics alignment; `common_failure_fix`: Align metric names, run IDs, and iteration IDs across artifacts.
+{{shared:verifier_common.md}}
 
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
@@ -102,11 +101,16 @@ Convert run artifacts into structured outputs:
 - [ ] Missing tables/figures are explicitly marked `not available` with rationale.
 
 ## EVIDENCE POINTERS
-When extracting metrics, reference specific artifacts with `{path, what_it_proves}`:
-- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json` -- proves run executed and sync status
-- `{{iteration_path}}/runs/{{run_id}}/` -- contains raw run outputs, logs, and checkpoints
-- `{{iteration_path}}/design.yaml` -- proves expected metrics and success criteria
-- `{{iteration_path}}/hypothesis.md` -- proves target delta and metric definition
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
+  what_it_proves: run execution metadata and sync status used for extraction
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+  what_it_proves: extracted primary metric values and deltas
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/analysis/summary.md`
+  what_it_proves: interpretation context and missing-evidence accounting
+  verifier_output_pointer: `.autolab/verification_result.json`
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, fix extraction outputs and rerun from the verification ritual.
