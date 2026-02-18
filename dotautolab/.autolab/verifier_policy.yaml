@@ -1,9 +1,9 @@
 test_command: "./venv/bin/python -m pytest"
-dry_run_command: "./venv/bin/python -m tinydesk_v4.train --config experiments/<ITERATION_ID>/design.yaml --dry-run"
+dry_run_command: ""
 require_tests: false
-require_dry_run: true
-require_env_smoke: true
-require_docs_target_update: true
+require_dry_run: false
+require_env_smoke: false
+require_docs_target_update: false
 template_fill:
   enabled: true
   command: "./venv/bin/python .autolab/verifiers/template_fill.py"
@@ -23,9 +23,53 @@ template_fill_by_stage:
   launch: "./venv/bin/python .autolab/verifiers/template_fill.py --stage launch"
   extract_results: "./venv/bin/python .autolab/verifiers/template_fill.py --stage extract_results"
   update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
+requirements_by_stage:
+  hypothesis:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: false
+    docs_target_update: false
+  design:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: false
+    docs_target_update: false
+  implementation:
+    tests: false
+    dry_run: true
+    schema: true
+    env_smoke: false
+    docs_target_update: false
+  implementation_review:
+    tests: false
+    dry_run: true
+    schema: true
+    env_smoke: true
+    docs_target_update: true
+  launch:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: true
+    docs_target_update: false
+  extract_results:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: true
+    docs_target_update: false
+  update_docs:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: false
+    docs_target_update: true
 agent_runner:
   enabled: false
-  command: "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -"
+  runner: codex  # Options: codex, claude, custom
+  # command is auto-set from runner preset; override with a custom command to use a specific tool
   stages:
     - hypothesis
     - design
@@ -45,3 +89,22 @@ agent_runner:
       - "tests"
     ensure_iteration_dir: true
   timeout_seconds: 0
+autorun:
+  guardrails:
+    max_same_decision_streak: 3
+    max_no_progress_decisions: 2
+    max_update_docs_cycles: 3
+    max_generated_todo_tasks: 5
+    on_breach: "human_review"
+  auto_commit:
+    mode: "meaningful_only"
+  meaningful_change:
+    require_implementation_progress: true
+    require_git_for_progress: true
+    on_non_git_behavior: "warn_and_continue"
+    require_verification: true
+    exclude_paths:
+      - ".autolab/**"
+      - "docs/todo.md"
+      - "docs/wiki/**"
+      - "experiments/*/docs_update.md"

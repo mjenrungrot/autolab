@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunManifest",
+  "type": "object",
+  "required": ["run_id", "iteration_id", "host_mode", "command", "resource_request", "timestamps", "artifact_sync_to_local"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "iteration_id": {"type": "string"},
+    "launch_mode": {"type": "string"},
+    "host_mode": {"type": "string", "enum": ["local", "slurm"]},
+    "command": {"type": "string", "minLength": 1},
+    "resource_request": {"type": "object"},
+    "artifact_sync_to_local": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "timestamps": {
+      "type": "object",
+      "properties": {
+        "started_at": {"type": "string"},
+        "completed_at": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

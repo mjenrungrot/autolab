@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewResult",
+  "type": "object",
+  "required": ["status", "blocking_findings", "required_checks", "reviewed_at"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "needs_retry", "failed"]
+    },
+    "blocking_findings": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "required_checks": {
+      "type": "object",
+      "required": ["tests", "dry_run", "schema", "env_smoke", "docs_target_update"],
+      "properties": {
+        "tests": {"type": "string"},
+        "dry_run": {"type": "string"},
+        "schema": {"type": "string"},
+        "env_smoke": {"type": "string"},
+        "docs_target_update": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "reviewed_at": {"type": "string"}
+  },
+  "additionalProperties": true
+}

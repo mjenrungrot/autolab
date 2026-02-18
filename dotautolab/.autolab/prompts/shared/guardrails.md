@@ -1,0 +1,16 @@
+## HARD GUARDRAILS (READ FIRST)
+- Do not modify experiments already marked completed in `.autolab/backlog.yaml` (including `done`, `completed`, `closed`, `resolved`) unless a human explicitly re-opens them.
+- If the mapped experiment is already `done`, `completed`, `closed`, or `resolved`, stop and do not edit that experiment until explicitly re-opened.
+- Never create literal placeholder paths, including unresolved paths with missing IDs:
+  - `experiments//design.yaml`
+  - `runs//metrics.json`
+  - `experiments/{{iteration_id}}/runs/{{run_id}}/`
+  - `experiments/{{iteration_id}}/...` (unresolved braces)
+- Never leave explicit unresolved template markers such as:
+  - `{{iteration_id}}`
+  - `{{run_id}}`
+  - `<TODO>`
+  - `TODO:`
+  - `TBD`
+  - `FIXME`
+- Never leave unresolved placeholders such as `{{...}}`, `<TODO>`, `TBD`, or `FIXME` in required outputs.

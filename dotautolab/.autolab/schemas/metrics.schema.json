@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Metrics",
+  "type": "object",
+  "required": ["iteration_id", "run_id", "status", "primary_metric"],
+  "properties": {
+    "iteration_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"]
+    },
+    "primary_metric": {
+      "type": "object",
+      "required": ["name", "value", "delta_vs_baseline"],
+      "properties": {
+        "name": {"type": "string"},
+        "value": {"type": "number"},
+        "delta_vs_baseline": {"type": "number"}
+      },
+      "additionalProperties": true
+    },
+    "baseline_results": {"type": "array", "items": {"type": "object"}},
+    "variant_results": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}

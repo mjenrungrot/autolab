@@ -39,13 +39,42 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     if run_id_in_manifest and run_id_in_manifest != run_id:
         failures.append(f"{manifest_path} run_id mismatch: expected {run_id}, found {run_id_in_manifest}")
 
-    location = str(manifest.get("location", "local")).strip().lower() or "local"
-    sync = manifest.get("sync", {})
-    if location == "slurm":
-        sync_status = sync.get("artifact_sync_to_local", {}).get("status", "").lower()
-        if sync_status not in {"ok", "completed", "success", "passed"}:
-            failures.append(f"{manifest_path} requires slurm artifact sync status 'ok', got '{sync_status or '<missing>'}'")
+    host_mode = str(
+        manifest.get("host_mode", manifest.get("launch_mode", manifest.get("location", "local"))
+    ).strip().lower() or "local"
+    if host_mode not in {"local", "slurm"}:
+        failures.append(f"{manifest_path} host_mode must be local or slurm")
 
+    sync = manifest.get("sync", {})
+    sync_to_local = manifest.get("artifact_sync_to_local", sync)
+    if host_mode == "slurm":
+        if not isinstance(sync_to_local, dict):
+            failures.append(f"{manifest_path} artifact_sync_to_local must be a mapping")
+        else:
+            sync_status = str(sync_to_local.get("status", "")).lower()
+            if sync_status not in {"ok", "completed", "success", "passed"}:
+                failures.append(
+                    f"{manifest_path} requires slurm artifact sync status 'ok'/'completed'/'success', "
+                    f"found '{sync_status or '<missing>'}'"
+                )
+    else:
+        command = manifest.get("command", "")
+        if not command:
+            failures.append(f"{manifest_path} command is required")
+
+    resource_request = manifest.get("resource_request")
+    if not isinstance(resource_request, dict):
+        failures.append(f"{manifest_path} resource_request must be a mapping")
+    if host_mode == "slurm" and not resource_request:
+        failures.append(f"{manifest_path} slurm run must include resource_request")
+
+    timestamps = manifest.get("timestamps", {})
+    if not isinstance(timestamps, dict):
+        failures.append(f"{manifest_path} timestamps must be a mapping")
+
+    sync_status = str(manifest.get("status", "")).strip().lower()
+    if sync_status == "failed":
+        failures.append(f"{manifest_path} has failed status")
     # Run-level required outputs for launch health.
     if not (run_dir / "metrics.json").exists():
         failures.append(f"{run_dir / 'metrics.json'} is missing")

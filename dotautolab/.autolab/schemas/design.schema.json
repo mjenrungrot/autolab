@@ -12,7 +12,7 @@
     "baselines"
   ],
   "properties": {
-    "id": {"type": "string"},
+    "id": {"type": "string", "minLength": 1},
     "iteration_id": {"type": "string"},
     "hypothesis_id": {"type": "string"},
     "description": {"type": "string"},
@@ -21,7 +21,8 @@
       "required": ["module"],
       "properties": {
         "module": {"type": "string"},
-        "args": {"type": "object"}
+        "args": {"type": "object"},
+        "cli": {"type": "string"}
       },
       "additionalProperties": true
     },
@@ -29,14 +30,65 @@
       "type": "object",
       "required": ["location"],
       "properties": {
-        "location": {"type": "string", "enum": ["local", "slurm"]}
+        "location": {"type": "string", "enum": ["local", "slurm"]},
+        "walltime_estimate": {"type": "string"},
+        "memory_estimate": {"type": "string"},
+        "gpu_count": {"type": ["integer", "null"], "minimum": 0},
+        "gpu_type": {"type": "string"},
+        "partition": {"type": "string"},
+        "qos": {"type": ["string", "null"]},
+        "num_nodes": {"type": "integer", "minimum": 1},
+        "notes": {"type": "string"},
+        "seed": {"type": ["integer", "null"]}
       },
       "additionalProperties": true
     },
-    "metrics": {"type": "object"},
+    "metrics": {
+      "type": "object",
+      "required": ["primary", "success_delta", "aggregation", "baseline_comparison"],
+      "properties": {
+        "primary": {
+          "type": "object",
+          "required": ["name", "unit", "mode"],
+          "properties": {
+            "name": {"type": "string"},
+            "unit": {"type": "string"},
+            "mode": {"type": "string", "enum": ["maximize", "minimize"]}
+          },
+          "additionalProperties": true
+        },
+        "secondary": {"type": "array", "items": {"type": "string"}},
+        "success_delta": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "baseline_comparison": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
     "baselines": {
       "type": "array",
-      "minItems": 1
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "variants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "changes"],
+        "properties": {
+          "name": {"type": "string"},
+          "changes": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
     }
   },
   "additionalProperties": true
