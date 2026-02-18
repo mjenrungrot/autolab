@@ -54,6 +54,63 @@ Agent runner execution is disabled by default (`enabled: false`).
 When `runner` is set, the `command` field is auto-populated from the preset. You can still override `command` explicitly for any runner.
 `claude_dangerously_skip_permissions` is an explicit opt-in for `--dangerously-skip-permissions` and should only be enabled in trusted automation contexts.
 
+## Configuration use cases
+
+Use these configurations based on how much control vs automation you want:
+
+### Runtime mode (`run` / `loop`)
+
+| Configuration | Use case |
+| --- | --- |
+| Standard mode (default; no `--assistant`) | Deterministic stage-by-stage orchestration (`hypothesis` → `design` → ...). Best for debugging stage verifiers and manual checkpoints. |
+| Assistant mode (`--assistant`) | Task-driven delivery from `docs/todo.md` / backlog (`select` → `implement` → `verify` → `review`). Best for autonomous feature completion. |
+
+### Run cadence and decision handling
+
+| Configuration | Use case |
+| --- | --- |
+| `autolab run` | Single controlled transition while iterating locally. |
+| `autolab loop --max-iterations N` | Bounded multi-step execution without unattended auto-decisions. |
+| `autolab loop --auto --max-hours H` | Unattended operation with lock management, guardrails, and automatic decision handling. |
+| `--decision <stage>` (at `decide_repeat`) | Force explicit human choice for the next stage. |
+| `--auto-decision` | Let Autolab choose from todo/backlog at `decide_repeat` (useful for semi-automated runs). |
+
+### Agent runner controls
+
+| Configuration | Use case |
+| --- | --- |
+| `agent_runner.enabled: false` (default) | Keep runs verifier-driven and manual by default. |
+| `agent_runner.enabled: true` + default `run_agent_mode=policy` | Enable stage prompt execution by policy for normal automation. |
+| `--run-agent` | Force runner invocation for a run/loop even when policy has runner disabled (one-off override). |
+| `--no-run-agent` | Temporarily disable runner invocation even if policy enables it. |
+| `agent_runner.runner: codex` | Default sandboxed runner preset for Codex CLI workflows. |
+| `agent_runner.runner: claude` | Claude Code CLI workflows in non-interactive mode. |
+| `agent_runner.runner: custom` | Bring your own command template/integration. |
+| `agent_runner.edit_scope.mode: iteration_plus_core` (default) | Allow changes in iteration workspace plus shared code/docs directories; good for real implementation work. |
+| `agent_runner.edit_scope.mode: iteration_only` | Restrict edits to iteration workspace; good for strict isolation and lower risk. |
+
+### Commit and quality gates (`.autolab/verifier_policy.yaml`)
+
+| Configuration | Use case |
+| --- | --- |
+| `autorun.auto_commit.mode: meaningful_only` (default) | Commit only when meaningful files changed; recommended default for most repos. |
+| `autorun.auto_commit.mode: always` | Always commit run outputs; useful for fully automated pipelines with external filtering. |
+| `autorun.auto_commit.mode: disabled` | Never auto-commit; use when humans curate every commit. |
+| `autorun.meaningful_change.require_implementation_progress: true` (default) | Block implementation transitions/commits that do not produce meaningful code/config/docs changes. |
+| `autorun.meaningful_change.require_implementation_progress: false` | Useful for early scaffolding/prototyping where strict change gating is too restrictive. |
+| `autorun.meaningful_change.require_verification: true` (default) | In assistant review cycle, require verification success before task completion. |
+| `autorun.meaningful_change.require_git_for_progress: true` (default) | Enforce git-based progress checks in normal repositories; relax only in non-git/sandbox contexts. |
+| `--no-strict-implementation-progress` | CLI override for experiments where strict implementation progress checks should be temporarily bypassed. |
+
+### Guardrails for unattended automation
+
+| Configuration | Use case |
+| --- | --- |
+| `autorun.guardrails.max_same_decision_streak` | Prevent loops that keep choosing the same next-stage decision. |
+| `autorun.guardrails.max_no_progress_decisions` | Escalate when repeated cycles show no open-task reduction or meaningful progress. |
+| `autorun.guardrails.max_update_docs_cycles` | Prevent repeated `extract_results`/`update_docs` churn without forward progress. |
+| `autorun.guardrails.on_breach: human_review` (default) | Safe escalation target when automation is stuck or quality gates cannot be satisfied. |
+
 ## Source layout
 
 - `src/autolab/`: Python package modules (`__main__`, `todo_sync`, `slurm_job_list`)
@@ -156,6 +213,17 @@ experiments:
 ## Prompt authoring
 
 See `docs/prompt_authoring_guide.md` for scaffold prompt conventions, shared includes, and stage-prompt wiring.
+
+## Install the Autolab skill template
+
+This repo includes a reusable skill file at `docs/skills/autolab/SKILL.md`.
+
+To install it locally for Codex-style skill loading:
+
+```bash
+mkdir -p ~/.codex/skills/autolab
+cp docs/skills/autolab/SKILL.md ~/.codex/skills/autolab/SKILL.md
+```
 
 ## Syncing into a repo
 
