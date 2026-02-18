@@ -5,6 +5,7 @@ This guide describes how to author scaffold stage prompts under `src/autolab/sca
 ## Core conventions
 
 - Stage files use `stage_<name>.md` (for example `stage_design.md`).
+- Stage metadata is canonical in `.autolab/workflow.yaml` (prompt file mapping, required tokens, verifier capabilities).
 - Shared includes live under `prompts/shared/` and are referenced with:
   - `{{shared:guardrails.md}}`
   - `{{shared:repo_scope.md}}`
@@ -60,10 +61,9 @@ Then include:
 ## Adding a new stage prompt
 
 1. Add `src/autolab/scaffold/.autolab/prompts/stage_<name>.md`.
-2. Add the file to canonical `STAGE_PROMPT_FILES` in `src/autolab/constants.py`.
-3. Ensure required prompt tokens for the stage are covered in `PROMPT_REQUIRED_TOKENS_BY_STAGE`.
-4. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
-5. Run tests and `autolab sync-scaffold --force` in downstream repos.
+2. Register the stage in `.autolab/workflow.yaml` (`prompt_file`, `required_tokens`, `required_outputs`, `verifier_categories`, `classifications`).
+3. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
+4. Run tests and `autolab sync-scaffold --force` in downstream repos.
 
 ## Verifier alignment
 
@@ -76,5 +76,5 @@ When adding a new prompt token:
 
 1. Add token resolution logic in `src/autolab/prompts.py`.
 2. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
-3. Add/adjust stage requirements in `PROMPT_REQUIRED_TOKENS_BY_STAGE` in `src/autolab/constants.py` when the token is mandatory for a stage.
+3. Add/adjust stage required tokens in `.autolab/workflow.yaml` when the token is mandatory for a stage.
 4. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).

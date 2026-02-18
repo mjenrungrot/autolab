@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "verifier": "registry_consistency",
+  "stage": "implementation_review",
+  "checks": [
+    {
+      "name": "registry_consistency",
+      "status": "pass",
+      "detail": "policy requirements are a subset of registry capabilities"
+    }
+  ],
+  "errors": []
+}
