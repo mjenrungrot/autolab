@@ -61,7 +61,10 @@ Update iteration-level and mapped paper-level documentation:
 2. Do not claim results that are not present in artifacts.
 3. Include explicit run references for reproducibility.
 4. If no paper change is needed, write a clear \"no changes needed\" note in `docs_update.md`.
-5. Prioritize TODO tasks mapped to `update_docs` before opportunistic documentation edits.
+5. For SLURM runs, document runtime metadata: job ID, walltime used vs. requested, peak memory from `sacct`.
+6. Note any job failures or retries that occurred before a successful run completion.
+7. Record artifact sync status and any sync-related issues from `run_manifest.json`.
+8. Prioritize TODO tasks mapped to `update_docs` before opportunistic documentation edits.
 
 ## FILE LENGTH BUDGET (HARD LIMIT)
 - Apply line limits from `.autolab/experiment_file_line_limits.yaml`.

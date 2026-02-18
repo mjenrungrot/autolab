@@ -45,7 +45,7 @@ Produce a runnable design spec:
 Generate `experiments/{{iteration_id}}/design.yaml` that includes:
 - `id`, `iteration_id`, `hypothesis_id`
 - `entrypoint` (module and args)
-- `compute` (`local` or `slurm`) and optional host routing notes
+- `compute` (`location`: `local` or `slurm`, plus resource estimates for SLURM: walltime, memory, GPU, partition)
 - reproducibility controls (`seeds`, determinism flags)
 - metrics (`primary`, optional secondary, success delta)
 - at least one baseline
@@ -59,6 +59,14 @@ Generate `experiments/{{iteration_id}}/design.yaml` that includes:
 5. If an entrypoint does not exist yet, mark it clearly as implementation-required.
 6. Include launch mode notes describing whether the design assumes local macOS execution or remote SLURM execution.
 7. Prioritize TODO tasks mapped to `design` before opportunistic work.
+8. When `compute.location` is `slurm`, include resource estimates in `compute`:
+   - `walltime_estimate`: expected runtime padded 1.5x for `--time`.
+   - `memory_estimate`: peak memory expected.
+   - `gpu_count` and `gpu_type`: GPU requirements.
+   - `partition` and `qos`: leave empty if unknown; do not guess cluster-specific values.
+   - `num_nodes`: default 1 unless multi-node is justified.
+9. Scope each run to complete within a single SLURM job submission.
+10. If resource requirements are uncertain, document estimates in `compute.notes` and flag for post-run adjustment.
 
 ## FILE LENGTH BUDGET (HARD LIMIT)
 - Apply line limits from `.autolab/experiment_file_line_limits.yaml`.

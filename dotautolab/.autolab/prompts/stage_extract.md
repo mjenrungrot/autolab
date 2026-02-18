@@ -53,6 +53,10 @@ Generate/update:
 4. Report baseline and variant outcomes separately.
 5. Include run id references for traceability.
 6. Prioritize TODO tasks mapped to `extract_results` before opportunistic analysis.
+7. Check `run_manifest.json` field `artifact_sync_to_local.status` is in {`ok`, `completed`, `success`}.
+   - If sync is incomplete or failed, flag affected metrics as `sync_incomplete` in summary.
+   - Verify expected output files exist under `runs/{{run_id}}/`.
+   - Note missing artifacts and whether results are partial.
 
 ## FILE LENGTH BUDGET (HARD LIMIT)
 - Apply line limits from `.autolab/experiment_file_line_limits.yaml`.
@@ -68,6 +72,7 @@ Generate/update:
 - primary metric outcome,
 - baseline vs variant comparison,
 - anomalies/failures,
+- for SLURM runs: job ID, walltime used vs. requested, and sync status from manifest,
 - recommendation for next stage (`update_docs` or retry loop).
 
 ## DONE WHEN

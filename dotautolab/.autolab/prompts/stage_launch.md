@@ -70,13 +70,40 @@ If gate fails, return `needs_retry` to implementation/review loop.
    - `slurm`: `sync_to_remote` (code sync via git), `submit`, `wait`, `collect_to_remote`, `sync_artifacts_to_local`.
 2. Execute selected path:
    - local: run `run_local.sh`.
-   - slurm: monitor `sbatch` job completion (`squeue/sacct`).
+   - slurm: submit via `sbatch run_slurm.sbatch`, capture job ID from stdout.
+   - Poll `squeue -j <job_id>` until job disappears from queue.
+   - Confirm final state via `sacct -j <job_id> --format=JobID,State,ExitCode,Elapsed,MaxRSS --parsable2`.
 3. `verify_local_artifacts` (required before stage completion).
 4. Write `run_manifest.json` with launch, sync, verifier snapshots, and detected host mode.
 5. Maintain SLURM ledger:
    - run `./venv/bin/python scripts/slurm_job_list.py append --manifest experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`.
    - local/non-SLURM manifests are allowed no-op.
    - for SLURM manifests, `job_id` is mandatory; missing `job_id` must fail this stage.
+
+## SLURM SBATCH SCRIPT REQUIREMENTS
+When generating `run_slurm.sbatch`:
+- Required SBATCH directives: `--job-name`, `--output`, `--error`, `--time`, `--mem`. Add GPU requests (`--gres=gpu:`) when `design.yaml.compute.gpu_count` > 0.
+- Add `set -euo pipefail` immediately after the SBATCH header block.
+- Activate the runtime environment exactly as specified in `docs/environment.md`.
+- Use the entrypoint from `design.yaml.entrypoint` as the main command.
+- Redirect all logs to `runs/{{run_id}}/logs/`.
+- Do not hardcode cluster-specific partition names; read from `design.yaml.compute.partition` or omit to use cluster default.
+
+## SLURM JOB FAILURE HANDLING
+After `sacct` confirms final job state:
+- `COMPLETED` with exit code 0 → proceed to artifact collection.
+- `TIMEOUT` → record in manifest with `needs_retry`, recommend increasing `--time`.
+- `OUT_OF_MEMORY` → record in manifest with `needs_retry`, recommend increasing `--mem`.
+- `CANCELLED`, `NODE_FAIL`, `PREEMPTED` → record failure reason in manifest, set `needs_retry`.
+- Never advance to artifact collection when job status is not `COMPLETED` with exit code 0.
+
+## ARTIFACT SYNCHRONIZATION
+- `sync_to_remote`: push a git commit or rsync working tree to SLURM host before job submission.
+- `sync_artifacts_to_local`: copy `runs/{{run_id}}/` from SLURM host via rsync or scp after job completion.
+- Write `artifact_sync_to_local.status` in manifest: `ok` on success, `failed` on failure.
+- The state machine blocks stage transition when sync status is not in {`ok`, `completed`, `success`}.
+- On sync failure: check connectivity, verify remote paths, confirm disk space, record diagnosis in manifest.
+- Repeated sync failures (exceeding `max_stage_attempts`) escalate to `human_review`.
 
 ## RULES
 1. Exactly one active run at a time.

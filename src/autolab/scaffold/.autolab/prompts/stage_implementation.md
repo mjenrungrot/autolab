@@ -69,6 +69,12 @@ and update:
 7. Transition-only edits to `.autolab/*` or task metadata are insufficient; include meaningful target changes.
 8. If the selected TODO is a feature/code task, include meaningful implementation changes in `scripts/` or `src/`, not only experiment handoff docs.
 9. When running in local host mode and no remaining task is available, propose and execute a concrete codebase improvement task before stopping.
+10. Use relative paths or environment variables for data/model paths (no hardcoded local-only paths that break on SLURM).
+11. Read resource configuration from `design.yaml.compute` or CLI arguments, not hardcoded values.
+12. Write all outputs under the run directory (`runs/{{run_id}}/`).
+13. No interactive terminal prompts or GUI dependencies; code must run unattended in batch mode.
+14. Handle CUDA device selection via `CUDA_VISIBLE_DEVICES` environment variable.
+15. When running in SLURM host mode and no remaining task is available, propose and execute a concrete experiment or analysis task before stopping.
 
 ## FILE LENGTH BUDGET (HARD LIMIT)
 - Apply line limits from `.autolab/experiment_file_line_limits.yaml`.

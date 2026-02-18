@@ -55,9 +55,11 @@ Write `experiments/{{iteration_id}}/hypothesis.md` with the following sections:
 2. Use measurable language, not qualitative claims.
 3. Include at least one metric name and an expected numeric delta.
 4. Keep scope narrow enough for one iteration.
-5. Do not implement code in this stage.
-6. Prioritize TODO tasks mapped to `hypothesis` before opportunistic work.
-7. When running in remote SLURM host mode and no remaining task is available, prioritize proposing a new experiment or new analysis direction before implementation improvements.
+5. SLURM experiments must be completable within one job submission; account for queue wait times in iteration turnaround.
+6. Flag hypotheses that require multi-node jobs or unusually long walltime (>24h) for explicit resource review.
+7. Do not implement code in this stage.
+8. Prioritize TODO tasks mapped to `hypothesis` before opportunistic work.
+9. When running in remote SLURM host mode and no remaining task is available, prioritize proposing a new experiment or new analysis direction before implementation improvements.
 
 ## FILE LENGTH BUDGET (HARD LIMIT)
 - Apply line limits from `.autolab/experiment_file_line_limits.yaml`.

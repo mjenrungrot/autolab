@@ -56,11 +56,16 @@ Assess launch readiness and produce:
 4. **Execution location consistency**
    - `design.yaml.compute.location` must match the resolved execution host mode (`local` or `slurm`) before review is marked `pass`.
    - If host-mode mismatch is detected, set `status` to `needs_retry` and explain the mismatch clearly.
-5. **Artifact Completeness**
+5. **SLURM Launch Readiness** (when `design.yaml.compute.location` is `slurm`)
+   - Verify `design.yaml.compute` includes walltime and memory estimates.
+   - Confirm no hardcoded local-only paths or interactive I/O dependencies in implementation.
+   - Confirm sbatch directives (if already created) match `design.yaml.compute` resource values.
+   - Confirm output paths write to the run directory, not fixed local paths.
+6. **Artifact Completeness**
    - Handoff docs and config references are complete.
-6. **TODO Priority**
+7. **TODO Priority**
    - Prioritize TODO tasks mapped to `implementation_review` before opportunistic review scope expansion.
-7. **Meaningful Change Gate**
+8. **Meaningful Change Gate**
    - Reject transition-only outcomes that only changed orchestration/control-plane files.
    - Confirm at least one meaningful target file change (code/config/docs target) exists for the selected task.
    - For feature/code tasks, confirm at least one meaningful implementation-path change exists outside `experiments/` (for example `scripts/` or `src/`).
