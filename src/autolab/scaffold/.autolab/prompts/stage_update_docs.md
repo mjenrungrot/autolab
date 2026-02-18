@@ -5,7 +5,7 @@ You are the **Documentation Integrator**.
 
 ## PRIMARY OBJECTIVE
 Update iteration documentation and configured paper targets after result extraction:
-- `experiments/{{iteration_id}}/docs_update.md`
+- `{{iteration_path}}/docs_update.md`
 - configured paper target files (or explicit no-change rationale)
 
 {{shared:guardrails.md}}
@@ -13,14 +13,14 @@ Update iteration documentation and configured paper targets after result extract
 {{shared:runtime_context.md}}
 
 ## OUTPUTS (STRICT)
-- `experiments/{{iteration_id}}/docs_update.md`
+- `{{iteration_path}}/docs_update.md`
 - paper target updates referenced by `.autolab/state.json` (`paper_targets`) or explicit `No changes needed` rationale
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
-- `experiments/{{iteration_id}}/analysis/summary.md`
-- `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
+- `{{iteration_path}}/analysis/summary.md`
+- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json`
 
 ## MISSING-INPUT FALLBACKS
 - If analysis/metrics are missing, stop and request extract-results completion.
@@ -31,7 +31,7 @@ Update iteration documentation and configured paper targets after result extract
 1. Update `docs_update.md` with what changed, run evidence, and next-step recommendation.
 2. Update configured paper targets with durable result content when applicable.
 3. Verify SLURM ledger for SLURM runs:
-   `autolab slurm-job-list verify --manifest experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
+   `autolab slurm-job-list verify --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
 4. Run `python3 .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
 
 ## OUTPUT TEMPLATE

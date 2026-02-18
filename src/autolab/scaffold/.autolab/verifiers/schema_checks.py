@@ -21,6 +21,8 @@ except Exception:  # pragma: no cover
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 SCHEMA_DIR = REPO_ROOT / ".autolab" / "schemas"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
 SCHEMAS: dict[str, str] = {
     "state": "state.schema.json",
     "backlog": "backlog.schema.json",
@@ -129,9 +131,19 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
     return output
 
 
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
+
+
 def _iteration_dir(state: dict[str, Any]) -> Path:
     iteration_id = str(state.get("iteration_id", "")).strip()
-    return REPO_ROOT / "experiments" / iteration_id
+    return _resolve_iteration_dir(iteration_id)
 
 
 def _latest_run_dir(state: dict[str, Any]) -> Path | None:
@@ -139,7 +151,7 @@ def _latest_run_dir(state: dict[str, Any]) -> Path | None:
     run_id = str(state.get("last_run_id", "")).strip()
     if not iteration_id or not run_id:
         return None
-    return REPO_ROOT / "experiments" / iteration_id / "runs" / run_id
+    return _resolve_iteration_dir(iteration_id) / "runs" / run_id
 
 
 def _validate_state_schema() -> list[str]:

@@ -5,23 +5,23 @@ You are the **Results Extractor**.
 
 ## PRIMARY OBJECTIVE
 Convert run artifacts into structured outputs:
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
-- `experiments/{{iteration_id}}/analysis/summary.md`
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- `{{iteration_path}}/analysis/summary.md`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 
 ## OUTPUTS (STRICT)
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
-- `experiments/{{iteration_id}}/analysis/summary.md`
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- `{{iteration_path}}/analysis/summary.md`
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/schemas/metrics.schema.json`
-- `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
-- Run artifacts under `experiments/{{iteration_id}}/runs/{{run_id}}/`
-- `experiments/{{iteration_id}}/design.yaml`
+- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
+- Run artifacts under `{{iteration_path}}/runs/{{run_id}}/`
+- `{{iteration_path}}/design.yaml`
 
 ## MISSING-INPUT FALLBACKS
 - If `run_manifest.json` is missing, stop and request launch-stage completion.

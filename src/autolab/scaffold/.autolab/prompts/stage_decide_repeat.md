@@ -21,9 +21,9 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json` (if available)
-- `experiments/{{iteration_id}}/review_result.json` (if available)
-- `experiments/{{iteration_id}}/docs_update.md` (if available)
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json` (if available)
+- `{{iteration_path}}/review_result.json` (if available)
+- `{{iteration_path}}/docs_update.md` (if available)
 
 ## MISSING-INPUT FALLBACKS
 - If backlog is missing/unreadable, choose `human_review` and report blocker.

@@ -11,12 +11,24 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
 PLACEHOLDER_TOKENS = {"<iteration_id>", "<run_id>", "<TODO>", "placeholder"}
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}"),
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bTBD\b", re.IGNORECASE),
 )
+
+
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
 
 
 def _load_state() -> dict:
@@ -108,7 +120,7 @@ def main() -> int:
         print("result_sanity: PASS")
         return 0
 
-    metrics_path = REPO_ROOT / "experiments" / iteration_id / "runs" / run_id / "metrics.json"
+    metrics_path = _resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
     _validate_metrics(metrics_path, failures)
 
     if failures:

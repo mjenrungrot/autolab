@@ -5,22 +5,22 @@ You are the **Implementation Reviewer**.
 
 ## PRIMARY OBJECTIVE
 Gate launch readiness and produce:
-- `experiments/{{iteration_id}}/implementation_review.md`
-- `experiments/{{iteration_id}}/review_result.json`
+- `{{iteration_path}}/implementation_review.md`
+- `{{iteration_path}}/review_result.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 
 ## OUTPUTS (STRICT)
-- `experiments/{{iteration_id}}/implementation_review.md`
-- `experiments/{{iteration_id}}/review_result.json`
+- `{{iteration_path}}/implementation_review.md`
+- `{{iteration_path}}/review_result.json`
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/verifier_policy.yaml`
-- `experiments/{{iteration_id}}/design.yaml`
-- `experiments/{{iteration_id}}/implementation_plan.md`
+- `{{iteration_path}}/design.yaml`
+- `{{iteration_path}}/implementation_plan.md`
 - `{{diff_summary}}`, `{{verifier_outputs}}`, `{{dry_run_output}}`
 
 ## MISSING-INPUT FALLBACKS

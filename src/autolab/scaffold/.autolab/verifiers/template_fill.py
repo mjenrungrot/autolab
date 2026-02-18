@@ -18,7 +18,9 @@ except Exception:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-TEMPLATE_ROOT = REPO_ROOT / "experiments" / "<ITERATION_ID>"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
+TEMPLATE_ROOT = REPO_ROOT / "experiments" / DEFAULT_EXPERIMENT_TYPE / "<ITERATION_ID>"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
 RUN_MANIFEST_POLICY_KEY = "runs/<RUN_ID>/run_manifest.json"
@@ -69,6 +71,16 @@ class LineLimitPolicy:
     fixed_max_chars: dict[str, int]
     fixed_max_bytes: dict[str, int]
     run_manifest_dynamic: RunManifestDynamicLimit
+
+
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
 
 
 def _read_text(path: Path) -> str:
@@ -674,7 +686,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     stage = args.stage or str(state.get("stage", "")).strip()
     iteration_id = str(state.get("iteration_id", "")).strip()
-    iteration_dir = REPO_ROOT / "experiments" / iteration_id
+    iteration_dir = _resolve_iteration_dir(iteration_id)
 
     if not iteration_id or iteration_id.startswith("<"):
         print("template_fill: ERROR iteration_id in state is missing or placeholder")

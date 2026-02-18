@@ -9,6 +9,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
 
 
 def _load_state() -> dict:
@@ -18,6 +20,16 @@ def _load_state() -> dict:
     if not isinstance(state, dict):
         raise RuntimeError("state.json must contain an object")
     return state
+
+
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
 
 
 def _iter_targets(paper_targets: object) -> list[Path]:
@@ -107,7 +119,7 @@ def main() -> int:
         print("docs_targets: PASS")
         return 0
 
-    iteration_dir = REPO_ROOT / "experiments" / iteration_id
+    iteration_dir = _resolve_iteration_dir(iteration_id)
     docs_update_path = iteration_dir / "docs_update.md"
 
     if not targets:

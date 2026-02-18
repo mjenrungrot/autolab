@@ -152,7 +152,7 @@ autorun:
       - ".autolab/**"
       - "docs/todo.md"
       - "docs/wiki/**"
-      - "experiments/*/docs_update.md"
+      - "experiments/*/*/docs_update.md"
 agent_runner:
   enabled: false
   runner: codex  # Options: codex, claude, custom
@@ -206,7 +206,6 @@ DEFAULT_MEANINGFUL_EXCLUDE_PATHS = (
     ".autolab/**",
     "docs/todo.md",
     "docs/wiki/**",
-    "experiments/*/docs_update.md",
     "experiments/*/*/docs_update.md",
 )
 ASSISTANT_CYCLE_STAGES = ("select", "implement", "verify", "review", "done")
@@ -217,8 +216,8 @@ ASSISTANT_CONTROL_COMMIT_PATHS = (
     "docs/todo.md",
 )
 BACKLOG_COMPLETED_STATUSES = {"done", "completed", "closed", "resolved"}
-EXPERIMENT_TYPES = ("template", "plan", "in_progress", "done")
-EXPERIMENT_LOCKED_TYPES = {"template", "done"}
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+EXPERIMENT_LOCKED_TYPES = {"done"}
 DEFAULT_EXPERIMENT_TYPE = "plan"
 ITERATION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 RUN_ID_TIMESTAMP_PATTERN = re.compile(r"(20\d{6}T\d{6}Z)")
@@ -1569,8 +1568,8 @@ def _default_stage_prompt_text(stage: str) -> str:
         "This prompt was bootstrapped by `autolab init`.\n"
         "Update it with your project-specific instructions for this stage.\n\n"
         "## Hard Guardrails (Read First)\n"
-        "- Do not modify experiments whose backlog `type` is `template` or `done`; legacy closed statuses (`done`, `completed`, `closed`, `resolved`) are also treated as read-only unless a human explicitly re-opens them.\n\n"
-        "- If the mapped experiment type is `template` or `done`, do not edit that experiment and wait for an explicit reopen/retype.\n\n"
+        "- Do not modify experiments whose backlog `type` is `done`; legacy closed statuses (`done`, `completed`, `closed`, `resolved`) are also treated as read-only unless a human explicitly re-opens them.\n\n"
+        "- If the mapped experiment type is `done`, do not edit that experiment and wait for an explicit reopen/retype.\n\n"
         "## Repository Path Scope\n"
         "- Required stage artifacts may be under `<ITERATION_PATH>/...` and `.autolab/...` when specified.\n"
         "- Do not restrict analysis or edits to `experiments/` only.\n"
@@ -1635,14 +1634,14 @@ def _resolve_runner_workspace(
         require_exists=not ensure_iteration_dir,
     )
 
-    if workspace_dir.parent != experiments_root and workspace_dir.parent.parent != experiments_root:
+    if workspace_dir.parent.parent != experiments_root or workspace_dir.parent.name not in EXPERIMENT_TYPES:
         raise StageCheckError(
             f"state.iteration_id must resolve within experiments/ for runner workspace scoping, got '{workspace_dir}'"
         )
 
     if ensure_iteration_dir and not workspace_dir.exists():
         created: list[Path] = []
-        effective_type = workspace_type if workspace_type != "legacy" else DEFAULT_EXPERIMENT_TYPE
+        effective_type = workspace_type if workspace_type in EXPERIMENT_TYPES else DEFAULT_EXPERIMENT_TYPE
         _ensure_iteration_skeleton(
             repo_root,
             normalized_iteration_id,
@@ -1894,7 +1893,7 @@ def _build_prompt_context(
         try:
             iteration_path = iteration_dir.relative_to(repo_root).as_posix()
         except ValueError:
-            iteration_path = f"experiments/{iteration_id}"
+            iteration_path = f"experiments/{DEFAULT_EXPERIMENT_TYPE}/{iteration_id}"
     todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")
     agent_result_payload = _load_json_if_exists(repo_root / ".autolab" / "agent_result.json")
     review_result_payload = _load_json_if_exists(iteration_dir / "review_result.json") if iteration_id else None
@@ -2758,7 +2757,6 @@ def _resolve_iteration_directory(
     candidates: list[tuple[Path, str]] = []
     if preferred_type:
         candidates.append((experiments_root / preferred_type / normalized_iteration_id, preferred_type))
-    candidates.append((experiments_root / normalized_iteration_id, "legacy"))
     for experiment_type in EXPERIMENT_TYPES:
         candidate = experiments_root / experiment_type / normalized_iteration_id
         if all(existing_path != candidate for existing_path, _ in candidates):
@@ -4739,7 +4737,7 @@ def _build_parser() -> argparse.ArgumentParser:
     slurm_job_list.add_argument(
         "--manifest",
         required=True,
-        help="Path to experiments/<iteration_id>/runs/<run_id>/run_manifest.json",
+        help="Path to experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json",
     )
     slurm_job_list.add_argument(
         "--doc",

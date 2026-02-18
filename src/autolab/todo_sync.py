@@ -49,6 +49,9 @@ FALLBACK_TASK_TEXT_SLURM = (
 
 HYPOTHESIS_CLOSED_STATUSES = {"done", "completed", "closed", "resolved"}
 EXPERIMENT_CLOSED_STATUSES = {"done", "completed", "closed", "resolved"}
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+READ_ONLY_EXPERIMENT_TYPES = {"done"}
+DEFAULT_EXPERIMENT_TYPE = "plan"
 SUCCESS_STAGE_TRANSITIONS = {
     "hypothesis": "design",
     "design": "implementation",
@@ -404,9 +407,64 @@ def _is_closed_hypothesis_status(value: Any) -> bool:
     return normalized in HYPOTHESIS_CLOSED_STATUSES
 
 
+def _normalize_experiment_type(value: Any) -> str:
+    normalized = _normalize_space(str(value)).lower()
+    if normalized in EXPERIMENT_TYPES:
+        return normalized
+    return ""
+
+
 def _is_completed_experiment_status(value: Any) -> bool:
     normalized = _normalize_space(str(value)).lower()
     return normalized in EXPERIMENT_CLOSED_STATUSES
+
+
+def _is_read_only_experiment_entry(entry: dict[str, Any]) -> bool:
+    experiment_type = _normalize_experiment_type(entry.get("type"))
+    if experiment_type in READ_ONLY_EXPERIMENT_TYPES:
+        return True
+    return _is_completed_experiment_status(entry.get("status"))
+
+
+def _resolve_iteration_dir(
+    repo_root: Path,
+    *,
+    iteration_id: str,
+    backlog_payload: dict[str, Any] | None = None,
+) -> Path:
+    normalized_iteration = _normalize_space(iteration_id)
+    experiments_root = repo_root / "experiments"
+    if not normalized_iteration:
+        return experiments_root
+
+    preferred_type = ""
+    experiments = backlog_payload.get("experiments") if isinstance(backlog_payload, dict) else None
+    if isinstance(experiments, list):
+        for entry in experiments:
+            if not isinstance(entry, dict):
+                continue
+            entry_iteration = _normalize_space(str(entry.get("iteration_id", "")))
+            if entry_iteration != normalized_iteration:
+                continue
+            entry_type = _normalize_experiment_type(entry.get("type"))
+            if entry_type:
+                preferred_type = entry_type
+                break
+
+    candidates: list[Path] = []
+    if preferred_type:
+        candidates.append(experiments_root / preferred_type / normalized_iteration)
+    for experiment_type in EXPERIMENT_TYPES:
+        candidate = experiments_root / experiment_type / normalized_iteration
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    fallback_type = preferred_type or DEFAULT_EXPERIMENT_TYPE
+    return experiments_root / fallback_type / normalized_iteration
 
 
 def _is_iteration_completed_in_backlog(backlog_payload: dict[str, Any], iteration_id: str) -> bool:
@@ -422,7 +480,7 @@ def _is_iteration_completed_in_backlog(backlog_payload: dict[str, Any], iteratio
         entry_iteration = _normalize_space(str(entry.get("iteration_id", "")))
         if entry_iteration != normalized_iteration:
             continue
-        if _is_completed_experiment_status(entry.get("status")):
+        if _is_read_only_experiment_entry(entry):
             return True
     return False
 
@@ -537,6 +595,7 @@ def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None)
             )
 
     backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    backlog_payload: dict[str, Any] | None = None
     iteration_is_completed = False
     if backlog_path.exists() and yaml is not None:
         try:
@@ -572,23 +631,38 @@ def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None)
                 for entry in experiments:
                     if not isinstance(entry, dict):
                         continue
-                    if _is_completed_experiment_status(entry.get("status")):
+                    if _is_read_only_experiment_entry(entry):
                         continue
                     experiment_id = _normalize_space(str(entry.get("id", "experiment"))) or "experiment"
                     experiment_iteration = _normalize_space(str(entry.get("iteration_id", "current iteration"))) or "current iteration"
+                    experiment_type = _normalize_experiment_type(entry.get("type"))
+                    if experiment_type == "plan":
+                        target_stage = "hypothesis"
+                        guidance = "by refining the plan and hypothesis before implementation."
+                    elif experiment_type == "in_progress":
+                        target_stage = "implementation"
+                        guidance = "by progressing implementation, launch readiness, or result extraction."
+                    else:
+                        target_stage = "design"
+                        guidance = "by keeping the design runnable and implementation-ready."
+                    type_suffix = f" (type={experiment_type})" if experiment_type else ""
                     candidates.append(
                         _GeneratedCandidate(
-                            stage="design",
+                            stage=target_stage,
                             scope=f"backlog:experiment:{experiment_id}",
                             text=(
-                                f"Advance backlog experiment {experiment_id} for iteration {experiment_iteration}"
-                                " by keeping the design runnable and implementation-ready."
+                                f"Advance backlog experiment {experiment_id} for iteration {experiment_iteration}{type_suffix} "
+                                f"{guidance}"
                             ),
                         )
                     )
 
     if iteration_id and not iteration_id.startswith("<") and not iteration_is_completed:
-        iteration_dir = repo_root / "experiments" / iteration_id
+        iteration_dir = _resolve_iteration_dir(
+            repo_root,
+            iteration_id=iteration_id,
+            backlog_payload=backlog_payload,
+        )
         analysis_summary_path = iteration_dir / "analysis" / "summary.md"
         docs_update_path = iteration_dir / "docs_update.md"
 

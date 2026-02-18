@@ -86,7 +86,7 @@ def _write_design(repo: Path) -> None:
         "baselines": [{"name": "baseline", "description": "existing"}],
         "variants": [{"name": "proposed", "changes": {}}],
     }
-    path = repo / "experiments" / "iter1" / "design.yaml"
+    path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
@@ -106,7 +106,7 @@ def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None
         "required_checks": required_checks,
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
-    path = repo / "experiments" / "iter1" / "review_result.json"
+    path = repo / "experiments" / "plan" / "iter1" / "review_result.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
