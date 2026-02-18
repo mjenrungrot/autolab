@@ -11,7 +11,10 @@
         "required": ["id", "status", "title", "success_metric", "target_delta"],
         "properties": {
           "id": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "minLength": 1},
+          "status": {
+            "type": "string",
+            "enum": ["open", "blocked", "in_progress", "done", "completed", "closed", "resolved"]
+          },
           "title": {"type": "string", "minLength": 1},
           "success_metric": {"type": "string", "minLength": 1},
           "target_delta": {
@@ -32,8 +35,11 @@
         "properties": {
           "id": {"type": "string", "minLength": 1},
           "hypothesis_id": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "minLength": 1},
-          "type": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["open", "blocked", "in_progress", "done", "completed", "closed", "resolved"]
+          },
+          "type": {"type": "string", "enum": ["plan", "in_progress", "done"]},
           "iteration_id": {"type": "string", "minLength": 1}
         },
         "additionalProperties": true

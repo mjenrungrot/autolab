@@ -71,6 +71,7 @@ def _write_agent_result(repo: Path) -> None:
 
 def _write_design(repo: Path) -> None:
     payload = {
+        "schema_version": "1.0",
         "id": "d1",
         "iteration_id": "iter1",
         "hypothesis_id": "h1",

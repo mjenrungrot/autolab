@@ -13,14 +13,17 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
-- No required artifact file.
-- A concise decision note in agent output containing: selected decision, rationale, and blocking risks.
+- `{{iteration_path}}/decision_result.json`
+- A concise decision note in agent output containing: selected decision and key rationale.
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`
+- Resolved context: `iteration_id={{iteration_id}}`
+- `.autolab/schemas/decision_result.schema.json`
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json` (if available)
 - `{{iteration_path}}/review_result.json` (if available)
 - `{{iteration_path}}/docs_update.md` (if available)
@@ -44,7 +47,33 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 1. Summarize latest run/review/doc evidence in 3-6 bullets.
 2. Select exactly one decision from the allowed set.
 3. Compare measured deltas vs target deltas (when available) and state whether target is met.
-4. Provide a short rationale with explicit risks and any required human actions.
+4. Write `{{iteration_path}}/decision_result.json` with fields:
+   - `schema_version: "1.0"`
+   - `decision` (`hypothesis|design|stop|human_review`)
+   - `rationale`
+   - `evidence` (`[{source, pointer, summary}]`)
+   - `risks` (string list)
+5. Run `autolab verify --stage decide_repeat` and fix any failures.
+6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat` for direct template diagnostics.
+
+## OUTPUT TEMPLATE
+```json
+{
+  "schema_version": "1.0",
+  "decision": "design",
+  "rationale": "short rationale",
+  "evidence": [
+    {
+      "source": "metrics",
+      "pointer": "runs/{{run_id}}/metrics.json",
+      "summary": "evidence summary"
+    }
+  ],
+  "risks": [
+    "risk 1"
+  ]
+}
+```
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
@@ -53,6 +82,7 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 {{shared:checklist.md}}
 - [ ] Exactly one decision token is selected from `hypothesis|design|stop|human_review`.
 - [ ] Rationale references concrete evidence from metrics/backlog/review when available.
+- [ ] `decision_result.json` exists and matches `.autolab/schemas/decision_result.schema.json`.
 
 ## FAILURE / RETRY BEHAVIOR
 - If required decision evidence is missing or contradictory, escalate with `human_review` instead of guessing.

@@ -18,7 +18,9 @@ except Exception:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-TEMPLATE_ROOT = REPO_ROOT / "experiments" / "<ITERATION_ID>"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
+TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
 RUN_MANIFEST_POLICY_KEY = "runs/<RUN_ID>/run_manifest.json"
@@ -30,6 +32,7 @@ REVIEW_RESULT_REQUIRED_CHECKS = (
     "docs_target_update",
 )
 REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
+DECISION_RESULT_ALLOWED = {"hypothesis", "design", "stop", "human_review"}
 PRIMARY_METRIC_LINE_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$"
 )
@@ -44,6 +47,57 @@ PLACEHOLDER_PATTERNS = (
 )
 
 COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")
+
+BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
+    "hypothesis.md": "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
+    "design.yaml": (
+        'schema_version: "1.0"\n'
+        'id: "e1"\n'
+        'iteration_id: "<ITERATION_ID>"\n'
+        'hypothesis_id: "h1"\n'
+        "entrypoint:\n"
+        '  module: "tinydesk_v4.train"\n'
+        "  args:\n"
+        '    config: "TODO: set config path"\n'
+        "compute:\n"
+        '  location: "local"\n'
+        '  walltime_estimate: "00:30:00"\n'
+        '  memory_estimate: "64GB"\n'
+        "  gpu_count: 0\n"
+        "metrics:\n"
+        "  primary:\n"
+        '    name: "primary_metric"\n'
+        '    unit: "unit"\n'
+        '    mode: "maximize"\n'
+        "  secondary: []\n"
+        '  success_delta: "TODO: define target delta"\n'
+        '  aggregation: "mean"\n'
+        '  baseline_comparison: "TODO: define baseline comparison"\n'
+        "baselines:\n"
+        '  - name: "baseline_current"\n'
+        '    description: "TODO: describe current baseline"\n'
+    ),
+    "implementation_plan.md": "# Implementation Plan\n\n- Implement the design requirements.\n",
+    "implementation_review.md": "# Implementation Review\n\nReview notes.\n",
+    "review_result.json": (
+        "{\n"
+        '  "status": "pass",\n'
+        '  "blocking_findings": [],\n'
+        '  "required_checks": {\n'
+        '    "tests": "skip",\n'
+        '    "dry_run": "skip",\n'
+        '    "schema": "pass",\n'
+        '    "env_smoke": "skip",\n'
+        '    "docs_target_update": "skip"\n'
+        "  },\n"
+        '  "reviewed_at": "1970-01-01T00:00:00Z"\n'
+        "}\n"
+    ),
+    "launch/run_local.sh": "#!/usr/bin/env bash\nset -euo pipefail\n# local launch placeholder\n",
+    "launch/run_slurm.sbatch": "#!/usr/bin/env bash\nset -euo pipefail\n# slurm launch placeholder\n",
+    "analysis/summary.md": "# Analysis Summary\n\nInitial summary.\n",
+    "docs_update.md": "# Documentation Update\n\nNo changes needed.\n",
+}
 
 
 @dataclass
@@ -69,6 +123,16 @@ class LineLimitPolicy:
     fixed_max_chars: dict[str, int]
     fixed_max_bytes: dict[str, int]
     run_manifest_dynamic: RunManifestDynamicLimit
+
+
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
 
 
 def _read_text(path: Path) -> str:
@@ -241,6 +305,9 @@ def _contains_placeholder(text: str, template_text: str = "") -> Optional[str]:
 
 
 def _template_text(relative_path: Path) -> str:
+    key = relative_path.as_posix()
+    if key in BOOTSTRAP_TEMPLATE_TEXT_BY_PATH:
+        return BOOTSTRAP_TEMPLATE_TEXT_BY_PATH[key]
     candidate = TEMPLATE_ROOT / relative_path
     if not candidate.exists():
         return ""
@@ -449,7 +516,7 @@ def _check_hypothesis(path: Path) -> list[Failure]:
         failures.append(
             Failure(
                 str(path),
-                "PrimaryMetric line must match 'PrimaryMetric: <name>; Unit: <unit>; Success: ...' format",
+                "PrimaryMetric line must match 'PrimaryMetric: metric_name; Unit: unit_name; Success: ...' format",
             )
         )
     return failures
@@ -508,10 +575,13 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
         return [Failure(str(path), reason)]
 
     data = _load_yaml(path)
-    required = {"id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
+    required = {"schema_version", "id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
     missing = required - data.keys()
     if missing:
         return [Failure(str(path), f"missing required keys: {sorted(missing)}")]
+
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
 
     if str(data.get("iteration_id", "")).strip() != iteration_id:
         return [Failure(str(path), "iteration_id does not match .autolab/state.json")]
@@ -531,6 +601,42 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
     return []
 
 
+def _check_decision_result(path: Path) -> list[Failure]:
+    if not path.exists():
+        return [Failure(str(path), "required file is missing")]
+    text = _read_text(path)
+    reason = _contains_placeholder(text)
+    if reason:
+        return [Failure(str(path), reason)]
+
+    data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
+
+    decision = str(data.get("decision", "")).strip()
+    if decision not in DECISION_RESULT_ALLOWED:
+        return [
+            Failure(
+                str(path),
+                f"decision must be one of {sorted(DECISION_RESULT_ALLOWED)}",
+            )
+        ]
+
+    rationale = str(data.get("rationale", "")).strip()
+    if not rationale:
+        return [Failure(str(path), "rationale must be non-empty")]
+
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return [Failure(str(path), "evidence must be a non-empty list")]
+
+    risks = data.get("risks")
+    if not isinstance(risks, list):
+        return [Failure(str(path), "risks must be a list")]
+
+    return []
+
+
 def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Failure]:
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
@@ -541,6 +647,8 @@ def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Fail
         return [Failure(str(path), reason)]
 
     data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
     if data.get("iteration_id") and data.get("iteration_id") != iteration_id:
         return [Failure(str(path), "iteration_id does not match .autolab/state.json")]
     if data.get("run_id") and data.get("run_id") != run_id:
@@ -558,6 +666,8 @@ def _check_metrics(path: Path) -> list[Failure]:
         return [Failure(str(path), reason)]
 
     data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
     if not data:
         return [Failure(str(path), "metrics content is empty")]
     if data == {"primary_metric": None, "status": "pending"}:
@@ -652,6 +762,11 @@ def _stage_checks(
             checks.extend(_check_size_limits(path, line_limit_policy, relative.as_posix()))
         return checks
 
+    if stage == "decide_repeat":
+        path = iteration_dir / "decision_result.json"
+        checks.extend(_check_decision_result(path))
+        return checks
+
     return checks
 
 
@@ -674,7 +789,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     stage = args.stage or str(state.get("stage", "")).strip()
     iteration_id = str(state.get("iteration_id", "")).strip()
-    iteration_dir = REPO_ROOT / "experiments" / iteration_id
+    iteration_dir = _resolve_iteration_dir(iteration_id)
 
     if not iteration_id or iteration_id.startswith("<"):
         print("template_fill: ERROR iteration_id in state is missing or placeholder")
