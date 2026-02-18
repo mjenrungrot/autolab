@@ -63,6 +63,7 @@ Every task must include:
 - `location`
 - `description`
 - `touches` (list of file paths/globs the task edits) -- **required** for wave safety validation. Plans without `touches` produce weaker wave overlap detection.
+- `scope_ok` (`true` after confirming task paths are inside `allowed_edit_dirs`)
 - `validation`
 - `status` (default `Not Completed`)
 - `log` (empty placeholder)
@@ -87,8 +88,9 @@ Include:
 4. File paths in `location` must be specific.
 5. Sequence tasks to maximize safe parallelism.
 6. Each task must include `touches` (list of file paths/globs the task edits).
-7. Optional `conflict_group` field: tasks sharing a group must not be in the same wave.
-8. Wave grouping must ensure no overlap in `touches` within a wave.
+7. Each task must include `scope_ok: true` only after validating touches/location against `allowed_edit_dirs`.
+8. Optional `conflict_group` field: tasks sharing a group must not be in the same wave.
+9. Wave grouping must ensure no overlap in `touches` within a wave.
 
 ## Subagent review pass (required)
 
@@ -138,6 +140,7 @@ After drafting the plan:
 - **location**: <paths>
 - **description**: <work>
 - **touches**: [<file paths/globs>]
+- **scope_ok**: true
 - **conflict_group**: <optional>
 - **validation**: <checks>
 - **status**: Not Completed
@@ -149,6 +152,7 @@ After drafting the plan:
 - **location**: <paths>
 - **description**: <work>
 - **touches**: [<file paths/globs>]
+- **scope_ok**: true
 - **conflict_group**: <optional>
 - **validation**: <checks>
 - **status**: Not Completed

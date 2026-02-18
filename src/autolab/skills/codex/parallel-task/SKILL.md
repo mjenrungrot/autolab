@@ -32,10 +32,12 @@ If no `task_ids` are provided, execute the full plan.
    - ID and name
    - `depends_on` list
    - `location`, `description`, `validation`
+   - `touches`, `scope_ok`
    - `status`, `log`, `files edited/created`
 4. Validate unique IDs and dependency references.
 5. If `.autolab/state.json` exists, load iteration and stage context for prompts.
 6. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and verify each task's `touches` are within allowed scope before launching subagents.
+7. Fail preflight if any task omits `touches` or `scope_ok`, or if `scope_ok` is not set to true.
 
 ## Subset execution rules
 
