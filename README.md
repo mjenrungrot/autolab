@@ -19,7 +19,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 For stable CI or release installs, pin to a tag:
 
 ```bash
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.0.0
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.0.4
 ```
 
 After upgrading the package from GitHub, refresh local workflow defaults:
@@ -33,6 +33,9 @@ Enable auto version bump on each commit:
 ```bash
 ./scripts/install-hooks.sh
 ```
+
+This also syncs the pinned release tag in `README.md` and keeps only the latest 10
+`vX.Y.Z` tags on GitHub (`origin`) after each commit.
 
 After install, invoke with:
 
