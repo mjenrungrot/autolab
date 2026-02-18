@@ -54,13 +54,13 @@ Then include:
 - strict output file list
 - required inputs
 - missing-input fallback behavior
-- explicit verifier command (`python .autolab/verifiers/template_fill.py --stage <stage>`)
+- explicit verifier command (`autolab verify --stage <stage>`)
 - failure/retry note
 
 ## Adding a new stage prompt
 
 1. Add `src/autolab/scaffold/.autolab/prompts/stage_<name>.md`.
-2. Add the file to `STAGE_PROMPT_FILES` in `src/autolab/__main__.py`.
+2. Add the file to canonical `STAGE_PROMPT_FILES` in `src/autolab/constants.py`.
 3. Ensure required prompt tokens for the stage are covered in `PROMPT_REQUIRED_TOKENS_BY_STAGE`.
 4. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
 5. Run tests and `autolab sync-scaffold --force` in downstream repos.
@@ -69,3 +69,12 @@ Then include:
 
 Each mandatory checklist item in stage prompts should map to a verifier or schema check.
 Avoid aspirational items that cannot be audited.
+
+## Token changes end-to-end
+
+When adding a new prompt token:
+
+1. Add token resolution logic in `src/autolab/prompts.py`.
+2. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
+3. Add/adjust stage requirements in `PROMPT_REQUIRED_TOKENS_BY_STAGE` in `src/autolab/constants.py` when the token is mandatory for a stage.
+4. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).

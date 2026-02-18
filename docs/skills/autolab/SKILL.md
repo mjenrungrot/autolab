@@ -17,6 +17,19 @@ Help the user execute Autolab safely and efficiently by:
 - applying policy knobs in `.autolab/verifier_policy.yaml`
 - diagnosing no-transition / retry / escalation outcomes
 
+See also: `docs/workflow_modes.md` for mode responsibility boundaries.
+
+## Quick recipes
+
+1. Standard mode:
+   - `autolab status`
+   - `autolab verify --stage <stage>`
+   - `autolab run`
+2. Agent-runner unattended mode:
+   - `autolab loop --auto --max-hours <H> --max-iterations <N>`
+3. Assistant unattended mode:
+   - `autolab loop --auto --assistant --max-hours <H> --max-iterations <N>`
+
 ## Command resolution
 
 Use this command order:

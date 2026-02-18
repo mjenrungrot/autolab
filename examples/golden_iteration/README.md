@@ -16,6 +16,8 @@ This folder contains a complete example iteration with stage artifacts that matc
 - `experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`
 - `experiments/plan/iter_golden/analysis/summary.md`
 - `experiments/plan/iter_golden/docs_update.md`
+- `experiments/plan/iter_golden/decision_result.json`
+- `paper/results.md`
 
 ## Usage
 
