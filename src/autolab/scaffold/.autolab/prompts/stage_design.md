@@ -9,6 +9,7 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/design.yaml`
@@ -36,10 +37,12 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 ## STEPS
 1. Translate hypothesis intent into reproducible fields with concrete values.
 2. Record compute/resource assumptions (local or slurm) and deterministic controls.
-3. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage design` and fix failures.
+3. Run `autolab verify --stage design` and fix failures.
+4. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage design` for direct template diagnostics.
 
 ## OUTPUT TEMPLATE
 ```yaml
+schema_version: "1.0"
 id: {{experiment_id}}
 iteration_id: {{iteration_id}}
 hypothesis_id: {{hypothesis_id}}

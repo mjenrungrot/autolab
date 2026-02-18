@@ -11,6 +11,7 @@ Gate launch readiness and produce:
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/implementation_review.md`
@@ -18,6 +19,7 @@ Gate launch readiness and produce:
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
+- Resolved context: `iteration_id={{iteration_id}}`
 - `.autolab/verifier_policy.yaml`
 - `{{iteration_path}}/design.yaml`
 - `{{iteration_path}}/implementation_plan.md`
@@ -44,7 +46,8 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 2. Read policy-required checks and map each to `pass|skip|fail` with evidence.
 3. Write `implementation_review.md` with summary, blocking findings, remediation actions, and rationale.
 4. Write `review_result.json` matching schema and policy-required checks.
-5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review` and fix failures.
+5. Run `autolab verify --stage implementation_review` and fix failures.
+6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review` for direct template diagnostics.
 
 ## OUTPUT TEMPLATE
 ```json

@@ -48,6 +48,7 @@ template_fill:
     launch: true
     extract_results: true
     update_docs: true
+    decide_repeat: true
 template_fill_by_stage:
   hypothesis: "{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis"
   design: "{{python_bin}} .autolab/verifiers/template_fill.py --stage design"
@@ -56,6 +57,7 @@ template_fill_by_stage:
   launch: "{{python_bin}} .autolab/verifiers/template_fill.py --stage launch"
   extract_results: "{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results"
   update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
+  decide_repeat: "{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat"
 requirements_by_stage:
   hypothesis:
     tests: false
@@ -99,6 +101,12 @@ requirements_by_stage:
     schema: true
     env_smoke: false
     docs_target_update: true
+  decide_repeat:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: false
+    docs_target_update: false
 autorun:
   guardrails:
     max_same_decision_streak: 3

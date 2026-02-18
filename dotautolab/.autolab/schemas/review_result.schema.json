@@ -16,15 +16,15 @@
       "type": "object",
       "required": ["tests", "dry_run", "schema", "env_smoke", "docs_target_update"],
       "properties": {
-        "tests": {"type": "string"},
-        "dry_run": {"type": "string"},
-        "schema": {"type": "string"},
-        "env_smoke": {"type": "string"},
-        "docs_target_update": {"type": "string"}
+        "tests": {"type": "string", "enum": ["pass", "skip", "fail"]},
+        "dry_run": {"type": "string", "enum": ["pass", "skip", "fail"]},
+        "schema": {"type": "string", "enum": ["pass", "skip", "fail"]},
+        "env_smoke": {"type": "string", "enum": ["pass", "skip", "fail"]},
+        "docs_target_update": {"type": "string", "enum": ["pass", "skip", "fail"]}
       },
       "additionalProperties": true
     },
-    "reviewed_at": {"type": "string"}
+    "reviewed_at": {"type": "string", "format": "date-time"}
   },
   "additionalProperties": true
 }

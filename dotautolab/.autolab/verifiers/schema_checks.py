@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -17,10 +18,17 @@ try:
 except Exception:  # pragma: no cover
     Draft202012Validator = None
 
+try:
+    from autolab.config import _resolve_stage_requirements as _shared_resolve_stage_requirements
+except Exception:  # pragma: no cover
+    _shared_resolve_stage_requirements = None  # type: ignore[assignment]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 SCHEMA_DIR = REPO_ROOT / ".autolab" / "schemas"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
 SCHEMAS: dict[str, str] = {
     "state": "state.schema.json",
     "backlog": "backlog.schema.json",
@@ -29,6 +37,7 @@ SCHEMAS: dict[str, str] = {
     "review_result": "review_result.schema.json",
     "run_manifest": "run_manifest.schema.json",
     "metrics": "metrics.schema.json",
+    "decision_result": "decision_result.schema.json",
 }
 REVIEW_RESULT_REQUIRED_CHECKS = (
     "tests",
@@ -102,6 +111,20 @@ def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
 
 
 def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
+    if _shared_resolve_stage_requirements is not None:
+        try:
+            shared = _shared_resolve_stage_requirements(policy, stage)
+        except Exception:
+            shared = None
+        if isinstance(shared, dict):
+            return {
+                "tests": bool(shared.get("tests", False)),
+                "dry_run": bool(shared.get("dry_run", False)),
+                "schema": bool(shared.get("schema", False)),
+                "env_smoke": bool(shared.get("env_smoke", False)),
+                "docs_target_update": bool(shared.get("docs_target_update", False)),
+            }
+
     output: dict[str, bool] = {
         "tests": False,
         "dry_run": False,
@@ -129,9 +152,19 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
     return output
 
 
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
+
+
 def _iteration_dir(state: dict[str, Any]) -> Path:
     iteration_id = str(state.get("iteration_id", "")).strip()
-    return REPO_ROOT / "experiments" / iteration_id
+    return _resolve_iteration_dir(iteration_id)
 
 
 def _latest_run_dir(state: dict[str, Any]) -> Path | None:
@@ -139,7 +172,7 @@ def _latest_run_dir(state: dict[str, Any]) -> Path | None:
     run_id = str(state.get("last_run_id", "")).strip()
     if not iteration_id or not run_id:
         return None
-    return REPO_ROOT / "experiments" / iteration_id / "runs" / run_id
+    return _resolve_iteration_dir(iteration_id) / "runs" / run_id
 
 
 def _validate_state_schema() -> list[str]:
@@ -172,8 +205,7 @@ def _validate_agent_result() -> list[str]:
     return failures
 
 
-def _validate_design(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {
         "design",
         "implementation",
@@ -199,8 +231,7 @@ def _validate_design(state: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _validate_review_result(state: dict[str, Any], policy: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_review_result(state: dict[str, Any], policy: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"implementation_review", "launch", "extract_results", "update_docs", "decide_repeat"}:
         return []
 
@@ -242,14 +273,13 @@ def _validate_review_result(state: dict[str, Any], policy: dict[str, Any]) -> li
     return failures
 
 
-def _validate_run_manifest(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"launch", "extract_results", "update_docs", "decide_repeat"}:
         return []
 
     run_dir = _latest_run_dir(state)
     if run_dir is None:
-        return [".autolab/state.json missing last_run_id for run_manifest validation"]
+        return []
 
     path = run_dir / "run_manifest.json"
     try:
@@ -304,14 +334,13 @@ def _validate_run_manifest(state: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _validate_metrics(state: dict[str, Any]) -> list[str]:
-    stage = str(state.get("stage", "")).strip()
+def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage not in {"extract_results", "update_docs", "decide_repeat"}:
         return []
 
     run_dir = _latest_run_dir(state)
     if run_dir is None:
-        return [".autolab/state.json missing last_run_id for metrics validation"]
+        return []
 
     path = run_dir / "metrics.json"
     try:
@@ -326,10 +355,55 @@ def _validate_metrics(state: dict[str, Any]) -> list[str]:
         failures.append(f"{path} iteration_id mismatch")
     if str(payload.get("run_id", "")).strip() and str(payload.get("run_id", "")).strip() != run_id:
         failures.append(f"{path} run_id mismatch")
+
+    primary_metric = payload.get("primary_metric")
+    primary_metric_name = ""
+    if isinstance(primary_metric, dict):
+        primary_metric_name = str(primary_metric.get("name", "")).strip()
+    if primary_metric_name:
+        design_path = _iteration_dir(state) / "design.yaml"
+        try:
+            design_payload = _load_yaml(design_path)
+        except Exception:
+            design_payload = {}
+        if isinstance(design_payload, dict):
+            metrics = design_payload.get("metrics")
+            if isinstance(metrics, dict):
+                primary = metrics.get("primary")
+                if isinstance(primary, dict):
+                    design_name = str(primary.get("name", "")).strip()
+                    if design_name and design_name != primary_metric_name:
+                        failures.append(
+                            f"{path} primary_metric.name '{primary_metric_name}' does not match design.metrics.primary.name '{design_name}'"
+                        )
     return failures
 
 
+def _validate_decision_result(state: dict[str, Any], *, stage: str) -> list[str]:
+    if stage != "decide_repeat":
+        return []
+
+    path = _iteration_dir(state) / "decision_result.json"
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+
+    failures = _schema_validate(payload, schema_key="decision_result", path=path)
+    return failures
+
+
+def _resolve_stage(state: dict[str, Any], stage_override: str | None) -> str:
+    if stage_override:
+        return stage_override.strip()
+    return str(state.get("stage", "")).strip()
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
+    args = parser.parse_args()
+
     failures: list[str] = []
 
     try:
@@ -337,16 +411,21 @@ def main() -> int:
     except Exception as exc:
         print(f"schema_checks: ERROR {exc}")
         return 1
+    stage = _resolve_stage(state, args.stage)
+    if not stage:
+        print("schema_checks: ERROR state stage is missing")
+        return 1
 
     policy = _load_policy()
 
     failures.extend(_validate_state_schema())
     failures.extend(_validate_backlog_schema())
     failures.extend(_validate_agent_result())
-    failures.extend(_validate_design(state))
-    failures.extend(_validate_review_result(state, policy))
-    failures.extend(_validate_run_manifest(state))
-    failures.extend(_validate_metrics(state))
+    failures.extend(_validate_design(state, stage=stage))
+    failures.extend(_validate_review_result(state, policy, stage=stage))
+    failures.extend(_validate_run_manifest(state, stage=stage))
+    failures.extend(_validate_metrics(state, stage=stage))
+    failures.extend(_validate_decision_result(state, stage=stage))
 
     if failures:
         print("schema_checks: FAIL")

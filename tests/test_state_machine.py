@@ -553,6 +553,42 @@ class TestDecideRepeat:
         persisted = _read_state(repo)
         assert persisted["stage_attempt"] == 0
 
+    def test_decide_repeat_uses_decision_result_artifact(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="decide_repeat")
+        payload = {
+            "schema_version": "1.0",
+            "decision": "design",
+            "rationale": "More refinement is needed before stopping.",
+            "evidence": [
+                {
+                    "source": "metrics",
+                    "pointer": "runs/run_001/metrics.json",
+                    "summary": "Target not met",
+                }
+            ],
+            "risks": ["Underpowered result sample"],
+        }
+        (it_dir / "decision_result.json").write_text(
+            json.dumps(payload, indent=2),
+            encoding="utf-8",
+        )
+
+        outcome = _run(state_path)
+
+        assert outcome.transitioned
+        assert outcome.stage_after == "design"
+        assert "decision_result.json" in outcome.message
+
+    def test_decide_repeat_invalid_decision_result_blocks(self, tmp_path: Path) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="decide_repeat")
+        (it_dir / "decision_result.json").write_text("{invalid json", encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        assert not outcome.transitioned
+        assert outcome.stage_after == "decide_repeat"
+        assert "Invalid decision artifact" in outcome.message
+
 
 # ---------------------------------------------------------------------------
 # Phase 5: Guardrail Tests

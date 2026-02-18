@@ -11,6 +11,7 @@ Convert run artifacts into structured outputs:
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
@@ -41,11 +42,13 @@ Convert run artifacts into structured outputs:
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
 3. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
 4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
-5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results` and fix failures.
+5. Run `autolab verify --stage extract_results` and fix failures.
+6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results` for direct template diagnostics.
 
 ## METRICS TEMPLATE (schema-aligned)
 ```json
 {
+  "schema_version": "1.0",
   "iteration_id": "{{iteration_id}}",
   "run_id": "{{run_id}}",
   "status": "completed",

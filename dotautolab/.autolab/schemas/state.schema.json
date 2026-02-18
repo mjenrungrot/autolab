@@ -95,6 +95,12 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "additionalProperties": true

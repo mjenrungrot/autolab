@@ -37,6 +37,7 @@ SCHEMAS: dict[str, str] = {
     "review_result": "review_result.schema.json",
     "run_manifest": "run_manifest.schema.json",
     "metrics": "metrics.schema.json",
+    "decision_result": "decision_result.schema.json",
 }
 REVIEW_RESULT_REQUIRED_CHECKS = (
     "tests",
@@ -354,6 +355,41 @@ def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
         failures.append(f"{path} iteration_id mismatch")
     if str(payload.get("run_id", "")).strip() and str(payload.get("run_id", "")).strip() != run_id:
         failures.append(f"{path} run_id mismatch")
+
+    primary_metric = payload.get("primary_metric")
+    primary_metric_name = ""
+    if isinstance(primary_metric, dict):
+        primary_metric_name = str(primary_metric.get("name", "")).strip()
+    if primary_metric_name:
+        design_path = _iteration_dir(state) / "design.yaml"
+        try:
+            design_payload = _load_yaml(design_path)
+        except Exception:
+            design_payload = {}
+        if isinstance(design_payload, dict):
+            metrics = design_payload.get("metrics")
+            if isinstance(metrics, dict):
+                primary = metrics.get("primary")
+                if isinstance(primary, dict):
+                    design_name = str(primary.get("name", "")).strip()
+                    if design_name and design_name != primary_metric_name:
+                        failures.append(
+                            f"{path} primary_metric.name '{primary_metric_name}' does not match design.metrics.primary.name '{design_name}'"
+                        )
+    return failures
+
+
+def _validate_decision_result(state: dict[str, Any], *, stage: str) -> list[str]:
+    if stage != "decide_repeat":
+        return []
+
+    path = _iteration_dir(state) / "decision_result.json"
+    try:
+        payload = _load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+
+    failures = _schema_validate(payload, schema_key="decision_result", path=path)
     return failures
 
 
@@ -389,6 +425,7 @@ def main() -> int:
     failures.extend(_validate_review_result(state, policy, stage=stage))
     failures.extend(_validate_run_manifest(state, stage=stage))
     failures.extend(_validate_metrics(state, stage=stage))
+    failures.extend(_validate_decision_result(state, stage=stage))
 
     if failures:
         print("schema_checks: FAIL")

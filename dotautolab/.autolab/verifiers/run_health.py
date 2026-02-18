@@ -9,6 +9,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
+DEFAULT_EXPERIMENT_TYPE = "plan"
 
 
 def _load_state() -> dict:
@@ -29,9 +31,19 @@ def _load_json(path: Path) -> dict:
     return payload
 
 
+def _resolve_iteration_dir(iteration_id: str) -> Path:
+    normalized_iteration = iteration_id.strip()
+    experiments_root = REPO_ROOT / "experiments"
+    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
+
+
 def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     failures: list[str] = []
-    run_dir = REPO_ROOT / "experiments" / iteration_id / "runs" / run_id
+    run_dir = _resolve_iteration_dir(iteration_id) / "runs" / run_id
     manifest_path = run_dir / "run_manifest.json"
     manifest = _load_json(manifest_path)
 
@@ -40,7 +52,7 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
         failures.append(f"{manifest_path} run_id mismatch: expected {run_id}, found {run_id_in_manifest}")
 
     host_mode = str(
-        manifest.get("host_mode", manifest.get("launch_mode", manifest.get("location", "local"))
+        manifest.get("host_mode", manifest.get("launch_mode", manifest.get("location", "local")))
     ).strip().lower() or "local"
     if host_mode not in {"local", "slurm"}:
         failures.append(f"{manifest_path} host_mode must be local or slurm")

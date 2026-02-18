@@ -15,6 +15,7 @@ template_fill:
     launch: true
     extract_results: true
     update_docs: true
+    decide_repeat: true
 
 template_fill_by_stage:
   hypothesis: "{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis"
@@ -24,6 +25,7 @@ template_fill_by_stage:
   launch: "{{python_bin}} .autolab/verifiers/template_fill.py --stage launch"
   extract_results: "{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results"
   update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
+  decide_repeat: "{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat"
 
 requirements_by_stage:
   hypothesis:
@@ -68,6 +70,12 @@ requirements_by_stage:
     schema: true
     env_smoke: false
     docs_target_update: true
+  decide_repeat:
+    tests: false
+    dry_run: false
+    schema: true
+    env_smoke: false
+    docs_target_update: false
 
 agent_runner:
   enabled: false
@@ -113,4 +121,4 @@ autorun:
       - ".autolab/**"
       - "docs/todo.md"
       - "docs/wiki/**"
-      - "experiments/*/docs_update.md"
+      - "experiments/*/*/docs_update.md"

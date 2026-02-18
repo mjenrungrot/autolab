@@ -32,6 +32,7 @@ REVIEW_RESULT_REQUIRED_CHECKS = (
     "docs_target_update",
 )
 REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
+DECISION_RESULT_ALLOWED = {"hypothesis", "design", "stop", "human_review"}
 PRIMARY_METRIC_LINE_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$"
 )
@@ -50,6 +51,7 @@ COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")
 BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
     "hypothesis.md": "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
     "design.yaml": (
+        'schema_version: "1.0"\n'
         'id: "e1"\n'
         'iteration_id: "<ITERATION_ID>"\n'
         'hypothesis_id: "h1"\n'
@@ -573,10 +575,13 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
         return [Failure(str(path), reason)]
 
     data = _load_yaml(path)
-    required = {"id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
+    required = {"schema_version", "id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
     missing = required - data.keys()
     if missing:
         return [Failure(str(path), f"missing required keys: {sorted(missing)}")]
+
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
 
     if str(data.get("iteration_id", "")).strip() != iteration_id:
         return [Failure(str(path), "iteration_id does not match .autolab/state.json")]
@@ -596,6 +601,42 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
     return []
 
 
+def _check_decision_result(path: Path) -> list[Failure]:
+    if not path.exists():
+        return [Failure(str(path), "required file is missing")]
+    text = _read_text(path)
+    reason = _contains_placeholder(text)
+    if reason:
+        return [Failure(str(path), reason)]
+
+    data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
+
+    decision = str(data.get("decision", "")).strip()
+    if decision not in DECISION_RESULT_ALLOWED:
+        return [
+            Failure(
+                str(path),
+                f"decision must be one of {sorted(DECISION_RESULT_ALLOWED)}",
+            )
+        ]
+
+    rationale = str(data.get("rationale", "")).strip()
+    if not rationale:
+        return [Failure(str(path), "rationale must be non-empty")]
+
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return [Failure(str(path), "evidence must be a non-empty list")]
+
+    risks = data.get("risks")
+    if not isinstance(risks, list):
+        return [Failure(str(path), "risks must be a list")]
+
+    return []
+
+
 def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Failure]:
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
@@ -606,6 +647,8 @@ def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Fail
         return [Failure(str(path), reason)]
 
     data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
     if data.get("iteration_id") and data.get("iteration_id") != iteration_id:
         return [Failure(str(path), "iteration_id does not match .autolab/state.json")]
     if data.get("run_id") and data.get("run_id") != run_id:
@@ -623,6 +666,8 @@ def _check_metrics(path: Path) -> list[Failure]:
         return [Failure(str(path), reason)]
 
     data = _load_json(path)
+    if str(data.get("schema_version", "")).strip() != "1.0":
+        return [Failure(str(path), "schema_version must be '1.0'")]
     if not data:
         return [Failure(str(path), "metrics content is empty")]
     if data == {"primary_metric": None, "status": "pending"}:
@@ -715,6 +760,11 @@ def _stage_checks(
             path = iteration_dir / relative
             checks.extend(_check_file_text(path, relative=relative))
             checks.extend(_check_size_limits(path, line_limit_policy, relative.as_posix()))
+        return checks
+
+    if stage == "decide_repeat":
+        path = iteration_dir / "decision_result.json"
+        checks.extend(_check_decision_result(path))
         return checks
 
     return checks

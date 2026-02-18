@@ -9,6 +9,7 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/hypothesis.md`
@@ -16,6 +17,7 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`
+- Resolved context: `iteration_id={{iteration_id}}`, `hypothesis_id={{hypothesis_id}}`
 - `.autolab/todo_focus.json` (optional)
 - Existing `{{iteration_path}}/hypothesis.md` (optional)
 
@@ -28,7 +30,8 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 1. Write one hypothesis with sections: `Hypothesis Statement`, `Motivation`, `Scope In`, `Scope Out`, `Primary Metric`, `Expected Delta`, `Operational Success Criteria`, `Risks and Failure Modes`, `Constraints for Design Stage`.
 2. Include exactly one metric-definition line:
    `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`.
-3. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis` and fix failures.
+3. Run `autolab verify --stage hypothesis` and fix failures.
+4. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis` for direct template diagnostics.
 
 ## OUTPUT TEMPLATE
 ```markdown

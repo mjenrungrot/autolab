@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKLOG_FILE = REPO_ROOT / ".autolab" / "backlog.yaml"
 CLOSED_STATUSES = {"done", "completed", "closed", "resolved"}
+EXPERIMENT_TYPES = ("plan", "in_progress", "done")
 
 
 def _load_closed_iteration_ids() -> set[str]:
@@ -68,13 +69,10 @@ def _git_changed_paths() -> list[str]:
 
 def _matches_closed_iteration(path: str, iteration_id: str) -> bool:
     normalized = path.replace("\\", "/")
-    direct_prefix = f"experiments/{iteration_id}/"
-    typed_fragment = f"/{iteration_id}/"
-    if normalized.startswith(direct_prefix):
-        return True
-    if not normalized.startswith("experiments/"):
-        return False
-    return typed_fragment in normalized
+    for experiment_type in EXPERIMENT_TYPES:
+        if normalized.startswith(f"experiments/{experiment_type}/{iteration_id}/"):
+            return True
+    return False
 
 
 def main() -> int:

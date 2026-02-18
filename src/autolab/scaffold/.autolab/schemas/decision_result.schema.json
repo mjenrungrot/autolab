@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionResult",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "decision",
+    "rationale",
+    "evidence",
+    "risks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["hypothesis", "design", "stop", "human_review"]
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source", "pointer", "summary"],
+        "properties": {
+          "source": {"type": "string", "minLength": 1},
+          "pointer": {"type": "string", "minLength": 1},
+          "summary": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "additionalProperties": false
+}

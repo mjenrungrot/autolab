@@ -3,6 +3,7 @@
   "title": "DesignSpec",
   "type": "object",
   "required": [
+    "schema_version",
     "id",
     "iteration_id",
     "hypothesis_id",
@@ -12,6 +13,7 @@
     "baselines"
   ],
   "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
     "id": {"type": "string", "minLength": 1},
     "iteration_id": {"type": "string"},
     "hypothesis_id": {"type": "string"},
@@ -24,7 +26,7 @@
         "args": {"type": "object"},
         "cli": {"type": "string"}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "compute": {
       "type": "object",
@@ -41,7 +43,7 @@
         "notes": {"type": "string"},
         "seed": {"type": ["integer", "null"]}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "metrics": {
       "type": "object",
@@ -55,14 +57,14 @@
             "unit": {"type": "string"},
             "mode": {"type": "string", "enum": ["maximize", "minimize"]}
           },
-          "additionalProperties": true
+          "additionalProperties": false
         },
         "secondary": {"type": "array", "items": {"type": "string"}},
         "success_delta": {"type": "string"},
         "aggregation": {"type": "string"},
         "baseline_comparison": {"type": "string"}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "baselines": {
       "type": "array",
@@ -74,7 +76,7 @@
           "name": {"type": "string"},
           "description": {"type": "string"}
         },
-        "additionalProperties": true
+        "additionalProperties": false
       }
     },
     "variants": {
@@ -87,9 +89,9 @@
           "name": {"type": "string"},
           "changes": {"type": "object"}
         },
-        "additionalProperties": true
+        "additionalProperties": false
       }
     }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

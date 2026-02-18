@@ -1,8 +1,9 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 from typing import Any
 
-from autolab.constants import TERMINAL_STAGES
+from autolab.constants import DECISION_STAGES, TERMINAL_STAGES
 from autolab.models import EvalResult, RunOutcome, StageCheckError
 from autolab.config import (
     _load_guardrail_config,
@@ -18,6 +19,7 @@ from autolab.state import (
     _load_state,
     _mark_backlog_experiment_completed,
     _normalize_state,
+    _resolve_iteration_directory,
 )
 from autolab.utils import (
     _append_log,
@@ -39,6 +41,43 @@ from autolab.models import StateError
 from autolab.state import _resolve_repo_root
 from autolab.todo_sync import select_decision_from_todo
 from autolab.validators import _run_verification_step
+
+
+def _decision_from_artifact(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> tuple[str | None, str]:
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=str(state.get("iteration_id", "")).strip(),
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    decision_path = iteration_dir / "decision_result.json"
+    if not decision_path.exists():
+        return (None, "")
+
+    try:
+        payload = json.loads(decision_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return (None, f"{decision_path} is not valid JSON: {exc}")
+    if not isinstance(payload, dict):
+        return (None, f"{decision_path} must contain a JSON object")
+
+    decision = str(payload.get("decision", "")).strip()
+    if decision not in DECISION_STAGES:
+        return (
+            None,
+            (
+                f"{decision_path} decision must be one of {list(DECISION_STAGES)}, "
+                f"got '{decision or '<missing>'}'"
+            ),
+        )
+
+    rationale = str(payload.get("rationale", "")).strip()
+    if not rationale:
+        return (None, f"{decision_path} must include a non-empty rationale")
+    return (decision, "")
 
 
 def _handle_stage_failure(
@@ -258,17 +297,33 @@ def _run_once_standard(
 
     if stage_before == "decide_repeat":
         selected_decision = decision
+        decision_source = "cli"
+        artifact_decision_error = ""
+        if selected_decision is None:
+            artifact_decision, artifact_decision_error = _decision_from_artifact(repo_root, state)
+            if artifact_decision is not None:
+                selected_decision = artifact_decision
+                decision_source = "artifact"
         if selected_decision is None and auto_decision:
             selected_decision = select_decision_from_todo(
                 repo_root,
                 prioritize_implementation=(detected_host_mode == "local"),
             )
+            if selected_decision is not None:
+                decision_source = "auto_todo"
         if selected_decision is None and auto_decision and auto_mode:
             selected_decision = "stop"
-        auto_selected = decision is None and selected_decision is not None
+            decision_source = "auto_default"
+        auto_selected = decision is None and decision_source in {"auto_todo", "auto_default"}
 
         if selected_decision is None:
-            message = "stage 'decide_repeat' requires --decision (or --auto-decision) to transition. Rerun with --decision=<hypothesis|design|stop|human_review> or enable --auto-decision."
+            message = (
+                "stage 'decide_repeat' requires --decision "
+                "(or decision_result.json or --auto-decision) to transition. "
+                "Rerun with --decision=<hypothesis|design|stop|human_review> or enable --auto-decision."
+            )
+            if artifact_decision_error:
+                message = f"{message} Invalid decision artifact: {artifact_decision_error}"
             _append_state_history(
                 state,
                 stage_before=stage_before,
@@ -303,6 +358,20 @@ def _run_once_standard(
                 stage_before=outcome.stage_before,
                 stage_after=outcome.stage_after,
                 message=summary,
+            )
+
+        if selected_decision not in DECISION_STAGES:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=(
+                    f"decide_repeat decision '{selected_decision}' is invalid "
+                    f"(expected one of {list(DECISION_STAGES)})"
+                ),
+                verification=verification_summary,
             )
 
         guardrails = _load_guardrail_config(repo_root)
@@ -351,6 +420,8 @@ def _run_once_standard(
         message = f"decision applied: decide_repeat -> {selected_decision}"
         if auto_selected:
             message = f"{message} (auto-selected from docs/todo.md)"
+        elif decision_source == "artifact":
+            message = f"{message} (from decision_result.json)"
         if selected_decision == "hypothesis":
             message = f"{message} (note: reusing current iteration directory; prior hypothesis.md will be overwritten)"
         changed = [state_path]

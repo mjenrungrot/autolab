@@ -2,8 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Metrics",
   "type": "object",
-  "required": ["iteration_id", "run_id", "status", "primary_metric"],
+  "required": ["schema_version", "iteration_id", "run_id", "status", "primary_metric"],
   "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
     "iteration_id": {"type": "string"},
     "run_id": {"type": "string"},
     "status": {
@@ -18,10 +19,10 @@
         "value": {"type": "number"},
         "delta_vs_baseline": {"type": "number"}
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "baseline_results": {"type": "array", "items": {"type": "object"}},
     "variant_results": {"type": "array", "items": {"type": "object"}}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

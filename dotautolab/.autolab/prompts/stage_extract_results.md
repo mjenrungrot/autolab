@@ -5,23 +5,24 @@ You are the **Results Extractor**.
 
 ## PRIMARY OBJECTIVE
 Convert run artifacts into structured outputs:
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
-- `experiments/{{iteration_id}}/analysis/summary.md`
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- `{{iteration_path}}/analysis/summary.md`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
-- `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
-- `experiments/{{iteration_id}}/analysis/summary.md`
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json`
+- `{{iteration_path}}/analysis/summary.md`
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/schemas/metrics.schema.json`
-- `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
-- Run artifacts under `experiments/{{iteration_id}}/runs/{{run_id}}/`
-- `experiments/{{iteration_id}}/design.yaml`
+- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
+- Run artifacts under `{{iteration_path}}/runs/{{run_id}}/`
+- `{{iteration_path}}/design.yaml`
 
 ## MISSING-INPUT FALLBACKS
 - If `run_manifest.json` is missing, stop and request launch-stage completion.
@@ -31,15 +32,23 @@ Convert run artifacts into structured outputs:
 ## REQUIRED PRECHECK
 `run_manifest.json.artifact_sync_to_local.status` must be success-like (`ok|completed|success|passed`) before extraction.
 
+## STATUS SEMANTICS
+- Use `status: completed` when required metrics and evidence are fully present.
+- Use `status: partial` when only part of required evidence is available; include explicit missing artifact list in `analysis/summary.md`.
+- Use `status: failed` when extraction cannot produce trustworthy metrics; include root cause and blocking artifacts.
+
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
 3. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
-4. Run `python3 .autolab/verifiers/template_fill.py --stage extract_results` and fix failures.
+4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
+5. Run `autolab verify --stage extract_results` and fix failures.
+6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results` for direct template diagnostics.
 
 ## METRICS TEMPLATE (schema-aligned)
 ```json
 {
+  "schema_version": "1.0",
   "iteration_id": "{{iteration_id}}",
   "run_id": "{{run_id}}",
   "status": "completed",

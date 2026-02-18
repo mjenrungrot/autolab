@@ -9,6 +9,7 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - Updated repo files for this iteration
@@ -16,6 +17,7 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
+- Resolved context: `iteration_id={{iteration_id}}`
 - `.autolab/verifier_policy.yaml`
 - `{{iteration_path}}/design.yaml`
 - `{{iteration_path}}/hypothesis.md`
@@ -32,7 +34,8 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 3. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
 4. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
 5. Include short bounded excerpts for failing commands and explain remediation.
-6. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation` and fix failures.
+6. Run `autolab verify --stage implementation` and fix failures.
+7. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation` for direct template diagnostics.
 
 ## OUTPUT TEMPLATE
 ```markdown
