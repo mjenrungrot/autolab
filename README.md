@@ -26,7 +26,6 @@ After upgrading the package from GitHub, refresh local workflow defaults:
 
 ```bash
 autolab sync-scaffold --force
-autolab lint-scaffold-sync
 ```
 
 After install, invoke with:
@@ -113,11 +112,13 @@ Use these configurations based on how much control vs automation you want:
 | `autorun.guardrails.max_update_docs_cycles` | Prevent repeated `extract_results`/`update_docs` churn without forward progress. |
 | `autorun.guardrails.max_generated_todo_tasks` | Cap auto-generated todo tasks to keep focus lists bounded and actionable. |
 | `autorun.guardrails.on_breach: human_review` (default) | Safe escalation target when automation is stuck or quality gates cannot be satisfied. |
+| `autorun.todo_fallback.local` / `autorun.todo_fallback.slurm` | Configure generated fallback tasks (stage/text/scope) when no actionable tasks remain for the current host mode. |
 
 ## Source layout
 
 - `src/autolab/`: Python package modules (`__main__`, `todo_sync`, `slurm_job_list`)
 - `src/autolab/scaffold/.autolab/`: Shared default scaffold assets (prompts, schemas, verifier helpers, defaults)
+- `.autolab/` in user repos is materialized from scaffold via `autolab init` or `autolab sync-scaffold`; there is no separate `dotautolab/` mirror.
 
 ## Scaffold lifecycle
 
@@ -207,6 +208,7 @@ experiments:
 - `extract_results`: `runs/<run_id>/metrics.json`, `analysis/summary.md`
 - `update_docs`: `docs_update.md`, plus configured paper target files from `.autolab/state.json`
 - `decide_repeat`: `decision_result.json`
+- assistant audit trail: `.autolab/task_history.jsonl`
 
 ## Verifiers and schema checks
 

@@ -893,6 +893,57 @@ class TestAssistantMode:
         assert persisted["task_cycle_stage"] == "done"
         assert persisted["current_task_id"] == ""
 
+    def test_assistant_select_writes_task_ledger(self, tmp_path: Path) -> None:
+        repo, state_path, _it_dir = _setup_repo(
+            tmp_path,
+            stage="human_review",
+            assistant_mode="on",
+            task_cycle_stage="select",
+            hypothesis_status="done",
+        )
+        _write_todo_md(repo, "# Tasks\n- [ ] [stage:implementation] Implement scoped fix\n")
+
+        outcome = _run(state_path, assistant=True)
+
+        assert outcome.transitioned
+        ledger_path = repo / ".autolab" / "task_history.jsonl"
+        assert ledger_path.exists()
+        entries = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert entries
+        latest = entries[-1]
+        assert latest["event"] == "select"
+        assert latest["stage_after"] == "implementation"
+        assert latest["task_id"]
+
+    def test_assistant_verify_writes_verification_ledger(self, tmp_path: Path) -> None:
+        repo, state_path, _it_dir = _setup_repo(
+            tmp_path,
+            stage="implementation",
+            assistant_mode="on",
+            task_cycle_stage="verify",
+            current_task_id="task_abc",
+            hypothesis_status="done",
+        )
+        with mock.patch("autolab.run_assistant._run_verification_step", return_value=(False, "verification failed")):
+            outcome = _run(state_path, assistant=True)
+
+        assert outcome.exit_code == 0
+        ledger_path = repo / ".autolab" / "task_history.jsonl"
+        assert ledger_path.exists()
+        entries = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        latest = entries[-1]
+        assert latest["event"] == "verify"
+        assert latest["task_id"] == "task_abc"
+        assert latest["verification"]["passed"] is False
+
 
 # ---------------------------------------------------------------------------
 # Full cycle integration: hypothesis → stop via decide_repeat

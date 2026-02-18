@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TodoState",
+  "type": "object",
+  "required": ["version", "next_order", "tasks"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "next_order": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "source",
+          "scope",
+          "stage",
+          "task_class",
+          "text",
+          "text_key",
+          "status",
+          "first_seen_order",
+          "first_seen_at",
+          "last_seen_at",
+          "last_evidence_at"
+        ],
+        "properties": {
+          "task_id": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "enum": ["manual", "generated"]},
+          "scope": {"type": "string", "minLength": 1},
+          "stage": {
+            "type": "string",
+            "enum": [
+              "hypothesis",
+              "design",
+              "implementation",
+              "implementation_review",
+              "launch",
+              "extract_results",
+              "update_docs",
+              "decide_repeat",
+              "human_review",
+              "stop"
+            ]
+          },
+          "task_class": {"type": "string", "enum": ["feature", "docs", "experiment", "unknown"]},
+          "text": {"type": "string", "minLength": 1},
+          "text_key": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["open", "completed", "removed"]},
+          "first_seen_order": {"type": "integer", "minimum": 1},
+          "first_seen_at": {"type": "string", "format": "date-time"},
+          "last_seen_at": {"type": "string", "format": "date-time"},
+          "last_evidence_at": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
