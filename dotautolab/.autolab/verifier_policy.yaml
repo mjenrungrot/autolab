@@ -1,0 +1,47 @@
+test_command: "./venv/bin/python -m pytest"
+dry_run_command: "./venv/bin/python -m tinydesk_v4.train --config experiments/<ITERATION_ID>/design.yaml --dry-run"
+require_tests: false
+require_dry_run: true
+require_env_smoke: true
+require_docs_target_update: true
+template_fill:
+  enabled: true
+  command: "./venv/bin/python .autolab/verifiers/template_fill.py"
+  stages:
+    hypothesis: true
+    design: true
+    implementation: true
+    implementation_review: true
+    launch: true
+    extract_results: true
+    update_docs: true
+template_fill_by_stage:
+  hypothesis: "./venv/bin/python .autolab/verifiers/template_fill.py --stage hypothesis"
+  design: "./venv/bin/python .autolab/verifiers/template_fill.py --stage design"
+  implementation: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation"
+  implementation_review: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation_review"
+  launch: "./venv/bin/python .autolab/verifiers/template_fill.py --stage launch"
+  extract_results: "./venv/bin/python .autolab/verifiers/template_fill.py --stage extract_results"
+  update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
+agent_runner:
+  enabled: false
+  command: "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -"
+  stages:
+    - hypothesis
+    - design
+    - implementation
+    - implementation_review
+    - launch
+    - extract_results
+    - update_docs
+  edit_scope:
+    mode: "iteration_plus_core"
+    core_dirs:
+      - "src"
+      - "scripts"
+      - ".autolab"
+      - "docs"
+      - "paper"
+      - "tests"
+    ensure_iteration_dir: true
+  timeout_seconds: 0

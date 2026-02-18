@@ -1,0 +1,21 @@
+version: 1
+profile: tight-safe
+scope: stage_and_run_core
+line_limits:
+  fixed_max_lines:
+    hypothesis.md: 90
+    design.yaml: 220
+    implementation_plan.md: 260
+    implementation_review.md: 120
+    review_result.json: 60
+    launch/run_local.sh: 160
+    launch/run_slurm.sbatch: 120
+    analysis/summary.md: 140
+    docs_update.md: 160
+    runs/<RUN_ID>/metrics.json: 260
+  run_manifest_dynamic:
+    target: runs/<RUN_ID>/run_manifest.json
+    min_lines: 2500
+    max_lines: 12000
+    base_lines: 1200
+    per_k_result_lines: 75
