@@ -44,6 +44,10 @@ TOUCHES_PATTERN = re.compile(
     r"^\s*-\s*\*\*touches\*\*:\s*\[([^\]]*)\]",
     re.MULTILINE,
 )
+SCOPE_OK_PATTERN = re.compile(
+    r"^\s*-\s*\*\*scope_ok\*\*:\s*(.+)$",
+    re.MULTILINE | re.IGNORECASE,
+)
 CONFLICT_GROUP_PATTERN = re.compile(
     r"^\s*-\s*\*\*conflict_group\*\*:\s*(.+)$",
     re.MULTILINE | re.IGNORECASE,
@@ -240,7 +244,16 @@ def lint(plan_text: str) -> list[str]:
             issues.append(f"{task_id}: missing 'validation' field")
 
         # touches (collect for wave validation)
-        task_touches[task_id] = _parse_touches_from_section(section)
+        touches = _parse_touches_from_section(section)
+        task_touches[task_id] = touches
+        if not touches:
+            issues.append(f"{task_id}: missing 'touches' field")
+
+        scope_ok_raw = _extract_field(section, SCOPE_OK_PATTERN)
+        if scope_ok_raw is None:
+            issues.append(f"{task_id}: missing 'scope_ok' field")
+        elif scope_ok_raw.strip().lower() not in {"true", "yes"}:
+            issues.append(f"{task_id}: scope_ok must be true after scope verification")
 
         # conflict_group (optional, collect for wave validation)
         cg = _extract_field(section, CONFLICT_GROUP_PATTERN)

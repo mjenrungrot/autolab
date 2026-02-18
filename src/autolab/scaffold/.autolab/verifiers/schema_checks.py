@@ -192,6 +192,8 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
                 "tests": bool(shared.get("tests", False)),
                 "dry_run": bool(shared.get("dry_run", False)),
                 "schema": bool(shared.get("schema", False)),
+                "prompt_lint": bool(shared.get("prompt_lint", False)),
+                "consistency": bool(shared.get("consistency", False)),
                 "env_smoke": bool(shared.get("env_smoke", False)),
                 "docs_target_update": bool(shared.get("docs_target_update", False)),
             }
@@ -200,6 +202,8 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
         "tests": False,
         "dry_run": False,
         "schema": False,
+        "prompt_lint": False,
+        "consistency": False,
         "env_smoke": False,
         "docs_target_update": False,
     }
@@ -207,6 +211,8 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
         "tests": "require_tests",
         "dry_run": "require_dry_run",
         "schema": "require_schema",
+        "prompt_lint": "require_prompt_lint",
+        "consistency": "require_consistency",
         "env_smoke": "require_env_smoke",
         "docs_target_update": "require_docs_target_update",
     }

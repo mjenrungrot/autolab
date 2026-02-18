@@ -140,6 +140,34 @@ def _run_prompt_lint(repo: Path, *, stage: str | None = None) -> subprocess.Comp
     )
 
 
+def _run_registry_consistency(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "registry_consistency.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
+    return subprocess.run(
+        command,
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_consistency_checks(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "consistency_checks.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
+    return subprocess.run(
+        command,
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _setup_review_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -169,6 +197,62 @@ def test_schema_checks_fail_when_required_check_key_missing(tmp_path: Path) -> N
 
     assert result.returncode == 1
     assert "docs_target_update" in result.stdout
+
+
+def test_registry_consistency_fails_when_policy_requires_unsupported_capability(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy, dict)
+    req = policy.setdefault("requirements_by_stage", {})
+    assert isinstance(req, dict)
+    design_req = req.setdefault("design", {})
+    assert isinstance(design_req, dict)
+    design_req["env_smoke"] = True  # design stage capability is false in workflow registry
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    result = _run_registry_consistency(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "not supported by workflow.yaml verifier_categories" in result.stdout
+
+
+def test_consistency_checks_fail_on_metric_name_mismatch(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_state(repo, stage="extract_results", last_run_id="run_001")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    run_dir = iteration_dir / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "local",
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    metrics = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        "run_id": "run_001",
+        "status": "completed",
+        "primary_metric": {
+            "name": "f1_score",
+            "value": 0.5,
+            "delta_vs_baseline": 0.1,
+        },
+        "baseline_results": [],
+        "variant_results": [],
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    result = _run_consistency_checks(repo, stage="extract_results")
+
+    assert result.returncode == 1
+    assert "does not match design.metrics.primary.name" in result.stdout
 
 
 def test_schema_checks_design_stage_override_skips_review_artifacts(tmp_path: Path) -> None:
@@ -298,6 +382,7 @@ def test_implementation_plan_lint_passes_valid_plan(tmp_path: Path) -> None:
         "- **location**: src/foo.py\n"
         "- **description**: Create foo module\n"
         "- **touches**: [src/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -307,6 +392,7 @@ def test_implementation_plan_lint_passes_valid_plan(tmp_path: Path) -> None:
         "- **location**: src/bar.py\n"
         "- **description**: Integrate foo into bar\n"
         "- **touches**: [src/bar.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -333,6 +419,7 @@ def test_implementation_plan_lint_fails_missing_change_summary(tmp_path: Path) -
         "- **location**: src/foo.py\n"
         "- **description**: Create foo\n"
         "- **touches**: [src/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
     ))
@@ -433,6 +520,7 @@ def test_implementation_plan_lint_fails_wave_overlap(tmp_path: Path) -> None:
         "- **location**: src/config.py\n"
         "- **description**: Update config\n"
         "- **touches**: [src/config.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
         "### T2: Also edit config\n"
@@ -440,6 +528,7 @@ def test_implementation_plan_lint_fails_wave_overlap(tmp_path: Path) -> None:
         "- **location**: src/config.py\n"
         "- **description**: Also modify config\n"
         "- **touches**: [src/config.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
         "## Parallel Execution Groups\n"
@@ -463,6 +552,7 @@ def test_implementation_plan_lint_fails_wave_conflict_group(tmp_path: Path) -> N
         "- **location**: src/a.py\n"
         "- **description**: A\n"
         "- **touches**: [src/a.py]\n"
+        "- **scope_ok**: true\n"
         "- **conflict_group**: database\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
@@ -471,6 +561,7 @@ def test_implementation_plan_lint_fails_wave_conflict_group(tmp_path: Path) -> N
         "- **location**: src/b.py\n"
         "- **description**: B\n"
         "- **touches**: [src/b.py]\n"
+        "- **scope_ok**: true\n"
         "- **conflict_group**: database\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
@@ -640,6 +731,7 @@ def test_implementation_plan_lint_fails_ellipsis_placeholder(tmp_path: Path) -> 
         "- **location**: src/foo.py\n"
         "- **description**: Create foo module with ... details\n"
         "- **touches**: [src/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -662,6 +754,7 @@ def test_implementation_plan_lint_fails_unicode_ellipsis_placeholder(tmp_path: P
         "- **location**: src/foo.py\n"
         "- **description**: Create foo module with\u2026 details\n"
         "- **touches**: [src/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -691,6 +784,7 @@ def test_implementation_plan_lint_scope_enforcement_warn_mode(tmp_path: Path) ->
         "- **location**: outside/foo.py\n"
         "- **description**: Create foo\n"
         "- **touches**: [outside/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -728,6 +822,7 @@ def test_implementation_plan_lint_scope_enforcement_fail_mode(tmp_path: Path) ->
         "- **location**: outside/foo.py\n"
         "- **description**: Create foo\n"
         "- **touches**: [outside/foo.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: run tests\n"
         "- **status**: Not Completed\n"
         "- **log**:\n"
@@ -766,6 +861,7 @@ def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None
         "- **location**: src/config.py\n"
         "- **description**: Update config\n"
         "- **touches**: [src/config.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
         "### T2: Edit utils\n"
@@ -773,6 +869,7 @@ def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None
         "- **location**: src/utils.py\n"
         "- **description**: Update utils\n"
         "- **touches**: [src/utils.py]\n"
+        "- **scope_ok**: true\n"
         "- **validation**: tests\n"
         "- **status**: Not Completed\n\n"
         "## Parallel Execution Groups\n"
