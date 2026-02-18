@@ -21,8 +21,20 @@
       },
       "additionalProperties": false
     },
-    "baseline_results": {"type": "array", "items": {"type": "object"}},
-    "variant_results": {"type": "array", "items": {"type": "object"}}
+    "baseline_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "variant_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
   },
   "additionalProperties": false
 }

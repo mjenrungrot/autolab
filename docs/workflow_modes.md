@@ -6,11 +6,9 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 
 ## Mode Summary
 
-| Mode | Who edits artifacts | Who runs verifiers | Who advances stage |
-| --- | --- | --- | --- |
-| Manual (`autolab run`, no runner) | Human | Human via stage prompt, `autolab verify`, and optionally `autolab run --verify` | Autolab state machine |
-| Agent runner (`agent_runner.enabled: true`) | Runner agent within allowed edit scope | Runner agent via stage prompt; Autolab can enforce via `autolab verify` / auto loop verification | Autolab state machine |
-| Assistant (`--assistant`) | Assistant task cycle (`select -> implement -> verify -> review`) | Assistant verify phase + policy checks | Autolab assistant orchestration |
+- `mode`: Manual (`autolab run`, no runner); `who_edits_artifacts`: Human; `who_runs_verifiers`: Human via stage prompt, `autolab verify`, and optionally `autolab run --verify`; `who_advances_stage`: Autolab state machine.
+- `mode`: Agent runner (`agent_runner.enabled: true`); `who_edits_artifacts`: Runner agent within allowed edit scope; `who_runs_verifiers`: Runner agent via stage prompt; Autolab can enforce via `autolab verify` / auto loop verification; `who_advances_stage`: Autolab state machine.
+- `mode`: Assistant (`--assistant`); `who_edits_artifacts`: Assistant task cycle (`select -> implement -> verify -> review`); `who_runs_verifiers`: Assistant verify phase + policy checks; `who_advances_stage`: Autolab assistant orchestration.
 
 ## Responsibility Contract
 

@@ -44,7 +44,7 @@ Use this skill when the user explicitly asks for `$llm-council` and wants strong
    - Overview
    - Change Summary (concise summary of what the plan changes and why)
    - Files Updated (list of files to be created or modified)
-   - Tasks (with full task block fields including `depends_on`, `location`, `description`, `touches` — **required** for wave safety validation, `validation`, `status`)
+   - Tasks (with full task block fields including `depends_on`, `location`, `description`, `touches` -- **required** for wave safety validation, `validation`, `status`)
    - Parallel Execution Groups (wave table)
    - Risks and edge cases
    - Rollback or mitigation

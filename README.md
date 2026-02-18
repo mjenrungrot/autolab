@@ -19,7 +19,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 For stable CI or release installs, pin to a tag:
 
 ```bash
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.4
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.5
 ```
 
 After upgrading the package from GitHub, refresh local workflow defaults:
@@ -69,59 +69,49 @@ Use these configurations based on how much control vs automation you want:
 
 ### Runtime mode (`run` / `loop`)
 
-| Configuration | Use case |
-| --- | --- |
-| Standard mode (default; no `--assistant`) | Deterministic stage-by-stage orchestration (`hypothesis` -> `design` -> ...). Best for debugging stage verifiers and manual checkpoints. |
-| Assistant mode (`--assistant`) | Task-driven delivery from `docs/todo.md` / backlog (`select` -> `implement` -> `verify` -> `review`). Best for autonomous feature completion. |
+- `configuration`: Standard mode (default; no `--assistant`); `use_case`: Deterministic stage-by-stage orchestration (`hypothesis` -> `design` -> ...). Best for debugging stage verifiers and manual checkpoints.
+- `configuration`: Assistant mode (`--assistant`); `use_case`: Task-driven delivery from `docs/todo.md` / backlog (`select` -> `implement` -> `verify` -> `review`). Best for autonomous feature completion.
 
 ### Run cadence and decision handling
 
-| Configuration | Use case |
-| --- | --- |
-| `autolab run` | Single controlled transition while iterating locally. |
-| `autolab run --verify` | Run policy-driven verification before stage evaluation during a standard run. |
-| `autolab loop --max-iterations N` | Bounded multi-step execution without unattended auto-decisions. |
-| `autolab loop --auto --max-hours H` | Unattended operation with lock management, guardrails, and automatic decision handling. |
-| `--decision <stage>` (at `decide_repeat`) | Force explicit human choice for the next stage. |
-| `--auto-decision` | Let Autolab choose from todo/backlog at `decide_repeat` (useful for semi-automated runs). |
+- `configuration`: `autolab run`; `use_case`: Single controlled transition while iterating locally.
+- `configuration`: `autolab run --verify`; `use_case`: Run policy-driven verification before stage evaluation during a standard run.
+- `configuration`: `autolab loop --max-iterations N`; `use_case`: Bounded multi-step execution without unattended auto-decisions.
+- `configuration`: `autolab loop --auto --max-hours H`; `use_case`: Unattended operation with lock management, guardrails, and automatic decision handling.
+- `configuration`: `--decision <stage>` (at `decide_repeat`); `use_case`: Force explicit human choice for the next stage.
+- `configuration`: `--auto-decision`; `use_case`: Let Autolab choose from todo/backlog at `decide_repeat` (useful for semi-automated runs).
 
 ### Agent runner controls
 
-| Configuration | Use case |
-| --- | --- |
-| `agent_runner.enabled: false` (default) | Keep runs verifier-driven and manual by default. |
-| `agent_runner.enabled: true` + default `run_agent_mode=policy` | Enable stage prompt execution by policy for normal automation. |
-| `--run-agent` | Force runner invocation for a run/loop even when policy has runner disabled (one-off override). |
-| `--no-run-agent` | Temporarily disable runner invocation even if policy enables it. |
-| `agent_runner.runner: codex` | Default sandboxed runner preset for Codex CLI workflows. |
-| `agent_runner.runner: claude` | Claude Code CLI workflows in non-interactive mode. |
-| `agent_runner.runner: custom` | Bring your own command template/integration. |
-| `agent_runner.edit_scope.mode: iteration_plus_core` (default) | Allow changes in iteration workspace plus shared code/docs directories; good for real implementation work. |
-| `agent_runner.edit_scope.mode: iteration_only` | Restrict edits to iteration workspace; good for strict isolation and lower risk. |
+- `configuration`: `agent_runner.enabled: false` (default); `use_case`: Keep runs verifier-driven and manual by default.
+- `configuration`: `agent_runner.enabled: true` + default `run_agent_mode=policy`; `use_case`: Enable stage prompt execution by policy for normal automation.
+- `configuration`: `--run-agent`; `use_case`: Force runner invocation for a run/loop even when policy has runner disabled (one-off override).
+- `configuration`: `--no-run-agent`; `use_case`: Temporarily disable runner invocation even if policy enables it.
+- `configuration`: `agent_runner.runner: codex`; `use_case`: Default sandboxed runner preset for Codex CLI workflows.
+- `configuration`: `agent_runner.runner: claude`; `use_case`: Claude Code CLI workflows in non-interactive mode.
+- `configuration`: `agent_runner.runner: custom`; `use_case`: Bring your own command template/integration.
+- `configuration`: `agent_runner.edit_scope.mode: iteration_plus_core` (default); `use_case`: Allow changes in iteration workspace plus shared code/docs directories; good for real implementation work.
+- `configuration`: `agent_runner.edit_scope.mode: iteration_only`; `use_case`: Restrict edits to iteration workspace; good for strict isolation and lower risk.
 
 ### Commit and quality gates (`.autolab/verifier_policy.yaml`)
 
-| Configuration | Use case |
-| --- | --- |
-| `autorun.auto_commit.mode: meaningful_only` (default) | Commit only when meaningful files changed; recommended default for most repos. |
-| `autorun.auto_commit.mode: always` | Always commit run outputs; useful for fully automated pipelines with external filtering. |
-| `autorun.auto_commit.mode: disabled` | Never auto-commit; use when humans curate every commit. |
-| `autorun.meaningful_change.require_implementation_progress: true` (default) | Block implementation transitions/commits that do not produce meaningful code/config/docs changes. |
-| `autorun.meaningful_change.require_implementation_progress: false` | Useful for early scaffolding/prototyping where strict change gating is too restrictive. |
-| `autorun.meaningful_change.require_verification: true` (default) | In assistant review cycle, require verification success before task completion. |
-| `autorun.meaningful_change.require_git_for_progress: true` (default) | Enforce git-based progress checks in normal repositories; relax only in non-git/sandbox contexts. |
-| `--no-strict-implementation-progress` | CLI override for experiments where strict implementation progress checks should be temporarily bypassed. |
+- `configuration`: `autorun.auto_commit.mode: meaningful_only` (default); `use_case`: Commit only when meaningful files changed; recommended default for most repos.
+- `configuration`: `autorun.auto_commit.mode: always`; `use_case`: Always commit run outputs; useful for fully automated pipelines with external filtering.
+- `configuration`: `autorun.auto_commit.mode: disabled`; `use_case`: Never auto-commit; use when humans curate every commit.
+- `configuration`: `autorun.meaningful_change.require_implementation_progress: true` (default); `use_case`: Block implementation transitions/commits that do not produce meaningful code/config/docs changes.
+- `configuration`: `autorun.meaningful_change.require_implementation_progress: false`; `use_case`: Useful for early scaffolding/prototyping where strict change gating is too restrictive.
+- `configuration`: `autorun.meaningful_change.require_verification: true` (default); `use_case`: In assistant review cycle, require verification success before task completion.
+- `configuration`: `autorun.meaningful_change.require_git_for_progress: true` (default); `use_case`: Enforce git-based progress checks in normal repositories; relax only in non-git/sandbox contexts.
+- `configuration`: `--no-strict-implementation-progress`; `use_case`: CLI override for experiments where strict implementation progress checks should be temporarily bypassed.
 
 ### Guardrails for unattended automation
 
-| Configuration | Use case |
-| --- | --- |
-| `autorun.guardrails.max_same_decision_streak` | Prevent loops that keep choosing the same next-stage decision. |
-| `autorun.guardrails.max_no_progress_decisions` | Escalate when repeated cycles show no open-task reduction or meaningful progress. |
-| `autorun.guardrails.max_update_docs_cycles` | Prevent repeated `extract_results`/`update_docs` churn without forward progress. |
-| `autorun.guardrails.max_generated_todo_tasks` | Cap auto-generated todo tasks to keep focus lists bounded and actionable. |
-| `autorun.guardrails.on_breach: human_review` (default) | Safe escalation target when automation is stuck or quality gates cannot be satisfied. |
-| `autorun.todo_fallback.local` / `autorun.todo_fallback.slurm` | Configure generated fallback tasks (stage/text/scope) when no actionable tasks remain for the current host mode. |
+- `configuration`: `autorun.guardrails.max_same_decision_streak`; `use_case`: Prevent loops that keep choosing the same next-stage decision.
+- `configuration`: `autorun.guardrails.max_no_progress_decisions`; `use_case`: Escalate when repeated cycles show no open-task reduction or meaningful progress.
+- `configuration`: `autorun.guardrails.max_update_docs_cycles`; `use_case`: Prevent repeated `extract_results`/`update_docs` churn without forward progress.
+- `configuration`: `autorun.guardrails.max_generated_todo_tasks`; `use_case`: Cap auto-generated todo tasks to keep focus lists bounded and actionable.
+- `configuration`: `autorun.guardrails.on_breach: human_review` (default); `use_case`: Safe escalation target when automation is stuck or quality gates cannot be satisfied.
+- `configuration`: `autorun.todo_fallback.local` / `autorun.todo_fallback.slurm`; `use_case`: Configure generated fallback tasks (stage/text/scope) when no actionable tasks remain for the current host mode.
 
 ## Source layout
 
@@ -135,18 +125,16 @@ Autolab uses this stage graph for each iteration:
 
 `hypothesis -> design -> implementation -> implementation_review -> launch -> extract_results -> update_docs -> decide_repeat`
 
-| Stage | Primary outputs | Exit behavior |
-| --- | --- | --- |
-| `hypothesis` | `hypothesis.md` | advances to `design` when metric/target/criteria contract fields are present |
-| `design` | `design.yaml` | advances to `implementation` when required keys are present |
-| `implementation` | `implementation_plan.md` and code changes | advances to `implementation_review` (requires Dry Run section when policy sets `dry_run: true`) |
-| `implementation_review` | `implementation_review.md`, `review_result.json` | `pass` -> `launch`; `needs_retry` -> `implementation`; `failed` -> `human_review` |
-| `launch` | `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json` | advances to `extract_results` |
-| `extract_results` | `runs/<run_id>/metrics.json`, `analysis/summary.md` | advances to `update_docs` |
-| `update_docs` | `docs_update.md` | advances to `decide_repeat` when run evidence references are present |
-| `decide_repeat` | `decision_result.json` | decides next iteration / next state action |
-| `human_review` | none (manual intervention) | terminal |
-| `stop` | none (complete) | terminal |
+- `stage`: `hypothesis`; `primary_outputs`: `hypothesis.md`; `exit_behavior`: advances to `design` when metric/target/criteria contract fields are present.
+- `stage`: `design`; `primary_outputs`: `design.yaml`; `exit_behavior`: advances to `implementation` when required keys are present.
+- `stage`: `implementation`; `primary_outputs`: `implementation_plan.md` and code changes; `exit_behavior`: advances to `implementation_review` (requires Dry Run section when policy sets `dry_run: true`).
+- `stage`: `implementation_review`; `primary_outputs`: `implementation_review.md`, `review_result.json`; `exit_behavior`: `pass` -> `launch`; `needs_retry` -> `implementation`; `failed` -> `human_review`.
+- `stage`: `launch`; `primary_outputs`: `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`; `exit_behavior`: advances to `extract_results`.
+- `stage`: `extract_results`; `primary_outputs`: `runs/<run_id>/metrics.json`, `analysis/summary.md`; `exit_behavior`: advances to `update_docs`.
+- `stage`: `update_docs`; `primary_outputs`: `docs_update.md`; `exit_behavior`: advances to `decide_repeat` when run evidence references are present.
+- `stage`: `decide_repeat`; `primary_outputs`: `decision_result.json`; `exit_behavior`: decides next iteration / next state action.
+- `stage`: `human_review`; `primary_outputs`: none (manual intervention); `exit_behavior`: terminal.
+- `stage`: `stop`; `primary_outputs`: none (complete); `exit_behavior`: terminal.
 
 ### Failure and retry behavior
 

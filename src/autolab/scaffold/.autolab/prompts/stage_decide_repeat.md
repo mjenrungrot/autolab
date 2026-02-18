@@ -65,11 +65,9 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - `risks` is a required array of non-empty strings (can be empty array `[]`).
 
 ## VERIFIER MAPPING
-| Verifier | What it checks | Common failure fix |
-|----------|---------------|-------------------|
-| schema_checks | `decision_result.json` schema validation | Ensure `evidence` is non-empty array with `source`, `pointer`, `summary` fields |
-| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
-| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+- `verifier`: schema_checks; `checks`: `decision_result.json` schema validation; `common_failure_fix`: Ensure `evidence` is non-empty array with `source`, `pointer`, `summary` fields.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
 
 ## STEPS
 1. Summarize latest run/review/doc evidence in 3-6 bullets.

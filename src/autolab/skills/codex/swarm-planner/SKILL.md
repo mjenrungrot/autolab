@@ -62,7 +62,7 @@ Every task must include:
 - `depends_on`
 - `location`
 - `description`
-- `touches` (list of file paths/globs the task edits) — **required** for wave safety validation. Plans without `touches` produce weaker wave overlap detection.
+- `touches` (list of file paths/globs the task edits) -- **required** for wave safety validation. Plans without `touches` produce weaker wave overlap detection.
 - `validation`
 - `status` (default `Not Completed`)
 - `log` (empty placeholder)
@@ -156,10 +156,8 @@ After drafting the plan:
 - **files edited/created**:
 
 ## Parallel Execution Groups
-| Wave | Tasks | Can Start When |
-|------|-------|----------------|
-| 1 | T1 | Immediately |
-| 2 | T2 | T1 complete |
+- `wave`: 1; `tasks`: T1; `can_start_when`: Immediately
+- `wave`: 2; `tasks`: T2; `can_start_when`: T1 complete
 
 ## Testing Strategy
 <strategy>

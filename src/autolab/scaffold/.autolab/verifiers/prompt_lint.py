@@ -46,6 +46,7 @@ ALLOWED_TOKENS = {
     "metrics_summary",
     "target_comparison",
     "decision_suggestion",
+    "auto_metrics_evidence",
     "diff_summary",
 }
 DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {

@@ -6,11 +6,9 @@ This document covers agent runner configuration, command substitution, environme
 
 Configure in `.autolab/verifier_policy.yaml` under `agent_runner`:
 
-| Preset | Command | Notes |
-|--------|---------|-------|
-| `codex` | `codex --approval-mode full-auto -q ...` | OpenAI Codex CLI |
-| `claude` | `claude -p ... --allowedTools ...` | Anthropic Claude Code |
-| `custom` | User-defined `command` field | Any CLI tool |
+- `preset`: `codex`; `command`: `codex --approval-mode full-auto -q ...`; `notes`: OpenAI Codex CLI.
+- `preset`: `claude`; `command`: `claude -p ... --allowedTools ...`; `notes`: Anthropic Claude Code.
+- `preset`: `custom`; `command`: User-defined `command` field; `notes`: Any CLI tool.
 
 Set `agent_runner.runner` to select a preset. Override with `agent_runner.command` for custom invocations.
 
@@ -24,27 +22,23 @@ Set `agent_runner.runner` to select a preset. Override with `agent_runner.comman
 
 The runner command string supports these substitution tokens:
 
-| Token | Replaced With | Example |
-|-------|---------------|---------|
-| `{stage}` | Current stage name | `implementation` |
-| `{workspace_dir}` | Absolute path to repo root | `/home/user/myproject` |
-| `{prompt_file}` | Path to rendered prompt | `.autolab/prompts/rendered/implementation.md` |
-| `{state_file}` | Path to state file | `.autolab/state.json` |
-| `{iteration_id}` | Current iteration ID | `iter_001` |
-| `{allowed_dirs}` | Comma-separated allowed edit dirs | `experiments/plan/iter_001,src,scripts` |
+- `token`: `{stage}`; `replaced_with`: Current stage name; `example`: `implementation`.
+- `token`: `{workspace_dir}`; `replaced_with`: Absolute path to repo root; `example`: `/home/user/myproject`.
+- `token`: `{prompt_file}`; `replaced_with`: Path to rendered prompt; `example`: `.autolab/prompts/rendered/implementation.md`.
+- `token`: `{state_file}`; `replaced_with`: Path to state file; `example`: `.autolab/state.json`.
+- `token`: `{iteration_id}`; `replaced_with`: Current iteration ID; `example`: `iter_001`.
+- `token`: `{allowed_dirs}`; `replaced_with`: Comma-separated allowed edit dirs; `example`: `experiments/plan/iter_001,src,scripts`.
 
 ## Environment Variables
 
 Set by Autolab before runner invocation:
 
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `AUTOLAB_STAGE` | Current stage name | Runner can condition on stage |
-| `AUTOLAB_ITERATION_ID` | Current iteration ID | Scoping |
-| `AUTOLAB_STATE_FILE` | Absolute path to state.json | State access |
-| `AUTOLAB_WORKSPACE_DIR` | Absolute path to repo root | Working directory |
-| `AUTOLAB_PROMPT_FILE` | Path to rendered prompt | Prompt input |
-| `AUTOLAB_ALLOWED_EDIT_DIRS` | Colon-separated allowed dirs | Scope enforcement |
+- `variable`: `AUTOLAB_STAGE`; `value`: Current stage name; `purpose`: Runner can condition on stage.
+- `variable`: `AUTOLAB_ITERATION_ID`; `value`: Current iteration ID; `purpose`: Scoping.
+- `variable`: `AUTOLAB_STATE_FILE`; `value`: Absolute path to state.json; `purpose`: State access.
+- `variable`: `AUTOLAB_WORKSPACE_DIR`; `value`: Absolute path to repo root; `purpose`: Working directory.
+- `variable`: `AUTOLAB_PROMPT_FILE`; `value`: Path to rendered prompt; `purpose`: Prompt input.
+- `variable`: `AUTOLAB_ALLOWED_EDIT_DIRS`; `value`: Colon-separated allowed dirs; `purpose`: Scope enforcement.
 
 ## Edit Scope Modes
 

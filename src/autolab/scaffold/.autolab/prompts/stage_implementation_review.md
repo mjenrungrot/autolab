@@ -61,14 +61,12 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 - When overall `status` is `pass`, all policy-required checks must individually be `pass`.
 
 ## VERIFIER MAPPING
-| Verifier | What it checks | Common failure fix |
-|----------|---------------|-------------------|
-| dry_run | Executes `dry_run_command` from policy | Fix dry-run failures before marking review as pass |
-| schema_checks | `review_result.json` schema validation | Ensure all 5 required_checks keys present with valid status values |
-| env_smoke | `run_health.py` + `result_sanity.py` checks | Fix environment or result consistency issues |
-| docs_target_update | `docs_targets.py` paper target checks | Update configured paper targets or provide no-change rationale |
-| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
-| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+- `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Fix dry-run failures before marking review as pass.
+- `verifier`: schema_checks; `checks`: `review_result.json` schema validation; `common_failure_fix`: Ensure all 5 required_checks keys present with valid status values.
+- `verifier`: env_smoke; `checks`: `run_health.py` + `result_sanity.py` checks; `common_failure_fix`: Fix environment or result consistency issues.
+- `verifier`: docs_target_update; `checks`: `docs_targets.py` paper target checks; `common_failure_fix`: Update configured paper targets or provide no-change rationale.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
 
 ## STEPS
 1. Validate implementation against design and launch constraints.

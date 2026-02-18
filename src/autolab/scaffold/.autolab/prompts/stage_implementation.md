@@ -71,13 +71,11 @@ Canonical minimal task block:
 ```
 
 ## VERIFIER MAPPING
-| Verifier | What it checks | Common failure fix |
-|----------|---------------|-------------------|
-| dry_run | Executes `dry_run_command` from policy | Configure `dry_run_command` in `verifier_policy.yaml` or fix runtime errors |
-| schema_checks | JSON schema validation | Ensure all required artifacts match their schemas |
-| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
-| implementation_plan_lint | Task block structure in `implementation_plan.md` | Ensure each task has `depends_on`, `location`, `description`, `validation`, `status` |
-| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+- `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Configure `dry_run_command` in `verifier_policy.yaml` or fix runtime errors.
+- `verifier`: schema_checks; `checks`: JSON schema validation; `common_failure_fix`: Ensure all required artifacts match their schemas.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
+- `verifier`: implementation_plan_lint; `checks`: Task block structure in `implementation_plan.md`; `common_failure_fix`: Ensure each task has `depends_on`, `location`, `description`, `validation`, `status`.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
 
 ## STEPS
 1. Implement only design-relevant changes; avoid unrelated edits.
@@ -140,10 +138,8 @@ Canonical minimal task block:
 - **files edited/created**:
 
 ## Parallel Execution Groups
-| Wave | Tasks | Can Start When |
-|------|-------|----------------|
-| 1 | T1 | Immediately |
-| 2 | T2 | T1 complete |
+- `wave`: 1; `tasks`: T1; `can_start_when`: Immediately
+- `wave`: 2; `tasks`: T2; `can_start_when`: T1 complete
 ```
 
 > **Note**: The Tasks and Parallel Execution Groups sections are **optional** for simple changes (1-3 files). For simple changes, only the Change Summary section is required.
