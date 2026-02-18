@@ -250,6 +250,77 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scaffold_sync_file_map(root: Path) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(root)
+        if "__pycache__" in relative.parts:
+            continue
+        if path.suffix == ".pyc":
+            continue
+        files[relative.as_posix()] = path.read_bytes()
+    return files
+
+
+def _cmd_lint_scaffold_sync(args: argparse.Namespace) -> int:
+    scaffold_dir = Path(args.scaffold_dir).expanduser().resolve()
+    dotautolab_dir = Path(args.dotautolab_dir).expanduser().resolve()
+
+    if not scaffold_dir.exists():
+        print(
+            f"autolab lint-scaffold-sync: ERROR scaffold directory is missing at {scaffold_dir}",
+            file=sys.stderr,
+        )
+        return 1
+    if not dotautolab_dir.exists():
+        print(
+            f"autolab lint-scaffold-sync: ERROR dotautolab directory is missing at {dotautolab_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    scaffold_files = _scaffold_sync_file_map(scaffold_dir)
+    dotautolab_files = _scaffold_sync_file_map(dotautolab_dir)
+
+    scaffold_keys = set(scaffold_files)
+    dotautolab_keys = set(dotautolab_files)
+    missing_in_dotautolab = sorted(scaffold_keys - dotautolab_keys)
+    extra_in_dotautolab = sorted(dotautolab_keys - scaffold_keys)
+    content_mismatches = sorted(
+        key
+        for key in (scaffold_keys & dotautolab_keys)
+        if scaffold_files[key] != dotautolab_files[key]
+    )
+
+    print("autolab lint-scaffold-sync")
+    print(f"scaffold_dir: {scaffold_dir}")
+    print(f"dotautolab_dir: {dotautolab_dir}")
+    print(f"missing_in_dotautolab: {len(missing_in_dotautolab)}")
+    print(f"extra_in_dotautolab: {len(extra_in_dotautolab)}")
+    print(f"content_mismatches: {len(content_mismatches)}")
+
+    if not missing_in_dotautolab and not extra_in_dotautolab and not content_mismatches:
+        print("status: PASS (scaffold and dotautolab are in sync)")
+        return 0
+
+    print("status: FAIL (scaffold and dotautolab differ)")
+    if missing_in_dotautolab:
+        print("missing files (present in scaffold only):")
+        for relative in missing_in_dotautolab:
+            print(f"- {relative}")
+    if extra_in_dotautolab:
+        print("extra files (present in dotautolab only):")
+        for relative in extra_in_dotautolab:
+            print(f"- {relative}")
+    if content_mismatches:
+        print("content mismatches:")
+        for relative in content_mismatches:
+            print(f"- {relative}")
+    return 1
+
+
 def _cmd_install_skill(args: argparse.Namespace) -> int:
     provider = str(getattr(args, "provider", "")).strip().lower()
     project_root = Path(getattr(args, "project_root", ".")).expanduser().resolve()
@@ -497,6 +568,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         state,
         stage_override=stage_override,
     )
+    canonical_result_path = repo_root / ".autolab" / "verification_result.json"
     effective_stage = str(details.get("stage", "")).strip() or str(state.get("stage", "")).strip() or "unknown"
     safe_stage = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in effective_stage) or "unknown"
     timestamp = _utc_now().replace("-", "").replace(":", "").replace(".", "")
@@ -524,6 +596,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     print(f"stage: {effective_stage}")
     print(f"passed: {passed}")
     print(f"message: {message}")
+    print(f"result: {canonical_result_path}")
     print(f"summary: {summary_path}")
     if not passed:
         print(f"autolab verify: ERROR {message}", file=sys.stderr)
@@ -990,6 +1063,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Overwrite existing scaffold files.",
     )
     sync_scaffold.set_defaults(handler=_cmd_sync_scaffold)
+
+    lint_scaffold_sync = subparsers.add_parser(
+        "lint-scaffold-sync",
+        help="Validate that src scaffold assets and dotautolab assets are byte-for-byte synchronized",
+    )
+    lint_scaffold_sync.add_argument(
+        "--scaffold-dir",
+        default="src/autolab/scaffold/.autolab",
+        help="Canonical scaffold directory (default: src/autolab/scaffold/.autolab)",
+    )
+    lint_scaffold_sync.add_argument(
+        "--dotautolab-dir",
+        default="dotautolab/.autolab",
+        help="dotautolab directory to compare (default: dotautolab/.autolab)",
+    )
+    lint_scaffold_sync.set_defaults(handler=_cmd_lint_scaffold_sync)
 
     install_skill = subparsers.add_parser(
         "install-skill",
