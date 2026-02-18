@@ -84,20 +84,26 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     timestamps = manifest.get("timestamps", {})
     if not isinstance(timestamps, dict):
         failures.append(f"{manifest_path} timestamps must be a mapping")
+    else:
+        started_at = str(timestamps.get("started_at", "")).strip()
+        if not started_at:
+            failures.append(f"{manifest_path} timestamps.started_at is required")
+        manifest_status = str(manifest.get("status", "")).strip().lower()
+        completion_like_statuses = {"completed", "complete", "success", "succeeded", "ok", "passed"}
+        if manifest_status in completion_like_statuses:
+            completed_at = str(timestamps.get("completed_at", "")).strip()
+            if not completed_at:
+                failures.append(
+                    f"{manifest_path} timestamps.completed_at is required when status is completion-like"
+                )
 
-    sync_status = str(manifest.get("status", "")).strip().lower()
-    if sync_status == "failed":
+    run_status = str(manifest.get("status", "")).strip().lower()
+    if run_status == "failed":
         failures.append(f"{manifest_path} has failed status")
-    # Run-level required outputs for launch health.
-    if not (run_dir / "metrics.json").exists():
-        failures.append(f"{run_dir / 'metrics.json'} is missing")
 
     if not (run_dir / "logs").exists():
         failures.append(f"{run_dir / 'logs'} is missing")
         return failures
-
-    if manifest.get("status") == "failed":
-        failures.append(f"{manifest_path} has failed status")
 
     return failures
 

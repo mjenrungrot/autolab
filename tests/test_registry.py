@@ -149,3 +149,18 @@ def test_launch_requires_run_id_token(tmp_path: Path) -> None:
     launch = registry.get("launch")
     assert launch is not None
     assert "run_id" in launch.required_tokens
+
+
+def test_registry_run_scoped_required_outputs_use_run_id_pattern(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    registry = load_registry(repo)
+
+    launch = registry.get("launch")
+    extract_results = registry.get("extract_results")
+
+    assert launch is not None
+    assert extract_results is not None
+    assert launch.required_outputs == ("runs/<RUN_ID>/run_manifest.json",)
+    assert extract_results.required_outputs == ("runs/<RUN_ID>/metrics.json", "analysis/summary.md")

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -12,6 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 EXPERIMENT_TYPES = ("plan", "in_progress", "done")
 DEFAULT_EXPERIMENT_TYPE = "plan"
+PLACEHOLDER_PATTERNS = (
+    re.compile(r"\{\{[^{}\n]+\}\}"),
+    re.compile(r"<[^>\n]+>"),
+    re.compile(r"\bTODO\b", re.IGNORECASE),
+    re.compile(r"\bTBD\b", re.IGNORECASE),
+    re.compile(r"\bFIXME\b", re.IGNORECASE),
+    re.compile(r"\bplaceholder\b", re.IGNORECASE),
+)
 
 
 def _load_state() -> dict:
@@ -55,7 +64,7 @@ def _load_text(path: Path) -> str:
 
 
 def _contains_placeholder_text(text: str) -> bool:
-    return "placeholder" in text.lower()
+    return any(pattern.search(text) for pattern in PLACEHOLDER_PATTERNS)
 
 
 def _iter_reference(iteration_id: str, run_id: str, targets: list[Path]) -> bool:
@@ -87,14 +96,16 @@ def _validate_docs_update(
     if not lowered.strip():
         failures.append(f"{docs_update_path} is empty")
 
-    if "no changes needed" in lowered:
+    if not targets:
+        if "no target configured" in lowered or "no targets configured" in lowered:
+            return failures
+        failures.append(
+            "state.paper_targets is not configured; docs_update.md must include explicit"
+            " 'No target configured' rationale."
+        )
         return failures
 
-    if not targets:
-        failures.append(
-            "state.paper_targets is not configured; if no doc updates are needed, set docs_update.md"
-            " to include 'No changes needed'."
-        )
+    if "no changes needed" in lowered:
         return failures
 
     if not _iter_reference(iteration_id, run_id, targets):
@@ -136,12 +147,6 @@ def main() -> int:
 
     iteration_dir = _resolve_iteration_dir(iteration_id)
     docs_update_path = iteration_dir / "docs_update.md"
-
-    if not targets:
-        targets = [
-            REPO_ROOT / "paper" / "paperbanana.md",
-            REPO_ROOT / "paper" / "ralph.md",
-        ]
 
     failures: list[str] = []
     for path in targets:

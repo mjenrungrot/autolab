@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,13 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def _write_state(repo: Path, *, stage: str = "implementation_review", last_run_id: str = "") -> None:
+def _write_state(
+    repo: Path,
+    *,
+    stage: str = "implementation_review",
+    last_run_id: str = "",
+    paper_targets: list[str] | str | None = None,
+) -> None:
     state = {
         "iteration_id": "iter1",
         "stage": stage,
@@ -29,6 +36,8 @@ def _write_state(repo: Path, *, stage: str = "implementation_review", last_run_i
         "max_stage_attempts": 3,
         "max_total_iterations": 20,
     }
+    if paper_targets is not None:
+        state["paper_targets"] = paper_targets
     path = repo / ".autolab" / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -161,6 +170,28 @@ def _run_consistency_checks(repo: Path, *, stage: str | None = None) -> subproce
         command.extend(["--stage", stage])
     return subprocess.run(
         command,
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_docs_targets(repo: Path) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "docs_targets.py"
+    return subprocess.run(
+        [sys.executable, str(verifier)],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_run_health(repo: Path) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "run_health.py"
+    return subprocess.run(
+        [sys.executable, str(verifier)],
         cwd=repo,
         text=True,
         capture_output=True,
@@ -337,21 +368,167 @@ def test_schema_checks_require_todo_files_when_assistant_mode_on(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
+# docs_targets / run_health verifier tests
+# ---------------------------------------------------------------------------
+
+
+def test_docs_targets_passes_with_no_paper_targets_and_required_rationale(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="update_docs", last_run_id="run_001")
+
+    docs_update = repo / "experiments" / "plan" / "iter1" / "docs_update.md"
+    docs_update.parent.mkdir(parents=True, exist_ok=True)
+    docs_update.write_text(
+        "No targets configured. No target configured for this iteration; metrics delta summary pending.",
+        encoding="utf-8",
+    )
+
+    result = _run_docs_targets(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "docs_targets: PASS" in result.stdout
+
+
+def test_docs_targets_fails_with_no_paper_targets_and_missing_rationale(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="update_docs", last_run_id="run_001")
+
+    docs_update = repo / "experiments" / "plan" / "iter1" / "docs_update.md"
+    docs_update.parent.mkdir(parents=True, exist_ok=True)
+    docs_update.write_text(
+        "Updated notes for iter1 without target configuration rationale.",
+        encoding="utf-8",
+    )
+
+    result = _run_docs_targets(repo)
+
+    assert result.returncode == 1
+    assert "No target configured" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "placeholder_text",
+    [
+        "TODO: fill in final metrics.",
+        "TBD after rerun.",
+        "Needs {{metric_value}} replacement.",
+        "Needs <metric_value> replacement.",
+    ],
+)
+def test_docs_targets_fails_placeholder_patterns(tmp_path: Path, placeholder_text: str) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(
+        repo,
+        stage="update_docs",
+        last_run_id="run_001",
+        paper_targets=["paper/main.md"],
+    )
+
+    target_path = repo / "paper" / "main.md"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("iter1\nrun_001\n", encoding="utf-8")
+
+    docs_update = repo / "experiments" / "plan" / "iter1" / "docs_update.md"
+    docs_update.parent.mkdir(parents=True, exist_ok=True)
+    docs_update.write_text(
+        f"Run iter1 summary.\n{placeholder_text}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_docs_targets(repo)
+
+    assert result.returncode == 1
+    assert "placeholder text" in result.stdout
+
+
+def test_run_health_launch_passes_without_metrics_json(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "local",
+        "status": "running",
+        "command": "python -m pkg.train --config design.yaml",
+        "resource_request": {"cpus": 2, "memory": "8GB", "gpu_count": 0},
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    result = _run_run_health(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "run_health: PASS" in result.stdout
+
+
+def test_run_health_fails_completion_like_status_missing_completed_at(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "local",
+        "status": "completed",
+        "command": "python -m pkg.train --config design.yaml",
+        "resource_request": {"cpus": 2, "memory": "8GB", "gpu_count": 0},
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    result = _run_run_health(repo)
+
+    assert result.returncode == 1
+    assert "timestamps.completed_at is required" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # implementation_plan_lint verifier tests
 # ---------------------------------------------------------------------------
 
 
-def _run_plan_lint(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_plan_lint(
+    repo: Path,
+    *,
+    stage: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "implementation_plan_lint.py"
     command = [sys.executable, str(verifier)]
     if stage:
         command.extend(["--stage", stage])
+    run_env: dict[str, str] | None = None
+    if env:
+        run_env = dict(os.environ)
+        run_env.update(env)
     return subprocess.run(
         command,
         cwd=repo,
         text=True,
         capture_output=True,
         check=False,
+        env=run_env,
     )
 
 
@@ -830,6 +1007,47 @@ def test_implementation_plan_lint_scope_enforcement_fail_mode(tmp_path: Path) ->
     ))
 
     result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "outside allowed scope" in result.stdout
+
+
+def test_implementation_plan_lint_scope_enforcement_auto_mode_defaults_to_fail(tmp_path: Path) -> None:
+    """Out-of-scope touches fail in auto mode when policy key is absent."""
+    repo = _setup_lint_repo(tmp_path)
+    context_dir = repo / ".autolab" / "prompts" / "rendered"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "implementation.context.json").write_text(
+        json.dumps({"runner_scope": {"allowed_edit_dirs": ["src"]}}),
+        encoding="utf-8",
+    )
+
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    lint_policy = policy.setdefault("implementation_plan_lint", {})
+    if isinstance(lint_policy, dict):
+        scope_enforcement = lint_policy.get("scope_enforcement")
+        if isinstance(scope_enforcement, dict):
+            scope_enforcement.pop("fail_on_out_of_scope_touches", None)
+            if not scope_enforcement:
+                lint_policy.pop("scope_enforcement", None)
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: outside/foo.py\n"
+        "- **description**: Create foo\n"
+        "- **touches**: [outside/foo.py]\n"
+        "- **scope_ok**: true\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n"
+    ))
+
+    result = _run_plan_lint(repo, env={"AUTOLAB_AUTO_MODE": "1"})
 
     assert result.returncode == 1
     assert "outside allowed scope" in result.stdout

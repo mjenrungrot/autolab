@@ -42,7 +42,7 @@ Update iteration documentation and configured paper targets after result extract
 
 ## MISSING-INPUT FALLBACKS
 - If analysis/metrics are missing, stop and request extract-results completion.
-- If `paper_targets` is not configured, write explicit `No target configured` rationale including metrics delta summary.
+- If `paper_targets` is not configured, `docs_update.md` must include explicit `No target configured` (or `No targets configured`) rationale including metrics delta summary.
 - If a configured paper target file is missing, record it in `docs_update.md` and set follow-up action.
 
 ## SCHEMA GOTCHAS
@@ -93,7 +93,7 @@ Update iteration documentation and configured paper targets after result extract
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}
 - [ ] `docs_update.md` includes iteration/run references or explicit `No changes needed` rationale.
-- [ ] Paper target updates align with configured `paper_targets`, or an explicit no-target rationale is documented.
+- [ ] Paper target updates align with configured `paper_targets`, or `docs_update.md` contains explicit `No target configured` rationale.
 - [ ] SLURM ledger verification is executed for SLURM manifests.
 
 ## EVIDENCE POINTERS

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Iterable, Optional
@@ -73,6 +74,25 @@ PLACEHOLDER_PATTERNS = (
 )
 
 VALID_STATUSES = {"not completed", "completed", "in progress", "blocked"}
+
+
+def _coerce_bool(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _auto_mode_enabled() -> bool:
+    return _coerce_bool(os.environ.get("AUTOLAB_AUTO_MODE"), default=False)
 
 
 def _load_state() -> dict:
@@ -405,10 +425,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     scope_failures: list[str] = []
     allowed_dirs = _load_allowed_dirs()
     if allowed_dirs:
+        auto_mode = _auto_mode_enabled()
         policy = _load_policy()
         lint_policy = policy.get("implementation_plan_lint", {})
         scope_cfg = lint_policy.get("scope_enforcement", {}) if isinstance(lint_policy, dict) else {}
-        fail_on_scope = bool(scope_cfg.get("fail_on_out_of_scope_touches", False)) if isinstance(scope_cfg, dict) else False
+        fail_on_scope = False
+        if isinstance(scope_cfg, dict):
+            raw_fail_on_scope = scope_cfg.get("fail_on_out_of_scope_touches")
+            if raw_fail_on_scope is None:
+                fail_on_scope = auto_mode
+            else:
+                fail_on_scope = _coerce_bool(raw_fail_on_scope, default=auto_mode)
+        else:
+            fail_on_scope = auto_mode
         task_sections = _split_task_sections(plan_text)
         task_touches: dict[str, list[str]] = {}
         for task_id, section in task_sections.items():

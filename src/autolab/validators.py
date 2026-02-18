@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -787,6 +788,7 @@ def _run_verification_step_detailed(
     state: dict[str, Any],
     *,
     stage_override: str | None = None,
+    auto_mode: bool = False,
 ) -> tuple[bool, str, dict[str, Any]]:
     from autolab.utils import _append_log, _compact_log_text
 
@@ -816,6 +818,9 @@ def _run_verification_step_detailed(
 
     results: list[dict[str, Any]] = []
     warning_count = 0
+    verifier_env = os.environ.copy() if auto_mode else None
+    if verifier_env is not None:
+        verifier_env["AUTOLAB_AUTO_MODE"] = "1"
     for command_name, command in command_specs:
         if not command.strip():
             continue
@@ -829,6 +834,7 @@ def _run_verification_step_detailed(
                 capture_output=True,
                 check=False,
                 timeout=VERIFIER_COMMAND_TIMEOUT_SECONDS,
+                env=verifier_env,
             )
             duration_seconds = round(time.monotonic() - started, 3)
         except subprocess.TimeoutExpired:
@@ -969,10 +975,12 @@ def _run_verification_step(
     state: dict[str, Any],
     *,
     stage_override: str | None = None,
+    auto_mode: bool = False,
 ) -> tuple[bool, str]:
     passed, message, _details = _run_verification_step_detailed(
         repo_root,
         state,
         stage_override=stage_override,
+        auto_mode=auto_mode,
     )
     return (passed, message)

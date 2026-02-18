@@ -486,7 +486,7 @@ def _run_once_standard(
 
         # Item 6: strict mode overrides for unattended loops
         if auto_mode and selected_decision is not None:
-            strict_config = _load_strict_mode_config(repo_root)
+            strict_config = _load_strict_mode_config(repo_root, auto_mode=auto_mode)
             if selected_decision == "stop" and strict_config.forbid_auto_stop:
                 selected_decision = "human_review"
                 decision_source = "strict_override"
@@ -800,6 +800,7 @@ def _run_once_standard(
                     stage=stage_before,
                     iteration_id=str(state["iteration_id"]),
                     run_agent_mode=run_agent_mode,
+                    auto_mode=auto_mode,
                 )
             except StageCheckError as exc:
                 return _handle_stage_failure(
@@ -812,7 +813,7 @@ def _run_once_standard(
                 )
 
     if auto_mode or verify_before_evaluate:
-        verified, verify_message = _run_verification_step(repo_root, state)
+        verified, verify_message = _run_verification_step(repo_root, state, auto_mode=auto_mode)
         verification_summary = {
             "passed": bool(verified),
             "message": verify_message,

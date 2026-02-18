@@ -52,13 +52,16 @@ Gate launch readiness and produce:
 - `env_smoke`
 - `docs_target_update`
 
-When `review_result.status` is `pass`, any checks required by policy for `implementation_review`
-under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_review` must be `pass`.
+When `review_result.status` is `pass`, any policy-required checks from this 5-key set must be `pass`.
+
+Policy categories outside this 5-key contract (for example `prompt_lint` and `consistency`) are
+auto-enforced by `autolab verify` and should be evidenced via `.autolab/verification_result.json`
+rather than added to `review_result.required_checks`.
 
 ## SCHEMA GOTCHAS
 - `required_checks` must include all 5 keys: `tests`, `dry_run`, `schema`, `env_smoke`, `docs_target_update`.
 - `status` enum is `pass|skip|fail` for individual checks and `pass|needs_retry|failed` for overall status.
-- When overall `status` is `pass`, all policy-required checks must individually be `pass`.
+- When overall `status` is `pass`, all policy-required checks within the 5 required-check keys must be `pass`.
 
 ## VERIFIER MAPPING
 - `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Fix dry-run failures before marking review as pass.

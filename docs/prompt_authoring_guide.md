@@ -6,6 +6,7 @@ This guide describes how to author scaffold stage prompts under `src/autolab/sca
 
 - Stage files use `stage_<name>.md` (for example `stage_design.md`).
 - Stage metadata is canonical in `.autolab/workflow.yaml` (prompt file mapping, required tokens, verifier capabilities).
+- `required_outputs` entries in `.autolab/workflow.yaml` should be concrete relative paths; use `<RUN_ID>` token for run-scoped artifacts (for example `runs/<RUN_ID>/run_manifest.json`).
 - Shared includes live under `prompts/shared/` and are referenced with:
   - `{{shared:guardrails.md}}`
   - `{{shared:repo_scope.md}}`
@@ -69,6 +70,15 @@ Then include:
 
 Each mandatory checklist item in stage prompts should map to a verifier or schema check.
 Avoid aspirational items that cannot be audited.
+
+## Run-scoped output patterns
+
+When a stage output is run-scoped, use `<RUN_ID>` in `workflow.yaml` output paths:
+
+- `runs/<RUN_ID>/run_manifest.json`
+- `runs/<RUN_ID>/metrics.json`
+
+This keeps registry contracts explicit and avoids stage-specific implicit path assumptions.
 
 ## Token changes end-to-end
 
