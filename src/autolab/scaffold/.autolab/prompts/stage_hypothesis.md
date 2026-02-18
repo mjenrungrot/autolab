@@ -23,7 +23,6 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/hypothesis.md`
@@ -40,12 +39,18 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 - If `.autolab/todo_focus.json` is missing, proceed without task focus narrowing.
 - If prior hypothesis content is missing, create a full file from scratch.
 
+## SCHEMA GOTCHAS
+- The `PrimaryMetric:` line must match **exactly** this format (semicolons, spacing):
+  `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`
+- Verifiers check for exactly **one** `PrimaryMetric:` line -- zero or multiple will fail.
+- The `+` prefix on the delta is required (e.g. `+2.5` or `+5%`), even for "higher is better" metrics.
+
 ## STEPS
 1. Write one hypothesis with sections: `Hypothesis Statement`, `Motivation`, `Scope In`, `Scope Out`, `Primary Metric`, `Expected Delta`, `Operational Success Criteria`, `Risks and Failure Modes`, `Constraints for Design Stage`.
 2. Include exactly one metric-definition line:
    `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`.
-3. Run `autolab verify --stage hypothesis` and fix failures.
-4. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -64,5 +69,5 @@ PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +re
 - [ ] `hypothesis.md` is non-empty and contains explicit scope-in and scope-out boundaries.
 
 ## FAILURE / RETRY BEHAVIOR
-- If any verifier fails, fix artifacts and rerun the same stage.
+- If any verification step fails, fix artifacts and rerun from the verification ritual.
 - Do not modify `.autolab/state.json` to force progression; Autolab updates stage state and retry counters.

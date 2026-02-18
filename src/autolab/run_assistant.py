@@ -30,6 +30,7 @@ from autolab.utils import (
     _safe_todo_post_sync,
     _safe_todo_pre_sync,
     _utc_now,
+    _write_block_reason,
     _write_json,
 )
 from autolab.validators import _run_verification_step
@@ -127,6 +128,12 @@ def _run_once_assistant(
         state["stage_attempt"] = 0
         _write_json(state_path, state)
         pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
+        _write_block_reason(
+            repo_root,
+            reason=completion_summary,
+            stage_at_block=current_stage,
+            action_required="re-open experiment in backlog to resume",
+        )
         message = f"blocked completed experiment edits: {completion_summary}; re-open experiment in backlog to resume"
         outcome = RunOutcome(
             exit_code=0,

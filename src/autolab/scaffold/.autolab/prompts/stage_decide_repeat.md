@@ -26,7 +26,7 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
+{{shared:run_artifacts.md}}
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/decision_result.json`
@@ -56,6 +56,12 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 4. Choose `human_review` on policy ambiguity, repeated verifier failures, contradictory evidence, or missing critical inputs.
 5. Respect guardrail thresholds defined in `.autolab/verifier_policy.yaml` (`autorun.guardrails`) and prefer `human_review` when thresholds are near breach.
 
+## SCHEMA GOTCHAS
+- `evidence` must be a **non-empty array** (`minItems: 1`). Each element requires all three fields: `source`, `pointer`, `summary` -- all non-empty strings.
+- `decision` must be one of: `"hypothesis"`, `"design"`, `"stop"`, `"human_review"` -- exact match, no variations.
+- `schema_version` must be the string `"1.0"`.
+- `risks` is a required array of non-empty strings (can be empty array `[]`).
+
 ## STEPS
 1. Summarize latest run/review/doc evidence in 3-6 bullets.
 2. Select exactly one decision from the allowed set.
@@ -66,8 +72,8 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
    - `rationale`
    - `evidence` (`[{source, pointer, summary}]`)
    - `risks` (string list)
-5. Run `autolab verify --stage decide_repeat` and fix any failures.
-6. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## OUTPUT TEMPLATE
 ```json
@@ -99,4 +105,5 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 
 ## FAILURE / RETRY BEHAVIOR
 - If required decision evidence is missing or contradictory, escalate with `human_review` instead of guessing.
+- If any verification step fails, fix the decision artifact and rerun from the verification ritual.
 - Do not edit `.autolab/state.json` directly to apply the decision; orchestrator applies transitions.

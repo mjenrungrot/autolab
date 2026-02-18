@@ -23,7 +23,6 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-- Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/design.yaml`
@@ -48,11 +47,19 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 - Include `metrics.primary`, `metrics.success_delta`, `metrics.aggregation`, `metrics.baseline_comparison`.
 - Provide non-empty `baselines`; include `variants` when proposing changes.
 
+## SCHEMA GOTCHAS
+- `schema_version` must be the **string** `"1.0"` -- omitting it or using a number (`1.0`) will fail schema validation.
+- `compute.location` must be one of the enum values: `"local"` or `"slurm"`. Any other value fails.
+- `baselines` array must be **non-empty** (`minItems: 1`). At least one baseline with `name` and `description` is required.
+- `metrics.primary.mode` must be `"maximize"` or `"minimize"` -- no other values accepted.
+- `walltime_estimate` should follow `HH:MM:SS` format (e.g. `"00:40:00"`).
+- `memory_estimate` should include units (e.g. `"64GB"`).
+
 ## STEPS
 1. Translate hypothesis intent into reproducible fields with concrete values.
 2. Record compute/resource assumptions (local or slurm) and deterministic controls.
-3. Run `autolab verify --stage design` and fix failures.
-4. Optional low-level fallback: run `{{python_bin}} .autolab/verifiers/template_fill.py --stage design` for direct template diagnostics.
+
+{{shared:verification_ritual.md}}
 
 ## OUTPUT TEMPLATE
 ```yaml
@@ -96,5 +103,5 @@ variants:
 - [ ] `metrics` includes `primary`, `success_delta`, and `aggregation`.
 
 ## FAILURE / RETRY BEHAVIOR
-- If any verifier fails, correct `design.yaml` and rerun the stage.
+- If any verification step fails, correct `design.yaml` and rerun from the verification ritual.
 - Do not advance by editing state manually; Autolab handles retry/escalation transitions.

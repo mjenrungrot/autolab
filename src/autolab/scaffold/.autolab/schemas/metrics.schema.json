@@ -16,8 +16,8 @@
       "required": ["name", "value", "delta_vs_baseline"],
       "properties": {
         "name": {"type": "string"},
-        "value": {"type": "number"},
-        "delta_vs_baseline": {"type": "number"}
+        "value": {"type": ["number", "null"]},
+        "delta_vs_baseline": {"type": ["number", "null"]}
       },
       "additionalProperties": false
     },

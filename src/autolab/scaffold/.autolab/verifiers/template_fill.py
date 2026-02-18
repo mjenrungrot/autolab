@@ -236,9 +236,9 @@ def _load_line_limits_policy(path: Path = LINE_LIMITS_POLICY_FILE) -> LineLimitP
             f"line_limits.run_manifest_dynamic.target must be '{RUN_MANIFEST_POLICY_KEY}', got '{target}'"
         )
 
-    count_paths = dynamic_raw.get("count_paths", [])
+    count_paths = dynamic_raw.get("count_paths") or dynamic_raw.get("item_count_paths") or []
     if not isinstance(count_paths, list) or not count_paths:
-        raise RuntimeError("line_limits.run_manifest_dynamic.count_paths must be a non-empty list")
+        raise RuntimeError("line_limits.run_manifest_dynamic.count_paths (or item_count_paths) must be a non-empty list")
     normalized_count_paths: list[str] = []
     for raw_count_path in count_paths:
         count_path = str(raw_count_path).strip()

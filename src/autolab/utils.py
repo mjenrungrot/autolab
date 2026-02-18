@@ -813,6 +813,27 @@ def _is_experiment_type_locked(value: Any) -> bool:
 # Agent result persistence
 # ---------------------------------------------------------------------------
 
+def _write_block_reason(
+    repo_root: Path,
+    *,
+    reason: str,
+    stage_at_block: str,
+    action_required: str,
+) -> Path:
+    """Write .autolab/block_reason.json when an experiment is blocked."""
+    block_path = repo_root / ".autolab" / "block_reason.json"
+    _write_json(
+        block_path,
+        {
+            "blocked_at": _utc_now(),
+            "reason": reason,
+            "stage_at_block": stage_at_block,
+            "action_required": action_required,
+        },
+    )
+    return block_path
+
+
 def _persist_agent_result(
     repo_root: Path,
     *,

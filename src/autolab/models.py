@@ -106,5 +106,11 @@ class MeaningfulChangeConfig:
 
 
 @dataclass(frozen=True)
+class StrictModeConfig:
+    forbid_auto_stop: bool
+    require_human_review_for_stop: bool
+
+
+@dataclass(frozen=True)
 class AutoCommitConfig:
     mode: str

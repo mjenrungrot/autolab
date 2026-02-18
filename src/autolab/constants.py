@@ -36,7 +36,7 @@ experiments:
 
 DEFAULT_VERIFIER_POLICY = """python_bin: "python3"
 test_command: "{{python_bin}} -m pytest"
-dry_run_command: "{{python_bin}} -c \\"print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml')\\""
+dry_run_command: "{{python_bin}} -c \\"import sys; print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml'); sys.exit(1)\\""
 template_fill:
   enabled: true
   command: "{{python_bin}} .autolab/verifiers/template_fill.py"
@@ -112,6 +112,8 @@ implementation_plan_lint:
   command: "{{python_bin}} .autolab/verifiers/implementation_plan_lint.py"
   stages:
     implementation: true
+schema_validation:
+  strict_additional_properties: false
 autorun:
   guardrails:
     max_same_decision_streak: 3
@@ -119,6 +121,9 @@ autorun:
     max_update_docs_cycles: 3
     max_generated_todo_tasks: 5
     on_breach: "human_review"
+  strict_mode:
+    forbid_auto_stop: false
+    require_human_review_for_stop: false
   auto_commit:
     mode: "meaningful_only"
   meaningful_change:
@@ -216,6 +221,7 @@ STAGE_PROMPT_FILES = {
     "extract_results": "stage_extract_results.md",
     "update_docs": "stage_update_docs.md",
     "decide_repeat": "stage_decide_repeat.md",
+    "human_review": "stage_human_review.md",
 }
 SLURM_JOB_LIST_PATH = Path("docs/slurm_job_list.md")
 PROMPT_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")

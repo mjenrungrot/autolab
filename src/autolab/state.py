@@ -804,3 +804,32 @@ def _release_lock(lock_path: Path) -> None:
         if holder_pid not in {-1, os.getpid()}:
             return
     lock_path.unlink(missing_ok=True)
+
+
+def _inspect_lock(lock_path: Path) -> dict[str, Any] | None:
+    """Return lock payload with computed age, or None if no lock exists."""
+    if not lock_path.exists():
+        return None
+    payload = _read_lock_payload(lock_path)
+    if not payload:
+        return None
+    now = datetime.now(timezone.utc)
+    age = _lock_age_seconds(payload, now=now)
+    result = dict(payload)
+    result["age_seconds"] = age
+    return result
+
+
+def _force_break_lock(lock_path: Path, *, reason: str) -> str:
+    """Forcibly remove a lock file and return an audit message."""
+    if not lock_path.exists():
+        return "no lock to break"
+    payload = _read_lock_payload(lock_path)
+    holder_pid = payload.get("pid", "<unknown>")
+    holder_host = payload.get("host", "<unknown>")
+    started_at = payload.get("started_at", "<unknown>")
+    lock_path.unlink(missing_ok=True)
+    return (
+        f"lock broken: pid={holder_pid}, host={holder_host}, "
+        f"started_at={started_at}, reason={reason}"
+    )

@@ -14,10 +14,16 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
     policy_path = target / "verifier_policy.yaml"
     policy_text = policy_path.read_text(encoding="utf-8")
-    policy_path.write_text(
-        policy_text.replace('python_bin: "python3"', f'python_bin: "{sys.executable}"', 1),
-        encoding="utf-8",
+    # Replace python_bin AND configure a passing dry-run command for tests
+    # (the default stub intentionally fails to force real configuration).
+    policy_text = policy_text.replace(
+        'python_bin: "python3"', f'python_bin: "{sys.executable}"', 1
     )
+    policy_text = policy_text.replace(
+        "import sys; print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml'); sys.exit(1)",
+        "print('golden iteration dry-run: OK')",
+    )
+    policy_path.write_text(policy_text, encoding="utf-8")
 
 
 def _copy_golden_iteration(repo: Path) -> None:

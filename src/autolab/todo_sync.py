@@ -36,12 +36,12 @@ DECISION_TO_DESIGN_STAGES = {
 }
 FALLBACK_SCOPE_LOCAL = "policy:no_task_fallback:local"
 FALLBACK_SCOPE_SLURM = "policy:no_task_fallback:slurm"
-FALLBACK_TASK_TEXT_LOCAL = (
+_DEFAULT_FALLBACK_TASK_TEXT_LOCAL = (
     "No remaining actionable tasks were detected on local execution context. "
     "Propose and implement a concrete codebase improvement in src/, scripts/, or experiments/ "
     "(reliability, maintainability, performance, or developer ergonomics)."
 )
-FALLBACK_TASK_TEXT_SLURM = (
+_DEFAULT_FALLBACK_TASK_TEXT_SLURM = (
     "No remaining actionable tasks were detected on remote SLURM execution context. "
     "Define a new experiment or analysis direction first, then plan implementation "
     "improvements only after that experiment/analysis path is explicit."
@@ -79,6 +79,9 @@ class _ParsedBullet:
     stage_tag: str | None
     checked: bool
     order: int
+    priority: str | None = None
+    owner: str | None = None
+    labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,9 @@ def _normalize_space(value: str) -> str:
 def _normalize_text_key(value: str) -> str:
     text = _normalize_space(value)
     text = re.sub(r"\[\s*stage\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\s*priority\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\s*owner\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[\s*label\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\[(?:x|X| )\]\s+", "", text)
     return _normalize_space(text).lower()
 
@@ -135,14 +141,14 @@ def _fallback_candidates_for_host(host_mode: str | None) -> list[_GeneratedCandi
             _GeneratedCandidate(
                 stage="hypothesis",
                 scope=FALLBACK_SCOPE_SLURM,
-                text=FALLBACK_TASK_TEXT_SLURM,
+                text=_DEFAULT_FALLBACK_TASK_TEXT_SLURM,
             )
         ]
     return [
         _GeneratedCandidate(
             stage="implementation",
             scope=FALLBACK_SCOPE_LOCAL,
-            text=FALLBACK_TASK_TEXT_LOCAL,
+            text=_DEFAULT_FALLBACK_TASK_TEXT_LOCAL,
         )
     ]
 
@@ -179,7 +185,7 @@ def _fallback_candidates_for_host_with_policy(
     default = defaults[0] if defaults else _GeneratedCandidate(
         stage="implementation",
         scope=FALLBACK_SCOPE_LOCAL,
-        text=FALLBACK_TASK_TEXT_LOCAL,
+        text=_DEFAULT_FALLBACK_TASK_TEXT_LOCAL,
     )
     default_text = default.text
     if iteration_implementation_path and iteration_implementation_path not in default_text:
@@ -451,11 +457,31 @@ def _parse_bullets(tasks_lines: list[str]) -> list[_ParsedBullet]:
             stage_tag = match_stage.group(1).strip().lower()
             text = _normalize_space(text[: match_stage.start()] + " " + text[match_stage.end() :])
 
+        priority = None
+        match_priority = re.search(r"\[\s*priority\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE)
+        if match_priority:
+            priority = match_priority.group(1).strip().lower()
+            text = _normalize_space(text[: match_priority.start()] + " " + text[match_priority.end() :])
+
+        owner = None
+        match_owner = re.search(r"\[\s*owner\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE)
+        if match_owner:
+            owner = match_owner.group(1).strip()
+            text = _normalize_space(text[: match_owner.start()] + " " + text[match_owner.end() :])
+
+        labels: list[str] = []
+        for match_label in re.finditer(r"\[\s*label\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE):
+            labels.append(match_label.group(1).strip().lower())
+        text = re.sub(r"\[\s*label\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
+
         text = _normalize_space(text)
         if not text:
             continue
 
-        parsed.append(_ParsedBullet(text=text, stage_tag=stage_tag, checked=checked, order=idx))
+        parsed.append(_ParsedBullet(
+            text=text, stage_tag=stage_tag, checked=checked, order=idx,
+            priority=priority, owner=owner, labels=tuple(labels),
+        ))
 
     return parsed
 
@@ -847,10 +873,14 @@ def _upsert_task(
     return task_id
 
 
+_PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
 def _open_tasks_sorted(todo_state: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = [task for task in todo_state.get("tasks", {}).values() if task.get("status") == "open"]
     tasks.sort(
         key=lambda item: (
+            _PRIORITY_ORDER.get(str(item.get("priority", "")).lower(), 4),
             0 if str(item.get("source", "")) == "manual" else 1,
             int(item.get("first_seen_order", 0)),
             str(item.get("task_id", "")),
@@ -1039,6 +1069,15 @@ def _sync_internal(
             now=now,
         )
         seen_manual_ids.add(manual_task_id)
+
+        task_entry = tasks.get(manual_task_id)
+        if task_entry is not None:
+            if parsed.priority:
+                task_entry["priority"] = parsed.priority
+            if parsed.owner:
+                task_entry["owner"] = parsed.owner
+            if parsed.labels:
+                task_entry["labels"] = list(parsed.labels)
 
         if parsed.checked:
             if _mark_completed(tasks[manual_task_id], now):
