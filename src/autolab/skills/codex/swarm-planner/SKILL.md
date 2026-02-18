@@ -26,6 +26,8 @@ Use this skill when the user explicitly asks for `$swarm-planner` to create or r
    - active-stage prompt in `.autolab/prompts/` when relevant
    - iteration artifacts under `experiments/<iteration_id>/` when available
 3. Inspect code paths implicated by the user request before drafting tasks.
+4. If a council `final-plan.md` exists in the plan directory (e.g. from `$llm-council`), use it as starting input rather than generating from scratch.
+5. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and constrain task `location` and `touches` to paths within allowed dirs.
 
 ## Clarification policy
 
@@ -38,15 +40,21 @@ Write the plan to:
 - `experiments/<iteration_id>/implementation_plan.md` when `iteration_id` exists.
 - Otherwise `experiments/plan/<topic>/implementation_plan.md`.
 
+Emit `plan_metadata.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `generated_at`, `skill_used` ("swarm-planner"), `task_count`. Optional: `wave_count`, `dependency_depth`, `conflict_groups`, `total_touches_count`.
+
 Every task must include:
 - `id`
 - `depends_on`
 - `location`
 - `description`
+- `touches` (list of file paths/globs the task edits)
 - `validation`
 - `status` (default `Not Completed`)
 - `log` (empty placeholder)
 - `files edited/created` (empty placeholder)
+
+Optional per task:
+- `conflict_group` — tasks sharing a group must not run in the same wave
 
 Include:
 - overview
@@ -63,6 +71,9 @@ Include:
 3. Validation must be concrete (commands, checks, or artifact assertions).
 4. File paths in `location` must be specific.
 5. Sequence tasks to maximize safe parallelism.
+6. Each task must include `touches` (list of file paths/globs the task edits).
+7. Optional `conflict_group` field: tasks sharing a group must not be in the same wave.
+8. Wave grouping must ensure no overlap in `touches` within a wave.
 
 ## Subagent review pass (required)
 
@@ -86,12 +97,27 @@ After drafting the plan:
 ## Dependency Graph
 <ascii graph>
 
+## Verifier Outputs
+- tests: pass|skip|fail
+- dry_run: pass|skip|fail
+- schema: pass|skip|fail
+
+## Dry Run
+- command:
+- status:
+- evidence:
+
+## Evidence Paths
+- `path/to/log_or_output`
+
 ## Tasks
 
 ### T1: <name>
 - **depends_on**: []
 - **location**: <paths>
 - **description**: <work>
+- **touches**: [<file paths/globs>]
+- **conflict_group**: <optional>
 - **validation**: <checks>
 - **status**: Not Completed
 - **log**:
@@ -101,6 +127,8 @@ After drafting the plan:
 - **depends_on**: [T1]
 - **location**: <paths>
 - **description**: <work>
+- **touches**: [<file paths/globs>]
+- **conflict_group**: <optional>
 - **validation**: <checks>
 - **status**: Not Completed
 - **log**:

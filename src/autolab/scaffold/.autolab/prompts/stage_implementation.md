@@ -9,6 +9,7 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:skill_playbook.md}}
 - Hard stop: edit only paths that are inside the runtime edit-scope allowlist resolved in `{{stage_context}}`.
 
 ## OUTPUTS (STRICT)
@@ -63,7 +64,39 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 
 ## Risks and Follow-ups
 - ...
+
+## Tasks
+
+### T1: <name>
+- **depends_on**: []
+- **location**: <paths>
+- **description**: <work>
+- **touches**: [<file paths/globs this task edits>]
+- **conflict_group**: <optional group name>
+- **validation**: <checks>
+- **status**: Not Completed
+- **log**:
+- **files edited/created**:
+
+### T2: <name>
+- **depends_on**: [T1]
+- **location**: <paths>
+- **description**: <work>
+- **touches**: [<file paths/globs this task edits>]
+- **conflict_group**: <optional group name>
+- **validation**: <checks>
+- **status**: Not Completed
+- **log**:
+- **files edited/created**:
+
+## Parallel Execution Groups
+| Wave | Tasks | Can Start When |
+|------|-------|----------------|
+| 1 | T1 | Immediately |
+| 2 | T2 | T1 complete |
 ```
+
+> **Note**: The Tasks and Parallel Execution Groups sections are **optional** for simple changes (1-3 files). For simple changes, only the Change Summary section is required.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
@@ -75,6 +108,9 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 - [ ] `implementation_plan.md` records exact commands and evidence locations.
 - [ ] `implementation_plan.md` includes `## Dry Run` when policy requires `dry_run` for implementation.
 - [ ] Output paths avoid unresolved placeholders and literal `runs//...` style paths.
+- [ ] If task blocks exist, each has depends_on, location, description, validation, status fields.
+- [ ] Parallel execution groups are consistent with task dependencies.
+- [ ] Run `{{python_bin}} .autolab/verifiers/implementation_plan_lint.py --stage implementation` passes when task blocks are present.
 
 ## FAILURE / RETRY BEHAVIOR
 - If verifiers fail, fix artifacts/code and rerun this stage.

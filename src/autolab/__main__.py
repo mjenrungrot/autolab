@@ -209,6 +209,7 @@ from autolab.commands import (  # noqa: F401
     _cmd_status,
     _cmd_sync_scaffold,
     _cmd_review,
+    _list_bundled_skills,
     _run_once,
     _write_overnight_summary,
     main,

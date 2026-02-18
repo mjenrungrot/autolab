@@ -107,6 +107,11 @@ requirements_by_stage:
     schema: true
     env_smoke: false
     docs_target_update: false
+implementation_plan_lint:
+  enabled: true
+  command: "{{python_bin}} .autolab/verifiers/implementation_plan_lint.py"
+  stages:
+    implementation: true
 autorun:
   guardrails:
     max_same_decision_streak: 3

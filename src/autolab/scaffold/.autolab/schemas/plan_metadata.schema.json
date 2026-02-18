@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan Metadata",
+  "description": "Metadata emitted by swarm-planner alongside implementation_plan.md",
+  "type": "object",
+  "required": ["schema_version", "iteration_id", "generated_at", "skill_used", "task_count"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill_used": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "wave_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dependency_depth": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "conflict_groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "total_touches_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

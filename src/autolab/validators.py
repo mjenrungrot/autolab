@@ -545,6 +545,14 @@ def _build_verification_command_specs(
         command_specs.append(
             ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py")
         )
+    plan_lint_path = repo_root / ".autolab" / "verifiers" / "implementation_plan_lint.py"
+    if plan_lint_path.exists() and stage == "implementation":
+        command_specs.append(
+            (
+                "implementation_plan_lint",
+                f"{python_bin} .autolab/verifiers/implementation_plan_lint.py --stage {shlex.quote(stage)}",
+            )
+        )
     if stage_requirements["schema"]:
         prompt_lint_path = repo_root / ".autolab" / "verifiers" / "prompt_lint.py"
         if prompt_lint_path.exists():

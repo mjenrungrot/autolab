@@ -72,7 +72,19 @@ from autolab.slurm_job_list import (
 # Skill installer helpers
 # ---------------------------------------------------------------------------
 
-def _load_packaged_skill_template_text(provider: str) -> str:
+def _list_bundled_skills(provider: str) -> list[str]:
+    normalized_provider = str(provider).strip().lower()
+    if normalized_provider != "codex":
+        raise RuntimeError(f"unsupported skill provider '{provider}'")
+    skills_root = importlib_resources.files("autolab").joinpath("skills", normalized_provider)
+    found: list[str] = []
+    for child in skills_root.iterdir():
+        if child.joinpath("SKILL.md").is_file():
+            found.append(child.name)
+    return sorted(found)
+
+
+def _load_packaged_skill_template_text(provider: str, skill_name: str) -> str:
     normalized_provider = str(provider).strip().lower()
     if normalized_provider != "codex":
         raise RuntimeError(f"unsupported skill provider '{provider}'")
@@ -80,12 +92,12 @@ def _load_packaged_skill_template_text(provider: str) -> str:
     resource = importlib_resources.files("autolab").joinpath(
         "skills",
         normalized_provider,
-        "autolab",
+        skill_name,
         "SKILL.md",
     )
     if not resource.is_file():
         raise RuntimeError(
-            "bundled skill template is unavailable at package://autolab/skills/codex/autolab/SKILL.md"
+            f"bundled skill template is unavailable at package://autolab/skills/{normalized_provider}/{skill_name}/SKILL.md"
         )
     return resource.read_text(encoding="utf-8")
 
@@ -253,25 +265,40 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
 def _cmd_install_skill(args: argparse.Namespace) -> int:
     provider = str(getattr(args, "provider", "")).strip().lower()
     project_root = Path(getattr(args, "project_root", ".")).expanduser().resolve()
-    destination = project_root / ".codex" / "skills" / "autolab" / "SKILL.md"
+    single_skill = getattr(args, "skill", None)
 
-    try:
-        template_text = _load_packaged_skill_template_text(provider)
-    except Exception as exc:
-        print(f"autolab install-skill: ERROR {exc}", file=sys.stderr)
-        return 1
-
-    try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(template_text, encoding="utf-8")
-    except Exception as exc:
-        print(f"autolab install-skill: ERROR writing {destination}: {exc}", file=sys.stderr)
-        return 1
+    if single_skill is not None:
+        skill_names = [str(single_skill).strip()]
+    else:
+        try:
+            skill_names = _list_bundled_skills(provider)
+        except Exception as exc:
+            print(f"autolab install-skill: ERROR {exc}", file=sys.stderr)
+            return 1
 
     print("autolab install-skill")
     print(f"provider: {provider}")
-    print("source: package://autolab/skills/codex/autolab/SKILL.md")
-    print(f"destination: {destination}")
+
+    installed = 0
+    for skill_name in skill_names:
+        destination = project_root / ".codex" / "skills" / skill_name / "SKILL.md"
+        try:
+            template_text = _load_packaged_skill_template_text(provider, skill_name)
+        except Exception as exc:
+            print(f"  {skill_name}: ERROR {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(template_text, encoding="utf-8")
+        except Exception as exc:
+            print(f"  {skill_name}: ERROR writing {destination}: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"  {skill_name}: installed -> {destination}")
+        installed += 1
+
+    print(f"skills_installed: {installed}")
     print("status: installed (overwritten if existing)")
     return 0
 
@@ -1001,6 +1028,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "provider",
         choices=("codex",),
         help="Skill provider to install (currently only: codex).",
+    )
+    install_skill.add_argument(
+        "--skill",
+        default=None,
+        help="Install only this skill (default: all bundled skills).",
     )
     install_skill.add_argument(
         "--project-root",

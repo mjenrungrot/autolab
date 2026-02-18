@@ -250,3 +250,328 @@ def test_schema_checks_require_todo_files_when_assistant_mode_on(tmp_path: Path)
 
     assert result.returncode == 1
     assert "todo_state.json is required when assistant_mode=on" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# implementation_plan_lint verifier tests
+# ---------------------------------------------------------------------------
+
+
+def _run_plan_lint(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "implementation_plan_lint.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
+    return subprocess.run(
+        command,
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _write_plan(repo: Path, content: str) -> None:
+    path = repo / "experiments" / "plan" / "iter1" / "implementation_plan.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _setup_lint_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    return repo
+
+
+def test_implementation_plan_lint_passes_valid_plan(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nAdded feature X.\n\n"
+        "## Tasks\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/foo.py\n"
+        "- **description**: Create foo module\n"
+        "- **touches**: [src/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n\n"
+        "### T2: Integration\n"
+        "- **depends_on**: [T1]\n"
+        "- **location**: src/bar.py\n"
+        "- **description**: Integrate foo into bar\n"
+        "- **touches**: [src/bar.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+        "- **log**:\n"
+        "- **files edited/created**:\n\n"
+        "## Parallel Execution Groups\n"
+        "| Wave | Tasks | Can Start When |\n"
+        "|------|-------|----------------|\n"
+        "| 1 | T1 | Immediately |\n"
+        "| 2 | T2 | T1 complete |\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "implementation_plan_lint: PASS" in result.stdout
+
+
+def test_implementation_plan_lint_fails_missing_change_summary(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Tasks\n\n"
+        "### T1: Setup\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/foo.py\n"
+        "- **description**: Create foo\n"
+        "- **touches**: [src/foo.py]\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "Change Summary" in result.stdout
+
+
+def test_implementation_plan_lint_fails_missing_depends_on(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Setup\n"
+        "- **location**: src/foo.py\n"
+        "- **description**: Create foo\n"
+        "- **validation**: run tests\n"
+        "- **status**: Not Completed\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "depends_on" in result.stdout
+
+
+def test_implementation_plan_lint_fails_circular_dependency(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: First\n"
+        "- **depends_on**: [T2]\n"
+        "- **location**: src/a.py\n"
+        "- **description**: A\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "### T2: Second\n"
+        "- **depends_on**: [T1]\n"
+        "- **location**: src/b.py\n"
+        "- **description**: B\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "circular" in result.stdout.lower()
+
+
+def test_implementation_plan_lint_fails_dangling_dependency(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: First\n"
+        "- **depends_on**: [T99]\n"
+        "- **location**: src/a.py\n"
+        "- **description**: A\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "T99" in result.stdout
+
+
+def test_implementation_plan_lint_passes_no_task_blocks(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nSmall refactor of helper function.\n\n"
+        "## Files Updated\n- src/utils.py\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "implementation_plan_lint: PASS" in result.stdout
+
+
+def test_implementation_plan_lint_skips_non_implementation_stage(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+
+    result = _run_plan_lint(repo, stage="design")
+
+    assert result.returncode == 0
+    assert "SKIP" in result.stdout
+
+
+def test_implementation_plan_lint_fails_wave_overlap(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Edit config\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/config.py\n"
+        "- **description**: Update config\n"
+        "- **touches**: [src/config.py]\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "### T2: Also edit config\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/config.py\n"
+        "- **description**: Also modify config\n"
+        "- **touches**: [src/config.py]\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "## Parallel Execution Groups\n"
+        "| Wave | Tasks | Can Start When |\n"
+        "|------|-------|----------------|\n"
+        "| 1 | T1, T2 | Immediately |\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "overlapping touches" in result.stdout.lower()
+
+
+def test_implementation_plan_lint_fails_wave_conflict_group(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Task A\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/a.py\n"
+        "- **description**: A\n"
+        "- **touches**: [src/a.py]\n"
+        "- **conflict_group**: database\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "### T2: Task B\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/b.py\n"
+        "- **description**: B\n"
+        "- **touches**: [src/b.py]\n"
+        "- **conflict_group**: database\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "## Parallel Execution Groups\n"
+        "| Wave | Tasks | Can Start When |\n"
+        "|------|-------|----------------|\n"
+        "| 1 | T1, T2 | Immediately |\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 1
+    assert "conflict_group" in result.stdout
+
+
+def test_schema_checks_pass_with_valid_plan_metadata(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    plan_metadata = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "skill_used": "swarm-planner",
+        "task_count": 5,
+        "wave_count": 3,
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plan_metadata, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fail_with_invalid_plan_metadata(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    plan_metadata = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        # missing generated_at, skill_used, task_count
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plan_metadata, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "plan_metadata" in result.stdout
+
+
+def test_schema_checks_pass_with_valid_plan_execution_summary(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    summary = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        "plan_file": "experiments/plan/iter1/implementation_plan.md",
+        "tasks_total": 4,
+        "tasks_completed": 4,
+        "tasks_failed": 0,
+        "tasks_blocked": 0,
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_execution_summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None:
+    repo = _setup_lint_repo(tmp_path)
+    _write_plan(repo, (
+        "## Change Summary\nDone.\n\n"
+        "### T1: Edit config\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/config.py\n"
+        "- **description**: Update config\n"
+        "- **touches**: [src/config.py]\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "### T2: Edit utils\n"
+        "- **depends_on**: []\n"
+        "- **location**: src/utils.py\n"
+        "- **description**: Update utils\n"
+        "- **touches**: [src/utils.py]\n"
+        "- **validation**: tests\n"
+        "- **status**: Not Completed\n\n"
+        "## Parallel Execution Groups\n"
+        "| Wave | Tasks | Can Start When |\n"
+        "|------|-------|----------------|\n"
+        "| 1 | T1, T2 | Immediately |\n"
+    ))
+
+    result = _run_plan_lint(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "implementation_plan_lint: PASS" in result.stdout

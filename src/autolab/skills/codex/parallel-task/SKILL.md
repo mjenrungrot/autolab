@@ -35,6 +35,7 @@ If no `task_ids` are provided, execute the full plan.
    - `status`, `log`, `files edited/created`
 4. Validate unique IDs and dependency references.
 5. If `.autolab/state.json` exists, load iteration and stage context for prompts.
+6. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and verify each task's `touches` are within allowed scope before launching subagents.
 
 ## Subset execution rules
 
@@ -46,14 +47,16 @@ If no `task_ids` are provided, execute the full plan.
 1. Identify unblocked tasks:
    - task not completed
    - all `depends_on` tasks completed
-2. Launch all unblocked tasks in parallel subagents.
-3. Wait for completion, collect outputs, and validate results.
-4. Mark task as complete only when plan updates are present:
+2. Extract `touches` and `conflict_group` from each unblocked task during preflight.
+3. When building a wave, exclude tasks whose `touches` overlap or share a `conflict_group` with already-selected tasks in the wave.
+4. Launch all wave tasks in parallel subagents.
+5. Wait for completion, collect outputs, and validate results.
+6. Mark task as complete only when plan updates are present:
    - `status: Completed`
    - non-empty `log`
    - non-empty `files edited/created`
-5. If a task fails validation, retry once; otherwise report blocked status.
-6. Repeat until no pending tasks remain.
+7. If a task fails validation, retry once; otherwise report blocked status.
+8. Repeat until no pending tasks remain.
 
 ## Subagent prompt contract
 
@@ -89,3 +92,5 @@ Return:
 - tasks failed/blocked with reasons
 - plan file path
 - validation coverage summary
+
+Emit `plan_execution_summary.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `plan_file`, `tasks_total`, `tasks_completed`, `tasks_failed`, `tasks_blocked`. Optional: `waves_executed`, `task_details[]`.
