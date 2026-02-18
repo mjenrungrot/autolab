@@ -1,10 +1,12 @@
 from __future__ import annotations
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,12 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*([^\s]+)"),
     re.compile(r"(?i)\b(authorization:\s*bearer)\s+([^\s]+)"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bASIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b"),
 )
 
 
@@ -57,6 +65,16 @@ _SHELL_META_PATTERN = re.compile(r"[|&;<>()$`]")
 
 def _command_uses_shell_syntax(command: str) -> bool:
     return bool(_SHELL_META_PATTERN.search(command))
+
+
+def _write_runner_execution_report(
+    repo_root: Path,
+    *,
+    payload: dict[str, Any],
+) -> None:
+    report_path = repo_root / ".autolab" / "runner_execution_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _is_within_scope(path: str, allowed_roots: tuple[str, ...]) -> bool:
@@ -317,6 +335,18 @@ def _invoke_agent_runner(
     env["AUTOLAB_CORE_ADD_DIRS"] = ",".join(str(path) for path in resolved_core_dirs)
 
     timeout: float | None = None if runner.timeout_seconds <= 0 else runner.timeout_seconds
+    run_report: dict[str, Any] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "stage": stage,
+        "runner": runner.runner,
+        "workspace_dir": str(workspace_dir),
+        "edit_scope_mode": runner.edit_scope.mode,
+        "allowed_roots": list(allowed_roots),
+        "timeout_seconds": runner.timeout_seconds,
+        "status": "starting",
+        "command_argv": [],
+        "exit_code": None,
+    }
     _append_log(
         repo_root,
         (
@@ -359,23 +389,27 @@ def _invoke_agent_runner(
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
     try:
-        use_shell = runner.runner == "custom" and _command_uses_shell_syntax(command)
-        popen_command: str | list[str]
-        if use_shell:
-            popen_command = command
-            _append_log(repo_root, "agent runner using shell execution for custom command with shell syntax")
-        else:
-            try:
-                popen_command = shlex.split(command)
-            except ValueError as exc:
-                raise StageCheckError(f"agent runner command could not be parsed: {exc}") from exc
-            if not popen_command:
-                raise StageCheckError("agent runner command resolved to empty arguments")
+        if _command_uses_shell_syntax(command):
+            raise StageCheckError(
+                "agent_runner.command contains shell metacharacters; "
+                "configure an argv-safe command without pipes/subshell syntax"
+            )
+        try:
+            popen_command = shlex.split(command)
+        except ValueError as exc:
+            raise StageCheckError(f"agent runner command could not be parsed: {exc}") from exc
+        if not popen_command:
+            raise StageCheckError("agent runner command resolved to empty arguments")
+        run_report["command_argv"] = [
+            _redact_sensitive_text(str(token))
+            for token in popen_command
+        ]
+        _write_runner_execution_report(repo_root, payload=run_report)
 
         process = subprocess.Popen(
             popen_command,
             cwd=repo_root,
-            shell=use_shell,
+            shell=False,
             text=True,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -409,6 +443,9 @@ def _invoke_agent_runner(
             returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             _append_log(repo_root, f"agent runner timeout stage={stage} timeout_seconds={runner.timeout_seconds}")
+            run_report["status"] = "timeout"
+            run_report["exit_code"] = None
+            _write_runner_execution_report(repo_root, payload=run_report)
             process.terminate()
             try:
                 process.wait(timeout=2)
@@ -418,6 +455,10 @@ def _invoke_agent_runner(
             return
     except Exception as exc:
         _append_log(repo_root, f"agent runner execution error stage={stage}: {exc}")
+        run_report["status"] = "error"
+        run_report["error"] = str(exc)
+        run_report["exit_code"] = None
+        _write_runner_execution_report(repo_root, payload=run_report)
         return
     finally:
         if stdout_thread is not None:
@@ -457,5 +498,8 @@ def _invoke_agent_runner(
             )
 
     _append_log(repo_root, f"agent runner exit stage={stage} returncode={returncode}")
+    run_report["status"] = "completed" if returncode == 0 else "failed"
+    run_report["exit_code"] = int(returncode)
+    _write_runner_execution_report(repo_root, payload=run_report)
     if returncode != 0:
         _append_log(repo_root, f"agent runner non-zero exit at stage={stage}; continuing with stage evaluation")
