@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -21,7 +22,12 @@ from autolab.state import (
     _resolve_iteration_directory,
 )
 from autolab.prompts import _render_stage_prompt, _resolve_stage_prompt_path
-from autolab.utils import _append_log
+from autolab.utils import (
+    _append_log,
+    _collect_change_snapshot,
+    _is_git_worktree,
+    _snapshot_delta_paths,
+)
 from autolab.state import _ensure_iteration_skeleton
 
 
@@ -30,6 +36,40 @@ def _compact_log_text(text: str, limit: int = 240) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[:limit]}..."
+
+
+SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*([^\s]+)"),
+    re.compile(r"(?i)\b(authorization:\s*bearer)\s+([^\s]+)"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{10,}\b"),
+)
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = str(text)
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub(lambda match: f"{match.group(1)}=<redacted>" if match.groups() else "<redacted>", redacted)
+    return redacted
+
+
+_SHELL_META_PATTERN = re.compile(r"[|&;<>()$`]")
+
+
+def _command_uses_shell_syntax(command: str) -> bool:
+    return bool(_SHELL_META_PATTERN.search(command))
+
+
+def _is_within_scope(path: str, allowed_roots: tuple[str, ...]) -> bool:
+    normalized = path.strip().replace("\\", "/")
+    if not normalized:
+        return True
+    for root in allowed_roots:
+        candidate = root.strip().strip("/")
+        if not candidate:
+            continue
+        if normalized == candidate or normalized.startswith(f"{candidate}/"):
+            return True
+    return False
 
 
 def _resolve_repo_relative_dir(repo_root: Path, raw_dir: str, *, field_name: str) -> Path:
@@ -172,11 +212,11 @@ def _substitute_runner_command(
 ) -> str:
     command = str(template)
     replacements = {
-        "{stage}": stage,
-        "{prompt_path}": str(prompt_path),
-        "{prompt_template_path}": str(prompt_template_path),
-        "{prompt_context_path}": str(prompt_context_path),
-        "{iteration_id}": iteration_id,
+        "{stage}": shlex.quote(stage),
+        "{prompt_path}": shlex.quote(str(prompt_path)),
+        "{prompt_template_path}": shlex.quote(str(prompt_template_path)),
+        "{prompt_context_path}": shlex.quote(str(prompt_context_path)),
+        "{iteration_id}": shlex.quote(iteration_id),
         "{workspace_dir}": shlex.quote(str(workspace_dir)),
         "{core_add_dirs}": core_add_dirs,
     }
@@ -254,6 +294,16 @@ def _invoke_agent_runner(
         workspace_dir=workspace_dir,
         core_add_dirs=core_add_dirs,
     )
+    baseline_snapshot = _collect_change_snapshot(repo_root) if _is_git_worktree(repo_root) else None
+    workspace_rel = workspace_dir.relative_to(repo_root).as_posix()
+    allowed_roots = tuple(
+        sorted(
+            {
+                workspace_rel,
+                *(path.relative_to(repo_root).as_posix() for path in resolved_core_dirs),
+            }
+        )
+    )
 
     env = os.environ.copy()
     env["AUTOLAB_STAGE"] = stage
@@ -272,7 +322,7 @@ def _invoke_agent_runner(
         (
             f"agent runner start stage={stage} timeout_seconds={runner.timeout_seconds} "
             f"workspace_dir={workspace_dir} prompt_template={prompt_bundle.template_path} "
-            f"prompt_rendered={prompt_bundle.rendered_path} command={command}"
+            f"prompt_rendered={prompt_bundle.rendered_path} command={_redact_sensitive_text(command)}"
         ),
     )
 
@@ -309,10 +359,23 @@ def _invoke_agent_runner(
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
     try:
+        use_shell = runner.runner == "custom" and _command_uses_shell_syntax(command)
+        popen_command: str | list[str]
+        if use_shell:
+            popen_command = command
+            _append_log(repo_root, "agent runner using shell execution for custom command with shell syntax")
+        else:
+            try:
+                popen_command = shlex.split(command)
+            except ValueError as exc:
+                raise StageCheckError(f"agent runner command could not be parsed: {exc}") from exc
+            if not popen_command:
+                raise StageCheckError("agent runner command resolved to empty arguments")
+
         process = subprocess.Popen(
-            command,
+            popen_command,
             cwd=repo_root,
-            shell=True,
+            shell=use_shell,
             text=True,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -365,9 +428,33 @@ def _invoke_agent_runner(
     captured_stdout = "".join(captured_stdout_chunks).strip()
     captured_stderr = "".join(captured_stderr_chunks).strip()
     if captured_stdout:
-        _append_log(repo_root, f"agent runner stdout stage={stage}: {_compact_log_text(captured_stdout)}")
+        _append_log(
+            repo_root,
+            f"agent runner stdout stage={stage}: {_compact_log_text(_redact_sensitive_text(captured_stdout))}",
+        )
     if captured_stderr:
-        _append_log(repo_root, f"agent runner stderr stage={stage}: {_compact_log_text(captured_stderr)}")
+        _append_log(
+            repo_root,
+            f"agent runner stderr stage={stage}: {_compact_log_text(_redact_sensitive_text(captured_stderr))}",
+        )
+
+    if baseline_snapshot is not None:
+        current_snapshot = _collect_change_snapshot(repo_root)
+        delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
+        out_of_scope = sorted(path for path in delta_paths if not _is_within_scope(path, allowed_roots))
+        if out_of_scope:
+            sample = ", ".join(out_of_scope[:8])
+            _append_log(
+                repo_root,
+                (
+                    "agent runner scope violation: changed paths outside allowed dirs "
+                    f"allowed={allowed_roots} out_of_scope={sample}"
+                ),
+            )
+            raise StageCheckError(
+                "agent runner edited paths outside allowed edit scope; "
+                f"out_of_scope={sample}"
+            )
 
     _append_log(repo_root, f"agent runner exit stage={stage} returncode={returncode}")
     if returncode != 0:

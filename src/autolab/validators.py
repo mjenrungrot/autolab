@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -267,14 +269,24 @@ def _validate_slurm_job_ledger_entry(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_latest_run_state(iteration_dir: Path) -> tuple[str, str]:
+def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = "") -> tuple[str, str]:
     # Lazy import to avoid circular dependency — _manifest_timestamp lives in
     # __main__ until the utils module is extracted.
     from autolab.utils import _manifest_timestamp
 
-    manifests = sorted(iteration_dir.glob("runs/*/run_manifest.json"))
-    if not manifests:
-        raise StageCheckError(f"launch did not produce run_manifest.json under {iteration_dir / 'runs'}")
+    preferred = str(preferred_run_id).strip()
+    manifests: list[Path]
+    if preferred:
+        preferred_manifest = iteration_dir / "runs" / preferred / "run_manifest.json"
+        if not preferred_manifest.exists():
+            raise StageCheckError(
+                f"state.last_run_id='{preferred}' but run manifest is missing at {preferred_manifest}"
+            )
+        manifests = [preferred_manifest]
+    else:
+        manifests = sorted(iteration_dir.glob("runs/*/run_manifest.json"))
+        if not manifests:
+            raise StageCheckError(f"launch did not produce run_manifest.json under {iteration_dir / 'runs'}")
     manifest_candidates: list[tuple[int, datetime, str, str, dict[str, Any]]] = []
     for manifest_path in manifests:
         payload = _load_dict_json(manifest_path, "runs/<run_id>/run_manifest.json")
@@ -323,7 +335,19 @@ def _resolve_latest_run_state(iteration_dir: Path) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool, str]:
+def _resolve_verification_stage(state: dict[str, Any], stage_override: str | None = None) -> str:
+    stage = str(stage_override or state.get("stage", "")).strip()
+    if not stage:
+        raise StageCheckError("verification stage is missing from state")
+    return stage
+
+
+def _build_verification_command_specs(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    stage_override: str | None = None,
+) -> tuple[str, dict[str, bool], list[tuple[str, str]]]:
     from autolab.config import (
         _load_verifier_policy,
         _resolve_policy_command,
@@ -331,34 +355,40 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
         _resolve_stage_requirements,
     )
     from autolab.state import _resolve_iteration_directory
-    from autolab.utils import _append_log, _compact_log_text
 
     policy = _load_verifier_policy(repo_root)
     iteration_id = str(state.get("iteration_id", "")).strip()
-    stage = str(state.get("stage", "")).strip()
+    stage = _resolve_verification_stage(state, stage_override=stage_override)
     iteration_dir, _iteration_type = _resolve_iteration_directory(
         repo_root,
         iteration_id=iteration_id,
         experiment_id=str(state.get("experiment_id", "")).strip(),
         require_exists=False,
     )
-    iteration_path = iteration_dir.relative_to(repo_root).as_posix()
+    try:
+        iteration_path = iteration_dir.relative_to(repo_root).as_posix()
+    except ValueError:
+        iteration_path = iteration_dir.as_posix()
 
     stage_requirements = _resolve_stage_requirements(policy, stage)
     python_bin = _resolve_policy_python_bin(policy)
     test_command = _resolve_policy_command(str(policy.get("test_command", "")).strip(), python_bin=python_bin)
     dry_run_command = _resolve_policy_command(str(policy.get("dry_run_command", "")).strip(), python_bin=python_bin)
     if not dry_run_command and stage_requirements.get("dry_run"):
-        return (False, "verification dry-run command is required by policy but not configured")
+        raise StageCheckError("verification dry-run command is required by policy but not configured")
     if not test_command and stage_requirements.get("tests"):
-        return (False, "verification test command is required by policy but not configured")
+        raise StageCheckError("verification test command is required by policy but not configured")
 
     template_fill_section = policy.get("template_fill", {})
     template_fill_enabled = False
     template_fill_command = ""
     if isinstance(template_fill_section, dict):
-        template_fill_enabled = bool(template_fill_section.get("enabled", False))
-        if _coerce_bool(template_fill_section.get("enabled"), default=template_fill_enabled):
+        template_fill_enabled = _coerce_bool(template_fill_section.get("enabled"), default=False)
+        stage_enabled = True
+        template_fill_stages = template_fill_section.get("stages")
+        if isinstance(template_fill_stages, dict):
+            stage_enabled = _coerce_bool(template_fill_stages.get(stage), default=True)
+        if template_fill_enabled and stage_enabled:
             raw_template_fill_command = str(template_fill_section.get("command", "")).strip()
             template_fill_command = _resolve_policy_command(raw_template_fill_command, python_bin=python_bin)
 
@@ -366,15 +396,19 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
     if isinstance(template_fill_by_stage, dict):
         stage_template_fill = template_fill_by_stage.get(stage)
         if isinstance(stage_template_fill, str) and stage_template_fill.strip():
+            template_fill_enabled = True
             template_fill_command = _resolve_policy_command(stage_template_fill.strip(), python_bin=python_bin)
 
     command_specs: list[tuple[str, str]] = []
-
-    commands: list[str] = []
     if stage_requirements["tests"] and test_command:
-        commands.append(test_command)
+        command_specs.append(("tests", test_command))
     if stage_requirements["dry_run"] and dry_run_command:
-        commands.append(_replace_iteration_placeholders(dry_run_command, iteration_id, iteration_path))
+        command_specs.append(
+            (
+                "dry_run",
+                _replace_iteration_placeholders(dry_run_command, iteration_id, iteration_path),
+            )
+        )
     if template_fill_enabled and template_fill_command:
         command_specs.append(("template_fill", template_fill_command))
     closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
@@ -393,26 +427,47 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
             ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py")
         )
     if stage_requirements["schema"]:
-        command_specs.append(("schema_checks", f"{python_bin} .autolab/verifiers/schema_checks.py"))
+        command_specs.append(
+            (
+                "schema_checks",
+                f"{python_bin} .autolab/verifiers/schema_checks.py --stage {shlex.quote(stage)}",
+            )
+        )
 
-    for _name, command in command_specs:
-        if command:
-            commands.append(command)
+    if not command_specs:
+        command_specs.append(("noop", "true"))
+    return (stage, stage_requirements, command_specs)
 
-    if not commands and stage_requirements["tests"]:
+
+def _run_verification_step_detailed(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    stage_override: str | None = None,
+) -> tuple[bool, str, dict[str, Any]]:
+    from autolab.utils import _append_log, _compact_log_text
+
+    try:
+        stage, stage_requirements, command_specs = _build_verification_command_specs(
+            repo_root, state, stage_override=stage_override
+        )
+    except StageCheckError as exc:
+        stage = str(stage_override or state.get("stage", "")).strip()
         return (
             False,
-            "verification command list is empty after policy resolution; update verifier_policy requirements",
+            f"verification failed: {exc}",
+            {
+                "stage": stage,
+                "requirements": {},
+                "commands": [],
+            },
         )
-    if not commands:
-        commands.append("true")
 
-    if not commands:
-        return (False, "verification command not configured")
-
-    for command in commands:
+    results: list[dict[str, Any]] = []
+    for command_name, command in command_specs:
         if not command.strip():
             continue
+        started = time.monotonic()
         try:
             process = subprocess.run(
                 command,
@@ -423,16 +478,101 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
                 check=False,
                 timeout=VERIFIER_COMMAND_TIMEOUT_SECONDS,
             )
+            duration_seconds = round(time.monotonic() - started, 3)
         except subprocess.TimeoutExpired:
             detail = _compact_log_text(f"verification command timed out: {command}")
-            _append_log(repo_root, f"assistant verification timeout command={command}")
-            return (False, f"verification failed: {detail}")
+            _append_log(repo_root, f"verification timeout command={command_name} detail={detail}")
+            results.append(
+                {
+                    "name": command_name,
+                    "command": command,
+                    "status": "timeout",
+                    "returncode": None,
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                    "detail": detail,
+                }
+            )
+            return (
+                False,
+                f"verification failed: {detail}",
+                {
+                    "stage": stage,
+                    "requirements": stage_requirements,
+                    "commands": results,
+                },
+            )
         except OSError as exc:
             detail = _compact_log_text(f"verification command failed to start: {exc}")
-            _append_log(repo_root, f"assistant verification failed command={command} detail={detail}")
-            return (False, f"verification failed: {detail}")
+            _append_log(repo_root, f"verification command failed command={command_name} detail={detail}")
+            results.append(
+                {
+                    "name": command_name,
+                    "command": command,
+                    "status": "error",
+                    "returncode": None,
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                    "detail": detail,
+                }
+            )
+            return (
+                False,
+                f"verification failed: {detail}",
+                {
+                    "stage": stage,
+                    "requirements": stage_requirements,
+                    "commands": results,
+                },
+            )
+
+        stdout = (process.stdout or "").strip()
+        stderr = (process.stderr or "").strip()
+        detail = _compact_log_text((stderr or stdout or "").strip())
+        status = "pass" if process.returncode == 0 else "fail"
+        result_payload = {
+            "name": command_name,
+            "command": command,
+            "status": status,
+            "returncode": process.returncode,
+            "duration_seconds": duration_seconds,
+            "stdout": _compact_log_text(stdout, limit=400) if stdout else "",
+            "stderr": _compact_log_text(stderr, limit=400) if stderr else "",
+        }
+        if detail:
+            result_payload["detail"] = detail
+        results.append(result_payload)
+
         if process.returncode != 0:
-            detail = _compact_log_text((process.stderr or process.stdout or "verification failed").strip())
-            _append_log(repo_root, f"assistant verification failed command={command} detail={detail}")
-            return (False, f"verification failed: {detail}")
-    return (True, f"verification passed ({len(commands)} command(s))")
+            _append_log(repo_root, f"verification failed command={command_name} detail={detail}")
+            return (
+                False,
+                f"verification failed: {detail or 'verification command returned non-zero'}",
+                {
+                    "stage": stage,
+                    "requirements": stage_requirements,
+                    "commands": results,
+                },
+            )
+
+    return (
+        True,
+        f"verification passed ({len(results)} command(s))",
+        {
+            "stage": stage,
+            "requirements": stage_requirements,
+            "commands": results,
+        },
+    )
+
+
+def _run_verification_step(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    stage_override: str | None = None,
+) -> tuple[bool, str]:
+    passed, message, _details = _run_verification_step_detailed(
+        repo_root,
+        state,
+        stage_override=stage_override,
+    )
+    return (passed, message)

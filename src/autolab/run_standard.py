@@ -37,6 +37,7 @@ from autolab.utils import (
 from autolab.models import StateError
 from autolab.state import _resolve_repo_root
 from autolab.todo_sync import select_decision_from_todo
+from autolab.validators import _run_verification_step
 
 
 def _handle_stage_failure(
@@ -381,6 +382,25 @@ def _run_once_standard(
                     pre_sync_changed=pre_sync_changed,
                     detail=f"agent runner error: {exc}",
                 )
+
+    if auto_mode:
+        verified, verify_message = _run_verification_step(repo_root, state)
+        repeat_guard = state.get("repeat_guard", {})
+        if not isinstance(repeat_guard, dict):
+            repeat_guard = {}
+        repeat_guard["last_verification_passed"] = bool(verified)
+        state["repeat_guard"] = repeat_guard
+        _write_json(state_path, state)
+        if not verified:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=verify_message,
+            )
+        _append_log(repo_root, f"auto verification passed stage={stage_before}: {verify_message}")
 
     try:
         eval_result = _evaluate_stage(repo_root, state)

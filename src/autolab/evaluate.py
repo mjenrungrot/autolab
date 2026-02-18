@@ -130,7 +130,10 @@ def _eval_launch(
     _validate_launch(iteration_dir)
 
     # -- run manifest & sync status ------------------------------------------
-    run_id, sync_status = _resolve_latest_run_state(iteration_dir)
+    run_id, sync_status = _resolve_latest_run_state(
+        iteration_dir,
+        preferred_run_id=str(state.get("last_run_id", "")).strip(),
+    )
     if run_id:
         state["last_run_id"] = run_id
         manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"

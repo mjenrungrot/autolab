@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from autolab.constants import (
     PROMPT_TOKEN_PATTERN,
     STAGE_PROMPT_FILES,
 )
+from autolab.config import _load_verifier_policy, _resolve_policy_python_bin
 from autolab.models import RenderedPromptBundle, StageCheckError
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
@@ -85,7 +87,7 @@ def _default_stage_prompt_text(stage: str) -> str:
         "- Do not modify experiments whose backlog `type` is `done`; legacy closed statuses (`done`, `completed`, `closed`, `resolved`) are also treated as read-only unless a human explicitly re-opens them.\n\n"
         "- If the mapped experiment type is `done`, do not edit that experiment and wait for an explicit reopen/retype.\n\n"
         "## Repository Path Scope\n"
-        "- Required stage artifacts may be under `<ITERATION_PATH>/...` and `.autolab/...` when specified.\n"
+        "- Required stage artifacts may be under `{{iteration_path}}/...` and `.autolab/...` when specified.\n"
         "- Do not restrict analysis or edits to `experiments/` only.\n"
         "- `src/` contains core implementation that should work across multiple experiments or the broader codebase.\n"
         "- `experiments/` can contain experiment-specific implementation to prevent context flooding; move reusable logic to `src/` when multiple experiments need it.\n"
@@ -93,6 +95,25 @@ def _default_stage_prompt_text(stage: str) -> str:
         "- `autolab/` is a valid target when task scope is orchestration, policy, prompt, or runner behavior.\n"
         "- Keep diffs minimal and avoid unrelated files.\n"
     )
+
+
+def _detect_total_memory_gb() -> int | None:
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        total_pages = int(os.sysconf("SC_PHYS_PAGES"))
+    except Exception:
+        return None
+    total_bytes = page_size * total_pages
+    if total_bytes <= 0:
+        return None
+    return max(1, int(total_bytes / (1024**3)))
+
+
+def _recommended_memory_estimate(total_memory_gb: int | None) -> str:
+    if total_memory_gb is None:
+        return "64GB"
+    recommended_gb = min(total_memory_gb, max(64, max(1, total_memory_gb // 2)))
+    return f"{recommended_gb}GB"
 
 
 def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id: str) -> str:
@@ -170,6 +191,18 @@ def _build_prompt_context(
 ) -> dict[str, Any]:
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
+    policy = _load_verifier_policy(repo_root)
+    python_bin = _resolve_policy_python_bin(policy)
+    total_memory_gb = _detect_total_memory_gb()
+    recommended_memory_estimate = _recommended_memory_estimate(total_memory_gb)
+    available_memory_gb = str(total_memory_gb) if total_memory_gb is not None else "unavailable"
+    paper_targets_raw = state.get("paper_targets")
+    if isinstance(paper_targets_raw, list):
+        paper_targets = ", ".join(str(item).strip() for item in paper_targets_raw if str(item).strip())
+    else:
+        paper_targets = str(paper_targets_raw or "").strip()
+    if not paper_targets:
+        paper_targets = "unavailable: paper_targets not configured"
     run_id = _resolve_prompt_run_id(stage=stage, state=state)
     hypothesis_id = _resolve_hypothesis_id(
         repo_root,
@@ -280,6 +313,11 @@ def _build_prompt_context(
         "launch_mode": launch_mode,
         "iteration_id": iteration_id,
         "iteration_path": iteration_path,
+        "experiment_id": experiment_id,
+        "paper_targets": paper_targets,
+        "python_bin": python_bin,
+        "recommended_memory_estimate": recommended_memory_estimate,
+        "available_memory_gb": available_memory_gb,
         "run_id": run_id,
         "hypothesis_id": hypothesis_id,
         "state_snapshot": state_excerpt,
@@ -308,6 +346,13 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
     return {
         "iteration_id": _to_text(context.get("iteration_id"), "iteration_id"),
         "iteration_path": _to_text(context.get("iteration_path"), "iteration_path"),
+        "experiment_id": _to_text(context.get("experiment_id"), "experiment_id"),
+        "paper_targets": _to_text(context.get("paper_targets"), "paper_targets"),
+        "python_bin": _to_text(context.get("python_bin"), "python_bin"),
+        "recommended_memory_estimate": _to_text(
+            context.get("recommended_memory_estimate"), "recommended_memory_estimate"
+        ),
+        "available_memory_gb": _to_text(context.get("available_memory_gb"), "available_memory_gb"),
         "stage": _to_text(context.get("stage"), "stage"),
         "stage_context": _to_text(context.get("stage_context"), "stage_context"),
         "run_id": _to_text(context.get("run_id"), "run_id"),
@@ -428,9 +473,8 @@ def _render_stage_prompt(
 
     required_tokens = PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
     required_values = {
-        "iteration_id": str(context_payload.get("iteration_id", "")).strip(),
-        "iteration_path": str(context_payload.get("iteration_path", "")).strip(),
-        "run_id": str(context_payload.get("run_id", "")).strip(),
+        token: str(context_payload.get(token, "")).strip()
+        for token in required_tokens
     }
     missing_required = sorted(
         token
@@ -455,9 +499,6 @@ def _render_stage_prompt(
         return f"unavailable: {token}"
 
     rendered_text = PROMPT_TOKEN_PATTERN.sub(_replace_token, template_text)
-    rendered_text = rendered_text.replace("<ITERATION_ID>", token_values.get("iteration_id", "").strip())
-    rendered_text = rendered_text.replace("<ITERATION_PATH>", token_values.get("iteration_path", "").strip())
-    rendered_text = rendered_text.replace("<RUN_ID>", token_values.get("run_id", "").strip())
     if "{{stage_context}}" not in template_text:
         stage_context_block = token_values.get("stage_context", "").strip()
         if stage_context_block:

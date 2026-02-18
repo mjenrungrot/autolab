@@ -6,22 +6,34 @@
   "properties": {
     "run_id": {"type": "string"},
     "iteration_id": {"type": "string"},
-    "launch_mode": {"type": "string"},
+    "launch_mode": {"type": "string", "enum": ["local", "slurm"]},
     "host_mode": {"type": "string", "enum": ["local", "slurm"]},
     "command": {"type": "string", "minLength": 1},
-    "resource_request": {"type": "object"},
+    "resource_request": {
+      "type": "object",
+      "properties": {
+        "cpus": {"type": "integer", "minimum": 0},
+        "memory": {"type": "string"},
+        "gpu_count": {"type": "integer", "minimum": 0},
+        "gpu_type": {"type": "string"},
+        "partition": {"type": "string"},
+        "qos": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
     "artifact_sync_to_local": {
       "type": "object",
       "properties": {
-        "status": {"type": "string"}
+        "status": {"type": "string", "minLength": 1}
       },
       "additionalProperties": true
     },
     "timestamps": {
       "type": "object",
+      "required": ["started_at"],
       "properties": {
-        "started_at": {"type": "string"},
-        "completed_at": {"type": "string"}
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"}
       },
       "additionalProperties": true
     }

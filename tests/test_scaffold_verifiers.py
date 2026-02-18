@@ -19,12 +19,12 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def _write_state(repo: Path, *, stage: str = "implementation_review") -> None:
+def _write_state(repo: Path, *, stage: str = "implementation_review", last_run_id: str = "") -> None:
     state = {
         "iteration_id": "iter1",
         "stage": stage,
         "stage_attempt": 0,
-        "last_run_id": "",
+        "last_run_id": last_run_id,
         "sync_status": "na",
         "max_stage_attempts": 3,
         "max_total_iterations": 20,
@@ -111,10 +111,13 @@ def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _run_schema_checks(repo: Path) -> subprocess.CompletedProcess[str]:
+def _run_schema_checks(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "schema_checks.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
     return subprocess.run(
-        [sys.executable, str(verifier)],
+        command,
         cwd=repo,
         text=True,
         capture_output=True,
@@ -151,3 +154,23 @@ def test_schema_checks_fail_when_required_check_key_missing(tmp_path: Path) -> N
 
     assert result.returncode == 1
     assert "docs_target_update" in result.stdout
+
+
+def test_schema_checks_design_stage_override_skips_review_artifacts(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_extract_results_skips_run_checks_when_run_id_missing(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_state(repo, stage="extract_results", last_run_id="")
+    _write_review_result(repo, include_docs_check=True)
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout

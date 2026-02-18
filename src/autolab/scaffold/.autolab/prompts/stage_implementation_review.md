@@ -36,13 +36,15 @@ Gate launch readiness and produce:
 - `env_smoke`
 - `docs_target_update`
 
-When `review_result.status` is `pass`, any checks required by policy for `implementation_review` must be `pass`.
+When `review_result.status` is `pass`, any checks required by policy for `implementation_review`
+under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_review` must be `pass`.
 
 ## STEPS
 1. Validate implementation against design and launch constraints.
-2. Write `implementation_review.md` with summary, blocking findings, remediation actions, and rationale.
-3. Write `review_result.json` matching schema and policy-required checks.
-4. Run `python3 .autolab/verifiers/template_fill.py --stage implementation_review` and fix failures.
+2. Read policy-required checks and map each to `pass|skip|fail` with evidence.
+3. Write `implementation_review.md` with summary, blocking findings, remediation actions, and rationale.
+4. Write `review_result.json` matching schema and policy-required checks.
+5. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```json

@@ -26,19 +26,21 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 
 ## DESIGN CONTRACT
 - Include `id`, `iteration_id`, `hypothesis_id`.
+- Set `id` to `{{experiment_id}}` when available; otherwise use the active backlog experiment id and note resolution in comments.
 - Set `entrypoint.module` and explicit `entrypoint.args`.
 - Set `compute.location` and keep it consistent with expected host assumptions.
+- Set `compute.memory_estimate` to a high value: use at least `64GB` when host capacity permits, otherwise use available memory divided safely for concurrent runs (recommended current value: `{{recommended_memory_estimate}}`, detected total RAM GB: `{{available_memory_gb}}`).
 - Include `metrics.primary`, `metrics.success_delta`, `metrics.aggregation`, `metrics.baseline_comparison`.
 - Provide non-empty `baselines`; include `variants` when proposing changes.
 
 ## STEPS
 1. Translate hypothesis intent into reproducible fields with concrete values.
 2. Record compute/resource assumptions (local or slurm) and deterministic controls.
-3. Run `python3 .autolab/verifiers/template_fill.py --stage design` and fix failures.
+3. Run `{{python_bin}} .autolab/verifiers/template_fill.py --stage design` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```yaml
-id: h1
+id: {{experiment_id}}
 iteration_id: {{iteration_id}}
 hypothesis_id: {{hypothesis_id}}
 entrypoint:
@@ -48,7 +50,7 @@ entrypoint:
 compute:
   location: local
   walltime_estimate: "00:40:00"
-  memory_estimate: "24GB"
+  memory_estimate: "{{recommended_memory_estimate}}"
   gpu_count: 0
 metrics:
   primary:
