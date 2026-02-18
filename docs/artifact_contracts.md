@@ -56,6 +56,7 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 - **Schema**: `.autolab/schemas/review_result.schema.json`
 - **Required fields**: `status` (`pass|needs_retry|failed`), `blocking_findings`, `required_checks`
 - **Required checks**: `tests`, `dry_run`, `schema`, `env_smoke`, `docs_target_update` (each `pass|skip|fail`)
+- **Auto-enforced checks**: categories such as `prompt_lint` and `consistency` are enforced by the verifier pipeline and evidenced in `.autolab/verification_result.json` (not additional keys in `required_checks`)
 - **Producing stage**: implementation_review
 - **Consuming stages**: launch (must be `pass` to proceed)
 

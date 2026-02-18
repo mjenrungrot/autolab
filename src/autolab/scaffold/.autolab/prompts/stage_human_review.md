@@ -26,19 +26,20 @@ The human reviewer can resolve this stage by running:
 - `autolab review --status=retry` -- Send back to implementation for fixes
 - `autolab review --status=stop` -- End the experiment
 
-## OUTPUTS (STRICT)
-- `{{iteration_path}}/human_review_packet.md`
+## OUTPUTS (OPTIONAL HELPER)
+- No mandatory machine-emitted artifact is required for this stage.
+- Optional helper output: `{{iteration_path}}/human_review_packet.md`
 
-The human review packet must include:
+If you choose to generate `human_review_packet.md`, include:
 1. **Stage history summary**: key transitions and their outcomes from `.autolab/state.json` history
 2. **Top verifier failures**: most recent verification errors blocking progress
 3. **Links to key artifacts**: paths to metrics, review results, and implementation plans
 4. **Checklist of human actions**: concrete steps the reviewer should take
 
-## FILE CHECKLIST (machine-auditable)
-- [ ] `human_review_packet.md` exists under `{{iteration_path}}/`
-- [ ] Packet includes stage history, verifier failures, artifact links, and action checklist
-- [ ] All artifact paths are concrete (no unresolved placeholders)
+## HUMAN CHECKLIST
+- [ ] Use `autolab review --status=<pass|retry|stop>` to resolve this stage.
+- [ ] Confirm chosen action is supported by available artifacts and verifier outputs.
+- [ ] If `human_review_packet.md` is created, ensure paths are concrete (no unresolved placeholders).
 
 ## ARTIFACT FORMAT
 When recording the review, the system writes `human_review_result.json`:
@@ -62,7 +63,7 @@ When recording the review, the system writes `human_review_result.json`:
 1. Read and summarize the current experiment state.
 2. List the evidence available for review (metrics, review result, analysis).
 3. Present the three available actions with their consequences.
-4. Wait for the human reviewer to choose an action via `autolab review`.
+4. Wait for the human reviewer to choose an action via `autolab review`; do not require machine file emission to proceed.
 
 ## FAILURE / RETRY BEHAVIOR
 - This stage blocks until a human runs `autolab review`.

@@ -347,7 +347,7 @@ def _run_once_assistant(
         )
 
     if cycle_stage == "verify":
-        verified, verify_message = _run_verification_step(repo_root, state)
+        verified, verify_message = _run_verification_step(repo_root, state, auto_mode=auto_mode)
         repeat_guard = dict(state.get("repeat_guard", {}))
         repeat_guard["last_verification_passed"] = verified
         state["repeat_guard"] = repeat_guard

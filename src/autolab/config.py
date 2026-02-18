@@ -115,16 +115,20 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
     )
 
 
-def _load_strict_mode_config(repo_root: Path) -> StrictModeConfig:
+def _load_strict_mode_config(repo_root: Path, *, auto_mode: bool = False) -> StrictModeConfig:
     policy = _load_verifier_policy(repo_root)
     autorun = policy.get("autorun")
     strict = autorun.get("strict_mode") if isinstance(autorun, dict) else {}
     if not isinstance(strict, dict):
         strict = {}
+    raw_forbid_auto_stop = strict.get("forbid_auto_stop")
+    raw_require_human_review_for_stop = strict.get("require_human_review_for_stop")
+    require_human_review_default = bool(auto_mode and raw_require_human_review_for_stop is None)
     return StrictModeConfig(
-        forbid_auto_stop=_coerce_bool(strict.get("forbid_auto_stop"), default=False),
+        forbid_auto_stop=_coerce_bool(raw_forbid_auto_stop, default=False),
         require_human_review_for_stop=_coerce_bool(
-            strict.get("require_human_review_for_stop"), default=False
+            raw_require_human_review_for_stop,
+            default=require_human_review_default,
         ),
     )
 
@@ -306,13 +310,14 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     )
 
 
-def _load_protected_files(policy: dict[str, Any]) -> list[str]:
+def _load_protected_files(policy: dict[str, Any], *, auto_mode: bool = False) -> list[str]:
     """Return normalized protected file paths from verifier policy.
 
     Supports:
     - ``protected_files`` legacy list
     - ``protected_file_profiles`` with optional ``protected_profile`` selector
     - ``safe_automation_protected_files`` toggle (profile: ``safe_automation``)
+    - ``auto_mode`` runtime overlay for unattended safety defaults
     """
     def _normalize_list(raw_values: Any) -> list[str]:
         if not isinstance(raw_values, list):
@@ -327,7 +332,10 @@ def _load_protected_files(policy: dict[str, Any]) -> list[str]:
     result = _normalize_list(policy.get("protected_files", []))
 
     profile_name = str(policy.get("protected_profile", "default")).strip() or "default"
-    if _coerce_bool(policy.get("safe_automation_protected_files"), default=False):
+    safe_automation_profile_enabled = _coerce_bool(policy.get("safe_automation_protected_files"), default=False)
+    if auto_mode:
+        safe_automation_profile_enabled = True
+    if safe_automation_profile_enabled:
         profile_name = "safe_automation"
 
     profile_map = policy.get("protected_file_profiles", {})
@@ -339,7 +347,7 @@ def _load_protected_files(policy: dict[str, Any]) -> list[str]:
                     result.append(path)
 
     safe_profile = policy.get("safe_automation_protected_files_list")
-    if _coerce_bool(policy.get("safe_automation_protected_files"), default=False):
+    if safe_automation_profile_enabled:
         for path in _normalize_list(safe_profile):
             if path not in result:
                 result.append(path)

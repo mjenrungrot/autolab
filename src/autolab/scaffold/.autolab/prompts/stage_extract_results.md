@@ -37,6 +37,7 @@ Convert run artifacts into structured outputs:
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - Run artifacts under `{{iteration_path}}/runs/{{run_id}}/`
 - `{{iteration_path}}/design.yaml`
+- Note: `metrics.json` is produced by this stage and is not a launch prerequisite.
 
 ## MISSING-INPUT FALLBACKS
 - If `run_manifest.json` is missing, stop and request launch-stage completion.

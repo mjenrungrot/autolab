@@ -294,6 +294,7 @@ def _invoke_agent_runner(
     stage: str,
     iteration_id: str,
     run_agent_mode: str,
+    auto_mode: bool = False,
 ) -> None:
     runner = _load_agent_runner_config(repo_root)
     mode = _resolve_run_agent_mode(run_agent_mode)
@@ -574,7 +575,7 @@ def _invoke_agent_runner(
     # -- Protected files denylist check --
     if effective_delta_paths:
         policy = _load_verifier_policy(repo_root)
-        protected_files = _load_protected_files(policy)
+        protected_files = _load_protected_files(policy, auto_mode=auto_mode)
         if protected_files:
             protected_patterns = tuple(protected_files)
             violated = sorted(

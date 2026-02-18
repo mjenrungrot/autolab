@@ -167,6 +167,12 @@ When answering users:
 - Keep guardrails enabled.
 - Use `meaningful_only` commit mode unless the user explicitly wants otherwise.
 
+## Implementation Review Check Contract
+
+- `review_result.json.required_checks` is a fixed 5-key map: `tests`, `dry_run`, `schema`, `env_smoke`, `docs_target_update`.
+- Do not add extra keys (for example `prompt_lint` or `consistency`) to `required_checks`.
+- Treat `.autolab/verification_result.json` as the canonical evidence for auto-enforced verifier categories.
+
 ## Common Failures
 
 - `symptom`: `stage_attempt` keeps incrementing, never advances; `cause`: Verification fails repeatedly; `fix`: Check verifier output: `autolab verify --stage <stage>`. Fix artifacts, not state.
