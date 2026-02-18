@@ -26,6 +26,7 @@ autolab = [
   "scaffold/.autolab/experiment_file_line_limits.yaml",
   "scaffold/.autolab/verifier_policy.yaml",
   "scaffold/.autolab/prompts/*.md",
+  "scaffold/.autolab/prompts/shared/*.md",
   "scaffold/.autolab/prompts/shared/.gitkeep",
   "scaffold/.autolab/schemas/*.json",
   "scaffold/.autolab/verifiers/*.py",

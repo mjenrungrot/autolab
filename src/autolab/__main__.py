@@ -19,9 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from autolab.slurm_job_list import (
+    append_entry_idempotent,
     canonical_slurm_job_bullet,
     is_slurm_manifest,
+    ledger_contains_entry,
     ledger_contains_run_id,
+    required_slurm_job_id,
 )
 from autolab.todo_sync import (
     mark_task_completed,
@@ -65,11 +68,11 @@ experiments:
 """
 
 DEFAULT_VERIFIER_POLICY = """test_command: "./venv/bin/python -m pytest"
-dry_run_command: "./venv/bin/python -m tinydesk_v4.train --config experiments/<ITERATION_ID>/design.yaml --dry-run"
+dry_run_command: ""
 require_tests: false
-require_dry_run: true
-require_env_smoke: true
-require_docs_target_update: true
+require_dry_run: false
+require_env_smoke: false
+require_docs_target_update: false
 template_fill:
   enabled: true
   command: "./venv/bin/python .autolab/verifiers/template_fill.py"
@@ -89,6 +92,28 @@ template_fill_by_stage:
   launch: "./venv/bin/python .autolab/verifiers/template_fill.py --stage launch"
   extract_results: "./venv/bin/python .autolab/verifiers/template_fill.py --stage extract_results"
   update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
+requirements_by_stage:
+  hypothesis:
+    schema: true
+  design:
+    schema: true
+  implementation:
+    dry_run: true
+    schema: true
+  implementation_review:
+    schema: true
+    docs_target_update: true
+    env_smoke: true
+  launch:
+    schema: true
+    env_smoke: true
+  extract_results:
+    schema: true
+    env_smoke: true
+  update_docs:
+    schema: true
+    env_smoke: true
+    docs_target_update: true
 autorun:
   guardrails:
     max_same_decision_streak: 3
@@ -173,21 +198,58 @@ STAGE_PROMPT_FILES = {
     "implementation": "stage_implementation.md",
     "implementation_review": "stage_implementation_review.md",
     "launch": "stage_launch.md",
+    "extract_results": "stage_extract_results.md",
+    "update_docs": "stage_update_docs.md",
+}
+STAGE_PROMPT_FILES_LEGACY = {
     "extract_results": "stage_extract.md",
     "update_docs": "stage_docs.md",
 }
 SLURM_JOB_LIST_PATH = Path("docs/slurm_job_list.md")
 PROMPT_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 PROMPT_LITERAL_TOKENS = ("<ITERATION_ID>", "<RUN_ID>")
+PROMPT_SHARED_INCLUDE_PATTERN = re.compile(r"\{\{\s*shared:([A-Za-z0-9_.-]+)\s*\}\}")
 PROMPT_REQUIRED_TOKENS_BY_STAGE = {
-    "hypothesis": {"iteration_id"},
-    "design": {"iteration_id"},
+    "hypothesis": {"iteration_id", "hypothesis_id"},
+    "design": {"iteration_id", "hypothesis_id"},
     "implementation": {"iteration_id"},
     "implementation_review": {"iteration_id"},
     "launch": {"iteration_id"},
     "extract_results": {"iteration_id", "run_id"},
     "update_docs": {"iteration_id", "run_id"},
 }
+REVIEW_RESULT_REQUIRED_CHECKS = (
+    "tests",
+    "dry_run",
+    "schema",
+    "env_smoke",
+    "docs_target_update",
+)
+HOST_MODE_COMMAND_TIMEOUT_SECONDS = 2
+VERIFIER_COMMAND_TIMEOUT_SECONDS = 120
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    return bool(value) if value is not None else default
+
+
+def _coerce_float(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
 
 
 class StateError(RuntimeError):
@@ -884,23 +946,72 @@ def _resolve_run_agent_mode(mode_value: str | None) -> str:
     return "policy"
 
 
-def _probe_host_command(argv: list[str]) -> bool:
+def _probe_host_command(argv: list[str], *, timeout: float = HOST_MODE_COMMAND_TIMEOUT_SECONDS) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             argv,
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=timeout,
         )
     except (FileNotFoundError, OSError):
-        return False
-    return proc.returncode == 0
+        return (False, "missing")
+    except subprocess.TimeoutExpired:
+        return (False, "timeout")
+    return (proc.returncode == 0, "ok" if proc.returncode == 0 else f"exit_{proc.returncode}")
+
+
+def _detect_host_mode_with_probe() -> tuple[str, dict[str, str]]:
+    has_sinfo = _is_command_available("sinfo")
+    has_squeue = _is_command_available("squeue")
+    has_sbatch = _is_command_available("sbatch")
+    probe = {
+        "has_sinfo": str(has_sinfo).lower(),
+        "has_squeue": str(has_squeue).lower(),
+        "has_sbatch": str(has_sbatch).lower(),
+        "has_slurm_env": str(_has_slurm_env()).lower(),
+    }
+
+    sinfo_ok = squeue_ok = sbatch_ok = False
+    if has_sinfo:
+        sinfo_ok, sinfo_status = _probe_host_command(["sinfo", "-V"])
+        probe["sinfo"] = sinfo_status
+    if has_squeue:
+        squeue_ok, squeue_status = _probe_host_command(["squeue", "-V"])
+        probe["squeue"] = squeue_status
+    if has_sbatch:
+        sbatch_ok, sbatch_status = _probe_host_command(["sbatch", "--version"])
+        probe["sbatch"] = sbatch_status
+
+    if _has_slurm_env():
+        if (has_sinfo and sinfo_ok) or (has_sbatch and sbatch_ok) or (has_squeue and squeue_ok):
+            return ("slurm", probe)
+        probe["note"] = "slurm environment detected but command probes incomplete"
+
+    if has_sinfo and has_squeue and sinfo_ok and squeue_ok:
+        return ("slurm", probe)
+    if has_sbatch and (sinfo_ok or squeue_ok):
+        return ("slurm", probe)
+    return ("local", probe)
+
+
+def _has_slurm_env() -> bool:
+    return bool(
+        os.environ.get("SLURM_CLUSTER_NAME")
+        or os.environ.get("SLURM_JOB_ID")
+        or os.environ.get("SLURM_JOB_NODELIST")
+        or os.environ.get("SLURM_NNODES")
+    )
+
+
+def _is_command_available(command: str) -> bool:
+    return shutil.which(command) is not None
 
 
 def _detect_priority_host_mode() -> str:
-    sinfo_ok = _probe_host_command(["sinfo", "-V"])
-    squeue_ok = _probe_host_command(["squeue", "-V"])
-    return "slurm" if sinfo_ok and squeue_ok else "local"
+    host_mode, _probe = _detect_host_mode_with_probe()
+    return host_mode
 
 
 def _collect_git_status_entries(repo_root: Path) -> list[tuple[str, str]]:
@@ -1128,21 +1239,86 @@ def _replace_iteration_placeholders(command: str, iteration_id: str) -> str:
 def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool, str]:
     policy = _load_verifier_policy(repo_root)
     iteration_id = str(state.get("iteration_id", "")).strip()
+    stage = str(state.get("stage", "")).strip()
+
+    stage_requirements: dict[str, bool] = {
+        "tests": _coerce_bool(policy.get("require_tests", False)),
+        "dry_run": _coerce_bool(policy.get("require_dry_run", False)),
+        "env_smoke": _coerce_bool(policy.get("require_env_smoke", False)),
+        "docs_target_update": _coerce_bool(policy.get("require_docs_target_update", False)),
+    }
+    requirements_by_stage = policy.get("requirements_by_stage", {})
+    if isinstance(requirements_by_stage, dict):
+        stage_section = requirements_by_stage.get(stage, {})
+        if isinstance(stage_section, dict):
+            stage_requirements["tests"] = _coerce_bool(
+                stage_section.get("tests"),
+                default=stage_requirements["tests"],
+            )
+            stage_requirements["dry_run"] = _coerce_bool(
+                stage_section.get("dry_run"),
+                default=stage_requirements["dry_run"],
+            )
+            stage_requirements["env_smoke"] = _coerce_bool(
+                stage_section.get("env_smoke"),
+                default=stage_requirements["env_smoke"],
+            )
+            stage_requirements["docs_target_update"] = _coerce_bool(
+                stage_section.get("docs_target_update"),
+                default=stage_requirements["docs_target_update"],
+            )
+
     test_command = str(policy.get("test_command", "")).strip()
     dry_run_command = str(policy.get("dry_run_command", "")).strip()
-    require_tests = bool(policy.get("require_tests", False))
-    require_dry_run = bool(policy.get("require_dry_run", False))
+    if not dry_run_command and stage_requirements.get("dry_run"):
+        return (False, "verification dry-run command is required by policy but not configured")
+    if not test_command and stage_requirements.get("tests"):
+        return (False, "verification test command is required by policy but not configured")
+
+    template_fill_section = policy.get("template_fill", {})
+    template_fill_enabled = False
+    template_fill_command = ""
+    if isinstance(template_fill_section, dict):
+        template_fill_enabled = bool(template_fill_section.get("enabled", False))
+        if _coerce_bool(template_fill_section.get("enabled"), default=template_fill_enabled):
+            raw_template_fill_command = str(template_fill_section.get("command", "")).strip()
+            template_fill_command = raw_template_fill_command
+
+    template_fill_by_stage = policy.get("template_fill_by_stage", {})
+    if isinstance(template_fill_by_stage, dict):
+        stage_template_fill = template_fill_by_stage.get(stage)
+        if isinstance(stage_template_fill, str) and stage_template_fill.strip():
+            template_fill_command = stage_template_fill.strip()
+
+    command_specs: list[tuple[str, str]] = []
 
     commands: list[str] = []
-    if require_tests and test_command:
+    if stage_requirements["tests"] and test_command:
         commands.append(test_command)
-    if require_dry_run and dry_run_command:
+    if stage_requirements["dry_run"] and dry_run_command:
         commands.append(_replace_iteration_placeholders(dry_run_command, iteration_id))
+    if template_fill_enabled and template_fill_command:
+        command_specs.append(("template_fill", template_fill_command))
+    if stage_requirements["env_smoke"]:
+        command_specs.append(("run_health", "./venv/bin/python .autolab/verifiers/run_health.py"))
+        command_specs.append(("result_sanity", "./venv/bin/python .autolab/verifiers/result_sanity.py"))
+    if stage_requirements["docs_target_update"] and stage in {"update_docs", "implementation_review"}:
+        command_specs.append(
+            ("docs_targets", "./venv/bin/python .autolab/verifiers/docs_targets.py")
+        )
+    command_specs.append(("schema_checks", "./venv/bin/python .autolab/verifiers/schema_checks.py"))
+
+    for _name, command in command_specs:
+        if command:
+            commands.append(command)
+
+    if not commands and stage_requirements["tests"]:
+        return (
+            False,
+            "verification command list is empty after policy resolution; update verifier_policy requirements",
+        )
     if not commands:
-        if test_command:
-            commands.append(test_command)
-        elif dry_run_command:
-            commands.append(_replace_iteration_placeholders(dry_run_command, iteration_id))
+        commands.append("true")
 
     if not commands:
         return (False, "verification command not configured")
@@ -1158,7 +1334,12 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
                 text=True,
                 capture_output=True,
                 check=False,
+                timeout=VERIFIER_COMMAND_TIMEOUT_SECONDS,
             )
+        except subprocess.TimeoutExpired:
+            detail = _compact_log_text(f"verification command timed out: {command}")
+            _append_log(repo_root, f"assistant verification timeout command={command}")
+            return (False, f"verification failed: {detail}")
         except OSError as exc:
             detail = _compact_log_text(f"verification command failed to start: {exc}")
             _append_log(repo_root, f"assistant verification failed command={command} detail={detail}")
@@ -1251,7 +1432,48 @@ def _resolve_stage_prompt_path(repo_root: Path, stage: str) -> Path:
     prompt_name = STAGE_PROMPT_FILES.get(stage)
     if prompt_name is None:
         raise StageCheckError(f"no stage prompt mapping is defined for '{stage}'")
-    return repo_root / ".autolab" / "prompts" / prompt_name
+    candidate = repo_root / ".autolab" / "prompts" / prompt_name
+    if candidate.exists():
+        return candidate
+    legacy_prompt_name = STAGE_PROMPT_FILES_LEGACY.get(stage)
+    if legacy_prompt_name:
+        legacy_candidate = repo_root / ".autolab" / "prompts" / legacy_prompt_name
+        if legacy_candidate.exists():
+            return legacy_candidate
+        raise StageCheckError(
+            f"stage prompt is missing (new='{candidate.name}', legacy='{legacy_candidate.name}')"
+        )
+    raise StageCheckError(f"stage prompt is missing for '{stage}' ({candidate})")
+
+
+def _resolve_prompt_shared_path(repo_root: Path, shared_name: str) -> Path:
+    return repo_root / ".autolab" / "prompts" / "shared" / shared_name
+
+
+def _render_prompt_includes(repo_root: Path, text: str, *, stage: str) -> str:
+    """Render {{shared:...}} include directives."""
+    rendered = text
+    for _ in range(4):
+        changed = False
+
+        def _replace(match: re.Match[str]) -> str:
+            nonlocal changed
+            shared_name = match.group(1).strip()
+            if not shared_name:
+                return ""
+            shared_path = _resolve_prompt_shared_path(repo_root, shared_name)
+            if not shared_path.exists():
+                raise StageCheckError(
+                    f"prompt shared include '{shared_name}' is missing for stage '{stage}'"
+                )
+            include_text = shared_path.read_text(encoding="utf-8")
+            changed = True
+            return include_text
+
+        rendered = PROMPT_SHARED_INCLUDE_PATTERN.sub(_replace, rendered)
+        if not changed:
+            break
+    return rendered
 
 
 def _compact_log_text(text: str, limit: int = 240) -> str:
@@ -1741,6 +1963,7 @@ def _render_stage_prompt(
 ) -> RenderedPromptBundle:
     try:
         template_text = template_path.read_text(encoding="utf-8")
+        template_text = _render_prompt_includes(repo_root, template_text, stage=stage)
     except Exception as exc:
         raise StageCheckError(f"agent runner prompt could not be read at {template_path}: {exc}") from exc
 
@@ -3641,6 +3864,69 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
+    action = str(getattr(args, "action", "")).strip().lower()
+    manifest_path = Path(args.manifest).expanduser()
+    doc_path = Path(args.doc).expanduser()
+    if action not in {"append", "verify"}:
+        print(
+            f"autolab slurm-job-list: invalid action '{action}' (expected append|verify)",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"autolab slurm-job-list: ERROR loading manifest {manifest_path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(manifest_payload, dict):
+        print(f"autolab slurm-job-list: ERROR manifest {manifest_path} must be a JSON object", file=sys.stderr)
+        return 1
+
+    if action == "append":
+        try:
+            if not is_slurm_manifest(manifest_payload):
+                print(
+                    f"autolab slurm-job-list: manifest is non-SLURM; append skipped for {manifest_path}"
+                )
+                return 0
+            if doc_path.parent != manifest_path.parent:
+                doc_path.parent.mkdir(parents=True, exist_ok=True)
+            run_id = required_run_id(manifest_payload)
+            canonical = canonical_slurm_job_bullet(manifest_payload)
+            existing_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+            next_text, updated = append_entry_idempotent(existing_text, canonical, run_id)
+            if updated:
+                doc_path.write_text(next_text, encoding="utf-8")
+                print(f"autolab slurm-job-list: appended run_id={run_id} -> {doc_path}")
+            else:
+                print(f"autolab slurm-job-list: run_id={run_id} already present in {doc_path}")
+            return 0
+        except Exception as exc:
+            print(f"autolab slurm-job-list: ERROR {exc}", file=sys.stderr)
+            return 1
+
+    try:
+        if not is_slurm_manifest(manifest_payload):
+            print(f"autolab slurm-job-list: manifest is non-SLURM; verify skipped for {manifest_path}")
+            return 0
+        run_id = required_run_id(manifest_payload)
+        job_id = required_slurm_job_id(manifest_payload)
+        expected = canonical_slurm_job_bullet(manifest_payload)
+        ledger_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+        if not ledger_contains_entry(ledger_text, expected):
+            print(
+                f"autolab slurm-job-list: FAIL run_id={run_id}, job_id={job_id}, missing ledger entry in {doc_path}"
+            )
+            return 1
+        print(f"autolab slurm-job-list: PASS job_id={job_id}, run_id={run_id}")
+        return 0
+    except Exception as exc:
+        print(f"autolab slurm-job-list: ERROR verifying {manifest_path}: {exc}", file=sys.stderr)
+        return 1
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -4065,6 +4351,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Overwrite existing scaffold files.",
     )
     sync_scaffold.set_defaults(handler=_cmd_sync_scaffold)
+
+    slurm_job_list = subparsers.add_parser(
+        "slurm-job-list",
+        help="Maintain or verify docs/slurm_job_list.md ledger entries for run manifests.",
+    )
+    slurm_job_list.add_argument(
+        "action",
+        choices=("append", "verify"),
+        help="Action to perform against a run manifest.",
+    )
+    slurm_job_list.add_argument(
+        "--manifest",
+        required=True,
+        help="Path to experiments/<iteration_id>/runs/<run_id>/run_manifest.json",
+    )
+    slurm_job_list.add_argument(
+        "--doc",
+        required=True,
+        help="Path to docs/slurm_job_list.md.",
+    )
+    slurm_job_list.set_defaults(handler=_cmd_slurm_job_list)
 
     return parser
 

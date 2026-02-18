@@ -5,12 +5,18 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-PLACEHOLDER_TOKENS = {"<iteration_id>", "<run_id>", "template"}
+PLACEHOLDER_TOKENS = {"<iteration_id>", "<run_id>", "<TODO>", "placeholder"}
+PLACEHOLDER_PATTERNS = (
+    re.compile(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}"),
+    re.compile(r"\bTODO\b", re.IGNORECASE),
+    re.compile(r"\bTBD\b", re.IGNORECASE),
+)
 
 
 def _load_state() -> dict:
@@ -22,8 +28,10 @@ def _load_state() -> dict:
 
 def _has_placeholders(payload) -> bool:
     if isinstance(payload, str):
-        normalized = payload.lower()
-        return any(token in normalized for token in PLACEHOLDER_TOKENS)
+        lowered = payload.lower()
+        if any(token in lowered for token in PLACEHOLDER_TOKENS):
+            return True
+        return any(pattern.search(lowered) for pattern in PLACEHOLDER_PATTERNS)
     return False
 
 
@@ -46,12 +54,17 @@ def _validate_metrics(path: Path, failures: list[str]) -> None:
         failures.append(f"{path} is empty")
         return
 
-    # Explicit placeholder guard
-    normalized_dump = json.dumps(metrics).lower()
-    if _has_placeholders(normalized_dump):
+    if _has_placeholders(json.dumps(metrics)):
         failures.append(f"{path} appears to contain placeholder content")
 
-    # Reject empty numeric states and NaN-like values.
+    for key in {"iteration_id", "run_id", "status", "primary_metric"}:
+        if key not in metrics:
+            failures.append(f"{path} missing required key '{key}'")
+
+    status = str(metrics.get("status", "")).strip().lower()
+    if status not in {"completed", "partial", "failed"}:
+        failures.append(f"{path} status must be one of completed|partial|failed")
+
     def walk(obj, key_prefix=""):
         if isinstance(obj, dict):
             for key, value in obj.items():
@@ -68,13 +81,11 @@ def _validate_metrics(path: Path, failures: list[str]) -> None:
 
     walk(metrics)
 
-    # Require at least one informative key for extract-results stage.
-    has_info = any(
-        key not in {"status", "iteration_id", "run_id"}
-        for key in metrics.keys()
-    )
-    if not has_info:
-        failures.append(f"{path} does not include metric payload beyond status metadata")
+    primary_metric = metrics.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        failures.append(f"{path} primary_metric must be a mapping")
+    elif not {"name", "value", "delta_vs_baseline"} <= set(primary_metric.keys()):
+        failures.append(f"{path} primary_metric requires name/value/delta_vs_baseline")
 
 
 def main() -> int:
