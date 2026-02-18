@@ -1,10 +1,8 @@
 ## SKILL PLAYBOOK (optional tool guidance)
-| Complexity | Indicator | Skill | Notes |
-|------------|-----------|-------|-------|
-| Simple | 1-3 files | (none) | Write tasks inline |
-| Medium | 4-10 files, clear deps | `$swarm-planner` | Dependency-aware task blocks |
-| Complex | 10+ files, multiple approaches | `$llm-council` -> `$swarm-planner` | Council then swarm |
-| Execution | Plan exists | `$parallel-task` | Run task waves |
+- `complexity`: Simple; `indicator`: 1-3 files; `skill`: (none); `notes`: Write tasks inline.
+- `complexity`: Medium; `indicator`: 4-10 files, clear deps; `skill`: `$swarm-planner`; `notes`: Dependency-aware task blocks.
+- `complexity`: Complex; `indicator`: 10+ files, multiple approaches; `skill`: `$llm-council` -> `$swarm-planner`; `notes`: Council then swarm.
+- `complexity`: Execution; `indicator`: Plan exists; `skill`: `$parallel-task`; `notes`: Run task waves.
 
 All skills require explicit `$` invocation. Plans must conform to the implementation_plan.md unified format.
 

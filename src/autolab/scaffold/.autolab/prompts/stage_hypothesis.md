@@ -46,11 +46,9 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 - The `+` prefix on the delta is required (e.g. `+2.5` or `+5%`), even for "higher is better" metrics.
 
 ## VERIFIER MAPPING
-| Verifier | What it checks | Common failure fix |
-|----------|---------------|-------------------|
-| schema_checks | JSON schema validation of state/backlog | Ensure `state.json` and `backlog.yaml` match schemas |
-| template_fill | Placeholder detection, artifact existence, triviality | Replace all `{{...}}`, `TODO`, `TBD` markers with real content |
-| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+- `verifier`: schema_checks; `checks`: JSON schema validation of state/backlog; `common_failure_fix`: Ensure `state.json` and `backlog.yaml` match schemas.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence, triviality; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` markers with real content.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
 
 ## STEPS
 1. Write one hypothesis with sections: `Hypothesis Statement`, `Motivation`, `Scope In`, `Scope Out`, `Primary Metric`, `Expected Delta`, `Operational Success Criteria`, `Risks and Failure Modes`, `Constraints for Design Stage`.

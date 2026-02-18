@@ -23,7 +23,10 @@
       "required": ["module"],
       "properties": {
         "module": {"type": "string"},
-        "args": {"type": "object"},
+        "args": {
+          "type": "object",
+          "additionalProperties": true
+        },
         "cli": {"type": "string"}
       },
       "additionalProperties": false
@@ -87,7 +90,10 @@
         "required": ["name", "changes"],
         "properties": {
           "name": {"type": "string"},
-          "changes": {"type": "object"}
+          "changes": {
+            "type": "object",
+            "additionalProperties": true
+          }
         },
         "additionalProperties": false
       }

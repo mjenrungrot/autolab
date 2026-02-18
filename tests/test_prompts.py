@@ -22,6 +22,7 @@ from autolab.prompts import (
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCAFFOLD_PROMPTS_DIR = _REPO_ROOT / "src" / "autolab" / "scaffold" / ".autolab" / "prompts"
 _SKILLS_DIR = _REPO_ROOT / "src" / "autolab" / "skills"
+_DOCS_DIR = _REPO_ROOT / "docs"
 _ALL_PROMPT_MDS = sorted(_SCAFFOLD_PROMPTS_DIR.rglob("*.md"))
 
 _ASCII_ENFORCED_MDS: list[Path] = []
@@ -30,6 +31,16 @@ _ASCII_ENFORCED_MDS.extend(sorted(_SKILLS_DIR.rglob("*.md")))
 _readme = _REPO_ROOT / "README.md"
 if _readme.exists():
     _ASCII_ENFORCED_MDS.append(_readme)
+
+_TABLE_ENFORCED_MDS: list[Path] = []
+if _readme.exists():
+    _TABLE_ENFORCED_MDS.append(_readme)
+_TABLE_ENFORCED_MDS.extend(_ALL_PROMPT_MDS)
+if _DOCS_DIR.exists():
+    _TABLE_ENFORCED_MDS.extend(sorted(_DOCS_DIR.rglob("*.md")))
+if _SKILLS_DIR.exists():
+    _TABLE_ENFORCED_MDS.extend(sorted(_SKILLS_DIR.rglob("*.md")))
+_TABLE_ENFORCED_MDS = sorted(dict.fromkeys(_TABLE_ENFORCED_MDS))
 
 
 def _copy_scaffold(repo: Path) -> None:
@@ -140,6 +151,34 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage
 
 
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
+_PIPE_TABLE_SEPARATOR_RE = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
+
+
+def _find_pipe_table_headers(content: str) -> list[tuple[int, str]]:
+    lines = content.splitlines()
+    in_code_fence = False
+    violations: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence:
+            continue
+        if not _PIPE_TABLE_SEPARATOR_RE.match(line):
+            continue
+        header_idx = idx - 1
+        while header_idx >= 0 and not lines[header_idx].strip():
+            header_idx -= 1
+        if header_idx < 0:
+            continue
+        header = lines[header_idx]
+        if "|" not in header:
+            continue
+        violations.append((header_idx + 1, header.strip()))
+    return violations
 
 
 @pytest.mark.parametrize(
@@ -160,6 +199,23 @@ def test_prompt_markdown_contains_only_ascii(md_path: Path) -> None:
             )
     assert not violations, (
         f"Non-ASCII characters found in {md_path.name}:\n" + "\n".join(violations)
+    )
+
+
+@pytest.mark.parametrize(
+    "md_path",
+    _TABLE_ENFORCED_MDS,
+    ids=[str(p.relative_to(_REPO_ROOT)) for p in _TABLE_ENFORCED_MDS],
+)
+def test_markdown_disallows_pipe_tables(md_path: Path) -> None:
+    content = md_path.read_text(encoding="utf-8")
+    violations = _find_pipe_table_headers(content)
+    assert not violations, (
+        f"Pipe-style Markdown tables are not allowed in {md_path.name}; "
+        "use bullet records instead:\n"
+        + "\n".join(
+            f"  {md_path.name}:{lineno} -> {line_preview}" for lineno, line_preview in violations
+        )
     )
 
 

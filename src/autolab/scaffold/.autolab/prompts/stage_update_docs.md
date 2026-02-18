@@ -50,12 +50,10 @@ Update iteration documentation and configured paper targets after result extract
 - Ensure all template tokens are replaced with real values before finalizing outputs.
 
 ## VERIFIER MAPPING
-| Verifier | What it checks | Common failure fix |
-|----------|---------------|-------------------|
-| schema_checks | JSON schema validation of artifacts | Ensure all required artifacts match their schemas |
-| docs_target_update | `docs_targets.py` paper target checks | Update configured paper targets or provide explicit no-change rationale |
-| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
-| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+- `verifier`: schema_checks; `checks`: JSON schema validation of artifacts; `common_failure_fix`: Ensure all required artifacts match their schemas.
+- `verifier`: docs_target_update; `checks`: `docs_targets.py` paper target checks; `common_failure_fix`: Update configured paper targets or provide explicit no-change rationale.
+- `verifier`: template_fill; `checks`: Placeholder detection, artifact existence; `common_failure_fix`: Replace all `{{...}}`, `TODO`, `TBD` with real content.
+- `verifier`: prompt_lint; `checks`: Prompt template token resolution; `common_failure_fix`: Ensure all prompt tokens resolve to non-empty values.
 
 ## STEPS
 1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.

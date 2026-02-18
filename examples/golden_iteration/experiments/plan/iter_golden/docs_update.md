@@ -13,5 +13,6 @@
 - Proceed with replication runs before marking hypothesis complete.
 
 ## No-Change Rationale (when applicable)
-- metrics delta summary: +1.2 absolute validation accuracy.
+- primary metric value: 83.6.
+- metrics delta summary: +1.2 absolute improvement over baseline.
 - why configured paper targets do not require updates: target write-up deferred until replication confirms stability.
