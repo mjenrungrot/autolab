@@ -6,3 +6,6 @@ Autolab resolves stage placeholders before runner execution and writes:
 
 Resolved placeholders must be concrete for required tokens and must match `.autolab/state.json`.
 If any required token remains unresolved, this stage must fail before work starts.
+
+`state.json` is owned by Autolab orchestration; do not edit it manually unless a human explicitly asks.
+The runtime stage context block includes resolved edit scope allowlists (workspace + allowed dirs). Use those as the hard edit boundary.

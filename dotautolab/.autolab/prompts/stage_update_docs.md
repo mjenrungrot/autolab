@@ -1,40 +1,38 @@
-# Background & Goal
-Update documentation and paper targets after extraction.
+# Stage: update_docs
 
 ## ROLE
 You are the **Documentation Integrator**.
 
 ## PRIMARY OBJECTIVE
-Produce:
+Update iteration documentation and configured paper targets after result extraction:
 - `experiments/{{iteration_id}}/docs_update.md`
-- One paper update in targets declared by `.autolab/state.json`, or explicit no-change rationale
+- configured paper target files (or explicit no-change rationale)
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 
-## INPUT DATA
+## OUTPUTS (STRICT)
+- `experiments/{{iteration_id}}/docs_update.md`
+- paper target updates referenced by `.autolab/state.json` (`paper_targets`) or explicit `No changes needed` rationale
+
+## REQUIRED INPUTS
+- `.autolab/state.json`
 - `experiments/{{iteration_id}}/analysis/summary.md`
 - `experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json`
 - `experiments/{{iteration_id}}/runs/{{run_id}}/metrics.json`
-- `.autolab/state.json` (for paper target mapping)
 
-Use explicit field in state:
-- `paper_targets` (list of repo-relative paths) or single string target.
+## MISSING-INPUT FALLBACKS
+- If analysis/metrics are missing, stop and request extract-results completion.
+- If `paper_targets` is not configured, write explicit `No changes needed` or `No target configured` rationale in `docs_update.md`.
+- If a configured paper target file is missing, record it in `docs_update.md` and set follow-up action.
 
-Example:
-```json
-{
-  "paper_targets": ["paper/paperbanana.md", "paper/results.md"]
-}
-```
-
-## REQUIRED ACTIONS
-1. Update `docs_update.md` with changes, results, issues, and next-step recommendation.
-2. If paper target(s) are declared, apply only durable additions to those files.
-3. If no target is configured or no doc change is needed, add explicit `No changes needed` rationale in `docs_update.md`.
-4. Verify SLURM ledger entry:
+## STEPS
+1. Update `docs_update.md` with what changed, run evidence, and next-step recommendation.
+2. Update configured paper targets with durable result content when applicable.
+3. Verify SLURM ledger for SLURM runs:
    `autolab slurm-job-list verify --manifest experiments/{{iteration_id}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
+4. Run `python3 .autolab/verifiers/template_fill.py --stage update_docs` and fix failures.
 
 ## OUTPUT TEMPLATE
 ```markdown
@@ -56,6 +54,10 @@ Example:
 
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}
-- [ ] `docs_update.md` includes iteration/run references or explicit `No changes needed`.
-- [ ] Paper target files (if configured) are updated consistently, or explicit rationale is documented.
-- [ ] Ledger verification is performed for SLURM runs.
+- [ ] `docs_update.md` includes iteration/run references or explicit `No changes needed` rationale.
+- [ ] Paper target updates align with configured `paper_targets`, or an explicit no-target rationale is documented.
+- [ ] SLURM ledger verification is executed for SLURM manifests.
+
+## FAILURE / RETRY BEHAVIOR
+- If verifiers fail, correct docs artifacts and rerun update_docs.
+- Keep state transitions orchestrator-driven; do not manually change `state.json`.

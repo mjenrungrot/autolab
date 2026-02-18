@@ -37,8 +37,10 @@ line_limits:
     runs/<RUN_ID>/metrics.json: 32000
   run_manifest_dynamic:
     target: runs/<RUN_ID>/run_manifest.json
-    min_lines: 2500
-    max_lines: 12000
+    # Dynamic cap formula: base_lines + per_item_lines * counted_items, clamped to [min_cap_lines, max_cap_lines].
+    # These are caps, not required minimum output lengths.
+    min_cap_lines: 2500
+    max_cap_lines: 12000
     base_lines: 1200
     per_item_lines: 75
     max_chars: 80000

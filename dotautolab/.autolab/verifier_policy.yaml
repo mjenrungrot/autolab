@@ -1,12 +1,12 @@
-test_command: "./venv/bin/python -m pytest"
-dry_run_command: ""
-require_tests: false
-require_dry_run: false
-require_env_smoke: false
-require_docs_target_update: false
+python_bin: "python3"
+
+test_command: "{{python_bin}} -m pytest"
+# Replace this stub with a real dry-run command for your project.
+dry_run_command: "{{python_bin}} -c \"print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml')\""
+
 template_fill:
   enabled: true
-  command: "./venv/bin/python .autolab/verifiers/template_fill.py"
+  command: "{{python_bin}} .autolab/verifiers/template_fill.py"
   stages:
     hypothesis: true
     design: true
@@ -15,14 +15,16 @@ template_fill:
     launch: true
     extract_results: true
     update_docs: true
+
 template_fill_by_stage:
-  hypothesis: "./venv/bin/python .autolab/verifiers/template_fill.py --stage hypothesis"
-  design: "./venv/bin/python .autolab/verifiers/template_fill.py --stage design"
-  implementation: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation"
-  implementation_review: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation_review"
-  launch: "./venv/bin/python .autolab/verifiers/template_fill.py --stage launch"
-  extract_results: "./venv/bin/python .autolab/verifiers/template_fill.py --stage extract_results"
-  update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
+  hypothesis: "{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis"
+  design: "{{python_bin}} .autolab/verifiers/template_fill.py --stage design"
+  implementation: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation"
+  implementation_review: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review"
+  launch: "{{python_bin}} .autolab/verifiers/template_fill.py --stage launch"
+  extract_results: "{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results"
+  update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
+
 requirements_by_stage:
   hypothesis:
     tests: false
@@ -66,9 +68,12 @@ requirements_by_stage:
     schema: true
     env_smoke: false
     docs_target_update: true
+
 agent_runner:
   enabled: false
   runner: codex  # Options: codex, claude, custom
+  # For claude runner only: set true only in trusted non-interactive automation contexts.
+  claude_dangerously_skip_permissions: false
   # command is auto-set from runner preset; override with a custom command to use a specific tool
   stages:
     - hypothesis
@@ -88,7 +93,8 @@ agent_runner:
       - "paper"
       - "tests"
     ensure_iteration_dir: true
-  timeout_seconds: 0
+  timeout_seconds: 3600
+
 autorun:
   guardrails:
     max_same_decision_streak: 3

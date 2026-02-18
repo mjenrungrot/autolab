@@ -51,6 +51,7 @@ ACTIVE_STAGES = (
 )
 TERMINAL_STAGES = ("human_review", "stop")
 DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
+RUNNER_ELIGIBLE_STAGES = ACTIVE_STAGES + ("decide_repeat",)
 ALL_STAGES = set(ACTIVE_STAGES + ("decide_repeat",) + TERMINAL_STAGES)
 PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 
@@ -64,18 +65,16 @@ experiments:
   - id: e1
     hypothesis_id: h1
     status: open
+    type: plan
     iteration_id: "{iteration_id}"
 """
 
-DEFAULT_VERIFIER_POLICY = """test_command: "./venv/bin/python -m pytest"
-dry_run_command: ""
-require_tests: false
-require_dry_run: false
-require_env_smoke: false
-require_docs_target_update: false
+DEFAULT_VERIFIER_POLICY = """python_bin: "python3"
+test_command: "{{python_bin}} -m pytest"
+dry_run_command: "{{python_bin}} -c \\"print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml')\\""
 template_fill:
   enabled: true
-  command: "./venv/bin/python .autolab/verifiers/template_fill.py"
+  command: "{{python_bin}} .autolab/verifiers/template_fill.py"
   stages:
     hypothesis: true
     design: true
@@ -85,34 +84,55 @@ template_fill:
     extract_results: true
     update_docs: true
 template_fill_by_stage:
-  hypothesis: "./venv/bin/python .autolab/verifiers/template_fill.py --stage hypothesis"
-  design: "./venv/bin/python .autolab/verifiers/template_fill.py --stage design"
-  implementation: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation"
-  implementation_review: "./venv/bin/python .autolab/verifiers/template_fill.py --stage implementation_review"
-  launch: "./venv/bin/python .autolab/verifiers/template_fill.py --stage launch"
-  extract_results: "./venv/bin/python .autolab/verifiers/template_fill.py --stage extract_results"
-  update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
+  hypothesis: "{{python_bin}} .autolab/verifiers/template_fill.py --stage hypothesis"
+  design: "{{python_bin}} .autolab/verifiers/template_fill.py --stage design"
+  implementation: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation"
+  implementation_review: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review"
+  launch: "{{python_bin}} .autolab/verifiers/template_fill.py --stage launch"
+  extract_results: "{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results"
+  update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
 requirements_by_stage:
   hypothesis:
+    tests: false
+    dry_run: false
     schema: true
+    env_smoke: false
+    docs_target_update: false
   design:
+    tests: false
+    dry_run: false
     schema: true
+    env_smoke: false
+    docs_target_update: false
   implementation:
+    tests: false
     dry_run: true
     schema: true
+    env_smoke: false
+    docs_target_update: false
   implementation_review:
+    tests: false
+    dry_run: true
     schema: true
+    env_smoke: true
     docs_target_update: true
-    env_smoke: true
   launch:
+    tests: false
+    dry_run: false
     schema: true
     env_smoke: true
+    docs_target_update: false
   extract_results:
+    tests: false
+    dry_run: false
     schema: true
     env_smoke: true
+    docs_target_update: false
   update_docs:
+    tests: false
+    dry_run: false
     schema: true
-    env_smoke: true
+    env_smoke: false
     docs_target_update: true
 autorun:
   guardrails:
@@ -134,8 +154,11 @@ autorun:
       - "docs/wiki/**"
       - "experiments/*/docs_update.md"
 agent_runner:
-  enabled: true
+  enabled: false
   runner: codex  # Options: codex, claude, custom
+  # claude_dangerously_skip_permissions defaults to false for safety.
+  # Set true only for trusted CI/non-interactive environments.
+  claude_dangerously_skip_permissions: false
   stages:
     - hypothesis
     - design
@@ -161,8 +184,11 @@ LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_MAX_HOURS = 8.0
 AGENT_RUNNER_PRESETS: dict[str, str] = {
     "codex": "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
-    "claude": "cat {prompt_path} | env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -",
+    "claude": "cat {prompt_path} | env -u CLAUDECODE claude -p --output-format text --verbose -",
 }
+AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = (
+    "cat {prompt_path} | env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
+)
 DEFAULT_AGENT_RUNNER_NAME = "codex"
 DEFAULT_AGENT_RUNNER_COMMAND = (
     # {prompt_path} resolves to rendered prompt content under .autolab/prompts/rendered/.
@@ -181,6 +207,7 @@ DEFAULT_MEANINGFUL_EXCLUDE_PATHS = (
     "docs/todo.md",
     "docs/wiki/**",
     "experiments/*/docs_update.md",
+    "experiments/*/*/docs_update.md",
 )
 ASSISTANT_CYCLE_STAGES = ("select", "implement", "verify", "review", "done")
 ASSISTANT_CONTROL_COMMIT_PATHS = (
@@ -190,6 +217,9 @@ ASSISTANT_CONTROL_COMMIT_PATHS = (
     "docs/todo.md",
 )
 BACKLOG_COMPLETED_STATUSES = {"done", "completed", "closed", "resolved"}
+EXPERIMENT_TYPES = ("template", "plan", "in_progress", "done")
+EXPERIMENT_LOCKED_TYPES = {"template", "done"}
+DEFAULT_EXPERIMENT_TYPE = "plan"
 ITERATION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 RUN_ID_TIMESTAMP_PATTERN = re.compile(r"(20\d{6}T\d{6}Z)")
 STAGE_PROMPT_FILES = {
@@ -200,19 +230,21 @@ STAGE_PROMPT_FILES = {
     "launch": "stage_launch.md",
     "extract_results": "stage_extract_results.md",
     "update_docs": "stage_update_docs.md",
+    "decide_repeat": "stage_decide_repeat.md",
 }
 SLURM_JOB_LIST_PATH = Path("docs/slurm_job_list.md")
 PROMPT_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
-PROMPT_LITERAL_TOKENS = ("<ITERATION_ID>", "<RUN_ID>")
+PROMPT_LITERAL_TOKENS = ("<ITERATION_ID>", "<ITERATION_PATH>", "<RUN_ID>")
 PROMPT_SHARED_INCLUDE_PATTERN = re.compile(r"\{\{\s*shared:([A-Za-z0-9_.-]+)\s*\}\}")
 PROMPT_REQUIRED_TOKENS_BY_STAGE = {
-    "hypothesis": {"iteration_id", "hypothesis_id"},
-    "design": {"iteration_id", "hypothesis_id"},
-    "implementation": {"iteration_id"},
-    "implementation_review": {"iteration_id"},
-    "launch": {"iteration_id"},
-    "extract_results": {"iteration_id", "run_id"},
-    "update_docs": {"iteration_id", "run_id"},
+    "hypothesis": {"iteration_id", "iteration_path", "hypothesis_id"},
+    "design": {"iteration_id", "iteration_path", "hypothesis_id"},
+    "implementation": {"iteration_id", "iteration_path"},
+    "implementation_review": {"iteration_id", "iteration_path"},
+    "launch": {"iteration_id", "iteration_path"},
+    "extract_results": {"iteration_id", "iteration_path", "run_id"},
+    "update_docs": {"iteration_id", "iteration_path", "run_id"},
+    "decide_repeat": {"iteration_id", "iteration_path"},
 }
 REVIEW_RESULT_REQUIRED_CHECKS = (
     "tests",
@@ -221,6 +253,7 @@ REVIEW_RESULT_REQUIRED_CHECKS = (
     "env_smoke",
     "docs_target_update",
 )
+REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
 HOST_MODE_COMMAND_TIMEOUT_SECONDS = 2
 VERIFIER_COMMAND_TIMEOUT_SECONDS = 120
 
@@ -277,6 +310,7 @@ class AgentRunnerConfig:
     stages: tuple[str, ...]
     edit_scope: "AgentRunnerEditScopeConfig"
     timeout_seconds: float
+    claude_dangerously_skip_permissions: bool = False
 
 
 @dataclass(frozen=True)
@@ -642,6 +676,17 @@ def _manifest_timestamp(payload: dict[str, Any], run_id: str) -> datetime | None
         payload.get("started_at"),
         payload.get("created_at"),
     ]
+    timestamps = payload.get("timestamps")
+    if isinstance(timestamps, dict):
+        candidates.extend(
+            [
+                timestamps.get("timestamp_utc"),
+                timestamps.get("completed_at"),
+                timestamps.get("finished_at"),
+                timestamps.get("started_at"),
+                timestamps.get("created_at"),
+            ]
+        )
     for nested_key in ("launch", "execution", "sync"):
         nested = payload.get(nested_key)
         if not isinstance(nested, dict):
@@ -763,6 +808,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             stages=DEFAULT_AGENT_RUNNER_STAGES,
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
+            claude_dangerously_skip_permissions=False,
         )
 
     try:
@@ -778,6 +824,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             stages=DEFAULT_AGENT_RUNNER_STAGES,
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
+            claude_dangerously_skip_permissions=False,
         )
 
     runner_section = loaded.get("agent_runner")
@@ -789,6 +836,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             stages=DEFAULT_AGENT_RUNNER_STAGES,
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
+            claude_dangerously_skip_permissions=False,
         )
     if not isinstance(runner_section, dict):
         raise StageCheckError("agent_runner policy must be a mapping")
@@ -802,10 +850,17 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
 
     enabled = bool(runner_section.get("enabled", False))
     raw_command = runner_section.get("command")
+    claude_dangerous_opt_in = _coerce_bool(
+        runner_section.get("claude_dangerously_skip_permissions"),
+        default=False,
+    ) or _coerce_bool(os.environ.get("AUTOLAB_CLAUDE_ALLOW_DANGEROUS"), default=False)
     if raw_command is not None:
         command = str(raw_command).strip()
     else:
-        command = AGENT_RUNNER_PRESETS.get(runner_name, DEFAULT_AGENT_RUNNER_COMMAND)
+        if runner_name == "claude" and claude_dangerous_opt_in:
+            command = AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET
+        else:
+            command = AGENT_RUNNER_PRESETS.get(runner_name, DEFAULT_AGENT_RUNNER_COMMAND)
     if enabled and not command:
         raise StageCheckError("agent_runner.command must be set when agent_runner.enabled is true")
 
@@ -818,7 +873,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         stages = []
         for raw_stage in raw_stages:
             stage = str(raw_stage).strip()
-            if stage not in ACTIVE_STAGES:
+            if stage not in RUNNER_ELIGIBLE_STAGES:
                 raise StageCheckError(f"agent_runner.stages includes unsupported stage '{stage}'")
             if stage not in stages:
                 stages.append(stage)
@@ -844,6 +899,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         stages=tuple(stages),
         edit_scope=edit_scope,
         timeout_seconds=timeout_seconds,
+        claude_dangerously_skip_permissions=claude_dangerous_opt_in,
     )
 
 
@@ -1225,44 +1281,73 @@ def _prepare_standard_commit_outcome(
     )
 
 
-def _replace_iteration_placeholders(command: str, iteration_id: str) -> str:
-    return command.replace("<ITERATION_ID>", iteration_id).replace("{{iteration_id}}", iteration_id)
+def _replace_iteration_placeholders(command: str, iteration_id: str, iteration_path: str) -> str:
+    return (
+        command
+        .replace("<ITERATION_ID>", iteration_id)
+        .replace("{{iteration_id}}", iteration_id)
+        .replace("<ITERATION_PATH>", iteration_path)
+        .replace("{{iteration_path}}", iteration_path)
+    )
+
+
+def _resolve_policy_python_bin(policy: dict[str, Any]) -> str:
+    value = str(policy.get("python_bin", "python3")).strip()
+    return value or "python3"
+
+
+def _resolve_stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
+    requirements: dict[str, bool] = {
+        "tests": False,
+        "dry_run": False,
+        "schema": False,
+        "env_smoke": False,
+        "docs_target_update": False,
+    }
+    legacy_mapping = {
+        "tests": "require_tests",
+        "dry_run": "require_dry_run",
+        "schema": "require_schema",
+        "env_smoke": "require_env_smoke",
+        "docs_target_update": "require_docs_target_update",
+    }
+    for key, legacy_key in legacy_mapping.items():
+        if legacy_key in policy:
+            requirements[key] = _coerce_bool(policy.get(legacy_key), default=requirements[key])
+
+    requirements_by_stage = policy.get("requirements_by_stage", {})
+    if isinstance(requirements_by_stage, dict):
+        stage_section = requirements_by_stage.get(stage, {})
+        if isinstance(stage_section, dict):
+            for key in requirements:
+                if key in stage_section:
+                    requirements[key] = _coerce_bool(stage_section.get(key), default=requirements[key])
+    return requirements
+
+
+def _resolve_policy_command(raw: str, *, python_bin: str) -> str:
+    command = str(raw).strip()
+    if not command:
+        return ""
+    return command.replace("<PYTHON_BIN>", python_bin).replace("{{python_bin}}", python_bin)
 
 
 def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool, str]:
     policy = _load_verifier_policy(repo_root)
     iteration_id = str(state.get("iteration_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    iteration_path = iteration_dir.relative_to(repo_root).as_posix()
 
-    stage_requirements: dict[str, bool] = {
-        "tests": _coerce_bool(policy.get("require_tests", False)),
-        "dry_run": _coerce_bool(policy.get("require_dry_run", False)),
-        "env_smoke": _coerce_bool(policy.get("require_env_smoke", False)),
-        "docs_target_update": _coerce_bool(policy.get("require_docs_target_update", False)),
-    }
-    requirements_by_stage = policy.get("requirements_by_stage", {})
-    if isinstance(requirements_by_stage, dict):
-        stage_section = requirements_by_stage.get(stage, {})
-        if isinstance(stage_section, dict):
-            stage_requirements["tests"] = _coerce_bool(
-                stage_section.get("tests"),
-                default=stage_requirements["tests"],
-            )
-            stage_requirements["dry_run"] = _coerce_bool(
-                stage_section.get("dry_run"),
-                default=stage_requirements["dry_run"],
-            )
-            stage_requirements["env_smoke"] = _coerce_bool(
-                stage_section.get("env_smoke"),
-                default=stage_requirements["env_smoke"],
-            )
-            stage_requirements["docs_target_update"] = _coerce_bool(
-                stage_section.get("docs_target_update"),
-                default=stage_requirements["docs_target_update"],
-            )
-
-    test_command = str(policy.get("test_command", "")).strip()
-    dry_run_command = str(policy.get("dry_run_command", "")).strip()
+    stage_requirements = _resolve_stage_requirements(policy, stage)
+    python_bin = _resolve_policy_python_bin(policy)
+    test_command = _resolve_policy_command(str(policy.get("test_command", "")).strip(), python_bin=python_bin)
+    dry_run_command = _resolve_policy_command(str(policy.get("dry_run_command", "")).strip(), python_bin=python_bin)
     if not dry_run_command and stage_requirements.get("dry_run"):
         return (False, "verification dry-run command is required by policy but not configured")
     if not test_command and stage_requirements.get("tests"):
@@ -1275,13 +1360,13 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
         template_fill_enabled = bool(template_fill_section.get("enabled", False))
         if _coerce_bool(template_fill_section.get("enabled"), default=template_fill_enabled):
             raw_template_fill_command = str(template_fill_section.get("command", "")).strip()
-            template_fill_command = raw_template_fill_command
+            template_fill_command = _resolve_policy_command(raw_template_fill_command, python_bin=python_bin)
 
     template_fill_by_stage = policy.get("template_fill_by_stage", {})
     if isinstance(template_fill_by_stage, dict):
         stage_template_fill = template_fill_by_stage.get(stage)
         if isinstance(stage_template_fill, str) and stage_template_fill.strip():
-            template_fill_command = stage_template_fill.strip()
+            template_fill_command = _resolve_policy_command(stage_template_fill.strip(), python_bin=python_bin)
 
     command_specs: list[tuple[str, str]] = []
 
@@ -1289,17 +1374,26 @@ def _run_verification_step(repo_root: Path, state: dict[str, Any]) -> tuple[bool
     if stage_requirements["tests"] and test_command:
         commands.append(test_command)
     if stage_requirements["dry_run"] and dry_run_command:
-        commands.append(_replace_iteration_placeholders(dry_run_command, iteration_id))
+        commands.append(_replace_iteration_placeholders(dry_run_command, iteration_id, iteration_path))
     if template_fill_enabled and template_fill_command:
         command_specs.append(("template_fill", template_fill_command))
+    closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
+    if closed_guard_path.exists():
+        command_specs.append(
+            (
+                "closed_experiment_guard",
+                f"{python_bin} .autolab/verifiers/closed_experiment_guard.py",
+            )
+        )
     if stage_requirements["env_smoke"]:
-        command_specs.append(("run_health", "./venv/bin/python .autolab/verifiers/run_health.py"))
-        command_specs.append(("result_sanity", "./venv/bin/python .autolab/verifiers/result_sanity.py"))
+        command_specs.append(("run_health", f"{python_bin} .autolab/verifiers/run_health.py"))
+        command_specs.append(("result_sanity", f"{python_bin} .autolab/verifiers/result_sanity.py"))
     if stage_requirements["docs_target_update"] and stage in {"update_docs", "implementation_review"}:
         command_specs.append(
-            ("docs_targets", "./venv/bin/python .autolab/verifiers/docs_targets.py")
+            ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py")
         )
-    command_specs.append(("schema_checks", "./venv/bin/python .autolab/verifiers/schema_checks.py"))
+    if stage_requirements["schema"]:
+        command_specs.append(("schema_checks", f"{python_bin} .autolab/verifiers/schema_checks.py"))
 
     for _name, command in command_specs:
         if command:
@@ -1475,10 +1569,10 @@ def _default_stage_prompt_text(stage: str) -> str:
         "This prompt was bootstrapped by `autolab init`.\n"
         "Update it with your project-specific instructions for this stage.\n\n"
         "## Hard Guardrails (Read First)\n"
-        "- Do not modify experiments already marked completed in `.autolab/backlog.yaml` (including `done`, `completed`, `closed`, `resolved`) unless a human explicitly re-opens them.\n\n"
-        "- If the mapped experiment is already `done`, `completed`, `closed`, or `resolved`, do not edit that experiment and wait for an explicit reopen.\n\n"
+        "- Do not modify experiments whose backlog `type` is `template` or `done`; legacy closed statuses (`done`, `completed`, `closed`, `resolved`) are also treated as read-only unless a human explicitly re-opens them.\n\n"
+        "- If the mapped experiment type is `template` or `done`, do not edit that experiment and wait for an explicit reopen/retype.\n\n"
         "## Repository Path Scope\n"
-        "- Required stage artifacts may be under `experiments/<ITERATION_ID>/...` and `.autolab/...` when specified.\n"
+        "- Required stage artifacts may be under `<ITERATION_PATH>/...` and `.autolab/...` when specified.\n"
         "- Do not restrict analysis or edits to `experiments/` only.\n"
         "- `src/` contains core implementation that should work across multiple experiments or the broader codebase.\n"
         "- `experiments/` can contain experiment-specific implementation to prevent context flooding; move reusable logic to `src/` when multiple experiments need it.\n"
@@ -1524,6 +1618,7 @@ def _resolve_runner_workspace(
     repo_root: Path,
     *,
     iteration_id: str,
+    experiment_id: str = "",
     ensure_iteration_dir: bool,
 ) -> Path:
     normalized_iteration_id = _normalize_workspace_iteration_id(iteration_id)
@@ -1532,19 +1627,34 @@ def _resolve_runner_workspace(
         "experiments",
         field_name="runner experiments root",
     )
-    workspace_dir = _resolve_repo_relative_dir(
+
+    workspace_dir, workspace_type = _resolve_iteration_directory(
         repo_root,
-        f"experiments/{normalized_iteration_id}",
-        field_name="agent_runner workspace_dir",
+        iteration_id=normalized_iteration_id,
+        experiment_id=experiment_id,
+        require_exists=not ensure_iteration_dir,
     )
-    if workspace_dir.parent != experiments_root:
+
+    if workspace_dir.parent != experiments_root and workspace_dir.parent.parent != experiments_root:
         raise StageCheckError(
-            f"state.iteration_id must resolve to exactly one experiments/<iteration_id> folder, got '{workspace_dir}'"
+            f"state.iteration_id must resolve within experiments/ for runner workspace scoping, got '{workspace_dir}'"
         )
 
     if ensure_iteration_dir and not workspace_dir.exists():
         created: list[Path] = []
-        _ensure_iteration_skeleton(repo_root, normalized_iteration_id, created)
+        effective_type = workspace_type if workspace_type != "legacy" else DEFAULT_EXPERIMENT_TYPE
+        _ensure_iteration_skeleton(
+            repo_root,
+            normalized_iteration_id,
+            created,
+            experiment_type=effective_type,
+        )
+        workspace_dir, _workspace_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=normalized_iteration_id,
+            experiment_id=experiment_id,
+            require_exists=True,
+        )
         _append_log(
             repo_root,
             f"agent runner created iteration workspace {workspace_dir} (created={len(created)})",
@@ -1680,7 +1790,13 @@ def _summarize_git_changes_for_prompt(repo_root: Path, *, limit: int = 12) -> tu
 def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id: str) -> str:
     candidate = ""
     if yaml is not None and iteration_id and not iteration_id.startswith("<"):
-        design_path = repo_root / "experiments" / iteration_id / "design.yaml"
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        design_path = iteration_dir / "design.yaml"
         if design_path.exists():
             try:
                 loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
@@ -1753,6 +1869,7 @@ def _build_prompt_context(
     *,
     state: dict[str, Any],
     stage: str,
+    runner_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
@@ -1765,7 +1882,19 @@ def _build_prompt_context(
     host_mode = _detect_priority_host_mode()
     launch_mode = host_mode
 
-    iteration_dir = repo_root / "experiments" / iteration_id if iteration_id else Path()
+    iteration_dir = Path()
+    iteration_path = ""
+    if iteration_id:
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        try:
+            iteration_path = iteration_dir.relative_to(repo_root).as_posix()
+        except ValueError:
+            iteration_path = f"experiments/{iteration_id}"
     todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")
     agent_result_payload = _load_json_if_exists(repo_root / ".autolab" / "agent_result.json")
     review_result_payload = _load_json_if_exists(iteration_dir / "review_result.json") if iteration_id else None
@@ -1846,12 +1975,14 @@ def _build_prompt_context(
     if agent_result_payload is None:
         agent_result_payload = {"note": "unavailable: .autolab/agent_result.json is missing or unreadable"}
 
+    scope_payload = runner_scope if isinstance(runner_scope, dict) else {}
     return {
         "generated_at": _utc_now(),
         "stage": stage,
         "host_mode": host_mode,
         "launch_mode": launch_mode,
         "iteration_id": iteration_id,
+        "iteration_path": iteration_path,
         "run_id": run_id,
         "hypothesis_id": hypothesis_id,
         "state_snapshot": state_excerpt,
@@ -1863,6 +1994,7 @@ def _build_prompt_context(
         "dry_run_output": dry_run_output,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
+        "runner_scope": scope_payload,
     }
 
 
@@ -1878,6 +2010,7 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
 
     return {
         "iteration_id": _to_text(context.get("iteration_id"), "iteration_id"),
+        "iteration_path": _to_text(context.get("iteration_path"), "iteration_path"),
         "stage": _to_text(context.get("stage"), "stage"),
         "stage_context": _to_text(context.get("stage_context"), "stage_context"),
         "run_id": _to_text(context.get("run_id"), "run_id"),
@@ -1916,6 +2049,7 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
 
     stage = str(context_payload.get("stage", "")).strip() or "unknown"
     iteration_id = str(context_payload.get("iteration_id", "")).strip() or "unknown"
+    iteration_path = str(context_payload.get("iteration_path", "")).strip() or "unknown"
     host_mode = str(context_payload.get("host_mode", "")).strip() or "unknown"
     stage_attempt = str(state_snapshot.get("stage_attempt", "")).strip() or "-"
     max_stage_attempts = str(state_snapshot.get("max_stage_attempts", "")).strip() or "-"
@@ -1924,11 +2058,29 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     last_run_id = str(state_snapshot.get("last_run_id", "")).strip() or "none"
     sync_status = str(state_snapshot.get("sync_status", "")).strip() or "unknown"
     todo_focus_summary = _format_todo_focus_summary(context_payload.get("todo_focus"))
+    runner_scope = context_payload.get("runner_scope")
+    if not isinstance(runner_scope, dict):
+        runner_scope = {}
+    scope_mode = str(runner_scope.get("mode", "")).strip() or "unknown"
+    scope_workspace = str(runner_scope.get("workspace_dir", "")).strip() or "unknown"
+    allowed_dirs = runner_scope.get("allowed_dirs")
+    if isinstance(allowed_dirs, list):
+        allowed_dirs_text = ", ".join(str(item).strip() for item in allowed_dirs if str(item).strip())
+    else:
+        allowed_dirs_text = ""
+    if not allowed_dirs_text:
+        allowed_dirs_text = "(iteration workspace only)"
+    disallowed_text = (
+        "all paths outside the iteration workspace and allowed dirs"
+        if allowed_dirs_text != "(iteration workspace only)"
+        else "all paths outside the iteration workspace"
+    )
 
     return (
         "## Runtime Stage Context\n"
         f"- stage: {stage}\n"
         f"- iteration_id: {iteration_id}\n"
+        f"- iteration_path: {iteration_path}\n"
         f"- detected_host_mode: {host_mode}\n"
         f"- stage_attempt: {stage_attempt}/{max_stage_attempts}\n"
         f"- assistant_mode: {assistant_mode}\n"
@@ -1936,6 +2088,10 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- last_run_id: {last_run_id}\n"
         f"- sync_status: {sync_status}\n"
         f"- todo_focus: {todo_focus_summary}\n"
+        f"- edit_scope_mode: {scope_mode}\n"
+        f"- workspace_dir: {scope_workspace}\n"
+        f"- allowed_edit_dirs: {allowed_dirs_text}\n"
+        f"- disallowed_edit_dirs: {disallowed_text}\n"
     )
 
 
@@ -1945,6 +2101,7 @@ def _render_stage_prompt(
     stage: str,
     state: dict[str, Any],
     template_path: Path,
+    runner_scope: dict[str, Any] | None = None,
 ) -> RenderedPromptBundle:
     try:
         template_text = template_path.read_text(encoding="utf-8")
@@ -1956,6 +2113,7 @@ def _render_stage_prompt(
         repo_root,
         state=state,
         stage=stage,
+        runner_scope=runner_scope,
     )
     context_payload["stage_context"] = _build_runtime_stage_context_block(context_payload)
     token_values = _context_token_values(context_payload)
@@ -1974,6 +2132,7 @@ def _render_stage_prompt(
     required_tokens = PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
     required_values = {
         "iteration_id": str(context_payload.get("iteration_id", "")).strip(),
+        "iteration_path": str(context_payload.get("iteration_path", "")).strip(),
         "run_id": str(context_payload.get("run_id", "")).strip(),
     }
     missing_required = sorted(
@@ -2000,6 +2159,7 @@ def _render_stage_prompt(
 
     rendered_text = PROMPT_TOKEN_PATTERN.sub(_replace_token, template_text)
     rendered_text = rendered_text.replace("<ITERATION_ID>", token_values.get("iteration_id", "").strip())
+    rendered_text = rendered_text.replace("<ITERATION_PATH>", token_values.get("iteration_path", "").strip())
     rendered_text = rendered_text.replace("<RUN_ID>", token_values.get("run_id", "").strip())
     if "{{stage_context}}" not in template_text:
         stage_context_block = token_values.get("stage_context", "").strip()
@@ -2106,22 +2266,28 @@ def _invoke_agent_runner(
         prompt_state = _normalize_state(_load_state(state_path))
     except StateError as exc:
         raise StageCheckError(f"prompt rendering requires valid state at {state_path}: {exc}") from exc
-    prompt_bundle = _render_stage_prompt(
-        repo_root,
-        stage=stage,
-        state=prompt_state,
-        template_path=prompt_template_path,
-    )
-
     workspace_dir = _resolve_runner_workspace(
         repo_root,
         iteration_id=iteration_id,
+        experiment_id=str(prompt_state.get("experiment_id", "")).strip(),
         ensure_iteration_dir=runner.edit_scope.ensure_iteration_dir,
     )
     core_add_dirs, resolved_core_dirs = _build_core_add_dir_flags(
         repo_root,
         edit_scope=runner.edit_scope,
         runner=runner.runner,
+    )
+    runner_scope = {
+        "mode": runner.edit_scope.mode,
+        "workspace_dir": str(workspace_dir),
+        "allowed_dirs": [str(path.relative_to(repo_root)) for path in resolved_core_dirs],
+    }
+    prompt_bundle = _render_stage_prompt(
+        repo_root,
+        stage=stage,
+        state=prompt_state,
+        template_path=prompt_template_path,
+        runner_scope=runner_scope,
     )
     command = _substitute_runner_command(
         runner.command,
@@ -2533,6 +2699,85 @@ def _is_backlog_status_completed(value: Any) -> bool:
     return _normalize_backlog_status(value) in BACKLOG_COMPLETED_STATUSES
 
 
+def _normalize_experiment_type(value: Any) -> str:
+    normalized = _normalize_space(str(value)).lower()
+    if normalized in EXPERIMENT_TYPES:
+        return normalized
+    return ""
+
+
+def _is_experiment_type_locked(value: Any) -> bool:
+    return _normalize_experiment_type(value) in EXPERIMENT_LOCKED_TYPES
+
+
+def _resolve_experiment_type_from_backlog(
+    repo_root: Path,
+    *,
+    iteration_id: str,
+    experiment_id: str = "",
+) -> str:
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    payload, _load_error = _load_backlog_yaml(backlog_path)
+    if payload is None:
+        return ""
+
+    entry, _resolve_error = _find_backlog_experiment_entry(
+        payload,
+        experiment_id=_normalize_space(experiment_id),
+        iteration_id=_normalize_space(iteration_id),
+    )
+    if entry is None:
+        return ""
+
+    explicit_type = _normalize_experiment_type(entry.get("type"))
+    if explicit_type:
+        return explicit_type
+    if _is_backlog_status_completed(entry.get("status")):
+        return "done"
+    return ""
+
+
+def _resolve_iteration_directory(
+    repo_root: Path,
+    *,
+    iteration_id: str,
+    experiment_id: str = "",
+    require_exists: bool = False,
+) -> tuple[Path, str]:
+    normalized_iteration_id = _normalize_space(iteration_id)
+    if not normalized_iteration_id:
+        raise StageCheckError("state.iteration_id must be set to a real identifier")
+
+    experiments_root = repo_root / "experiments"
+    preferred_type = _resolve_experiment_type_from_backlog(
+        repo_root,
+        iteration_id=normalized_iteration_id,
+        experiment_id=experiment_id,
+    )
+
+    candidates: list[tuple[Path, str]] = []
+    if preferred_type:
+        candidates.append((experiments_root / preferred_type / normalized_iteration_id, preferred_type))
+    candidates.append((experiments_root / normalized_iteration_id, "legacy"))
+    for experiment_type in EXPERIMENT_TYPES:
+        candidate = experiments_root / experiment_type / normalized_iteration_id
+        if all(existing_path != candidate for existing_path, _ in candidates):
+            candidates.append((candidate, experiment_type))
+
+    for candidate_path, candidate_type in candidates:
+        if candidate_path.exists():
+            return (candidate_path, candidate_type)
+
+    if require_exists:
+        searched = ", ".join(str(path) for path, _ in candidates)
+        raise StageCheckError(
+            f"iteration workspace is missing for iteration_id '{normalized_iteration_id}' (searched: {searched})"
+        )
+
+    resolved_type = preferred_type or DEFAULT_EXPERIMENT_TYPE
+    return (experiments_root / resolved_type / normalized_iteration_id, resolved_type)
+
+
 def _find_backlog_experiment_entry(
     backlog_payload: dict[str, Any],
     *,
@@ -2602,6 +2847,13 @@ def _is_active_experiment_completed(
         return (False, resolve_error)
 
     experiment_label = _normalize_space(str(entry.get("id", ""))) or experiment_id or iteration_id
+    experiment_type = _normalize_experiment_type(entry.get("type"))
+    if _is_experiment_type_locked(experiment_type):
+        return (
+            True,
+            f"backlog experiment '{experiment_label}' is type '{experiment_type}'",
+        )
+
     status = _normalize_backlog_status(entry.get("status"))
     if _is_backlog_status_completed(status):
         return (
@@ -2610,7 +2862,7 @@ def _is_active_experiment_completed(
         )
     return (
         False,
-        f"backlog experiment '{experiment_label}' status is '{status or 'open'}'",
+        f"backlog experiment '{experiment_label}' type is '{experiment_type or DEFAULT_EXPERIMENT_TYPE}' and status is '{status or 'open'}'",
     )
 
 
@@ -2667,45 +2919,29 @@ def _mark_backlog_experiment_completed(
 ) -> tuple[bool, Path | None, str]:
     normalized_experiment_id = str(experiment_id).strip()
     if not normalized_experiment_id:
-        return (False, None, "state.experiment_id is unset")
-
-    backlog_path = repo_root / ".autolab" / "backlog.yaml"
-    payload, load_error = _load_backlog_yaml(backlog_path)
-    if payload is None:
-        return (False, None, load_error)
-
-    experiments = payload.get("experiments")
-    if not isinstance(experiments, list):
-        return (False, None, "backlog experiments list is missing")
-
-    matches: list[dict[str, Any]] = []
-    for entry in experiments:
-        if not isinstance(entry, dict):
-            continue
-        if str(entry.get("id", "")).strip() == normalized_experiment_id:
-            matches.append(entry)
-
-    if not matches:
-        return (False, None, f"backlog experiment '{normalized_experiment_id}' was not found")
-    if len(matches) > 1:
-        return (False, None, f"backlog experiment id '{normalized_experiment_id}' is duplicated")
-
-    target = matches[0]
-    current_status = str(target.get("status", "")).strip().lower()
-    if current_status == "completed":
-        return (False, None, f"backlog experiment '{normalized_experiment_id}' is already completed")
-
-    target["status"] = "completed"
-    written, write_error = _write_backlog_yaml(backlog_path, payload)
-    if write_error:
-        return (False, None, write_error)
-    if not written:
-        return (False, None, f"no backlog changes were written for experiment '{normalized_experiment_id}'")
-    return (True, backlog_path, f"marked backlog experiment '{normalized_experiment_id}' as completed")
+        return (
+            False,
+            None,
+            "manual policy: state.experiment_id is unset and autolab does not auto-transition experiment type/status",
+        )
+    return (
+        False,
+        None,
+        (
+            f"manual policy: autolab does not auto-transition backlog experiment '{normalized_experiment_id}'; "
+            "set `.autolab/backlog.yaml` experiments[].type to `done` explicitly when ready"
+        ),
+    )
 
 
-def _ensure_iteration_skeleton(repo_root: Path, iteration_id: str, created: list[Path]) -> None:
-    iteration_dir = repo_root / "experiments" / iteration_id
+def _ensure_iteration_skeleton(
+    repo_root: Path,
+    iteration_id: str,
+    created: list[Path],
+    experiment_type: str = DEFAULT_EXPERIMENT_TYPE,
+) -> None:
+    normalized_type = _normalize_experiment_type(experiment_type) or DEFAULT_EXPERIMENT_TYPE
+    iteration_dir = repo_root / "experiments" / normalized_type / iteration_id
     _ensure_text_file(
         iteration_dir / "hypothesis.md",
         "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
@@ -2758,6 +2994,8 @@ def _ensure_iteration_skeleton(repo_root: Path, iteration_id: str, created: list
                 "tests": "skip",
                 "dry_run": "skip",
                 "schema": "pass",
+                "env_smoke": "skip",
+                "docs_target_update": "skip",
             },
             "reviewed_at": "1970-01-01T00:00:00Z",
         },
@@ -2869,7 +3107,7 @@ def _validate_design(path: Path, iteration_id: str) -> None:
         raise StageCheckError("design.yaml baselines must be a non-empty list")
 
 
-def _validate_review_result(path: Path) -> str:
+def _validate_review_result(path: Path, *, policy_requirements: dict[str, bool] | None = None) -> str:
     payload = _load_dict_json(path, "review_result.json")
     required = {"status", "blocking_findings", "required_checks", "reviewed_at"}
     missing = sorted(required - set(payload.keys()))
@@ -2879,6 +3117,34 @@ def _validate_review_result(path: Path) -> str:
     status = str(payload.get("status", "")).strip()
     if status not in {"pass", "needs_retry", "failed"}:
         raise StageCheckError(f"review_result.json has invalid status '{status}'")
+
+    required_checks = payload.get("required_checks")
+    if not isinstance(required_checks, dict):
+        raise StageCheckError("review_result.json required_checks must be a mapping")
+
+    missing_checks = sorted(set(REVIEW_RESULT_REQUIRED_CHECKS) - set(required_checks.keys()))
+    if missing_checks:
+        raise StageCheckError(f"review_result.json required_checks missing keys: {missing_checks}")
+
+    for check_name in REVIEW_RESULT_REQUIRED_CHECKS:
+        check_status = str(required_checks.get(check_name, "")).strip().lower()
+        if check_status not in REVIEW_RESULT_CHECK_STATUSES:
+            raise StageCheckError(
+                f"review_result.json required_checks['{check_name}'] must be one of {sorted(REVIEW_RESULT_CHECK_STATUSES)}"
+            )
+
+    if policy_requirements:
+        required_by_policy = sorted(
+            check_name
+            for check_name in REVIEW_RESULT_REQUIRED_CHECKS
+            if policy_requirements.get(check_name, False)
+        )
+        for check_name in required_by_policy:
+            check_status = str(required_checks.get(check_name, "")).strip().lower()
+            if status == "pass" and check_status != "pass":
+                raise StageCheckError(
+                    f"review_result.json status=pass requires required_checks['{check_name}']='pass', got '{check_status}'"
+                )
     return status
 
 
@@ -2900,6 +3166,15 @@ def _validate_extract(iteration_dir: Path, run_id: str) -> None:
     manifest = run_dir / "run_manifest.json"
     metrics = run_dir / "metrics.json"
     _require_non_empty(manifest, "runs/<run_id>/run_manifest.json")
+    manifest_payload = _load_dict_json(manifest, "runs/<run_id>/run_manifest.json")
+    sync = manifest_payload.get("artifact_sync_to_local")
+    if not isinstance(sync, dict):
+        raise StageCheckError("runs/<run_id>/run_manifest.json missing artifact_sync_to_local mapping")
+    sync_status = str(sync.get("status", "")).strip().lower()
+    if sync_status not in {"ok", "completed", "success", "passed"}:
+        raise StageCheckError(
+            "runs/<run_id>/run_manifest.json artifact_sync_to_local.status must be success-like before extract_results"
+        )
     payload = _load_dict_json(metrics, "runs/<run_id>/metrics.json")
     if not payload:
         raise StageCheckError("runs/<run_id>/metrics.json must not be empty")
@@ -2924,9 +3199,12 @@ def _validate_update_docs(repo_root: Path, iteration_dir: Path, run_id: str) -> 
 def _evaluate_stage(repo_root: Path, state: dict[str, Any]) -> tuple[str, str, str]:
     stage = state["stage"]
     iteration_id = state["iteration_id"]
-    iteration_dir = repo_root / "experiments" / iteration_id
-    if not iteration_dir.exists():
-        raise StageCheckError(f"iteration workspace is missing at {iteration_dir}")
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=True,
+    )
 
     if stage == "hypothesis":
         _require_non_empty(iteration_dir / "hypothesis.md", "hypothesis.md")
@@ -2939,19 +3217,48 @@ def _evaluate_stage(repo_root: Path, state: dict[str, Any]) -> tuple[str, str, s
         return ("implementation_review", "complete", "implementation checks passed")
     if stage == "implementation_review":
         _require_non_empty(iteration_dir / "implementation_review.md", "implementation_review.md")
-        review_status = _validate_review_result(iteration_dir / "review_result.json")
+        policy_requirements = _resolve_stage_requirements(_load_verifier_policy(repo_root), "implementation_review")
+        review_status = _validate_review_result(
+            iteration_dir / "review_result.json",
+            policy_requirements=policy_requirements,
+        )
         if review_status == "pass":
             return ("launch", "complete", "implementation review passed")
         if review_status == "needs_retry":
             return ("implementation", "complete", "implementation review requested retry")
         return ("human_review", "failed", "implementation review failed")
     if stage == "launch":
+        review_status = _validate_review_result(
+            iteration_dir / "review_result.json",
+            policy_requirements=_resolve_stage_requirements(_load_verifier_policy(repo_root), "implementation_review"),
+        )
+        if review_status != "pass":
+            raise StageCheckError("launch requires review_result.json status=pass")
+        if yaml is None:
+            raise StageCheckError("launch validation requires PyYAML")
+        try:
+            design_payload = yaml.safe_load((iteration_dir / "design.yaml").read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise StageCheckError(f"launch validation could not parse design.yaml: {exc}") from exc
+        compute = design_payload.get("compute", {}) if isinstance(design_payload, dict) else {}
+        design_location = str(compute.get("location", "")).strip().lower()
         _validate_launch(iteration_dir)
         run_id, sync_status = _resolve_latest_run_state(iteration_dir)
         if run_id:
             state["last_run_id"] = run_id
             manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
             manifest_payload = _load_dict_json(manifest_path, "runs/<run_id>/run_manifest.json")
+            manifest_mode = str(
+                manifest_payload.get("host_mode")
+                or manifest_payload.get("launch_mode")
+                or manifest_payload.get("detected_host_mode")
+            ).strip().lower()
+            resolved_launch_mode = manifest_mode or _detect_priority_host_mode()
+            if design_location and resolved_launch_mode and design_location != resolved_launch_mode:
+                raise StageCheckError(
+                    "launch host-mode mismatch: "
+                    f"design.compute.location='{design_location}' but resolved host mode='{resolved_launch_mode}'"
+                )
             _validate_slurm_job_ledger_entry(
                 repo_root,
                 manifest_path=manifest_path,
@@ -3943,6 +4250,17 @@ def _cmd_init(args: argparse.Namespace) -> int:
     backlog_path = autolab_dir / "backlog.yaml"
     verifier_policy_path = autolab_dir / "verifier_policy.yaml"
     agent_result_path = autolab_dir / "agent_result.json"
+    scaffold_copied = 0
+    scaffold_skipped = 0
+
+    try:
+        scaffold_source = _resolve_scaffold_source()
+    except RuntimeError:
+        scaffold_source = None
+    if scaffold_source is not None:
+        copied, skipped = _sync_scaffold_bundle(scaffold_source, autolab_dir, overwrite=False)
+        scaffold_copied = copied
+        scaffold_skipped = skipped
 
     iteration_id = ""
     if state_path.exists():
@@ -3961,13 +4279,24 @@ def _cmd_init(args: argparse.Namespace) -> int:
     _ensure_text_file(backlog_path, DEFAULT_BACKLOG_TEMPLATE.format(iteration_id=iteration_id), created)
     _ensure_text_file(verifier_policy_path, DEFAULT_VERIFIER_POLICY, created)
     _ensure_json_file(agent_result_path, _default_agent_result(), created)
-    for stage, prompt_file in STAGE_PROMPT_FILES.items():
-        _ensure_text_file(
-            autolab_dir / "prompts" / prompt_file,
-            _default_stage_prompt_text(stage),
-            created,
-        )
-    _ensure_iteration_skeleton(repo_root, iteration_id, created)
+    if scaffold_source is None:
+        for stage, prompt_file in STAGE_PROMPT_FILES.items():
+            _ensure_text_file(
+                autolab_dir / "prompts" / prompt_file,
+                _default_stage_prompt_text(stage),
+                created,
+            )
+    init_experiment_type = _resolve_experiment_type_from_backlog(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id="",
+    ) or DEFAULT_EXPERIMENT_TYPE
+    _ensure_iteration_skeleton(
+        repo_root,
+        iteration_id,
+        created,
+        experiment_type=init_experiment_type,
+    )
     try:
         init_state = _normalize_state(_load_state(state_path))
     except StateError:
@@ -3983,6 +4312,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"state_file: {state_path}")
     print(f"iteration_id: {iteration_id}")
     print(f"created_entries: {len(created)}")
+    print(f"scaffold_copied_files: {scaffold_copied}")
+    print(f"scaffold_skipped_files: {scaffold_skipped}")
     for path in created:
         print(f"- {path}")
     return 0
