@@ -625,8 +625,9 @@ def test_suggest_decision_minimize_mode_via_design(tmp_path: Path) -> None:
     metrics = {"status": "complete", "primary_metric": {"name": "loss", "value": 1.0, "delta_vs_baseline": -3.0}}
     (run_dir / "metrics.json").write_text(_json.dumps(metrics), encoding="utf-8")
 
-    result = _suggest_decision_from_metrics(repo, state)
+    result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "stop"
+    assert isinstance(evidence, dict)
 
 
 def test_implementation_plan_lint_fails_ellipsis_placeholder(tmp_path: Path) -> None:

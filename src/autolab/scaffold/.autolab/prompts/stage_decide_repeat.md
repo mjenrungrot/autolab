@@ -43,6 +43,7 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - Metrics summary context: `{{metrics_summary}}`
 - Target comparison context: `{{target_comparison}}`
 - Suggested next decision context: `{{decision_suggestion}}`
+- Auto-metrics evidence: `{{auto_metrics_evidence}}`
 
 ## MISSING-INPUT FALLBACKS
 - If backlog is missing/unreadable, choose `human_review` and report blocker.
@@ -55,12 +56,20 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 3. Choose `design` to iterate on the same hypothesis when implementation-level refinement is still likely to help.
 4. Choose `human_review` on policy ambiguity, repeated verifier failures, contradictory evidence, or missing critical inputs.
 5. Respect guardrail thresholds defined in `.autolab/verifier_policy.yaml` (`autorun.guardrails`) and prefer `human_review` when thresholds are near breach.
+6. When `{{auto_metrics_evidence}}` is available, cross-reference its `comparison` and `suggestion` fields with your own analysis before deciding.
 
 ## SCHEMA GOTCHAS
 - `evidence` must be a **non-empty array** (`minItems: 1`). Each element requires all three fields: `source`, `pointer`, `summary` -- all non-empty strings.
 - `decision` must be one of: `"hypothesis"`, `"design"`, `"stop"`, `"human_review"` -- exact match, no variations.
 - `schema_version` must be the string `"1.0"`.
 - `risks` is a required array of non-empty strings (can be empty array `[]`).
+
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | `decision_result.json` schema validation | Ensure `evidence` is non-empty array with `source`, `pointer`, `summary` fields |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
 
 ## STEPS
 1. Summarize latest run/review/doc evidence in 3-6 bullets.
@@ -94,6 +103,8 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 }
 ```
 
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
+
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
 
@@ -102,6 +113,13 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - [ ] Exactly one decision token is selected from `hypothesis|design|stop|human_review`.
 - [ ] Rationale references concrete evidence from metrics/backlog/review when available.
 - [ ] `decision_result.json` exists and matches `.autolab/schemas/decision_result.schema.json`.
+
+## EVIDENCE POINTERS
+When making the decision, reference specific artifacts with `{path, what_it_proves}`:
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json` -- proves measured vs target delta
+- `{{iteration_path}}/review_result.json` -- proves review gate status
+- `{{iteration_path}}/docs_update.md` -- proves docs were updated with results
+- `.autolab/backlog.yaml` -- proves experiment status and completion criteria
 
 ## FAILURE / RETRY BEHAVIOR
 - If required decision evidence is missing or contradictory, escalate with `human_review` instead of guessing.

@@ -327,48 +327,69 @@ def _check_scope(task_touches: dict[str, list[str]], allowed_dirs: list[str]) ->
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override current stage")
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"implementation_plan_lint: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"implementation_plan_lint: ERROR {exc}")
         return 1
 
     stage = args.stage or str(state.get("stage", "")).strip()
 
     # Only run for implementation stage
     if stage != "implementation":
-        print(f"implementation_plan_lint: SKIP stage={stage}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "stage_skip", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print(f"implementation_plan_lint: SKIP stage={stage}")
         return 0
 
     iteration_id = str(state.get("iteration_id", "")).strip()
     if not iteration_id or iteration_id.startswith("<"):
-        print("implementation_plan_lint: ERROR iteration_id is missing or placeholder")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [], "errors": ["iteration_id is missing or placeholder"]}
+            print(_json.dumps(envelope))
+        else:
+            print("implementation_plan_lint: ERROR iteration_id is missing or placeholder")
         return 1
 
     iteration_dir = _resolve_iteration_dir(iteration_id)
     plan_path = iteration_dir / "implementation_plan.md"
 
     if not plan_path.exists():
-        print(f"implementation_plan_lint: SKIP plan file not found at {plan_path}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "plan_file", "status": "pass", "detail": f"plan file not found at {plan_path}, skipped"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print(f"implementation_plan_lint: SKIP plan file not found at {plan_path}")
         return 0
 
     plan_text = plan_path.read_text(encoding="utf-8")
     if not plan_text.strip():
-        print("implementation_plan_lint: FAIL issues=1")
-        print(f"{plan_path}\tcontent is empty")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": str(plan_path), "status": "fail", "detail": "content is empty"}], "errors": [f"{plan_path}\tcontent is empty"]}
+            print(_json.dumps(envelope))
+        else:
+            print("implementation_plan_lint: FAIL issues=1")
+            print(f"{plan_path}\tcontent is empty")
         return 1
 
     issues = lint(plan_text)
 
-    if issues:
-        print(f"implementation_plan_lint: FAIL issues={len(issues)}")
-        for issue in issues:
-            print(f"  {issue}")
-        return 1
-
     # Optional scope validation (warn or fail based on policy)
+    scope_failures: list[str] = []
     allowed_dirs = _load_allowed_dirs()
     if allowed_dirs:
         policy = _load_policy()
@@ -381,15 +402,44 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             task_touches[task_id] = _parse_touches_from_section(section)
         scope_warnings = _check_scope(task_touches, allowed_dirs)
         if scope_warnings and fail_on_scope:
-            print(f"implementation_plan_lint: FAIL scope issues={len(scope_warnings)}")
-            for warning in scope_warnings:
-                print(f"  {warning}")
-            return 1
-        for warning in scope_warnings:
-            print(f"  WARN: {warning}")
+            scope_failures = scope_warnings
 
-    print(f"implementation_plan_lint: PASS stage={stage} iteration={iteration_id}")
-    return 0
+    all_failures = issues + scope_failures
+    passed = not all_failures
+
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in all_failures]
+        if passed:
+            checks = [{"name": "implementation_plan_lint", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "implementation_plan_lint",
+            "stage": stage,
+            "checks": checks,
+            "errors": all_failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if issues:
+            print(f"implementation_plan_lint: FAIL issues={len(issues)}")
+            for issue in issues:
+                print(f"  {issue}")
+        elif scope_failures:
+            print(f"implementation_plan_lint: FAIL scope issues={len(scope_failures)}")
+            for warning in scope_failures:
+                print(f"  {warning}")
+        else:
+            if allowed_dirs:
+                scope_warnings_only = _check_scope(
+                    {tid: _parse_touches_from_section(sec) for tid, sec in _split_task_sections(plan_text).items()},
+                    allowed_dirs,
+                ) if not scope_failures else []
+                for warning in scope_warnings_only:
+                    print(f"  WARN: {warning}")
+            print(f"implementation_plan_lint: PASS stage={stage} iteration={iteration_id}")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

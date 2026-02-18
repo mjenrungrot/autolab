@@ -55,6 +55,14 @@ Execute the approved run and write launch artifacts:
 - SLURM launches require `job_id` in the manifest.
 - `artifact_sync_to_local` is required with at least a `status` field.
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | `run_manifest.json` schema validation | Ensure `run_id`, `iteration_id`, `host_mode`, `timestamps` are present |
+| env_smoke | `run_health.py` + `result_sanity.py` checks | Fix environment or result consistency issues |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
 2. Mint a new `run_id` (`YYYYMMDDTHHMMSSZ_suffix`) before writing launch outputs.
@@ -74,7 +82,7 @@ Execute the approved run and write launch artifacts:
   "iteration_id": "{{iteration_id}}",
   "launch_mode": "local",
   "host_mode": "local",
-  "command": "python -m package.entry --config ...",
+  "command": "python -m package.entry --config path/to/config.yaml",
   "resource_request": {
     "cpus": 4,
     "memory": "{{recommended_memory_estimate}}",
@@ -89,6 +97,8 @@ Execute the approved run and write launch artifacts:
   }
 }
 ```
+
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}

@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "verifier": "prompt_lint",
+  "stage": "launch",
+  "checks": [
+    {
+      "name": "prompt_lint",
+      "status": "pass",
+      "detail": "all prompt checks passed"
+    }
+  ],
+  "errors": []
+}

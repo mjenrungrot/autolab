@@ -160,15 +160,23 @@ def _lint_stage_prompt(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Stage to lint (default: all stage prompts)")
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
     args = parser.parse_args()
     stage_prompt_files = _resolve_stage_prompt_files()
     required_tokens_by_stage = _resolve_required_tokens_by_stage()
+
+    stage_label = args.stage or ""
 
     stages: list[str]
     if args.stage:
         requested = str(args.stage).strip()
         if requested not in stage_prompt_files:
-            print(f"prompt_lint: ERROR unsupported stage '{requested}'")
+            if args.json:
+                import json as _json
+                envelope = {"status": "fail", "verifier": "prompt_lint", "stage": requested, "checks": [], "errors": [f"unsupported stage '{requested}'"]}
+                print(_json.dumps(envelope))
+            else:
+                print(f"prompt_lint: ERROR unsupported stage '{requested}'")
             return 1
         stages = [requested]
     else:
@@ -185,14 +193,30 @@ def main() -> int:
             )
         )
 
-    if failures:
-        print("prompt_lint: FAIL")
-        for failure in failures:
-            print(failure)
-        return 1
+    passed = not failures
 
-    print("prompt_lint: PASS")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+        if passed:
+            checks = [{"name": "prompt_lint", "status": "pass", "detail": "all prompt checks passed"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "prompt_lint",
+            "stage": stage_label,
+            "checks": checks,
+            "errors": failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
+            print("prompt_lint: FAIL")
+            for failure in failures:
+                print(failure)
+        else:
+            print("prompt_lint: PASS")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

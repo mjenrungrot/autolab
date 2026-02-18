@@ -19,6 +19,23 @@ Help the user execute Autolab safely and efficiently by:
 
 See also: `docs/workflow_modes.md` for mode responsibility boundaries.
 
+## Quickstart
+
+Autolab is an ML experiment workflow engine that orchestrates iterative
+research cycles -- from hypothesis through results extraction -- with
+built-in verification and guardrails at every stage.
+
+Key commands:
+
+- `autolab run` -- run the next stage in the workflow
+- `autolab status` -- check current state, guardrails, and diagnostics
+- `autolab verify --stage <stage>` -- validate stage outputs against policy
+
+Stage flow at a glance:
+
+    hypothesis -> design -> implementation -> implementation_review ->
+    launch -> extract_results -> update_docs -> decide_repeat
+
 ## Quick recipes
 
 1. Standard mode:

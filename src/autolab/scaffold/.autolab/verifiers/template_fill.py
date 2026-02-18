@@ -1,5 +1,32 @@
 #!/usr/bin/env python3
-"""Verifier for template-completion and artifact budgets."""
+"""Verifier for template-completion and artifact budgets.
+
+Responsibility boundary
+-----------------------
+**Owns (template_fill)**:
+  - Placeholder detection: {{...}}, <...>, TODO, TBD, FIXME, ellipsis
+  - Template-identity detection (content == bootstrap template verbatim)
+  - Artifact existence checks (required files present for each stage)
+  - Line / character / byte budget enforcement (fixed and dynamic caps)
+  - Triviality detection (scripts with no meaningful commands, comment-only files)
+  - Hypothesis PrimaryMetric format validation
+
+**Does NOT own** (these belong to schema_checks):
+  - JSON Schema validation (Draft 2020-12 via jsonschema library)
+  - Cross-artifact consistency (e.g. metrics.primary_metric.name matches
+    design.metrics.primary.name, review_result status gating before launch)
+  - Stage-gating policy invariants (policy-required checks must be 'pass')
+  - Formal required-field / type validation against .schema.json files
+
+**Known boundary overlap** (intentional defence-in-depth):
+  Functions _check_review_result, _check_design, _check_decision_result,
+  _check_run_manifest, and _check_metrics perform lightweight structural
+  checks (required keys, enum values, schema_version == "1.0") as a fast
+  pre-flight.  These duplicate a subset of what schema_checks validates
+  with full JSON Schema.  The duplication is deliberate so template_fill
+  can give an early, specific error message without depending on the
+  jsonschema library.
+"""
 
 from __future__ import annotations
 
@@ -529,6 +556,9 @@ def _check_hypothesis(path: Path) -> list[Failure]:
 
 
 def _check_review_result(path: Path) -> list[Failure]:
+    # Boundary note: the structural checks below (required keys, status enum,
+    # required_checks presence) overlap with schema_checks._validate_review_result.
+    # Kept here intentionally for fast pre-flight error messages without jsonschema.
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
@@ -572,6 +602,9 @@ def _check_review_result(path: Path) -> list[Failure]:
 
 
 def _check_design(path: Path, iteration_id: str) -> list[Failure]:
+    # Boundary note: the structural checks below (required keys, schema_version,
+    # iteration_id match, entrypoint/compute/baselines shape) overlap with
+    # schema_checks._validate_design.  Kept here for fast pre-flight without jsonschema.
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
@@ -608,6 +641,9 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
 
 
 def _check_decision_result(path: Path) -> list[Failure]:
+    # Boundary note: the structural checks below (schema_version, decision enum,
+    # rationale/evidence/risks shape) overlap with schema_checks._validate_decision_result.
+    # Kept here for fast pre-flight without jsonschema.
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
@@ -644,6 +680,8 @@ def _check_decision_result(path: Path) -> list[Failure]:
 
 
 def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Failure]:
+    # Boundary note: schema_version and iteration_id/run_id match checks overlap
+    # with schema_checks._validate_run_manifest.  Kept here for fast pre-flight.
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
@@ -664,6 +702,8 @@ def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Fail
 
 
 def _check_metrics(path: Path) -> list[Failure]:
+    # Boundary note: schema_version check overlaps with schema_checks._validate_metrics.
+    # Kept here for fast pre-flight.
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
@@ -779,18 +819,29 @@ def _stage_checks(
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override current stage from .autolab/state.json")
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"template_fill: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"template_fill: ERROR {exc}")
         return 1
 
     try:
         line_limit_policy = _load_line_limits_policy()
     except Exception as exc:
-        print(f"template_fill: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"template_fill: ERROR {exc}")
         return 1
 
     stage = args.stage or str(state.get("stage", "")).strip()
@@ -798,25 +849,56 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     iteration_dir = _resolve_iteration_dir(iteration_id)
 
     if not iteration_id or iteration_id.startswith("<"):
-        print("template_fill: ERROR iteration_id in state is missing or placeholder")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["iteration_id in state is missing or placeholder"]}
+            print(_json.dumps(envelope))
+        else:
+            print("template_fill: ERROR iteration_id in state is missing or placeholder")
         return 1
     if not iteration_dir.exists():
-        print(f"template_fill: ERROR iteration workspace missing at {iteration_dir}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "template_fill", "stage": stage, "checks": [], "errors": [f"iteration workspace missing at {iteration_dir}"]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"template_fill: ERROR iteration workspace missing at {iteration_dir}")
         return 1
     if not stage:
-        print("template_fill: ERROR state stage is missing")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["state stage is missing"]}
+            print(_json.dumps(envelope))
+        else:
+            print("template_fill: ERROR state stage is missing")
         return 1
 
     failures = _stage_checks(stage, iteration_dir, state, line_limit_policy)
 
-    if failures:
-        print(f"template_fill: FAIL stage={stage} issues={len(failures)}")
-        for failure in failures:
-            print(f"{failure.path}\t{failure.reason}")
-        return 1
+    passed = not failures
 
-    print(f"template_fill: PASS stage={stage} iteration={iteration_id}")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f.path, "status": "fail", "detail": f.reason} for f in failures]
+        if passed:
+            checks = [{"name": "template_fill", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "template_fill",
+            "stage": stage,
+            "checks": checks,
+            "errors": [f"{f.path}\t{f.reason}" for f in failures],
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
+            print(f"template_fill: FAIL stage={stage} issues={len(failures)}")
+            for failure in failures:
+                print(f"{failure.path}\t{failure.reason}")
+        else:
+            print(f"template_fill: PASS stage={stage} iteration={iteration_id}")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

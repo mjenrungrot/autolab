@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "verifier": "result_sanity",
+  "stage": "decide_repeat",
+  "checks": [
+    {
+      "name": "result_sanity",
+      "status": "pass",
+      "detail": "skipped for stage=decide_repeat"
+    }
+  ],
+  "errors": []
+}

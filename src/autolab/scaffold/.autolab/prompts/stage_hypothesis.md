@@ -45,6 +45,13 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 - Verifiers check for exactly **one** `PrimaryMetric:` line -- zero or multiple will fail.
 - The `+` prefix on the delta is required (e.g. `+2.5` or `+5%`), even for "higher is better" metrics.
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | JSON schema validation of state/backlog | Ensure `state.json` and `backlog.yaml` match schemas |
+| template_fill | Placeholder detection, artifact existence, triviality | Replace all `{{...}}`, `TODO`, `TBD` markers with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Write one hypothesis with sections: `Hypothesis Statement`, `Motivation`, `Scope In`, `Scope Out`, `Primary Metric`, `Expected Delta`, `Operational Success Criteria`, `Risks and Failure Modes`, `Constraints for Design Stage`.
 2. Include exactly one metric-definition line:
@@ -60,10 +67,12 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%
 
 ## Structured Metadata (machine-parsed)
-- target_delta: <signed numeric value>
-- metric_name: <metric name>
-- metric_mode: <maximize or minimize>
+- target_delta: +2.5
+- metric_name: accuracy
+- metric_mode: maximize
 ```
+
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}

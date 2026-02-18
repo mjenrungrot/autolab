@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
-"""Schema-oriented artifact validation for autolab stage handoffs."""
+"""Schema-oriented artifact validation for autolab stage handoffs.
+
+Responsibility boundary
+-----------------------
+**Owns (schema_checks)**:
+  - JSON Schema validation of all structured artifacts against .schema.json
+    files (state, backlog, design, agent_result, review_result, run_manifest,
+    metrics, decision_result, todo_state, todo_focus, plan_metadata,
+    plan_execution_summary) using Draft 2020-12 via jsonschema library
+  - Cross-artifact consistency:
+      * iteration_id / run_id match across state, design, run_manifest, metrics
+      * primary_metric.name in metrics matches design.metrics.primary.name
+      * host_mode in run_manifest matches design.compute.location
+  - Stage-gating invariants:
+      * review_result.status must be 'pass' before launch
+      * Policy-required checks (tests, dry_run, schema, env_smoke,
+        docs_target_update) must be 'pass' when review status is 'pass'
+      * artifact_sync_to_local.status must be success-like for extract_results
+  - Required field presence and type enforcement (via JSON Schema)
+  - Optional strict additionalProperties mode (via verifier_policy.yaml)
+
+**Does NOT own** (these belong to template_fill):
+  - Placeholder / template detection ({{...}}, <...>, TODO, TBD, FIXME, ...)
+  - File size budgets (line / character / byte limits)
+  - Content triviality detection (empty scripts, comment-only files)
+  - Template-identity detection (content == bootstrap template verbatim)
+  - Hypothesis PrimaryMetric format validation
+
+**Known boundary overlap** with template_fill:
+  template_fill performs lightweight structural checks (required keys, enum
+  values, schema_version) as a fast pre-flight that partially overlaps with
+  the full JSON Schema validation here.  This duplication is intentional
+  defence-in-depth; see template_fill.py docstring for details.
+"""
 
 from __future__ import annotations
 
@@ -494,6 +527,7 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -501,11 +535,21 @@ def main() -> int:
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"schema_checks: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"schema_checks: ERROR {exc}")
         return 1
     stage = _resolve_stage(state, args.stage)
     if not stage:
-        print("schema_checks: ERROR state stage is missing")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": ["state stage is missing"]}
+            print(_json.dumps(envelope))
+        else:
+            print("schema_checks: ERROR state stage is missing")
         return 1
 
     policy = _load_policy()
@@ -523,34 +567,50 @@ def main() -> int:
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
 
-    if failures:
-        print("schema_checks: FAIL")
-        for reason in failures:
-            print(reason)
-        top_n = failures[:3]
-        if top_n:
-            print("\n--- Top failures summary ---")
-            schema_hints: dict[str, str] = {
-                "state": "Check .autolab/state.json keys match state.schema.json",
-                "backlog": "Verify .autolab/backlog.yaml experiments list structure",
-                "design": "Ensure design.yaml has schema_version, id, iteration_id, metrics, baselines",
-                "review_result": "Confirm review_result.json has all required_checks keys with valid statuses",
-                "agent_result": "Check .autolab/agent_result.json status is complete|needs_retry|failed",
-                "todo_state": "Validate .autolab/todo_state.json version field is an integer",
-                "metrics": "Ensure metrics.json has schema_version and primary_metric",
-            }
-            for i, failure_text in enumerate(top_n, 1):
-                hint = ""
-                for schema_key, schema_hint in schema_hints.items():
-                    if schema_key in failure_text.lower():
-                        hint = f" Hint: {schema_hint}"
-                        break
-                print(f"  {i}. {failure_text}{hint}")
-            print(f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`")
-        return 1
+    passed = not failures
 
-    print("schema_checks: PASS")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+        if passed:
+            checks = [{"name": "schema_checks", "status": "pass", "detail": "all schema checks passed"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "schema_checks",
+            "stage": stage,
+            "checks": checks,
+            "errors": failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
+            print("schema_checks: FAIL")
+            for reason in failures:
+                print(reason)
+            top_n = failures[:3]
+            if top_n:
+                print("\n--- Top failures summary ---")
+                schema_hints: dict[str, str] = {
+                    "state": "Check .autolab/state.json keys match state.schema.json",
+                    "backlog": "Verify .autolab/backlog.yaml experiments list structure",
+                    "design": "Ensure design.yaml has schema_version, id, iteration_id, metrics, baselines",
+                    "review_result": "Confirm review_result.json has all required_checks keys with valid statuses",
+                    "agent_result": "Check .autolab/agent_result.json status is complete|needs_retry|failed",
+                    "todo_state": "Validate .autolab/todo_state.json version field is an integer",
+                    "metrics": "Ensure metrics.json has schema_version and primary_metric",
+                }
+                for i, failure_text in enumerate(top_n, 1):
+                    hint = ""
+                    for schema_key, schema_hint in schema_hints.items():
+                        if schema_key in failure_text.lower():
+                            hint = f" Hint: {schema_hint}"
+                            break
+                    print(f"  {i}. {failure_text}{hint}")
+                print(f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`")
+        else:
+            print("schema_checks: PASS")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

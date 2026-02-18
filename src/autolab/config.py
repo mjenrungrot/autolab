@@ -306,6 +306,24 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     )
 
 
+def _load_protected_files(policy: dict[str, Any]) -> list[str]:
+    """Return normalized protected file paths from verifier policy.
+
+    Reads ``policy["protected_files"]`` and returns a list of forward-slash
+    normalized, stripped path strings.  Returns an empty list when the key is
+    absent or not a list.
+    """
+    raw = policy.get("protected_files", [])
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    for entry in raw:
+        normalized = str(entry).strip().replace("\\", "/")
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
 def _resolve_run_agent_mode(mode_value: str | None) -> str:
     candidate = str(mode_value or "policy").strip().lower()
     if candidate in {"policy", "force_on", "force_off"}:
@@ -318,7 +336,12 @@ def _resolve_policy_python_bin(policy: dict[str, Any]) -> str:
     return value or "python3"
 
 
-def _resolve_stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
+def _resolve_stage_requirements(
+    policy: dict[str, Any],
+    stage: str,
+    *,
+    registry_verifier_categories: dict[str, bool] | None = None,
+) -> dict[str, bool]:
     requirements: dict[str, bool] = {
         "tests": False,
         "dry_run": False,
@@ -326,6 +349,14 @@ def _resolve_stage_requirements(policy: dict[str, Any], stage: str) -> dict[str,
         "env_smoke": False,
         "docs_target_update": False,
     }
+
+    # Layer 1: registry verifier_categories from workflow.yaml (base defaults).
+    if isinstance(registry_verifier_categories, dict):
+        for key in requirements:
+            if key in registry_verifier_categories:
+                requirements[key] = bool(registry_verifier_categories[key])
+
+    # Layer 2: legacy top-level policy keys (backward-compat).
     legacy_mapping = {
         "tests": "require_tests",
         "dry_run": "require_dry_run",
@@ -337,6 +368,7 @@ def _resolve_stage_requirements(policy: dict[str, Any], stage: str) -> dict[str,
         if legacy_key in policy:
             requirements[key] = _coerce_bool(policy.get(legacy_key), default=requirements[key])
 
+    # Layer 3: per-stage policy overrides (highest priority).
     requirements_by_stage = policy.get("requirements_by_stage", {})
     if isinstance(requirements_by_stage, dict):
         stage_section = requirements_by_stage.get(stage, {})
@@ -345,6 +377,22 @@ def _resolve_stage_requirements(policy: dict[str, Any], stage: str) -> dict[str,
                 if key in stage_section:
                     requirements[key] = _coerce_bool(stage_section.get(key), default=requirements[key])
     return requirements
+
+
+def _resolve_stage_max_retries(policy: dict[str, Any], stage: str, *, fallback: int = 5) -> int:
+    """Return the per-stage max_retries from retry_policy_by_stage.
+
+    Falls back to *fallback* (typically the global max_stage_attempts) when the
+    stage is not configured or the section is missing.
+    """
+    retry_section = policy.get("retry_policy_by_stage", {})
+    if isinstance(retry_section, dict):
+        stage_config = retry_section.get(stage)
+        if isinstance(stage_config, dict):
+            val = stage_config.get("max_retries")
+            if val is not None:
+                return int(val)
+    return fallback
 
 
 def _resolve_policy_command(raw: str, *, python_bin: str) -> str:

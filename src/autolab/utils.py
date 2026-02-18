@@ -819,6 +819,8 @@ def _write_block_reason(
     reason: str,
     stage_at_block: str,
     action_required: str,
+    iteration_id: str = "",
+    guardrail_rule: str = "",
 ) -> Path:
     """Write .autolab/block_reason.json when an experiment is blocked."""
     block_path = repo_root / ".autolab" / "block_reason.json"
@@ -831,7 +833,60 @@ def _write_block_reason(
             "action_required": action_required,
         },
     )
+    # Also write a human-readable blocked.md alongside the JSON
+    if iteration_id:
+        md_dir = repo_root / "experiments"
+        # Find the iteration directory by searching experiment type dirs
+        for exp_type in ("plan", "in_progress", "done"):
+            candidate = md_dir / exp_type / iteration_id
+            if candidate.is_dir():
+                md_dir = candidate
+                break
+        else:
+            md_dir = md_dir / "in_progress" / iteration_id
+        md_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        md_dir = repo_root / ".autolab"
+    blocked_md_path = md_dir / "blocked.md"
+    lines = [
+        "# Experiment Blocked\n",
+        f"\n**Reason:** {reason}\n",
+        f"\n**Stage at block:** {stage_at_block}\n",
+        f"\n**Action required:** {action_required}\n",
+    ]
+    if guardrail_rule:
+        lines.append(f"\n**Guardrail rule:** {guardrail_rule}\n")
+    lines.append(
+        "\n## How to Reopen\n\n"
+        "1. Address the blocking reason above\n"
+        "2. Update the backlog entry status (e.g., change `type` from `done` back to `in_progress`)\n"
+        "3. Run `autolab run` to resume the workflow\n"
+    )
+    blocked_md_path.write_text("".join(lines), encoding="utf-8")
     return block_path
+
+
+def _write_guardrail_breach(
+    repo_root: Path,
+    *,
+    rule: str,
+    counters: dict[str, Any],
+    stage: str,
+    remediation: str,
+) -> Path:
+    """Write .autolab/guardrail_breach.json when a guardrail threshold is exceeded."""
+    breach_path = repo_root / ".autolab" / "guardrail_breach.json"
+    _write_json(
+        breach_path,
+        {
+            "breached_at": _utc_now(),
+            "rule": rule,
+            "counters": counters,
+            "stage": stage,
+            "remediation": remediation,
+        },
+    )
+    return breach_path
 
 
 def _persist_agent_result(

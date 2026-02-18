@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -76,14 +77,28 @@ def _matches_closed_iteration(path: str, iteration_id: str) -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    args = parser.parse_args()
+
     closed_iterations = _load_closed_iteration_ids()
     if not closed_iterations:
-        print("closed_experiment_guard: PASS")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "closed_experiment_guard", "stage": "", "checks": [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iterations"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print("closed_experiment_guard: PASS")
         return 0
 
     changed_paths = _git_changed_paths()
     if not changed_paths:
-        print("closed_experiment_guard: PASS")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "closed_experiment_guard", "stage": "", "checks": [{"name": "closed_experiment_guard", "status": "pass", "detail": "no changed paths"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print("closed_experiment_guard: PASS")
         return 0
 
     violations: list[tuple[str, str]] = []
@@ -93,14 +108,30 @@ def main() -> int:
                 violations.append((iteration_id, changed))
                 break
 
-    if violations:
-        print("closed_experiment_guard: FAIL")
-        for iteration_id, changed in violations:
-            print(f"closed iteration '{iteration_id}' has modified path: {changed}")
-        return 1
+    passed = not violations
 
-    print("closed_experiment_guard: PASS")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f"{iteration_id}:{changed}", "status": "fail", "detail": f"closed iteration '{iteration_id}' has modified path: {changed}"} for iteration_id, changed in violations]
+        if passed:
+            checks = [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iteration violations"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "closed_experiment_guard",
+            "stage": "",
+            "checks": checks,
+            "errors": [f"closed iteration '{iteration_id}' has modified path: {changed}" for iteration_id, changed in violations],
+        }
+        print(_json.dumps(envelope))
+    else:
+        if violations:
+            print("closed_experiment_guard: FAIL")
+            for iteration_id, changed in violations:
+                print(f"closed iteration '{iteration_id}' has modified path: {changed}")
+        else:
+            print("closed_experiment_guard: PASS")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

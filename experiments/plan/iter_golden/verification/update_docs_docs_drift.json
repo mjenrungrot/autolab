@@ -1,0 +1,28 @@
+{
+  "status": "pass",
+  "verifier": "docs_drift",
+  "stage": "update_docs",
+  "checks": [
+    {
+      "name": "value_in_docs_update",
+      "passed": true,
+      "metric_name": "validation_accuracy",
+      "expected_value": 83.6
+    },
+    {
+      "name": "delta_in_docs_update",
+      "passed": true,
+      "metric_name": "validation_accuracy",
+      "expected_delta": 1.2
+    },
+    {
+      "name": "no_contradiction_docs_update.md",
+      "passed": true
+    },
+    {
+      "name": "no_contradiction_paper_target[0]",
+      "passed": true
+    }
+  ],
+  "errors": []
+}

@@ -461,6 +461,39 @@ def _persist_verification_result(
     result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _persist_structured_verifier_results(
+    state: dict[str, Any],
+    stage: str,
+    results: list[dict[str, Any]],
+) -> None:
+    """Best-effort persist per-verifier structured JSON output to iteration verification dir."""
+    try:
+        from autolab.state import _resolve_iteration_directory
+
+        iteration_id = str(state.get("iteration_id", "")).strip()
+        experiment_id = str(state.get("experiment_id", "")).strip()
+        if not iteration_id:
+            return
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            Path.cwd(),
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        verification_dir = iteration_dir / "verification"
+        verification_dir.mkdir(parents=True, exist_ok=True)
+        for result in results:
+            structured = result.get("structured")
+            if not isinstance(structured, dict):
+                continue
+            verifier_name = str(structured.get("verifier", result.get("name", "unknown"))).strip()
+            filename = f"{stage}_{verifier_name}.json"
+            output_path = verification_dir / filename
+            output_path.write_text(json.dumps(structured, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _build_verification_command_specs(
     repo_root: Path,
     state: dict[str, Any],
@@ -473,6 +506,7 @@ def _build_verification_command_specs(
         _resolve_policy_python_bin,
         _resolve_stage_requirements,
     )
+    from autolab.registry import load_registry
     from autolab.state import _resolve_iteration_directory
 
     policy = _load_verifier_policy(repo_root)
@@ -489,7 +523,9 @@ def _build_verification_command_specs(
     except ValueError:
         iteration_path = iteration_dir.as_posix()
 
-    stage_requirements = _resolve_stage_requirements(policy, stage)
+    registry = load_registry(repo_root)
+    reg_verifier_cats = registry[stage].verifier_categories if stage in registry else None
+    stage_requirements = _resolve_stage_requirements(policy, stage, registry_verifier_categories=reg_verifier_cats)
     python_bin = _resolve_policy_python_bin(policy)
     test_command = _resolve_policy_command(str(policy.get("test_command", "")).strip(), python_bin=python_bin)
     dry_run_command = _resolve_policy_command(str(policy.get("dry_run_command", "")).strip(), python_bin=python_bin)
@@ -529,28 +565,33 @@ def _build_verification_command_specs(
             )
         )
     if template_fill_enabled and template_fill_command:
-        command_specs.append(("template_fill", template_fill_command))
+        command_specs.append(("template_fill", f"{template_fill_command} --json"))
     closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
     if closed_guard_path.exists():
         command_specs.append(
             (
                 "closed_experiment_guard",
-                f"{python_bin} .autolab/verifiers/closed_experiment_guard.py",
+                f"{python_bin} .autolab/verifiers/closed_experiment_guard.py --json",
             )
         )
     if stage_requirements["env_smoke"]:
-        command_specs.append(("run_health", f"{python_bin} .autolab/verifiers/run_health.py"))
-        command_specs.append(("result_sanity", f"{python_bin} .autolab/verifiers/result_sanity.py"))
+        command_specs.append(("run_health", f"{python_bin} .autolab/verifiers/run_health.py --json"))
+        command_specs.append(("result_sanity", f"{python_bin} .autolab/verifiers/result_sanity.py --json"))
     if stage_requirements["docs_target_update"] and stage in {"update_docs", "implementation_review"}:
         command_specs.append(
-            ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py")
+            ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py --json")
+        )
+    docs_drift_path = repo_root / ".autolab" / "verifiers" / "docs_drift.py"
+    if docs_drift_path.exists() and stage == "update_docs":
+        command_specs.append(
+            ("docs_drift", f"{python_bin} .autolab/verifiers/docs_drift.py --stage {shlex.quote(stage)} --json")
         )
     plan_lint_path = repo_root / ".autolab" / "verifiers" / "implementation_plan_lint.py"
     if plan_lint_path.exists() and stage == "implementation":
         command_specs.append(
             (
                 "implementation_plan_lint",
-                f"{python_bin} .autolab/verifiers/implementation_plan_lint.py --stage {shlex.quote(stage)}",
+                f"{python_bin} .autolab/verifiers/implementation_plan_lint.py --stage {shlex.quote(stage)} --json",
             )
         )
     if stage_requirements["schema"]:
@@ -559,13 +600,13 @@ def _build_verification_command_specs(
             command_specs.append(
                 (
                     "prompt_lint",
-                    f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {shlex.quote(stage)}",
+                    f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {shlex.quote(stage)} --json",
                 )
             )
         command_specs.append(
             (
                 "schema_checks",
-                f"{python_bin} .autolab/verifiers/schema_checks.py --stage {shlex.quote(stage)}",
+                f"{python_bin} .autolab/verifiers/schema_checks.py --stage {shlex.quote(stage)} --json",
             )
         )
 
@@ -696,6 +737,13 @@ def _run_verification_step_detailed(
         }
         if detail:
             result_payload["detail"] = detail
+        # Attempt to parse structured JSON envelope from verifier stdout
+        try:
+            parsed = json.loads(stdout)
+            if isinstance(parsed, dict) and "status" in parsed and "verifier" in parsed:
+                result_payload["structured"] = parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
         results.append(result_payload)
 
         if process.returncode != 0:
@@ -715,6 +763,7 @@ def _run_verification_step_detailed(
                 message=message,
                 details=details,
             )
+            _persist_structured_verifier_results(state, stage, results)
             return (False, message, details)
 
     details = {
@@ -732,6 +781,7 @@ def _run_verification_step_detailed(
         message=message,
         details=details,
     )
+    _persist_structured_verifier_results(state, stage, results)
     return (True, message, details)
 
 

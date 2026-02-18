@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from autolab.utils import (
     _safe_todo_pre_sync,
     _utc_now,
     _write_block_reason,
+    _write_guardrail_breach,
     _write_json,
 )
 from autolab.validators import _run_verification_step
@@ -53,6 +55,8 @@ def _append_task_ledger(
     verification_message: str = "",
     commit_allowed: bool | None = None,
     commit_reason: str = "",
+    changed_files_summary: list[str] | None = None,
+    meaningful_files_summary: list[str] | None = None,
 ) -> None:
     entry: dict[str, Any] = {
         "timestamp": _utc_now(),
@@ -75,6 +79,10 @@ def _append_task_ledger(
             "allowed": bool(commit_allowed),
             "reason": str(commit_reason).strip(),
         }
+    if changed_files_summary is not None:
+        entry["changed_files"] = changed_files_summary
+    if meaningful_files_summary is not None:
+        entry["meaningful_files"] = meaningful_files_summary
 
     ledger_path = repo_root / ".autolab" / "task_history.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,6 +213,8 @@ def _run_once_assistant(
         verification_message: str = "",
         commit_reason: str = "",
         ledger_event: str = "",
+        changed_files_summary: list[str] | None = None,
+        meaningful_files_summary: list[str] | None = None,
     ) -> RunOutcome:
         _append_state_history(
             state,
@@ -246,6 +256,8 @@ def _run_once_assistant(
                 verification_message=verification_message,
                 commit_allowed=commit_allowed,
                 commit_reason=commit_reason,
+                changed_files_summary=changed_files_summary,
+                meaningful_files_summary=meaningful_files_summary,
             )
         except Exception as exc:
             _append_log(repo_root, f"assistant task ledger write failed: {exc}")
@@ -369,6 +381,33 @@ def _run_once_assistant(
 
         if passes_gate:
             mark_task_completed(repo_root, current_task_id)
+            # Persist task completion evidence
+            try:
+                completions_dir = repo_root / ".autolab" / "task_completions"
+                completions_dir.mkdir(parents=True, exist_ok=True)
+                commit_hash = ""
+                try:
+                    result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=repo_root, capture_output=True, text=True, check=False, timeout=5,
+                    )
+                    if result.returncode == 0:
+                        commit_hash = result.stdout.strip()
+                except Exception:
+                    pass
+                evidence = {
+                    "task_id": current_task_id,
+                    "completed_at": _utc_now(),
+                    "verification_passed": verification_passed,
+                    "verification_message": "review gate considered last verification state",
+                    "changed_files": sorted(changed_paths) if changed_paths else [],
+                    "meaningful_files": sorted(meaningful_paths) if meaningful_paths else [],
+                    "commit_hash": commit_hash,
+                }
+                evidence_path = completions_dir / f"{current_task_id}.json"
+                evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+            except Exception:
+                pass
             state["current_task_id"] = ""
             state["task_cycle_stage"] = "done"
             state["task_change_baseline"] = {}
@@ -392,6 +431,8 @@ def _run_once_assistant(
                 verification_message="review gate considered last verification state",
                 commit_reason="meaningful-change gate passed",
                 ledger_event="review",
+                changed_files_summary=sorted(changed_paths) if changed_paths else [],
+                meaningful_files_summary=sorted(meaningful_paths) if meaningful_paths else [],
             )
 
         repeat_guard["no_progress_decisions"] = int(repeat_guard.get("no_progress_decisions", 0)) + 1
@@ -403,6 +444,16 @@ def _run_once_assistant(
             state["task_change_baseline"] = {}
             state["stage"] = guardrails.on_breach
             _write_json(state_path, state)
+            _write_guardrail_breach(
+                repo_root,
+                rule="no_progress",
+                counters={
+                    "no_progress_decisions": int(repeat_guard["no_progress_decisions"]),
+                    "max_no_progress_decisions": int(guardrails.max_no_progress_decisions),
+                },
+                stage=stage_before,
+                remediation=f"Escalated to '{guardrails.on_breach}'. Assistant review found no meaningful changes after multiple attempts.",
+            )
             return _persist_simple(
                 status="failed",
                 message="assistant review guardrail breach: escalating to human_review",
@@ -423,7 +474,12 @@ def _run_once_assistant(
         missing_verification = meaningful_config.require_verification and not verification_passed
         details: list[str] = []
         if not meaningful:
-            details.append("no meaningful code/config/docs targets changed")
+            changed_summary = ", ".join(sorted(changed_paths)[:5]) if changed_paths else "none"
+            meaningful_summary = ", ".join(sorted(meaningful_paths)[:5]) if meaningful_paths else "none"
+            details.append(
+                f"no meaningful code/config/docs targets changed "
+                f"(changed_paths=[{changed_summary}], meaningful_paths=[{meaningful_summary}])"
+            )
         if missing_verification:
             details.append("verification not passed")
         if not details:

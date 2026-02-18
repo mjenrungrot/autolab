@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "verifier": "closed_experiment_guard",
+  "stage": "",
+  "checks": [
+    {
+      "name": "closed_experiment_guard",
+      "status": "pass",
+      "detail": "no closed iterations"
+    }
+  ],
+  "errors": []
+}
