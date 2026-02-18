@@ -22,6 +22,12 @@ For stable CI or release installs, pin to a tag:
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.0.0
 ```
 
+After upgrading the package from GitHub, refresh local workflow defaults:
+
+```bash
+autolab sync-scaffold --force
+```
+
 After install, invoke with:
 
 ```bash
@@ -32,4 +38,4 @@ python -m autolab --help
 ## Source layout
 
 - `src/autolab/`: Python package modules (`__main__`, `todo_sync`, `slurm_job_list`)
-- `dotautolab/.autolab/`: Shared default scaffold assets (prompts, schemas, verifier helpers, defaults)
+- `src/autolab/scaffold/.autolab/`: Shared default scaffold assets (prompts, schemas, verifier helpers, defaults)

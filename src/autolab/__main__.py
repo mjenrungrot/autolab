@@ -5,6 +5,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import shutil
 import re
 import shlex
 import socket
@@ -48,6 +49,7 @@ ACTIVE_STAGES = (
 TERMINAL_STAGES = ("human_review", "stop")
 DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
 ALL_STAGES = set(ACTIVE_STAGES + ("decide_repeat",) + TERMINAL_STAGES)
+PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 
 DEFAULT_BACKLOG_TEMPLATE = """hypotheses:
   - id: h1
@@ -253,6 +255,38 @@ def _resolve_repo_root(state_path: Path) -> Path:
     if state_path.name == "state.json" and state_path.parent.name == ".autolab":
         return state_path.parent.parent
     return Path.cwd()
+
+
+def _resolve_scaffold_source() -> Path:
+    if PACKAGE_SCAFFOLD_DIR.exists():
+        return PACKAGE_SCAFFOLD_DIR
+    legacy = Path(__file__).resolve().parent.parent / "dotautolab" / ".autolab"
+    if legacy.exists():
+        return legacy
+    raise RuntimeError("bundled autolab scaffold is unavailable in this installation")
+
+
+def _sync_scaffold_bundle(
+    source_root: Path,
+    destination_root: Path,
+    *,
+    overwrite: bool,
+) -> tuple[int, int]:
+    copied = 0
+    skipped = 0
+    for source in source_root.rglob("*"):
+        relative = source.relative_to(source_root)
+        destination = destination_root / relative
+        if source.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists() and not overwrite:
+            skipped += 1
+            continue
+        shutil.copy2(source, destination)
+        copied += 1
+    return copied, skipped
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -3414,6 +3448,29 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
+    try:
+        source_root = _resolve_scaffold_source()
+    except RuntimeError as exc:
+        print(f"autolab sync-scaffold: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    destination = Path(args.dest).expanduser().resolve()
+    copied, skipped = _sync_scaffold_bundle(
+        source_root,
+        destination,
+        overwrite=bool(args.force),
+    )
+    print("autolab sync-scaffold")
+    print(f"source: {source_root}")
+    print(f"destination: {destination}")
+    print(f"copied_files: {copied}")
+    print(f"skipped_files: {skipped}")
+    if not args.force and skipped and copied == 0:
+        print("No files copied. Add --force to overwrite existing files.")
+    return 0
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -3792,6 +3849,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     status.set_defaults(handler=_cmd_status)
+
+    sync_scaffold = subparsers.add_parser(
+        "sync-scaffold",
+        help="Sync bundled autolab scaffold files into the repository",
+    )
+    sync_scaffold.add_argument(
+        "--dest",
+        default=".autolab",
+        help="Target directory for scaffold files (default: .autolab)",
+    )
+    sync_scaffold.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing scaffold files.",
+    )
+    sync_scaffold.set_defaults(handler=_cmd_sync_scaffold)
+
     return parser
 
 

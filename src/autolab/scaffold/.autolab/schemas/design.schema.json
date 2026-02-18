@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DesignSpec",
+  "type": "object",
+  "required": [
+    "id",
+    "iteration_id",
+    "hypothesis_id",
+    "entrypoint",
+    "compute",
+    "metrics",
+    "baselines"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "iteration_id": {"type": "string"},
+    "hypothesis_id": {"type": "string"},
+    "description": {"type": "string"},
+    "entrypoint": {
+      "type": "object",
+      "required": ["module"],
+      "properties": {
+        "module": {"type": "string"},
+        "args": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "compute": {
+      "type": "object",
+      "required": ["location"],
+      "properties": {
+        "location": {"type": "string", "enum": ["local", "slurm"]}
+      },
+      "additionalProperties": true
+    },
+    "metrics": {"type": "object"},
+    "baselines": {
+      "type": "array",
+      "minItems": 1
+    }
+  },
+  "additionalProperties": true
+}
