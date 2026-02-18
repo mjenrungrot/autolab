@@ -70,6 +70,15 @@ Canonical minimal task block:
 - **status**: Not Completed
 ```
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| dry_run | Executes `dry_run_command` from policy | Configure `dry_run_command` in `verifier_policy.yaml` or fix runtime errors |
+| schema_checks | JSON schema validation | Ensure all required artifacts match their schemas |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| implementation_plan_lint | Task block structure in `implementation_plan.md` | Ensure each task has `depends_on`, `location`, `description`, `validation`, `status` |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Implement only design-relevant changes; avoid unrelated edits.
 2. Keep experiment-local artifacts under `{{iteration_path}}/implementation/` unless code is reusable across iterations.
@@ -82,10 +91,10 @@ Canonical minimal task block:
 ## OUTPUT TEMPLATE
 ```markdown
 ## Change Summary
-- ...
+- Added focal loss module per design spec
 
 ## Files Updated
-- ...
+- src/model/loss.py
 
 ## Verifier Outputs
 - tests: pass|skip|fail
@@ -104,28 +113,28 @@ Canonical minimal task block:
 - `path/to/log_or_output`
 
 ## Risks and Follow-ups
-- ...
+- Focal loss gamma parameter may need tuning
 
 ## Tasks
 
-### T1: <name>
+### T1: Add loss function
 - **depends_on**: []
-- **location**: <paths>
-- **description**: <work>
-- **touches**: [<file paths/globs this task edits>]
-- **conflict_group**: <optional group name>
-- **validation**: <checks>
+- **location**: src/model/loss.py
+- **description**: Implement focal loss per design spec
+- **touches**: [src/model/loss.py]
+- **conflict_group**: model_changes
+- **validation**: `pytest tests/test_loss.py` passes
 - **status**: Not Completed
 - **log**:
 - **files edited/created**:
 
-### T2: <name>
+### T2: Integrate loss into training loop
 - **depends_on**: [T1]
-- **location**: <paths>
-- **description**: <work>
-- **touches**: [<file paths/globs this task edits>]
-- **conflict_group**: <optional group name>
-- **validation**: <checks>
+- **location**: src/training/trainer.py
+- **description**: Wire focal loss into the training step
+- **touches**: [src/training/trainer.py]
+- **conflict_group**: model_changes
+- **validation**: `pytest tests/test_trainer.py` passes
 - **status**: Not Completed
 - **log**:
 - **files edited/created**:
@@ -138,6 +147,8 @@ Canonical minimal task block:
 ```
 
 > **Note**: The Tasks and Parallel Execution Groups sections are **optional** for simple changes (1-3 files). For simple changes, only the Change Summary section is required.
+
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}

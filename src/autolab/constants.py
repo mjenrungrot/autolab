@@ -1,4 +1,9 @@
-"""Autolab constants — stage definitions, templates, patterns, and defaults."""
+"""Autolab constants — stage definitions, templates, patterns, and defaults.
+
+Stage-level constants (ACTIVE_STAGES, STAGE_PROMPT_FILES, etc.) are the built-in
+defaults.  At runtime, ``autolab.registry.load_registry()`` reads the canonical
+``workflow.yaml`` and provides an overlay that takes precedence where available.
+"""
 
 from __future__ import annotations
 

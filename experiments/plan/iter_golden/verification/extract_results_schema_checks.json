@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "verifier": "schema_checks",
+  "stage": "extract_results",
+  "checks": [
+    {
+      "name": "schema_checks",
+      "status": "pass",
+      "detail": "all schema checks passed"
+    }
+  ],
+  "errors": []
+}

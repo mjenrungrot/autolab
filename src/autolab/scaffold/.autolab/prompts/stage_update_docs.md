@@ -49,6 +49,14 @@ Update iteration documentation and configured paper targets after result extract
 - The `template_fill` verifier checks for unresolved placeholders (e.g. double-brace tokens, angle-bracket tokens, `TODO`, `TBD`, `FIXME`, `...`) and trivial/boilerplate content.
 - Ensure all template tokens are replaced with real values before finalizing outputs.
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | JSON schema validation of artifacts | Ensure all required artifacts match their schemas |
+| docs_target_update | `docs_targets.py` paper target checks | Update configured paper targets or provide explicit no-change rationale |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Update `docs_update.md` with what changed, run evidence, metrics delta summary, and next-step recommendation.
 2. Update configured paper targets with durable result content when applicable.
@@ -62,23 +70,25 @@ Update iteration documentation and configured paper targets after result extract
 ## OUTPUT TEMPLATE
 ```markdown
 ## What Changed
-- ...
+- Updated results table with latest accuracy metrics from run
 
 ## Run Evidence
 - iteration_id: {{iteration_id}}
 - run_id: {{run_id}}
-- job id: ...
-- sync status: ...
+- job id: N/A (local run)
+- sync status: ok
 - metrics artifact: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
 - manifest artifact: `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 
 ## Recommendation
-- ...
+- Proceed to next iteration with refined hyperparameters
 
 ## No-Change Rationale (when applicable)
-- metrics delta summary: ...
-- why configured paper targets do not require updates: ...
+- metrics delta summary: Primary metric improved +1.2% over baseline
+- why configured paper targets do not require updates: Delta below significance threshold for paper revision
 ```
+
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
@@ -88,6 +98,13 @@ Update iteration documentation and configured paper targets after result extract
 - [ ] `docs_update.md` includes iteration/run references or explicit `No changes needed` rationale.
 - [ ] Paper target updates align with configured `paper_targets`, or an explicit no-target rationale is documented.
 - [ ] SLURM ledger verification is executed for SLURM manifests.
+
+## EVIDENCE POINTERS
+When updating docs, reference specific artifacts with `{path, what_it_proves}`:
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json` -- proves measured metric values
+- `{{iteration_path}}/analysis/summary.md` -- proves interpretation and context
+- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json` -- proves run configuration and sync
+- configured paper target files -- proves current state of documentation
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, correct docs artifacts and rerun from the verification ritual.

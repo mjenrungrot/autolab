@@ -1,0 +1,185 @@
+# ---------------------------------------------------------------------------
+# Autolab Stage Registry (workflow.yaml)
+# ---------------------------------------------------------------------------
+# Single source of truth for per-stage metadata: prompt files, required
+# tokens, required output artifacts, verifier categories, successor stages,
+# and stage classifications.
+#
+# The orchestrator, prompt renderer, and verification system can all read
+# this file to avoid hard-coded stage-specific logic scattered across the
+# codebase.  Runtime overrides (e.g. verifier_policy.yaml) take precedence
+# where applicable.
+# ---------------------------------------------------------------------------
+
+schema_version: "1.0"
+
+stages:
+  hypothesis:
+    prompt_file: stage_hypothesis.md
+    required_tokens: [iteration_id, iteration_path, hypothesis_id]
+    required_outputs: [hypothesis.md]
+    next_stage: design
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: true
+      runner_eligible: true
+
+  design:
+    prompt_file: stage_design.md
+    required_tokens: [iteration_id, iteration_path, hypothesis_id]
+    required_outputs: [design.yaml]
+    next_stage: implementation
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: true
+      runner_eligible: true
+
+  implementation:
+    prompt_file: stage_implementation.md
+    required_tokens: [iteration_id, iteration_path]
+    required_outputs: [implementation_plan.md]
+    next_stage: implementation_review
+    verifier_categories:
+      tests: false
+      dry_run: true
+      schema: true
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  implementation_review:
+    prompt_file: stage_implementation_review.md
+    required_tokens: [iteration_id, iteration_path]
+    required_outputs: [implementation_review.md, review_result.json]
+    next_stage: launch
+    verifier_categories:
+      tests: false
+      dry_run: true
+      schema: true
+      env_smoke: true
+      docs_target_update: true
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  launch:
+    prompt_file: stage_launch.md
+    required_tokens: [iteration_id, iteration_path]
+    required_outputs: [run_manifest.json]
+    next_stage: extract_results
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: true
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  extract_results:
+    prompt_file: stage_extract_results.md
+    required_tokens: [iteration_id, iteration_path, run_id]
+    required_outputs: [metrics.json, analysis/summary.md]
+    next_stage: update_docs
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: true
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  update_docs:
+    prompt_file: stage_update_docs.md
+    required_tokens: [iteration_id, iteration_path, run_id]
+    required_outputs: [docs_update.md]
+    next_stage: decide_repeat
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: false
+      docs_target_update: true
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  decide_repeat:
+    prompt_file: stage_decide_repeat.md
+    required_tokens: [iteration_id, iteration_path]
+    required_outputs: [decision_result.json]
+    next_stage: ""
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: true
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: false
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  human_review:
+    prompt_file: stage_human_review.md
+    required_tokens: []
+    required_outputs: []
+    next_stage: ""
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: false
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: false
+      terminal: true
+      decision: true
+      runner_eligible: false
+
+  stop:
+    prompt_file: stage_stop.md
+    required_tokens: []
+    required_outputs: []
+    next_stage: ""
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: false
+      env_smoke: false
+      docs_target_update: false
+    classifications:
+      active: false
+      terminal: true
+      decision: true
+      runner_eligible: false

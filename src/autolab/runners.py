@@ -17,7 +17,7 @@ from autolab.constants import (
     ITERATION_ID_SAFE_PATTERN,
 )
 from autolab.models import AgentRunnerEditScopeConfig, StageCheckError, StateError
-from autolab.config import _load_agent_runner_config, _resolve_run_agent_mode
+from autolab.config import _load_agent_runner_config, _load_protected_files, _load_verifier_policy, _resolve_run_agent_mode
 from autolab.state import (
     _load_state,
     _normalize_state,
@@ -532,9 +532,11 @@ def _invoke_agent_runner(
             f"agent runner stderr stage={stage}: {_compact_log_text(_redact_sensitive_text(captured_stderr))}",
         )
 
+    effective_delta_paths: list[str] = []
     if baseline_snapshot is not None:
         current_snapshot = _collect_change_snapshot(repo_root)
         delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
+        effective_delta_paths = delta_paths
         out_of_scope = sorted(path for path in delta_paths if not _is_within_scope(path, allowed_roots))
         if out_of_scope:
             sample = ", ".join(out_of_scope[:8])
@@ -552,6 +554,7 @@ def _invoke_agent_runner(
     elif fs_baseline_snapshot is not None:
         fs_current_snapshot = _collect_filesystem_snapshot(repo_root)
         fs_delta_paths = _filesystem_snapshot_delta_paths(fs_baseline_snapshot, fs_current_snapshot)
+        effective_delta_paths = fs_delta_paths
         fs_out_of_scope = sorted(path for path in fs_delta_paths if not _is_within_scope(path, allowed_roots))
         if fs_out_of_scope:
             sample = ", ".join(fs_out_of_scope[:8])
@@ -566,6 +569,30 @@ def _invoke_agent_runner(
                 "agent runner edited paths outside allowed edit scope (detected via filesystem snapshot); "
                 f"out_of_scope={sample}"
             )
+
+    # -- Protected files denylist check --
+    if effective_delta_paths:
+        policy = _load_verifier_policy(repo_root)
+        protected_files = _load_protected_files(policy)
+        if protected_files:
+            protected_set = set(protected_files)
+            violated = sorted(
+                path for path in effective_delta_paths
+                if path.replace("\\", "/") in protected_set
+            )
+            if violated:
+                sample = ", ".join(violated[:8])
+                _append_log(
+                    repo_root,
+                    (
+                        f"agent runner modified protected file(s): {sample}. "
+                        f"Protected files: {protected_files}"
+                    ),
+                )
+                raise StageCheckError(
+                    f"agent runner modified protected file(s): {sample}. "
+                    f"Protected files: {protected_files}"
+                )
 
     _append_log(repo_root, f"agent runner exit stage={stage} returncode={returncode}")
     run_report["status"] = "completed" if returncode == 0 else "failed"

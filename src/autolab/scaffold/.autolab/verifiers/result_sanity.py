@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import re
@@ -101,36 +102,71 @@ def _validate_metrics(path: Path, failures: list[str]) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    args = parser.parse_args()
+
     failures: list[str] = []
 
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"result_sanity: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "result_sanity", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"result_sanity: ERROR {exc}")
         return 1
 
     iteration_id = str(state.get("iteration_id", "")).strip()
     run_id = str(state.get("last_run_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
     if not iteration_id or not run_id:
-        print("result_sanity: ERROR missing iteration_id/last_run_id in state")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "result_sanity", "stage": stage, "checks": [], "errors": ["missing iteration_id/last_run_id in state"]}
+            print(_json.dumps(envelope))
+        else:
+            print("result_sanity: ERROR missing iteration_id/last_run_id in state")
         return 1
 
     if stage != "extract_results":
-        print("result_sanity: PASS")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "result_sanity", "stage": stage, "checks": [{"name": "result_sanity", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print("result_sanity: PASS")
         return 0
 
     metrics_path = _resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
     _validate_metrics(metrics_path, failures)
 
-    if failures:
-        print("result_sanity: FAIL")
-        for reason in failures:
-            print(reason)
-        return 1
+    passed = not failures
 
-    print("result_sanity: PASS")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+        if passed:
+            checks = [{"name": "result_sanity", "status": "pass", "detail": "all result sanity checks passed"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "result_sanity",
+            "stage": stage,
+            "checks": checks,
+            "errors": failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
+            print("result_sanity: FAIL")
+            for reason in failures:
+                print(reason)
+        else:
+            print("result_sanity: PASS")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -102,12 +103,21 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    args = parser.parse_args()
+
     failures: list[str] = []
 
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"run_health: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "run_health", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"run_health: ERROR {exc}")
         return 1
 
     stage = str(state.get("stage", "")).strip()
@@ -115,27 +125,58 @@ def main() -> int:
     run_id = str(state.get("last_run_id", "")).strip()
 
     if stage != "launch":
-        print("run_health: PASS")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "run_health", "stage": stage, "checks": [{"name": "run_health", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print("run_health: PASS")
         return 0
 
     if not iteration_id or not run_id or run_id.startswith("<"):
-        print("run_health: ERROR missing iteration_id/last_run_id")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "run_health", "stage": stage, "checks": [], "errors": ["missing iteration_id/last_run_id"]}
+            print(_json.dumps(envelope))
+        else:
+            print("run_health: ERROR missing iteration_id/last_run_id")
         return 1
 
     try:
         failures.extend(_check_launch_artifacts(iteration_id, run_id))
     except Exception as exc:
-        print(f"run_health: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "run_health", "stage": stage, "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"run_health: ERROR {exc}")
         return 1
 
-    if failures:
-        print("run_health: FAIL")
-        for reason in failures:
-            print(reason)
-        return 1
+    passed = not failures
 
-    print("run_health: PASS")
-    return 0
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+        if passed:
+            checks = [{"name": "run_health", "status": "pass", "detail": "all run health checks passed"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "run_health",
+            "stage": stage,
+            "checks": checks,
+            "errors": failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
+            print("run_health: FAIL")
+            for reason in failures:
+                print(reason)
+        else:
+            print("run_health: PASS")
+
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

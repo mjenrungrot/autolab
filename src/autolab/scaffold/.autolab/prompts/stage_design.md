@@ -55,6 +55,13 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 - `walltime_estimate` should follow `HH:MM:SS` format (e.g. `"00:40:00"`).
 - `memory_estimate` should include units (e.g. `"64GB"`).
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | `design.yaml` schema validation | Ensure `schema_version: "1.0"`, valid `compute.location`, non-empty `baselines` |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with concrete values |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Translate hypothesis intent into reproducible fields with concrete values.
 2. Record compute/resource assumptions (local or slurm) and deterministic controls.
@@ -92,6 +99,8 @@ variants:
   - name: proposed
     changes: {}
 ```
+
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
 
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}

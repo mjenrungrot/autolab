@@ -26,6 +26,20 @@ The human reviewer can resolve this stage by running:
 - `autolab review --status=retry` -- Send back to implementation for fixes
 - `autolab review --status=stop` -- End the experiment
 
+## OUTPUTS (STRICT)
+- `{{iteration_path}}/human_review_packet.md`
+
+The human review packet must include:
+1. **Stage history summary**: key transitions and their outcomes from `.autolab/state.json` history
+2. **Top verifier failures**: most recent verification errors blocking progress
+3. **Links to key artifacts**: paths to metrics, review results, and implementation plans
+4. **Checklist of human actions**: concrete steps the reviewer should take
+
+## FILE CHECKLIST (machine-auditable)
+- [ ] `human_review_packet.md` exists under `{{iteration_path}}/`
+- [ ] Packet includes stage history, verifier failures, artifact links, and action checklist
+- [ ] All artifact paths are concrete (no unresolved placeholders)
+
 ## ARTIFACT FORMAT
 When recording the review, the system writes `human_review_result.json`:
 ```json

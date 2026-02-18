@@ -9,7 +9,9 @@ from autolab.config import (
     _load_guardrail_config,
     _load_meaningful_change_config,
     _load_strict_mode_config,
+    _load_verifier_policy,
     _resolve_run_agent_mode,
+    _resolve_stage_max_retries,
 )
 from autolab.evaluate import _evaluate_stage
 from autolab.runners import _invoke_agent_runner
@@ -38,6 +40,7 @@ from autolab.utils import (
     _todo_open_count,
     _utc_now,
     _write_block_reason,
+    _write_guardrail_breach,
     _write_json,
 )
 from autolab.models import StateError
@@ -81,6 +84,17 @@ def _decision_from_artifact(
     rationale = str(payload.get("rationale", "")).strip()
     if not rationale:
         return (None, f"{decision_path} must include a non-empty rationale")
+
+    evidence = payload.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) == 0:
+        return (None, f"{decision_path} must include a non-empty 'evidence' list")
+    for idx, item in enumerate(evidence):
+        if not isinstance(item, dict):
+            return (None, f"{decision_path} evidence[{idx}] must be a dict")
+        for field in ("source", "pointer", "summary"):
+            val = item.get(field)
+            if not isinstance(val, str) or not val.strip():
+                return (None, f"{decision_path} evidence[{idx}] must have a non-empty string '{field}'")
     return (decision, "")
 
 
@@ -91,12 +105,19 @@ def _compute_next_stage_attempt(
     prior_attempt: int,
     max_stage_attempts: int,
     needs_retry: bool,
+    stage_max_retries: int | None = None,
 ) -> tuple[int, str | None, str | None]:
     """Compute the stage_attempt value after a stage transition.
 
     Returns (new_attempt, override_stage, override_summary).
     override_stage/override_summary are set only when retry budget is exhausted.
+
+    When *stage_max_retries* is provided it takes precedence over
+    *max_stage_attempts* for the exhaustion check, enabling per-stage retry
+    budgets while keeping backward compatibility with the global fallback.
     """
+    effective_max = stage_max_retries if stage_max_retries is not None else max_stage_attempts
+
     retry_cycle_increment = (
         stage_before == "implementation_review"
         and next_stage == "implementation"
@@ -110,11 +131,11 @@ def _compute_next_stage_attempt(
 
     if retry_cycle_increment:
         new_attempt = prior_attempt + 1
-        if new_attempt >= max_stage_attempts:
+        if new_attempt >= effective_max:
             return (
                 new_attempt,
                 "human_review",
-                f"implementation review retry budget exhausted ({new_attempt}/{max_stage_attempts})"
+                f"implementation review retry budget exhausted ({new_attempt}/{effective_max})"
                 " -- handing off to human review",
             )
         return (new_attempt, None, None)
@@ -133,17 +154,46 @@ def _handle_stage_failure(
     detail: str,
     verification: dict[str, Any] | None = None,
 ) -> RunOutcome:
+    # Resolve per-stage retry budget from policy, falling back to the global max.
+    policy = _load_verifier_policy(repo_root)
+    global_max = int(state["max_stage_attempts"])
+    effective_max = _resolve_stage_max_retries(policy, stage_before, fallback=global_max)
+
     state["stage_attempt"] = int(state["stage_attempt"]) + 1
-    exhausted = state["stage_attempt"] >= int(state["max_stage_attempts"])
+    exhausted = state["stage_attempt"] >= effective_max
     if exhausted:
         state["stage"] = "human_review"
         agent_status = "failed"
-        message = f"{detail}; retry budget exhausted ({state['stage_attempt']}/{state['max_stage_attempts']}), escalating to human_review"
+        message = f"{detail}; retry budget exhausted ({state['stage_attempt']}/{effective_max}), escalating to human_review"
+        # Write escalation packet for diagnostics / human review.
+        history = state.get("history", [])
+        recent_history: list[str] = []
+        if isinstance(history, list):
+            for entry in history[-3:]:
+                if isinstance(entry, dict):
+                    recent_history.append(
+                        f"{entry.get('stage_before', '?')} -> {entry.get('stage_after', '?')}: "
+                        f"{entry.get('summary', '')}"
+                    )
+                else:
+                    recent_history.append(str(entry))
+        escalation_packet: dict[str, Any] = {
+            "escalated_at": _utc_now(),
+            "stage": stage_before,
+            "stage_attempt": int(state["stage_attempt"]),
+            "max_retries": effective_max,
+            "last_failures": [detail],
+            "history": recent_history,
+        }
+        try:
+            _write_json(repo_root / ".autolab" / "escalation_packet.json", escalation_packet)
+        except Exception:
+            pass
     else:
         agent_status = "needs_retry"
         message = (
             f"{detail}; retrying stage {stage_before} "
-            f"({state['stage_attempt']}/{state['max_stage_attempts']})"
+            f"({state['stage_attempt']}/{effective_max})"
         )
     _append_state_history(
         state,
@@ -361,7 +411,7 @@ def _run_once_standard(
             if selected_decision is not None:
                 decision_source = "auto_todo"
         if selected_decision is None and auto_decision:
-            metrics_suggestion = _suggest_decision_from_metrics(repo_root, state)
+            metrics_suggestion, _metrics_evidence = _suggest_decision_from_metrics(repo_root, state)
             if metrics_suggestion is not None:
                 selected_decision = metrics_suggestion
                 decision_source = "auto_metrics"
@@ -479,6 +529,18 @@ def _run_once_standard(
                 selected_decision = guardrails.on_breach
                 same_decision_streak = 0
                 no_progress_decisions = 0
+                _write_guardrail_breach(
+                    repo_root,
+                    rule="same_decision_streak" if same_decision_streak > guardrails.max_same_decision_streak else "no_progress",
+                    counters={
+                        "same_decision_streak": same_decision_streak,
+                        "max_same_decision_streak": guardrails.max_same_decision_streak,
+                        "no_progress_decisions": no_progress_decisions,
+                        "max_no_progress_decisions": guardrails.max_no_progress_decisions,
+                    },
+                    stage="decide_repeat",
+                    remediation=f"Escalated to '{guardrails.on_breach}'. Review experiment progress and consider manual intervention.",
+                )
 
         repeat_guard["last_decision"] = selected_decision
         repeat_guard["same_decision_streak"] = same_decision_streak
@@ -513,6 +575,32 @@ def _run_once_standard(
             )
         except Exception:
             pass
+        if auto_selected:
+            try:
+                _iter_dir, _iter_type = _resolve_iteration_directory(
+                    repo_root,
+                    iteration_id=str(state.get("iteration_id", "")).strip(),
+                    experiment_id=str(state.get("experiment_id", "")).strip(),
+                    require_exists=False,
+                )
+                _write_json(
+                    _iter_dir / "decision_result.json",
+                    {
+                        "schema_version": "1.0",
+                        "decision": selected_decision,
+                        "rationale": f"Auto-selected via {decision_source}",
+                        "evidence": [
+                            {
+                                "source": decision_source,
+                                "pointer": str(repo_root / ".autolab" / "decision_trace.json"),
+                                "summary": f"Decision '{selected_decision}' auto-selected by {decision_source} policy",
+                            }
+                        ],
+                        "risks": [],
+                    },
+                )
+            except Exception:
+                pass
         message = f"decision applied: decide_repeat -> {selected_decision}"
         if auto_selected:
             _source_labels = {
@@ -719,15 +807,33 @@ def _run_once_standard(
                 f"update_docs cycle limit exceeded ({update_docs_cycle_count}/{guardrails.max_update_docs_cycles}) "
                 f"— escalating to '{guardrails.on_breach}'."
             )
+            _write_guardrail_breach(
+                repo_root,
+                rule="update_docs_cycle",
+                counters={
+                    "update_docs_cycle_count": update_docs_cycle_count,
+                    "max_update_docs_cycles": int(guardrails.max_update_docs_cycles),
+                },
+                stage="extract_results",
+                remediation=f"Escalated to '{guardrails.on_breach}'. The extract_results -> update_docs cycle has repeated too many times.",
+            )
 
     if not guardrail_stage_override:
         state["stage"] = next_stage
+        # Resolve per-stage retry budget for the implementation review cycle.
+        _transition_policy = _load_verifier_policy(repo_root)
+        _transition_stage_max = _resolve_stage_max_retries(
+            _transition_policy,
+            next_stage,
+            fallback=int(state["max_stage_attempts"]),
+        )
         new_attempt, override_stage, override_summary = _compute_next_stage_attempt(
             stage_before=stage_before,
             next_stage=next_stage,
             prior_attempt=int(state["stage_attempt"]),
             max_stage_attempts=int(state["max_stage_attempts"]),
             needs_retry=eval_result.needs_retry,
+            stage_max_retries=_transition_stage_max,
         )
         state["stage_attempt"] = new_attempt
         if override_stage is not None:

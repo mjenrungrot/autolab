@@ -21,6 +21,7 @@ from autolab.constants import (
 )
 from autolab.config import _load_verifier_policy, _resolve_policy_python_bin
 from autolab.models import RenderedPromptBundle, StageCheckError
+from autolab.registry import load_registry, registry_prompt_files, registry_required_tokens
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
@@ -38,7 +39,9 @@ from autolab.utils import (
 
 
 def _resolve_stage_prompt_path(repo_root: Path, stage: str) -> Path:
-    prompt_name = STAGE_PROMPT_FILES.get(stage)
+    registry = load_registry(repo_root)
+    reg_prompt_files = registry_prompt_files(registry) if registry else {}
+    prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage)
     if prompt_name is None:
         raise StageCheckError(f"no stage prompt mapping is defined for '{stage}'")
     candidate = repo_root / ".autolab" / "prompts" / prompt_name
@@ -349,14 +352,14 @@ def _target_comparison_text(
 def _suggest_decision_from_metrics(
     repo_root: Path,
     state: dict[str, Any],
-) -> str | None:
+) -> tuple[str | None, dict]:
     """Suggest a decide_repeat decision based on metrics vs target comparison.
 
-    Returns one of 'stop', 'design', or None if evidence is insufficient.
+    Returns (decision, evidence_record) where decision is 'stop', 'design', or None.
     """
     iteration_id = str(state.get("iteration_id", "")).strip()
     if not iteration_id:
-        return None
+        return (None, {})
     iteration_dir, _type = _resolve_iteration_directory(
         repo_root,
         iteration_id=iteration_id,
@@ -365,10 +368,10 @@ def _suggest_decision_from_metrics(
     )
     run_id = str(state.get("last_run_id", "")).strip()
     if not run_id:
-        return None
+        return (None, {})
     metrics_payload = _load_metrics_payload(iteration_dir, run_id)
     if not isinstance(metrics_payload, dict):
-        return None
+        return (None, {})
     hypothesis_text = _safe_read_text(iteration_dir / "hypothesis.md", max_chars=12000)
     hypothesis_target_delta = _extract_hypothesis_target_delta(hypothesis_text)
     design_target_delta = _extract_design_target_delta(iteration_dir)
@@ -380,11 +383,19 @@ def _suggest_decision_from_metrics(
         run_id=run_id,
         metric_mode=metric_mode,
     )
+    evidence = {
+        "comparison": _comparison,
+        "suggestion": suggestion,
+        "hypothesis_target_delta": hypothesis_target_delta,
+        "design_target_delta": design_target_delta,
+        "metric_mode": metric_mode,
+        "run_id": run_id,
+    }
     if "stop" in suggestion:
-        return "stop"
+        return ("stop", evidence)
     if "design" in suggestion:
-        return "design"
-    return None
+        return ("design", evidence)
+    return (None, evidence)
 
 
 def _build_prompt_context(
@@ -396,6 +407,8 @@ def _build_prompt_context(
 ) -> dict[str, Any]:
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
+    if not experiment_id:
+        _append_log(repo_root, f"warning: experiment_id is empty for stage '{stage}'; prompt tokens referencing experiment_id will be blank")
     policy = _load_verifier_policy(repo_root)
     python_bin = _resolve_policy_python_bin(policy)
     total_memory_gb = _detect_total_memory_gb()
@@ -449,6 +462,13 @@ def _build_prompt_context(
             run_id=run_id,
             metric_mode=metric_mode,
         )
+
+    auto_metrics_evidence_record: dict = {}
+    if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
+        try:
+            _auto_decision, auto_metrics_evidence_record = _suggest_decision_from_metrics(repo_root, state)
+        except Exception:
+            pass
 
     todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")
     agent_result_payload = _load_json_if_exists(repo_root / ".autolab" / "agent_result.json")
@@ -530,6 +550,27 @@ def _build_prompt_context(
     if agent_result_payload is None:
         agent_result_payload = {"note": "unavailable: .autolab/agent_result.json is missing or unreadable"}
 
+    task_context_text = ""
+    if str(state.get("assistant_mode", "")).strip().lower() == "on":
+        current_task_id = str(state.get("current_task_id", "")).strip()
+        if current_task_id:
+            try:
+                todo_path = repo_root / ".autolab" / "todo_state.json"
+                if todo_path.exists():
+                    todo_state = json.loads(todo_path.read_text(encoding="utf-8"))
+                    tasks = todo_state.get("tasks", {})
+                    if isinstance(tasks, dict):
+                        task = tasks.get(current_task_id)
+                        if isinstance(task, dict):
+                            parts = [f"task_id: {current_task_id}"]
+                            for field in ("title", "description", "acceptance_criteria", "text", "stage", "task_class"):
+                                val = str(task.get(field, "")).strip()
+                                if val:
+                                    parts.append(f"{field}: {val}")
+                            task_context_text = "\n".join(parts)
+            except Exception:
+                pass
+
     scope_payload = runner_scope if isinstance(runner_scope, dict) else {}
     return {
         "generated_at": _utc_now(),
@@ -555,9 +596,11 @@ def _build_prompt_context(
         "metrics_summary": metrics_summary,
         "target_comparison": target_comparison,
         "decision_suggestion": decision_suggestion,
+        "auto_metrics_evidence": auto_metrics_evidence_record,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,
+        "task_context": task_context_text,
     }
 
 
@@ -574,7 +617,7 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
     return {
         "iteration_id": _to_text(context.get("iteration_id"), "iteration_id"),
         "iteration_path": _to_text(context.get("iteration_path"), "iteration_path"),
-        "experiment_id": _to_text(context.get("experiment_id"), "experiment_id"),
+        "experiment_id": context.get("experiment_id", "").strip() if isinstance(context.get("experiment_id"), str) else "",
         "paper_targets": _to_text(context.get("paper_targets"), "paper_targets"),
         "python_bin": _to_text(context.get("python_bin"), "python_bin"),
         "recommended_memory_estimate": _to_text(
@@ -593,7 +636,9 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "metrics_summary": _to_text(context.get("metrics_summary"), "metrics_summary"),
         "target_comparison": _to_text(context.get("target_comparison"), "target_comparison"),
         "decision_suggestion": _to_text(context.get("decision_suggestion"), "decision_suggestion"),
+        "auto_metrics_evidence": _to_text(context.get("auto_metrics_evidence"), "auto_metrics_evidence"),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
+        "task_context": context.get("task_context", ""),
     }
 
 
@@ -702,7 +747,9 @@ def _render_stage_prompt(
             f"prompt template has unsupported token(s) for stage '{stage}': {', '.join(unsupported_tokens)}"
         )
 
-    required_tokens = PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
+    registry = load_registry(repo_root)
+    reg_required = registry_required_tokens(registry) if registry else {}
+    required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
     required_values = {
         token: str(context_payload.get(token, "")).strip()
         for token in required_tokens

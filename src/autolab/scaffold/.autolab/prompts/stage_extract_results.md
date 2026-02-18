@@ -58,6 +58,14 @@ Convert run artifacts into structured outputs:
 - All of `iteration_id`, `run_id`, `status`, `primary_metric` are **required** top-level fields.
 - For failed runs where metrics are unavailable, use `status: "failed"` and set `value`/`delta_vs_baseline` to `0` (or `null` if nullable metrics policy is enabled).
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| schema_checks | `metrics.json` schema validation | Ensure `primary_metric.value` is a number, `status` is valid enum |
+| env_smoke | `run_health.py` + `result_sanity.py` checks | Fix environment or metric consistency issues |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
@@ -83,6 +91,8 @@ Convert run artifacts into structured outputs:
 }
 ```
 
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
+
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
 
@@ -92,6 +102,13 @@ Convert run artifacts into structured outputs:
 - [ ] `metrics.json` includes non-placeholder `iteration_id` and `run_id`.
 - [ ] `analysis/summary.md` includes run context and interpretation.
 - [ ] Missing tables/figures are explicitly marked `not available` with rationale.
+
+## EVIDENCE POINTERS
+When extracting metrics, reference specific artifacts with `{path, what_it_proves}`:
+- `{{iteration_path}}/runs/{{run_id}}/run_manifest.json` -- proves run executed and sync status
+- `{{iteration_path}}/runs/{{run_id}}/` -- contains raw run outputs, logs, and checkpoints
+- `{{iteration_path}}/design.yaml` -- proves expected metrics and success criteria
+- `{{iteration_path}}/hypothesis.md` -- proves target delta and metric definition
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, fix extraction outputs and rerun from the verification ritual.

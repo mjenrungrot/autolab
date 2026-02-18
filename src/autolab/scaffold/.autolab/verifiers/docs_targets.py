@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -104,10 +105,19 @@ def _validate_docs_update(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    args = parser.parse_args()
+
     try:
         state = _load_state()
     except Exception as exc:
-        print(f"docs_targets: ERROR {exc}")
+        if args.json:
+            import json as _json
+            envelope = {"status": "fail", "verifier": "docs_targets", "stage": "", "checks": [], "errors": [str(exc)]}
+            print(_json.dumps(envelope))
+        else:
+            print(f"docs_targets: ERROR {exc}")
         return 1
 
     stage = str(state.get("stage", "")).strip()
@@ -116,7 +126,12 @@ def main() -> int:
     targets = _iter_targets(state.get("paper_targets"))
 
     if stage != "update_docs":
-        print("docs_targets: PASS")
+        if args.json:
+            import json as _json
+            envelope = {"status": "pass", "verifier": "docs_targets", "stage": stage, "checks": [{"name": "docs_targets", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
+            print(_json.dumps(envelope))
+        else:
+            print("docs_targets: PASS")
         return 0
 
     iteration_dir = _resolve_iteration_dir(iteration_id)
@@ -128,26 +143,43 @@ def main() -> int:
             REPO_ROOT / "paper" / "ralph.md",
         ]
 
+    failures: list[str] = []
     for path in targets:
         if not path.exists():
+            failures.append(f"{path} is missing")
+
+    if not failures:
+        failures = _validate_docs_update(
+            docs_update_path,
+            iteration_id=iteration_id,
+            run_id=run_id,
+            targets=targets,
+        )
+
+    passed = not failures
+
+    if args.json:
+        import json as _json
+        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+        if passed:
+            checks = [{"name": "docs_targets", "status": "pass", "detail": "all docs target checks passed"}]
+        envelope = {
+            "status": "pass" if passed else "fail",
+            "verifier": "docs_targets",
+            "stage": stage,
+            "checks": checks,
+            "errors": failures,
+        }
+        print(_json.dumps(envelope))
+    else:
+        if failures:
             print("docs_targets: FAIL")
-            print(f"{path} is missing")
-            return 1
+            for reason in failures:
+                print(reason)
+        else:
+            print("docs_targets: PASS")
 
-    failures = _validate_docs_update(
-        docs_update_path,
-        iteration_id=iteration_id,
-        run_id=run_id,
-        targets=targets,
-    )
-    if failures:
-        print("docs_targets: FAIL")
-        for reason in failures:
-            print(reason)
-        return 1
-
-    print("docs_targets: PASS")
-    return 0
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

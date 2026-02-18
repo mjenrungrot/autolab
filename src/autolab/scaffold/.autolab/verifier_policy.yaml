@@ -126,6 +126,21 @@ schema_validation:
   strict_additional_properties: true
 
 # ---------------------------------------------------------------------------
+# Per-stage retry policy
+# ---------------------------------------------------------------------------
+# Controls how many retries each stage gets before escalating to human_review.
+# Falls back to state.max_stage_attempts when a stage is not listed here.
+retry_policy_by_stage:
+  hypothesis: {max_retries: 3}
+  design: {max_retries: 3}
+  implementation: {max_retries: 5}
+  implementation_review: {max_retries: 5}
+  launch: {max_retries: 3}
+  extract_results: {max_retries: 3}
+  update_docs: {max_retries: 3}
+  decide_repeat: {max_retries: 3}
+
+# ---------------------------------------------------------------------------
 # Agent runner configuration
 # ---------------------------------------------------------------------------
 agent_runner:
@@ -197,3 +212,13 @@ autorun:
       stage: "hypothesis"
       scope: "policy:no_task_fallback:slurm"
       text: "No remaining actionable tasks were detected on remote SLURM execution context. Define a new experiment or analysis direction first, then plan implementation improvements only after that experiment/analysis path is explicit."
+
+# ---------------------------------------------------------------------------
+# Protected files denylist
+# ---------------------------------------------------------------------------
+# Paths listed here are forbidden from modification by the agent runner.
+# If any of these files are changed during a runner execution, the stage
+# check will fail immediately.
+protected_files:
+  - ".autolab/state.json"
+  - ".autolab/verifier_policy.yaml"

@@ -258,14 +258,18 @@ def _setup_metrics_repo(
 
 def test_suggest_decision_from_metrics_returns_stop_when_target_met(tmp_path: Path) -> None:
     repo, state = _setup_metrics_repo(tmp_path, hypothesis_target_delta="5.0", metrics_delta=6.0)
-    result = _suggest_decision_from_metrics(repo, state)
+    result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "stop"
+    assert isinstance(evidence, dict)
+    assert "comparison" in evidence
 
 
 def test_suggest_decision_from_metrics_returns_design_when_target_not_met(tmp_path: Path) -> None:
     repo, state = _setup_metrics_repo(tmp_path, hypothesis_target_delta="10.0", metrics_delta=6.0)
-    result = _suggest_decision_from_metrics(repo, state)
+    result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "design"
+    assert isinstance(evidence, dict)
+    assert "comparison" in evidence
 
 
 # ---------------------------------------------------------------------------
@@ -313,5 +317,7 @@ def test_suggest_decision_from_metrics_minimize_mode(tmp_path: Path) -> None:
     repo, state = _setup_metrics_repo(
         tmp_path, hypothesis_target_delta="-2.0", metrics_delta=-3.0, metric_mode="minimize",
     )
-    result = _suggest_decision_from_metrics(repo, state)
+    result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "stop"
+    assert isinstance(evidence, dict)
+    assert evidence.get("metric_mode") == "minimize"

@@ -60,6 +60,16 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 - `status` enum is `pass|skip|fail` for individual checks and `pass|needs_retry|failed` for overall status.
 - When overall `status` is `pass`, all policy-required checks must individually be `pass`.
 
+## VERIFIER MAPPING
+| Verifier | What it checks | Common failure fix |
+|----------|---------------|-------------------|
+| dry_run | Executes `dry_run_command` from policy | Fix dry-run failures before marking review as pass |
+| schema_checks | `review_result.json` schema validation | Ensure all 5 required_checks keys present with valid status values |
+| env_smoke | `run_health.py` + `result_sanity.py` checks | Fix environment or result consistency issues |
+| docs_target_update | `docs_targets.py` paper target checks | Update configured paper targets or provide no-change rationale |
+| template_fill | Placeholder detection, artifact existence | Replace all `{{...}}`, `TODO`, `TBD` with real content |
+| prompt_lint | Prompt template token resolution | Ensure all prompt tokens resolve to non-empty values |
+
 ## STEPS
 1. Validate implementation against design and launch constraints.
 2. Read policy-required checks and map each to `pass|skip|fail` with evidence.
@@ -84,6 +94,8 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 }
 ```
 
+> **Note**: Delete unused headings rather than leaving them with placeholder content.
+
 ## FILE LENGTH BUDGET
 {{shared:line_limits.md}}
 
@@ -92,6 +104,13 @@ under `.autolab/verifier_policy.yaml -> requirements_by_stage.implementation_rev
 - [ ] `review_result.json` contains all required keys and required check entries.
 - [ ] `required_checks` values are only `pass|skip|fail`.
 - [ ] `status=pass` is only used when policy-required checks are `pass`.
+
+## EVIDENCE POINTERS
+When writing findings, reference specific artifacts with `{path, what_it_proves}`:
+- `{{iteration_path}}/design.yaml` -- proves implementation aligns with design spec
+- `{{iteration_path}}/implementation_plan.md` -- proves files changed and verifier outcomes
+- `{{iteration_path}}/runs/*/` -- proves dry-run or test execution evidence
+- `.autolab/verifier_policy.yaml` -- proves which checks are policy-required
 
 ## FAILURE / RETRY BEHAVIOR
 - If any verification step fails, set `status: needs_retry` with actionable findings and rerun from the verification ritual.

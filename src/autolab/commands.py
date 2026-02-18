@@ -4,10 +4,17 @@ import argparse
 import importlib.resources as importlib_resources
 import json
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+try:
+    import yaml as _yaml_mod
+except Exception:
+    _yaml_mod = None
 
 from autolab.constants import (
     ACTIVE_STAGES,
@@ -22,7 +29,13 @@ from autolab.constants import (
     TERMINAL_STAGES,
 )
 from autolab.models import RunOutcome, StateError
-from autolab.config import _resolve_run_agent_mode
+from autolab.config import (
+    _load_guardrail_config,
+    _load_meaningful_change_config,
+    _load_verifier_policy,
+    _resolve_policy_python_bin,
+    _resolve_run_agent_mode,
+)
 from autolab.run_standard import _run_once_standard
 from autolab.run_assistant import _run_once_assistant
 from autolab.state import (
@@ -31,13 +44,16 @@ from autolab.state import (
     _bootstrap_iteration_id,
     _default_agent_result,
     _default_state,
+    _find_backlog_experiment_entry,
     _force_break_lock,
     _heartbeat_lock,
     _inspect_lock,
+    _load_backlog_yaml,
     _load_state,
     _mark_backlog_experiment_completed,
     _normalize_state,
     _parse_iteration_from_backlog,
+    _read_lock_payload,
     _release_lock,
     _resolve_autolab_dir,
     _resolve_repo_root,
@@ -51,6 +67,7 @@ from autolab.utils import (
     _collect_change_snapshot,
     _ensure_json_file,
     _ensure_text_file,
+    _load_json_if_exists,
     _outcome_payload,
     _persist_agent_result,
     _prepare_standard_commit_outcome,
@@ -216,6 +233,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"autolab status: ERROR {exc}", file=sys.stderr)
         return 1
 
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+
     print("autolab status")
     print(f"state_file: {state_path}")
     for key in (
@@ -243,7 +263,260 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print("\n*** HUMAN REVIEW REQUIRED ***")
         print("Run `autolab review --status=pass|retry|stop` to record your decision.")
 
+    # --- Lock status ---
+    lock_path = autolab_dir / "lock"
+    if lock_path.exists():
+        lock_payload = _read_lock_payload(lock_path)
+        if lock_payload:
+            lock_pid = lock_payload.get("pid", "<unknown>")
+            lock_started = lock_payload.get("started_at", "<unknown>")
+            from datetime import datetime, timedelta, timezone
+            heartbeat_raw = lock_payload.get("last_heartbeat_at", "")
+            from autolab.utils import _parse_utc
+            heartbeat_dt = _parse_utc(str(heartbeat_raw))
+            now = datetime.now(timezone.utc)
+            if heartbeat_dt is not None and (now - heartbeat_dt).total_seconds() > LOCK_STALE_SECONDS:
+                print("lock: stale")
+            else:
+                print(f"lock: held by PID {lock_pid} since {lock_started}")
+        else:
+            print("lock: stale")
+    else:
+        print("lock: free")
+
+    # --- Last verification result ---
+    verification_result_path = autolab_dir / "verification_result.json"
+    vr_payload = _load_json_if_exists(verification_result_path)
+    if isinstance(vr_payload, dict):
+        vr_passed = "passed" if vr_payload.get("passed") else "failed"
+        vr_generated_at = vr_payload.get("generated_at", "<unknown>")
+        print(f"last_verification: {vr_passed} at {vr_generated_at}")
+
+    # --- Last 3 history entries ---
+    history = state.get("history")
+    if isinstance(history, list) and history:
+        print("recent_history:")
+        for entry in history[-3:]:
+            if not isinstance(entry, dict):
+                continue
+            ts = entry.get("timestamp_utc", "")
+            sb = entry.get("stage_before", "")
+            sa = entry.get("stage_after", "")
+            status = entry.get("status", "")
+            summary = entry.get("summary", "")
+            # One-liner summary
+            print(f"  {ts} {sb}->{sa} [{status}] {summary}")
+
+    # --- Open todo count ---
+    todo_state_path = autolab_dir / "todo_state.json"
+    if todo_state_path.exists():
+        open_count = _todo_open_count(repo_root)
+        print(f"open_tasks: {open_count}")
+
+    # --- Experiment completion ---
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    backlog_path = autolab_dir / "backlog.yaml"
+    backlog_payload, _backlog_err = _load_backlog_yaml(backlog_path)
+    if backlog_payload is not None:
+        entry, _entry_err = _find_backlog_experiment_entry(
+            backlog_payload,
+            experiment_id=experiment_id,
+            iteration_id=iteration_id,
+        )
+        if entry is not None:
+            exp_status = str(entry.get("status", "<unknown>")).strip()
+            print(f"experiment_status: {exp_status}")
+
     return 0
+
+
+def _cmd_guardrails(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+
+    try:
+        state = _load_state(state_path)
+    except RuntimeError as exc:
+        print(f"autolab guardrails: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        guardrail_cfg = _load_guardrail_config(repo_root)
+    except Exception as exc:
+        print(f"autolab guardrails: ERROR loading guardrail config: {exc}", file=sys.stderr)
+        return 1
+
+    repeat_guard = state.get("repeat_guard", {})
+    if not isinstance(repeat_guard, dict):
+        repeat_guard = {}
+
+    print("autolab guardrails")
+    print(f"state_file: {state_path}")
+    print(f"on_breach: {guardrail_cfg.on_breach}")
+    print("")
+
+    # Define the counter/threshold pairs
+    counters = [
+        (
+            "same_decision_streak",
+            int(repeat_guard.get("same_decision_streak", 0)),
+            guardrail_cfg.max_same_decision_streak,
+        ),
+        (
+            "no_progress_decisions",
+            int(repeat_guard.get("no_progress_decisions", 0)),
+            guardrail_cfg.max_no_progress_decisions,
+        ),
+        (
+            "update_docs_cycle_count",
+            int(repeat_guard.get("update_docs_cycle_count", 0)),
+            guardrail_cfg.max_update_docs_cycles,
+        ),
+    ]
+
+    print("guardrail counters:")
+    for name, current, threshold in counters:
+        distance = threshold - current
+        breach_marker = " [BREACHED]" if distance <= 0 else ""
+        print(f"  {name}: {current}/{threshold} (distance: {distance}){breach_marker}")
+
+    print(f"  max_generated_todo_tasks: {guardrail_cfg.max_generated_todo_tasks}")
+
+    # Additional repeat_guard state
+    last_decision = str(repeat_guard.get("last_decision", "")).strip()
+    last_verification = repeat_guard.get("last_verification_passed", False)
+    print("")
+    print(f"last_decision: {last_decision or '<none>'}")
+    print(f"last_verification_passed: {last_verification}")
+
+    # Show meaningful-change config if available
+    try:
+        meaningful_cfg = _load_meaningful_change_config(repo_root)
+        print("")
+        print("meaningful_change config:")
+        print(f"  require_verification: {meaningful_cfg.require_verification}")
+        print(f"  require_implementation_progress: {meaningful_cfg.require_implementation_progress}")
+        print(f"  require_git_for_progress: {meaningful_cfg.require_git_for_progress}")
+        print(f"  on_non_git_behavior: {meaningful_cfg.on_non_git_behavior}")
+        print(f"  exclude_paths: {list(meaningful_cfg.exclude_paths)}")
+    except Exception:
+        pass
+
+    return 0
+
+
+def _cmd_configure(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    check_only = bool(args.check)
+
+    print("autolab configure")
+    print(f"state_file: {state_path}")
+    print(f"check_only: {check_only}")
+    print("")
+
+    all_pass = True
+    has_warn = False
+
+    # 1. Check .autolab/ directory exists
+    if autolab_dir.exists() and autolab_dir.is_dir():
+        print(f"  [PASS] .autolab directory: {autolab_dir}")
+    else:
+        print(f"  [FAIL] .autolab directory: not found at {autolab_dir}")
+        print("         Run `autolab init` to create the project scaffold.")
+        all_pass = False
+
+    # 2. Check verifier_policy.yaml exists and is valid YAML
+    policy_path = autolab_dir / "verifier_policy.yaml"
+    policy: dict[str, Any] = {}
+    if policy_path.exists():
+        if _yaml_mod is not None:
+            try:
+                loaded = _yaml_mod.safe_load(policy_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    policy = loaded
+                    print(f"  [PASS] verifier_policy.yaml: valid ({policy_path})")
+                else:
+                    print(f"  [FAIL] verifier_policy.yaml: not a valid YAML mapping ({policy_path})")
+                    all_pass = False
+            except Exception as exc:
+                print(f"  [FAIL] verifier_policy.yaml: parse error: {exc}")
+                all_pass = False
+        else:
+            print(f"  [WARN] verifier_policy.yaml: exists but PyYAML is not installed; cannot validate")
+            has_warn = True
+    else:
+        print(f"  [FAIL] verifier_policy.yaml: not found at {policy_path}")
+        all_pass = False
+
+    # 3. Check python_bin is resolvable
+    python_bin = _resolve_policy_python_bin(policy)
+    try:
+        proc = subprocess.run(
+            [python_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            version = proc.stdout.strip() or proc.stderr.strip()
+            print(f"  [PASS] python_bin: {python_bin} ({version})")
+        else:
+            print(f"  [FAIL] python_bin: {python_bin} exited with code {proc.returncode}")
+            all_pass = False
+    except FileNotFoundError:
+        print(f"  [FAIL] python_bin: {python_bin} not found on PATH")
+        all_pass = False
+    except subprocess.TimeoutExpired:
+        print(f"  [FAIL] python_bin: {python_bin} timed out")
+        all_pass = False
+    except Exception as exc:
+        print(f"  [FAIL] python_bin: {python_bin} error: {exc}")
+        all_pass = False
+
+    # 4. Check test_command is configured
+    test_command = str(policy.get("test_command", "")).strip()
+    if test_command:
+        print(f"  [PASS] test_command: {test_command}")
+    else:
+        print("  [WARN] test_command: not configured")
+        has_warn = True
+
+    # 5. Check dry_run_command is configured
+    dry_run_command = str(policy.get("dry_run_command", "")).strip()
+    if dry_run_command:
+        # Check if it is the default stub that always fails
+        if "AUTOLAB DRY-RUN STUB" in dry_run_command:
+            print("  [WARN] dry_run_command: using default stub (will fail until customized)")
+            has_warn = True
+        else:
+            print(f"  [PASS] dry_run_command: {dry_run_command}")
+    else:
+        print("  [WARN] dry_run_command: not configured")
+        has_warn = True
+
+    # Summary
+    print("")
+    if all_pass and not has_warn:
+        print("summary: all checks passed")
+    elif all_pass and has_warn:
+        print("summary: passed with warnings")
+    else:
+        print("summary: some checks failed")
+
+    # Offer to write missing defaults if not --check
+    if not check_only and not all_pass:
+        if not autolab_dir.exists():
+            print("\nTo create the .autolab scaffold, run: autolab init")
+        if not policy_path.exists() and autolab_dir.exists():
+            print(f"\nWriting default verifier_policy.yaml to {policy_path}")
+            policy_path.parent.mkdir(parents=True, exist_ok=True)
+            policy_path.write_text(DEFAULT_VERIFIER_POLICY, encoding="utf-8")
+            print("  written: verifier_policy.yaml (default)")
+
+    return 0 if all_pass else 1
 
 
 def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
@@ -966,6 +1239,120 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Verify golden iteration (self-test against bundled fixtures)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_verify_golden(args: argparse.Namespace) -> int:
+    """Run verifiers against bundled golden iteration fixtures.
+
+    Creates a temporary directory, copies the scaffold and golden iteration
+    fixtures into it, then runs ``autolab verify --stage <stage>`` for every
+    active stage plus ``decide_repeat``.  Reports pass/fail for each stage
+    and returns 0 if all pass, 1 if any fail.
+    """
+    # Locate golden iteration examples relative to the autolab package source.
+    package_dir = Path(__file__).resolve().parent
+    golden_root = package_dir.parent.parent / "examples" / "golden_iteration"
+    scaffold_source = package_dir / "scaffold" / ".autolab"
+
+    if not golden_root.exists():
+        print(
+            f"autolab verify-golden: ERROR golden iteration fixtures not found at {golden_root}",
+            file=sys.stderr,
+        )
+        return 1
+    if not scaffold_source.exists():
+        print(
+            f"autolab verify-golden: ERROR scaffold not found at {scaffold_source}",
+            file=sys.stderr,
+        )
+        return 1
+
+    stages = list(ACTIVE_STAGES) + ["decide_repeat"]
+    results: list[tuple[str, bool]] = []
+
+    with tempfile.TemporaryDirectory(prefix="autolab_verify_golden_") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+
+        # 1. Copy scaffold to .autolab/
+        target_autolab = repo / ".autolab"
+        shutil.copytree(scaffold_source, target_autolab, dirs_exist_ok=True)
+
+        # 2. Patch verifier_policy.yaml: replace python_bin with actual binary
+        #    and replace the dry-run stub so it passes.
+        policy_path = target_autolab / "verifier_policy.yaml"
+        policy_text = policy_path.read_text(encoding="utf-8")
+        policy_text = policy_text.replace(
+            'python_bin: "python3"', f'python_bin: "{sys.executable}"', 1
+        )
+        policy_text = policy_text.replace(
+            "import sys; print('autolab dry-run stub: configure dry_run_command in .autolab/verifier_policy.yaml'); sys.exit(1)",
+            "print('golden iteration dry-run: OK')",
+        )
+        policy_path.write_text(policy_text, encoding="utf-8")
+
+        # 3. Copy golden iteration experiments/ and paper/
+        shutil.copytree(
+            golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
+        )
+        shutil.copytree(
+            golden_root / "paper", repo / "paper", dirs_exist_ok=True
+        )
+
+        # 4. Copy golden iteration state.json and backlog.yaml
+        shutil.copy2(
+            golden_root / ".autolab" / "state.json",
+            target_autolab / "state.json",
+        )
+        shutil.copy2(
+            golden_root / ".autolab" / "backlog.yaml",
+            target_autolab / "backlog.yaml",
+        )
+
+        # 5. Write minimal agent_result.json
+        agent_result = {
+            "status": "complete",
+            "summary": "golden fixture",
+            "changed_files": [],
+            "completion_token_seen": True,
+        }
+        (target_autolab / "agent_result.json").write_text(
+            json.dumps(agent_result, indent=2), encoding="utf-8"
+        )
+
+        state_path = target_autolab / "state.json"
+
+        # 6. Run verify for each stage
+        print("autolab verify-golden")
+        for stage in stages:
+            exit_code = main(
+                ["verify", "--state-file", str(state_path), "--stage", stage]
+            )
+            passed = exit_code == 0
+            results.append((stage, passed))
+            status_label = "PASS" if passed else "FAIL"
+            print(f"  {stage}: {status_label}")
+
+    # 7. Print summary
+    total = len(results)
+    passed_count = sum(1 for _, ok in results if ok)
+    failed_count = total - passed_count
+    print("")
+    print(f"stages_total: {total}")
+    print(f"stages_passed: {passed_count}")
+    print(f"stages_failed: {failed_count}")
+    if failed_count > 0:
+        failed_stages = [name for name, ok in results if not ok]
+        print(f"failed: {', '.join(failed_stages)}")
+        print("autolab verify-golden: FAIL", file=sys.stderr)
+        return 1
+    print("autolab verify-golden: ALL PASSED")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -980,6 +1367,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     init.set_defaults(handler=_cmd_init)
+
+    configure_parser = subparsers.add_parser("configure", help="Validate and configure autolab settings")
+    configure_parser.add_argument("--check", action="store_true", help="Check configuration without modifying")
+    configure_parser.add_argument("--state-file", default=".autolab/state.json", help="Path to state file")
+    configure_parser.set_defaults(handler=_cmd_configure)
 
     reset = subparsers.add_parser("reset", help="Reset autolab scaffold and state to defaults")
     reset.add_argument(
@@ -1001,6 +1393,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override stage for verification command resolution (default: state.stage)",
     )
     verify.set_defaults(handler=_cmd_verify)
+
+    verify_golden = subparsers.add_parser(
+        "verify-golden",
+        help="Run verifiers against bundled golden iteration fixtures",
+    )
+    verify_golden.set_defaults(handler=_cmd_verify_golden)
 
     run = subparsers.add_parser("run", help="Run one deterministic stage transition")
     run.add_argument(
@@ -1132,6 +1530,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_cmd_status)
 
+    guardrails_parser = subparsers.add_parser("guardrails", help="Show guardrail counters and thresholds")
+    guardrails_parser.add_argument("--state-file", default=".autolab/state.json", help="Path to state file")
+    guardrails_parser.set_defaults(handler=_cmd_guardrails)
+
     sync_scaffold = subparsers.add_parser(
         "sync-scaffold",
         help="Sync bundled autolab scaffold files into the repository",
@@ -1216,6 +1618,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reason for breaking the lock (used in audit log)",
     )
     lock.set_defaults(handler=_cmd_lock)
+
+    # Unlock alias (delegates to lock break)
+    unlock = subparsers.add_parser("unlock", help="Force-break the autolab run lock (alias for 'lock break')")
+    unlock.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    unlock.add_argument(
+        "--reason",
+        default="manual break",
+        help="Reason for breaking the lock (used in audit log)",
+    )
+    unlock.set_defaults(handler=_cmd_lock, action="break")
 
     # Skip stage
     skip = subparsers.add_parser("skip", help="Skip the current stage forward with audit trail")
