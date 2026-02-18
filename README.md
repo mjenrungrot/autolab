@@ -35,6 +35,22 @@ autolab --help
 python -m autolab --help
 ```
 
+## Agent runner
+
+Autolab supports multiple agent runners via the `runner` field in `.autolab/verifier_policy.yaml`:
+
+```yaml
+agent_runner:
+  enabled: true
+  runner: claude  # Options: codex, claude, custom
+```
+
+- **codex** (default): Uses `codex exec` with sandboxed `--add-dir` flags.
+- **claude**: Uses Claude Code in non-interactive mode (`claude -p`). Operates from the repo root.
+- **custom**: Set `runner: custom` and provide your own `command:` template.
+
+When `runner` is set, the `command` field is auto-populated from the preset. You can still override `command` explicitly for any runner.
+
 ## Source layout
 
 - `src/autolab/`: Python package modules (`__main__`, `todo_sync`, `slurm_job_list`)

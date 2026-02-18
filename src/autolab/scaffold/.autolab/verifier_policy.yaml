@@ -25,7 +25,8 @@ template_fill_by_stage:
   update_docs: "./venv/bin/python .autolab/verifiers/template_fill.py --stage update_docs"
 agent_runner:
   enabled: false
-  command: "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -"
+  runner: codex  # Options: codex, claude, custom
+  # command is auto-set from runner preset; override with a custom command to use a different tool
   stages:
     - hypothesis
     - design
@@ -45,3 +46,22 @@ agent_runner:
       - "tests"
     ensure_iteration_dir: true
   timeout_seconds: 0
+autorun:
+  guardrails:
+    max_same_decision_streak: 3
+    max_no_progress_decisions: 2
+    max_update_docs_cycles: 3
+    max_generated_todo_tasks: 5
+    on_breach: "human_review"
+  auto_commit:
+    mode: "meaningful_only"
+  meaningful_change:
+    require_implementation_progress: true
+    require_git_for_progress: true
+    on_non_git_behavior: "warn_and_continue"
+    require_verification: true
+    exclude_paths:
+      - ".autolab/**"
+      - "docs/todo.md"
+      - "docs/wiki/**"
+      - "experiments/*/docs_update.md"

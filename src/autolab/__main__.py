@@ -99,6 +99,9 @@ autorun:
   auto_commit:
     mode: "meaningful_only"
   meaningful_change:
+    require_implementation_progress: true
+    require_git_for_progress: true
+    on_non_git_behavior: "warn_and_continue"
     require_verification: true
     exclude_paths:
       - ".autolab/**"
@@ -107,7 +110,7 @@ autorun:
       - "experiments/*/docs_update.md"
 agent_runner:
   enabled: true
-  command: "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -"
+  runner: codex  # Options: codex, claude, custom
   stages:
     - hypothesis
     - design
@@ -131,9 +134,14 @@ agent_runner:
 
 LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_MAX_HOURS = 8.0
+AGENT_RUNNER_PRESETS: dict[str, str] = {
+    "codex": "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
+    "claude": "cat {prompt_path} | env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -",
+}
+DEFAULT_AGENT_RUNNER_NAME = "codex"
 DEFAULT_AGENT_RUNNER_COMMAND = (
     # {prompt_path} resolves to rendered prompt content under .autolab/prompts/rendered/.
-    "cat {prompt_path} | codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -"
+    AGENT_RUNNER_PRESETS[DEFAULT_AGENT_RUNNER_NAME]
 )
 DEFAULT_AGENT_RUNNER_STAGES = tuple(ACTIVE_STAGES)
 DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS = 3600.0
@@ -205,6 +213,7 @@ class RunOutcome:
 
 @dataclass(frozen=True)
 class AgentRunnerConfig:
+    runner: str
     enabled: bool
     command: str
     stages: tuple[str, ...]
@@ -239,6 +248,9 @@ class GuardrailConfig:
 @dataclass(frozen=True)
 class MeaningfulChangeConfig:
     require_verification: bool
+    require_implementation_progress: bool
+    require_git_for_progress: bool
+    on_non_git_behavior: str
     exclude_paths: tuple[str, ...]
 
 
@@ -413,6 +425,11 @@ def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
         return subprocess.CompletedProcess(command, 127, "", f"git not found: {exc}")
     except OSError as exc:
         return subprocess.CompletedProcess(command, 1, "", str(exc))
+
+
+def _is_git_worktree(repo_root: Path) -> bool:
+    check = _run_git(repo_root, ["rev-parse", "--is-inside-work-tree"])
+    return check.returncode == 0 and check.stdout.strip() == "true"
 
 
 def _collect_staged_paths(repo_root: Path, scoped_paths: tuple[str, ...]) -> list[str]:
@@ -685,6 +702,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
     if yaml is None or not policy_path.exists():
         return AgentRunnerConfig(
+            runner=DEFAULT_AGENT_RUNNER_NAME,
             enabled=False,
             command=DEFAULT_AGENT_RUNNER_COMMAND,
             stages=DEFAULT_AGENT_RUNNER_STAGES,
@@ -699,6 +717,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
 
     if not isinstance(loaded, dict):
         return AgentRunnerConfig(
+            runner=DEFAULT_AGENT_RUNNER_NAME,
             enabled=False,
             command=DEFAULT_AGENT_RUNNER_COMMAND,
             stages=DEFAULT_AGENT_RUNNER_STAGES,
@@ -706,24 +725,36 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
         )
 
-    runner = loaded.get("agent_runner")
-    if runner is None:
+    runner_section = loaded.get("agent_runner")
+    if runner_section is None:
         return AgentRunnerConfig(
+            runner=DEFAULT_AGENT_RUNNER_NAME,
             enabled=False,
             command=DEFAULT_AGENT_RUNNER_COMMAND,
             stages=DEFAULT_AGENT_RUNNER_STAGES,
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
         )
-    if not isinstance(runner, dict):
+    if not isinstance(runner_section, dict):
         raise StageCheckError("agent_runner policy must be a mapping")
 
-    enabled = bool(runner.get("enabled", False))
-    command = str(runner.get("command", DEFAULT_AGENT_RUNNER_COMMAND)).strip()
+    runner_name = str(runner_section.get("runner", DEFAULT_AGENT_RUNNER_NAME)).strip()
+    valid_runners = set(AGENT_RUNNER_PRESETS) | {"custom"}
+    if runner_name not in valid_runners:
+        raise StageCheckError(
+            f"agent_runner.runner must be one of {sorted(valid_runners)}, got '{runner_name}'"
+        )
+
+    enabled = bool(runner_section.get("enabled", False))
+    raw_command = runner_section.get("command")
+    if raw_command is not None:
+        command = str(raw_command).strip()
+    else:
+        command = AGENT_RUNNER_PRESETS.get(runner_name, DEFAULT_AGENT_RUNNER_COMMAND)
     if enabled and not command:
         raise StageCheckError("agent_runner.command must be set when agent_runner.enabled is true")
 
-    raw_stages = runner.get("stages")
+    raw_stages = runner_section.get("stages")
     if raw_stages is None:
         stages = list(DEFAULT_AGENT_RUNNER_STAGES)
     else:
@@ -739,7 +770,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     if enabled and not stages:
         raise StageCheckError("agent_runner.stages must include at least one active stage")
 
-    raw_timeout = runner.get("timeout_seconds", DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS)
+    raw_timeout = runner_section.get("timeout_seconds", DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS)
     try:
         timeout_seconds = float(raw_timeout)
     except Exception as exc:
@@ -749,9 +780,10 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     if timeout_seconds == 0:
         timeout_seconds = DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS
 
-    edit_scope = _load_agent_runner_edit_scope(runner)
+    edit_scope = _load_agent_runner_edit_scope(runner_section)
 
     return AgentRunnerConfig(
+        runner=runner_name,
         enabled=enabled,
         command=command,
         stages=tuple(stages),
@@ -806,6 +838,15 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
     if not isinstance(meaningful, dict):
         meaningful = {}
     require_verification = bool(meaningful.get("require_verification", True))
+    require_implementation_progress = bool(
+        meaningful.get("require_implementation_progress", True)
+    )
+    require_git_for_progress = bool(meaningful.get("require_git_for_progress", True))
+    on_non_git_behavior = str(
+        meaningful.get("on_non_git_behavior", "warn_and_continue")
+    ).strip().lower()
+    if on_non_git_behavior not in {"warn_and_continue", "fail"}:
+        on_non_git_behavior = "warn_and_continue"
     raw_patterns = meaningful.get("exclude_paths", list(DEFAULT_MEANINGFUL_EXCLUDE_PATHS))
     patterns: list[str] = []
     if isinstance(raw_patterns, list):
@@ -815,7 +856,13 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
                 patterns.append(candidate)
     if not patterns:
         patterns = list(DEFAULT_MEANINGFUL_EXCLUDE_PATHS)
-    return MeaningfulChangeConfig(require_verification=require_verification, exclude_paths=tuple(patterns))
+    return MeaningfulChangeConfig(
+        require_verification=require_verification,
+        require_implementation_progress=require_implementation_progress,
+        require_git_for_progress=require_git_for_progress,
+        on_non_git_behavior=on_non_git_behavior,
+        exclude_paths=tuple(patterns),
+    )
 
 
 def _load_auto_commit_config(repo_root: Path) -> AutoCommitConfig:
@@ -951,12 +998,31 @@ def _evaluate_meaningful_change(
     return (bool(meaningful_paths), delta_paths, meaningful_paths, current_snapshot)
 
 
+def _meaningful_progress_detail(
+    *,
+    changed_paths: list[str],
+    meaningful_paths: list[str],
+    limit: int = 5,
+) -> str:
+    if not changed_paths:
+        return "no files changed"
+    if meaningful_paths:
+        sample = ", ".join(meaningful_paths[:limit])
+    else:
+        sample = ", ".join(changed_paths[:limit])
+    return (
+        f"changed_paths={len(changed_paths)}, meaningful_paths={len(meaningful_paths)} "
+        f"sample={sample}"
+    )
+
+
 def _prepare_standard_commit_outcome(
     repo_root: Path,
     outcome: RunOutcome,
     baseline_snapshot: dict[str, str],
     *,
     assistant: bool,
+    strict_implementation_progress: bool = True,
 ) -> RunOutcome:
     if assistant:
         return outcome
@@ -979,11 +1045,57 @@ def _prepare_standard_commit_outcome(
         )
 
     meaningful_config = _load_meaningful_change_config(repo_root)
-    meaningful, _delta_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
+    require_progress_gate = (
+        strict_implementation_progress
+        and meaningful_config.require_implementation_progress
+    )
+    non_git_check = bool(
+        meaningful_config.require_git_for_progress and not _is_git_worktree(repo_root)
+    )
+    meaningful, delta_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
         repo_root,
         meaningful_config,
         baseline_snapshot=baseline_snapshot,
     )
+
+    if require_progress_gate and non_git_check:
+        if meaningful_config.on_non_git_behavior == "warn_and_continue":
+            return RunOutcome(
+                exit_code=outcome.exit_code,
+                transitioned=outcome.transitioned,
+                stage_before=outcome.stage_before,
+                stage_after=outcome.stage_after,
+                message=outcome.message,
+                commit_allowed=True,
+                commit_task_id=outcome.commit_task_id,
+                commit_cycle_stage=outcome.commit_cycle_stage,
+                commit_paths=tuple(delta_paths),
+            )
+        return RunOutcome(
+            exit_code=outcome.exit_code,
+            transitioned=outcome.transitioned,
+            stage_before=outcome.stage_before,
+            stage_after=outcome.stage_after,
+            message=outcome.message,
+            commit_allowed=False,
+            commit_task_id=outcome.commit_task_id,
+            commit_cycle_stage=outcome.commit_cycle_stage,
+            commit_paths=(),
+        )
+
+    if not require_progress_gate:
+        return RunOutcome(
+            exit_code=outcome.exit_code,
+            transitioned=outcome.transitioned,
+            stage_before=outcome.stage_before,
+            stage_after=outcome.stage_after,
+            message=outcome.message,
+            commit_allowed=True,
+            commit_task_id=outcome.commit_task_id,
+            commit_cycle_stage=outcome.commit_cycle_stage,
+            commit_paths=tuple(delta_paths),
+        )
+
     if not meaningful:
         return RunOutcome(
             exit_code=outcome.exit_code,
@@ -1262,6 +1374,7 @@ def _build_core_add_dir_flags(
     repo_root: Path,
     *,
     edit_scope: AgentRunnerEditScopeConfig,
+    runner: str = DEFAULT_AGENT_RUNNER_NAME,
 ) -> tuple[str, tuple[Path, ...]]:
     if edit_scope.mode == "iteration_only":
         return ("", ())
@@ -1270,6 +1383,11 @@ def _build_core_add_dir_flags(
         repo_root,
         core_dirs=edit_scope.core_dirs,
     )
+
+    # Claude Code operates from repo root; scope is communicated via env vars + prompt.
+    if runner == "claude":
+        return ("", resolved_dirs)
+
     flags = " ".join(f"--add-dir {shlex.quote(str(path))}" for path in resolved_dirs)
     return (flags, resolved_dirs)
 
@@ -1795,6 +1913,7 @@ def _invoke_agent_runner(
     core_add_dirs, resolved_core_dirs = _build_core_add_dir_flags(
         repo_root,
         edit_scope=runner.edit_scope,
+        runner=runner.runner,
     )
     command = _substitute_runner_command(
         runner.command,
@@ -2990,20 +3109,58 @@ def _run_once_standard(
         and next_stage == "implementation_review"
     ):
         meaningful_config = _load_meaningful_change_config(repo_root)
-        implementation_progress, _delta_paths, _meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
-            repo_root,
-            meaningful_config,
-            baseline_snapshot=standard_baseline_snapshot,
-        )
-        if not implementation_progress:
-            return _handle_stage_failure(
+        if not meaningful_config.require_implementation_progress:
+            _append_log(
                 repo_root,
-                state_path=state_path,
-                state=state,
-                stage_before=stage_before,
-                pre_sync_changed=pre_sync_changed,
-                detail="implementation produced no meaningful target changes beyond excluded paths",
+                "implementation progress check skipped: require_implementation_progress=false",
             )
+        else:
+            non_git_required = bool(
+                meaningful_config.require_git_for_progress and not _is_git_worktree(repo_root)
+            )
+            if non_git_required:
+                if meaningful_config.on_non_git_behavior == "fail":
+                    _append_log(
+                        repo_root,
+                        "implementation progress check failed: git worktree required but unavailable",
+                    )
+                    return _handle_stage_failure(
+                        repo_root,
+                        state_path=state_path,
+                        state=state,
+                        stage_before=stage_before,
+                        pre_sync_changed=pre_sync_changed,
+                        detail=(
+                            "implementation progress check requires a git worktree; "
+                            "set meaningful_change.require_git_for_progress=false to continue"
+                        ),
+                    )
+                skip_message = (
+                    "implementation progress check skipped: repository is not a git worktree; "
+                    "continuing under policy"
+                )
+                _append_log(repo_root, skip_message)
+                summary = f"{summary}; {skip_message}"
+            else:
+                implementation_progress, delta_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
+                    repo_root,
+                    meaningful_config,
+                    baseline_snapshot=standard_baseline_snapshot,
+                )
+                if not implementation_progress:
+                    detail = (
+                        "implementation produced no meaningful target changes beyond excluded paths "
+                        f"({_meaningful_progress_detail(changed_paths=delta_paths, meaningful_paths=meaningful_paths)})"
+                    )
+                    _append_log(repo_root, f"implementation progress check failed: {detail}")
+                    return _handle_stage_failure(
+                        repo_root,
+                        state_path=state_path,
+                        state=state,
+                        stage_before=stage_before,
+                        pre_sync_changed=pre_sync_changed,
+                        detail=detail,
+                    )
 
     guardrail_stage_override = False
     if stage_before == "extract_results" and next_stage == "update_docs":
@@ -3405,6 +3562,7 @@ def _run_once(
     assistant: bool = False,
     auto_mode: bool = False,
     auto_decision: bool = False,
+    strict_implementation_progress: bool = True,
 ) -> RunOutcome:
     if assistant:
         return _run_once_assistant(state_path, run_agent_mode=run_agent_mode, auto_mode=auto_mode)
@@ -3414,7 +3572,7 @@ def _run_once(
         run_agent_mode=run_agent_mode,
         auto_decision=auto_decision,
         auto_mode=auto_mode,
-        strict_implementation_progress=True,
+        strict_implementation_progress=strict_implementation_progress,
     )
 
 
@@ -3551,12 +3709,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
         assistant=assistant_mode,
         auto_mode=False,
         auto_decision=bool(getattr(args, "auto_decision", False)),
+        strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
     )
     commit_outcome = _prepare_standard_commit_outcome(
         repo_root,
         outcome,
         baseline_snapshot,
         assistant=assistant_mode,
+        strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
     )
     commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
     print("autolab run")
@@ -3648,12 +3808,14 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 assistant=assistant_mode,
                 auto_mode=bool(args.auto),
                 auto_decision=auto_decision_enabled,
+                strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
             )
             commit_outcome = _prepare_standard_commit_outcome(
                 repo_root,
                 outcome,
                 baseline_snapshot,
                 assistant=assistant_mode,
+                strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
             )
             commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
             if "escalating to human_review" in outcome.message:
@@ -3778,6 +3940,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow decide_repeat to auto-select from todo/backlog when --decision is not provided.",
     )
+    run.add_argument(
+        "--strict-implementation-progress",
+        dest="strict_implementation_progress",
+        action="store_true",
+        help="Require meaningful implementation progress checks (default).",
+    )
+    run.add_argument(
+        "--no-strict-implementation-progress",
+        dest="strict_implementation_progress",
+        action="store_false",
+        help="Disable meaningful implementation progress checks.",
+    )
     run_runner_group = run.add_mutually_exclusive_group()
     run_runner_group.add_argument(
         "--run-agent",
@@ -3794,6 +3968,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable agent_runner invocation even if enabled in policy.",
     )
     run.set_defaults(run_agent_mode="policy")
+    run.set_defaults(strict_implementation_progress=True)
     run.set_defaults(handler=_cmd_run)
 
     loop = subparsers.add_parser("loop", help="Run bounded stage transitions in sequence")
@@ -3819,6 +3994,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable engineer-assistant task cycle mode for unattended feature delivery.",
     )
     loop.add_argument(
+        "--strict-implementation-progress",
+        dest="strict_implementation_progress",
+        action="store_true",
+        help="Require meaningful implementation progress checks (default).",
+    )
+    loop.add_argument(
+        "--no-strict-implementation-progress",
+        dest="strict_implementation_progress",
+        action="store_false",
+        help="Disable meaningful implementation progress checks.",
+    )
+    loop.add_argument(
         "--max-hours",
         type=float,
         default=DEFAULT_MAX_HOURS,
@@ -3840,6 +4027,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable agent_runner invocation even if enabled in policy.",
     )
     loop.set_defaults(run_agent_mode="policy")
+    loop.set_defaults(strict_implementation_progress=True)
     loop.set_defaults(handler=_cmd_loop)
 
     status = subparsers.add_parser("status", help="Show current .autolab state")
