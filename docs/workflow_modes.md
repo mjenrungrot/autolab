@@ -13,10 +13,10 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 ## Responsibility Contract
 
 1. `.autolab/state.json` is orchestration-owned in all modes.
-2. Workers (human or agent) produce stage artifacts; they do not manually set `state.stage`.
-3. Policy (`.autolab/verifier_policy.yaml`) defines required checks by stage.
-4. `autolab verify` is the canonical CLI for stage-relevant verification summaries.
-5. Assistant-mode scaffold prompts can be customized under `.autolab/prompts/assistant_*.md` for `select`, `implement`, `verify`, and `review` phases.
+1. Workers (human or agent) produce stage artifacts; they do not manually set `state.stage`.
+1. Policy (`.autolab/verifier_policy.yaml`) defines required checks by stage.
+1. `autolab verify` is the canonical CLI for stage-relevant verification summaries.
+1. Assistant-mode scaffold prompts can be customized under `.autolab/prompts/assistant_*.md` for `select`, `implement`, `verify`, and `review` phases.
 
 ## Recommended Usage
 
@@ -24,19 +24,19 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
    - Run stage work.
    - Execute `autolab verify --stage <stage>` (or use `autolab run --verify`).
    - Run `autolab run` to apply transition logic.
-2. Agent runner development:
+1. Agent runner development:
    - Keep `agent_runner.edit_scope` strict.
    - Run `autolab loop --auto` when unattended execution is needed.
    - Let automatic verification gate progression.
-3. Assistant mode:
+1. Assistant mode:
    - Use for backlog/todo-driven delivery loops.
    - Treat verification failures as blocking until fixed.
 
 ## Failure Ownership
 
 1. Verifier failure: stage retries until attempt budget is exhausted.
-2. Attempt budget exhausted: escalates to `human_review`.
-3. Guardrail breach (`max_same_decision_streak`, `max_no_progress_decisions`, etc.): escalates per policy (`human_review` by default).
+1. Attempt budget exhausted: escalates to `human_review`.
+1. Guardrail breach (`max_same_decision_streak`, `max_no_progress_decisions`, etc.): escalates per policy (`human_review` by default).
 
 ## See Also
 

@@ -17,8 +17,8 @@
 ## Recommended Chaining
 
 1. `$llm-council` -> produce `final-plan.md` from multiple planner candidates.
-2. `$swarm-planner` -> normalize/validate the final plan into `implementation_plan.md`.
-3. `$parallel-task` -> execute tasks by dependency wave and emit `plan_execution_summary.json`.
+1. `$swarm-planner` -> normalize/validate the final plan into `implementation_plan.md`.
+1. `$parallel-task` -> execute tasks by dependency wave and emit `plan_execution_summary.json`.
 
 ## Stage Mapping
 

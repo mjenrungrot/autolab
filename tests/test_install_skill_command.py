@@ -13,7 +13,9 @@ def _assert_has_yaml_frontmatter(content: str, *, expected_name: str) -> None:
     assert lines, "skill file is empty"
     assert lines[0] == "---"
 
-    end_index = next((i for i, line in enumerate(lines[1:], start=1) if line == "---"), None)
+    end_index = next(
+        (i for i, line in enumerate(lines[1:], start=1) if line == "---"), None
+    )
     assert end_index is not None, "missing closing YAML frontmatter delimiter"
 
     frontmatter = "\n".join(lines[1:end_index])

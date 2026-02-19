@@ -370,9 +370,7 @@ def _validate_target_identifiers(iteration_id: str, experiment_id: str) -> str:
     if not normalized_iteration_id or normalized_iteration_id.startswith("<"):
         return "iteration_id must be a real identifier"
     if not ITERATION_ID_SAFE_PATTERN.fullmatch(normalized_iteration_id):
-        return (
-            "iteration_id must match [A-Za-z0-9._-] so it can map to experiments/<type>/<iteration_id>"
-        )
+        return "iteration_id must match [A-Za-z0-9._-] so it can map to experiments/<type>/<iteration_id>"
     if not normalized_experiment_id or normalized_experiment_id.startswith("<"):
         return "experiment_id must be a real identifier"
     return ""
@@ -439,7 +437,8 @@ def _resolve_backlog_target_entry(
         entry
         for entry in experiments
         if isinstance(entry, dict)
-        and _normalize_space(str(entry.get("iteration_id", ""))) == normalized_iteration_id
+        and _normalize_space(str(entry.get("iteration_id", "")))
+        == normalized_iteration_id
     ]
     if not matches:
         return (
@@ -582,7 +581,11 @@ def _insert_todo_task_line(todo_path: Path, *, line: str) -> None:
 
     # Keep one blank line before notes section for readability.
     notes_idx = next(
-        (idx for idx, raw_line in enumerate(lines) if raw_line.strip().lower() == "## notes"),
+        (
+            idx
+            for idx, raw_line in enumerate(lines)
+            if raw_line.strip().lower() == "## notes"
+        ),
         -1,
     )
     if notes_idx > 0 and lines[notes_idx - 1].strip():
@@ -592,7 +595,9 @@ def _insert_todo_task_line(todo_path: Path, *, line: str) -> None:
     todo_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _resolve_todo_selector(open_tasks: list[dict[str, Any]], selector: str) -> tuple[str, str]:
+def _resolve_todo_selector(
+    open_tasks: list[dict[str, Any]], selector: str
+) -> tuple[str, str]:
     normalized = _normalize_space(selector)
     if not normalized:
         return ("", "task selector is empty")
@@ -883,7 +888,11 @@ def _cmd_todo(args: argparse.Namespace) -> int:
     if action == "list":
         open_tasks = list_open_tasks(repo_root)
         if bool(getattr(args, "json", False)):
-            print(json.dumps({"open_count": len(open_tasks), "tasks": open_tasks}, indent=2))
+            print(
+                json.dumps(
+                    {"open_count": len(open_tasks), "tasks": open_tasks}, indent=2
+                )
+            )
             return 0
         print("autolab todo list")
         print(f"open_tasks: {len(open_tasks)}")
@@ -901,8 +910,12 @@ def _cmd_todo(args: argparse.Namespace) -> int:
         if not raw_text:
             print("autolab todo add: ERROR task text is empty", file=sys.stderr)
             return 2
-        default_stage = _normalize_space(str(state.get("stage", "implementation"))).lower()
-        stage = _normalize_space(str(getattr(args, "stage", ""))).lower() or default_stage
+        default_stage = _normalize_space(
+            str(state.get("stage", "implementation"))
+        ).lower()
+        stage = (
+            _normalize_space(str(getattr(args, "stage", ""))).lower() or default_stage
+        )
         if stage not in ALL_STAGES:
             if default_stage in ALL_STAGES:
                 stage = default_stage
@@ -919,7 +932,11 @@ def _cmd_todo(args: argparse.Namespace) -> int:
         priority = _normalize_space(str(getattr(args, "priority", ""))).lower()
         owner = _normalize_space(str(getattr(args, "owner", "")))
         labels_raw = getattr(args, "label", []) or []
-        labels = [_normalize_space(str(item)).lower() for item in labels_raw if _normalize_space(str(item))]
+        labels = [
+            _normalize_space(str(item)).lower()
+            for item in labels_raw
+            if _normalize_space(str(item))
+        ]
         if priority:
             tags.append(f"[priority:{priority}]")
         if owner:
@@ -1103,9 +1120,7 @@ def _cmd_experiment_move(args: argparse.Namespace) -> int:
             backlog_payload,
         )
         if rollback_backlog_error:
-            rollback_notes.append(
-                f"backlog rollback failed: {rollback_backlog_error}"
-            )
+            rollback_notes.append(f"backlog rollback failed: {rollback_backlog_error}")
 
         # Revert directory move if needed.
         if moved:
@@ -1909,9 +1924,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         "details": details,
     }
     _write_json(summary_path, summary_payload)
-    retained_before, retained_deleted, retained_after = _prune_verification_summary_logs(
-        repo_root,
-        keep_latest=VERIFICATION_SUMMARY_RETENTION_LIMIT,
+    retained_before, retained_deleted, retained_after = (
+        _prune_verification_summary_logs(
+            repo_root,
+            keep_latest=VERIFICATION_SUMMARY_RETENTION_LIMIT,
+        )
     )
     _append_log(
         repo_root,

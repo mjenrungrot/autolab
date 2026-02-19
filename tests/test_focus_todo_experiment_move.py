@@ -94,7 +94,9 @@ def _write_backlog(repo: Path, *, experiments: list[dict]) -> None:
 
 
 def _read_backlog(repo: Path) -> dict:
-    return yaml.safe_load((repo / ".autolab" / "backlog.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load(
+        (repo / ".autolab" / "backlog.yaml").read_text(encoding="utf-8")
+    )
 
 
 def _mk_iteration_dir(repo: Path, experiment_type: str, iteration_id: str) -> Path:
@@ -104,7 +106,9 @@ def _mk_iteration_dir(repo: Path, experiment_type: str, iteration_id: str) -> Pa
 
 
 def _write_lock(repo: Path) -> None:
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    now = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
     payload = {
         "pid": 99999,
         "host": "test-host",
@@ -120,7 +124,9 @@ def _write_lock(repo: Path) -> None:
 
 
 def _open_tasks(repo: Path) -> list[dict]:
-    payload = json.loads((repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
     tasks = payload.get("tasks", {})
     return [
         task
@@ -378,7 +384,12 @@ def test_todo_list_is_index_stable_and_json_friendly(
         == 0
     )
     capsys.readouterr()
-    assert commands_module.main(["todo", "list", "--state-file", str(state_path), "--json"]) == 0
+    assert (
+        commands_module.main(
+            ["todo", "list", "--state-file", str(state_path), "--json"]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["open_count"] >= 2
     texts = [task["text"] for task in payload["tasks"]]
@@ -387,7 +398,9 @@ def test_todo_list_is_index_stable_and_json_friendly(
     assert texts.index("Task one") < texts.index("Task two")
 
 
-def test_todo_done_by_index_and_task_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_todo_done_by_index_and_task_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -435,9 +448,17 @@ def test_todo_done_by_index_and_task_id(tmp_path: Path, capsys: pytest.CaptureFi
         == 0
     )
 
-    assert commands_module.main(["todo", "done", "--state-file", str(state_path), "1"]) == 0
+    assert (
+        commands_module.main(["todo", "done", "--state-file", str(state_path), "1"])
+        == 0
+    )
     capsys.readouterr()
-    assert commands_module.main(["todo", "list", "--state-file", str(state_path), "--json"]) == 0
+    assert (
+        commands_module.main(
+            ["todo", "list", "--state-file", str(state_path), "--json"]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     remaining_manual = [
         task
@@ -454,16 +475,22 @@ def test_todo_done_by_index_and_task_id(tmp_path: Path, capsys: pytest.CaptureFi
         == 0
     )
     capsys.readouterr()
-    assert commands_module.main(["todo", "list", "--state-file", str(state_path), "--json"]) == 0
+    assert (
+        commands_module.main(
+            ["todo", "list", "--state-file", str(state_path), "--json"]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert not any(
-        task.get("source") == "manual"
-        and task.get("text") in {"Task one", "Task two"}
+        task.get("source") == "manual" and task.get("text") in {"Task one", "Task two"}
         for task in payload["tasks"]
     )
 
 
-def test_todo_remove_clears_open_task(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_todo_remove_clears_open_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -496,9 +523,17 @@ def test_todo_remove_clears_open_task(tmp_path: Path, capsys: pytest.CaptureFixt
         )
         == 0
     )
-    assert commands_module.main(["todo", "remove", "--state-file", str(state_path), "1"]) == 0
+    assert (
+        commands_module.main(["todo", "remove", "--state-file", str(state_path), "1"])
+        == 0
+    )
     capsys.readouterr()
-    assert commands_module.main(["todo", "list", "--state-file", str(state_path), "--json"]) == 0
+    assert (
+        commands_module.main(
+            ["todo", "list", "--state-file", str(state_path), "--json"]
+        )
+        == 0
+    )
     payload = json.loads(capsys.readouterr().out)
     assert not any(
         task.get("source") == "manual" and task.get("text") == "Task one"
@@ -542,7 +577,9 @@ def test_todo_sync_reconciles_manual_markdown(tmp_path: Path) -> None:
     assert any(task.get("text") == "Manual follow-up task" for task in tasks)
 
 
-def test_experiment_move_plan_to_in_progress_moves_and_rewrites_paths(tmp_path: Path) -> None:
+def test_experiment_move_plan_to_in_progress_moves_and_rewrites_paths(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -593,7 +630,9 @@ def test_experiment_move_plan_to_in_progress_moves_and_rewrites_paths(tmp_path: 
     updated_text = (destination_dir / "docs_update.md").read_text(encoding="utf-8")
     assert "experiments/in_progress/iter1/runs/run_001/metrics.json" in updated_text
 
-    run_context = json.loads((repo / ".autolab" / "run_context.json").read_text(encoding="utf-8"))
+    run_context = json.loads(
+        (repo / ".autolab" / "run_context.json").read_text(encoding="utf-8")
+    )
     assert run_context["iteration_path"] == "experiments/in_progress/iter1"
 
     backlog = _read_backlog(repo)
@@ -607,7 +646,9 @@ def test_experiment_move_plan_to_in_progress_moves_and_rewrites_paths(tmp_path: 
     assert state["sync_status"] == "na"
 
 
-def test_experiment_move_in_progress_to_done_updates_state_to_stop(tmp_path: Path) -> None:
+def test_experiment_move_in_progress_to_done_updates_state_to_stop(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)

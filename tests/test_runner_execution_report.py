@@ -120,8 +120,12 @@ def _configure_runner_environment(
         timeout_seconds=60.0,
         codex_dangerously_bypass_approvals_and_sandbox=False,
     )
-    monkeypatch.setattr(runners, "_load_agent_runner_config", lambda _root: runner_config)
-    monkeypatch.setattr(runners, "_resolve_stage_prompt_path", lambda _root, _stage: template_path)
+    monkeypatch.setattr(
+        runners, "_load_agent_runner_config", lambda _root: runner_config
+    )
+    monkeypatch.setattr(
+        runners, "_resolve_stage_prompt_path", lambda _root, _stage: template_path
+    )
     monkeypatch.setattr(runners, "_load_state", lambda _state_path: dict(state_payload))
     monkeypatch.setattr(runners, "_normalize_state", lambda raw_state: raw_state)
     monkeypatch.setattr(
@@ -153,7 +157,9 @@ def _configure_runner_environment(
         lambda _before, _after: list(delta_paths or []),
     )
     monkeypatch.setattr(runners, "_load_verifier_policy", lambda _repo_root: {})
-    monkeypatch.setattr(runners, "_load_protected_files", lambda _policy, auto_mode=False: [])
+    monkeypatch.setattr(
+        runners, "_load_protected_files", lambda _policy, auto_mode=False: []
+    )
     monkeypatch.setattr(runners.subprocess, "Popen", process_factory)
     return state_path
 
@@ -243,7 +249,9 @@ def test_protected_file_violation_includes_remediation_hint(
         timeout_seconds=60.0,
         codex_dangerously_bypass_approvals_and_sandbox=False,
     )
-    monkeypatch.setattr(runners, "_load_agent_runner_config", lambda _root: runner_config)
+    monkeypatch.setattr(
+        runners, "_load_agent_runner_config", lambda _root: runner_config
+    )
     monkeypatch.setattr(
         runners,
         "_build_core_add_dir_flags",

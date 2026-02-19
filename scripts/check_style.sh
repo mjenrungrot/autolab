@@ -12,7 +12,12 @@ YAMLFIX_BIN="${YAMLFIX_BIN:-yamlfix}"
 "${PYTHON_BIN}" -m ruff check . --select E9,F63,F7,F82
 
 # Markdown formatting.
-md_files="$(git ls-files '*.md' | grep -Ev '(^|/)\.' || true)"
+md_files="$(
+  git ls-files '*.md' \
+    | grep -Ev '(^|/)\.' \
+    | grep -Ev '^src/autolab/skills/.+/SKILL\.md$' \
+    || true
+)"
 if [ -n "${md_files}" ]; then
   printf '%s\n' "${md_files}" | xargs "${MDFORMAT_BIN}" --check
 fi

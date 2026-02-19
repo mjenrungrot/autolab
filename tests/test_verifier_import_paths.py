@@ -30,9 +30,7 @@ def test_scaffold_verifiers_are_importable_via_spec() -> None:
         / "verifiers"
     )
     scripts = sorted(
-        path
-        for path in verifiers_dir.glob("*.py")
-        if path.stem != "verifier_lib"
+        path for path in verifiers_dir.glob("*.py") if path.stem != "verifier_lib"
     )
     assert scripts, "expected scaffold verifier scripts"
 
