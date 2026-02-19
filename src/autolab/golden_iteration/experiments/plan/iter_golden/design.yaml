@@ -1,0 +1,31 @@
+---
+schema_version: "1.0"
+id: e_golden
+iteration_id: iter_golden
+hypothesis_id: h_golden
+entrypoint:
+  module: pkg.train
+  args:
+    config: configs/train_golden.yaml
+compute:
+  location: local
+  walltime_estimate: 00:50:00
+  memory_estimate: 64GB
+  gpu_count: 0
+metrics:
+  primary:
+    name: validation_accuracy
+    unit: '%'
+    mode: maximize
+  secondary: [validation_loss]
+  success_delta: +1.0%
+  aggregation: mean
+  baseline_comparison: vs previous stable checkpoint
+baselines:
+  - name: baseline_current
+    description: Current production training recipe
+variants:
+  - name: aug_schedule_calibrated
+    changes:
+      augmentation:
+        schedule: calibrated_v2

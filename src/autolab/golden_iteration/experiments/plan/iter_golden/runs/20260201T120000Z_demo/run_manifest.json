@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260201T120000Z_demo",
+  "iteration_id": "iter_golden",
+  "launch_mode": "local",
+  "host_mode": "local",
+  "command": "python -m pkg.train --config configs/train_golden.yaml",
+  "resource_request": {
+    "cpus": 8,
+    "memory": "64GB",
+    "gpu_count": 0
+  },
+  "artifact_sync_to_local": {
+    "status": "completed"
+  },
+  "timestamps": {
+    "started_at": "2026-02-01T12:00:00Z",
+    "completed_at": "2026-02-01T12:46:00Z"
+  }
+}
