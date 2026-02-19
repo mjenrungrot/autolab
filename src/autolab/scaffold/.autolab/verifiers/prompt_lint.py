@@ -44,6 +44,7 @@ _FALLBACK_ALLOWED_TOKENS = {
     "verifier_outputs",
     "dry_run_output",
     "launch_mode",
+    "launch_execute",
     "metrics_summary",
     "target_comparison",
     "decision_suggestion",
@@ -56,12 +57,13 @@ _FALLBACK_ALLOWED_TOKENS = {
 
 # Shared tokens always allowed (not stage-specific).
 _SHARED_TOKENS = {"python_bin", "stage", "stage_context"}
-OPTIONAL_TOKENS_BY_STAGE: dict[str, set[str]] = {
+DEFAULT_OPTIONAL_TOKENS_BY_STAGE: dict[str, set[str]] = {
     "design": {"available_memory_gb", "experiment_id", "recommended_memory_estimate"},
     "implementation": {"review_feedback", "verifier_errors"},
     "implementation_review": {"diff_summary", "dry_run_output", "verifier_outputs"},
     "launch": {
         "launch_mode",
+        "launch_execute",
         "recommended_memory_estimate",
         "run_group",
         "replicate_count",
@@ -102,6 +104,7 @@ def _resolve_allowed_tokens() -> set[str]:
                     "experiment_id",
                     "paper_targets",
                     "launch_mode",
+                    "launch_execute",
                     "recommended_memory_estimate",
                     "available_memory_gb",
                     "hypothesis_id",
@@ -177,11 +180,68 @@ def _resolve_required_tokens_by_stage() -> dict[str, set[str]]:
     return dict(DEFAULT_REQUIRED_TOKENS_BY_STAGE)
 
 
+def _resolve_optional_tokens_by_stage() -> dict[str, set[str]]:
+    try:
+        from autolab.registry import load_registry
+
+        registry = load_registry(REPO_ROOT)
+        resolved: dict[str, set[str]] = {}
+        missing_optional_key_stages: set[str] = set()
+
+        workflow_path = REPO_ROOT / ".autolab" / "workflow.yaml"
+        if workflow_path.exists():
+            try:
+                import yaml as _yaml
+
+                workflow_payload = _yaml.safe_load(
+                    workflow_path.read_text(encoding="utf-8")
+                )
+                stages_payload = (
+                    workflow_payload.get("stages", {})
+                    if isinstance(workflow_payload, dict)
+                    else {}
+                )
+                if isinstance(stages_payload, dict):
+                    for stage_name, stage_payload in stages_payload.items():
+                        normalized_stage = str(stage_name).strip()
+                        if not normalized_stage or not isinstance(stage_payload, dict):
+                            continue
+                        if "optional_tokens" not in stage_payload:
+                            missing_optional_key_stages.add(normalized_stage)
+            except Exception:
+                missing_optional_key_stages = set()
+
+        for stage_name, spec in registry.items():
+            normalized_stage = str(stage_name).strip()
+            if not normalized_stage:
+                continue
+            tokens = {
+                str(token).strip()
+                for token in spec.optional_tokens
+                if str(token).strip()
+            }
+            if tokens:
+                resolved[normalized_stage] = tokens
+                continue
+            if normalized_stage in missing_optional_key_stages:
+                fallback_tokens = DEFAULT_OPTIONAL_TOKENS_BY_STAGE.get(
+                    normalized_stage, set()
+                )
+                if fallback_tokens:
+                    resolved[normalized_stage] = set(fallback_tokens)
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+    return dict(DEFAULT_OPTIONAL_TOKENS_BY_STAGE)
+
+
 def _lint_stage_prompt(
     stage: str,
     prompt_path: Path,
     *,
     required_tokens_by_stage: dict[str, set[str]],
+    optional_tokens_by_stage: dict[str, set[str]],
 ) -> list[str]:
     if not prompt_path.exists():
         return [f"{prompt_path} is missing"]
@@ -262,7 +322,7 @@ def _lint_stage_prompt(
             f"{prompt_path} missing required token(s) for stage '{stage}': {', '.join(missing_required_tokens)}"
         )
 
-    stage_optional_tokens = OPTIONAL_TOKENS_BY_STAGE.get(stage, set())
+    stage_optional_tokens = optional_tokens_by_stage.get(stage, set())
     optional_tokens_used = sorted(
         token
         for token in tokens_in_prompt
@@ -291,6 +351,8 @@ ASSISTANT_REQUIRED_SHARED_INCLUDES = (
     "{{shared:guardrails.md}}",
     "{{shared:repo_scope.md}}",
     "{{shared:runtime_context.md}}",
+    "{{shared:assistant_guardrails.md}}",
+    "{{shared:assistant_output_contract.md}}",
 )
 
 
@@ -315,6 +377,11 @@ def _lint_assistant_prompt(prompt_path: Path) -> list[str]:
     for include in ASSISTANT_REQUIRED_SHARED_INCLUDES:
         if include not in text:
             failures.append(f"{prompt_path} missing required shared include: {include}")
+
+    if "## response format" not in lowered:
+        failures.append(
+            f"{prompt_path} missing required section heading: ## RESPONSE FORMAT"
+        )
 
     tokens_in_prompt = {
         match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)
@@ -373,6 +440,7 @@ def main() -> int:
     else:
         stage_prompt_files = _resolve_stage_prompt_files()
         required_tokens_by_stage = _resolve_required_tokens_by_stage()
+        optional_tokens_by_stage = _resolve_optional_tokens_by_stage()
 
         stages: list[str]
         if args.stage:
@@ -394,6 +462,7 @@ def main() -> int:
                     stage,
                     prompt_path,
                     required_tokens_by_stage=required_tokens_by_stage,
+                    optional_tokens_by_stage=optional_tokens_by_stage,
                 )
             )
 

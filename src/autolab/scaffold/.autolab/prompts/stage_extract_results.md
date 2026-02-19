@@ -23,6 +23,9 @@ Convert run artifacts into structured outputs:
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
 - `{{iteration_path}}/analysis/summary.md`
 
+## GOLDEN EXAMPLE
+Examples: `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`, `examples/golden_iteration/experiments/plan/iter_golden/analysis/summary.md`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
@@ -61,6 +64,7 @@ Convert run artifacts into structured outputs:
 - `slurm_monitor` is the async pickup stage.
 - `extract_results` assumes artifacts are local-ready, or it reports `partial|failed` with explicit missing evidence.
 - Do not mutate scheduler state or fabricate metrics from unsynced remote logs.
+- Under strict lifecycle policy, successful extraction finalizes `run_manifest.status` from `synced` -> `completed`.
 
 ## STATUS SEMANTICS
 - Use `status: completed` when required metrics and evidence are fully present.
@@ -93,7 +97,8 @@ If multiple runs exist in `{{run_group}}` (replicate_count = `{{replicate_count}
 2. If evidence is incomplete, emit `partial|failed` with explicit missing artifact accounting.
 3. Otherwise parse run outputs and compute primary/secondary outcomes.
 4. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
-5. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
+5. For strict SLURM lifecycle, update `run_manifest.json` to `status=completed` after successful extraction (or terminal failure status when extraction cannot complete).
+6. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
 
 {{shared:verification_ritual.md}}
 
@@ -129,6 +134,7 @@ Verify `artifact_sync_to_local.status` is success-like (see guardrails) before e
 - [ ] `analysis/summary.md` includes run context and interpretation.
 - [ ] Missing tables/figures are explicitly marked `not available` with rationale.
 - [ ] When sync/local evidence is missing, output uses `partial` or `failed` with explicit missing-evidence accounting (no async polling ownership in this stage).
+- [ ] For SLURM strict lifecycle, successful extraction finalizes manifest `status=completed`.
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}

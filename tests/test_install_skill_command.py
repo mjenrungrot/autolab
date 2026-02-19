@@ -40,8 +40,14 @@ def test_install_skill_is_listed_in_help() -> None:
 def test_install_skill_rejects_unknown_provider() -> None:
     parser = _build_parser()
     with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["install-skill", "claude"])
+        parser.parse_args(["install-skill", "unknown-provider"])
     assert int(exc_info.value.code) == 2
+
+
+def test_install_skill_accepts_claude_provider() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["install-skill", "claude"])
+    assert args.provider == "claude"
 
 
 def test_install_skill_reports_missing_packaged_asset(
@@ -68,6 +74,11 @@ def test_install_skill_codex_installs_all_skills(tmp_path: Path) -> None:
         assert dest.exists(), f"missing {skill_name}/SKILL.md"
         content = dest.read_text(encoding="utf-8")
         assert f"name: {skill_name}" in content
+
+
+def test_install_skill_claude_lists_bundled_skills() -> None:
+    expected_skills = _list_bundled_skills("claude")
+    assert expected_skills == ["autolab"]
 
 
 def test_install_skill_codex_selective_install(tmp_path: Path) -> None:
@@ -98,6 +109,31 @@ def test_install_skill_codex_selective_unknown_fails(tmp_path: Path) -> None:
         [
             "install-skill",
             "codex",
+            "--skill",
+            "nonexistent-skill",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert exit_code == 1
+
+
+def test_install_skill_claude_creates_project_local_file(tmp_path: Path) -> None:
+    exit_code = main(["install-skill", "claude", "--project-root", str(tmp_path)])
+    assert exit_code == 0
+
+    destination = tmp_path / ".claude" / "skills" / "autolab" / "SKILL.md"
+    assert destination.exists()
+    content = destination.read_text(encoding="utf-8")
+    assert "name: autolab" in content
+    assert "Workflow Operator (Claude)" in content
+
+
+def test_install_skill_claude_selective_unknown_fails(tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "install-skill",
+            "claude",
             "--skill",
             "nonexistent-skill",
             "--project-root",

@@ -23,6 +23,9 @@ Update iteration documentation and configured paper targets after result extract
 - `{{iteration_path}}/docs_update.md`
 - configured paper target files (or explicit no-change rationale)
 
+## GOLDEN EXAMPLE
+Example: `examples/golden_iteration/experiments/plan/iter_golden/docs_update.md`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}

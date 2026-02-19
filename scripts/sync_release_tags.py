@@ -13,8 +13,22 @@ try:
     import tomllib
 except Exception:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
+try:
+    import tomli
+except Exception:  # pragma: no cover
+    tomli = None  # type: ignore[assignment]
 
 TAG_RE = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+
+
+def _toml_loads(text: str) -> dict:
+    if tomllib is not None:
+        return tomllib.loads(text)
+    if tomli is not None:
+        return tomli.loads(text)
+    raise RuntimeError(
+        "python tomllib/tomli is unavailable; use Python 3.11+ or install tomli"
+    )
 
 
 def _run_git(
@@ -34,9 +48,7 @@ def _run_git(
 
 
 def _current_project_version(pyproject_path: Path) -> str:
-    if tomllib is None:
-        raise RuntimeError("python tomllib is unavailable; use Python 3.11+")
-    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    payload = _toml_loads(pyproject_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError("invalid pyproject.toml content")
     project = payload.get("project")

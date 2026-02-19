@@ -167,6 +167,7 @@ def _seed_hypothesis(iteration_dir: Path) -> None:
             "## Primary Metric\n"
             "PrimaryMetric: accuracy; Unit: %; Success: baseline +2.0\n\n"
             "- metric: accuracy\n"
+            "- metric_mode: maximize\n"
             "- target_delta: 2.0\n"
             "- criteria: improve top-1 accuracy by at least 2.0 points\n"
         ),
@@ -1120,6 +1121,17 @@ def _seed_slurm_launch(
     )
     run_dir = iteration_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    normalized_sync = str(sync_status).strip().lower()
+    if normalized_sync in {"ok", "completed", "success", "passed"}:
+        manifest_status = "synced"
+        manifest_sync = "ok"
+    elif normalized_sync in {"failed", "error"}:
+        manifest_status = "failed"
+        manifest_sync = "failed"
+    else:
+        manifest_status = "submitted"
+        manifest_sync = normalized_sync or "pending"
+
     manifest: dict[str, Any] = {
         "run_id": run_id,
         "iteration_id": iteration_id,
@@ -1129,9 +1141,9 @@ def _seed_slurm_launch(
         "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
         "completed_at": "2026-01-01T00:05:00Z",
-        "status": "completed",
+        "status": manifest_status,
         "slurm": {"job_id": job_id},
-        "artifact_sync_to_local": {"status": sync_status},
+        "artifact_sync_to_local": {"status": manifest_sync},
         "timestamps": {
             "started_at": "2026-01-01T00:00:00Z",
             "completed_at": "2026-01-01T00:05:00Z",
@@ -1161,9 +1173,9 @@ def _seed_slurm_extract(
         "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
         "completed_at": "2026-01-01T00:05:00Z",
-        "status": "completed",
+        "status": "synced",
         "slurm": {"job_id": job_id},
-        "artifact_sync_to_local": {"status": "completed"},
+        "artifact_sync_to_local": {"status": "ok"},
         "timestamps": {
             "started_at": "2026-01-01T00:00:00Z",
             "completed_at": "2026-01-01T00:05:00Z",
@@ -1488,6 +1500,64 @@ class TestSlurmFullCycle:
         assert not outcome.transitioned
         assert outcome.stage_after == "slurm_monitor"
         assert "waiting" in outcome.message
+
+    def test_slurm_monitor_strict_mode_rejects_sync_ok_without_synced_status(
+        self, tmp_path: Path
+    ) -> None:
+        """Strict mode requires manifest status=synced once sync reports success."""
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="slurm_monitor")
+        run_dir = it_dir / "runs" / "run_001"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "run_id": "run_001",
+            "iteration_id": "iter_test_001",
+            "host_mode": "slurm",
+            "command": "sbatch launch/run_slurm.sbatch",
+            "resource_request": {"partition": "debug"},
+            "status": "completed",
+            "slurm": {"job_id": "12345"},
+            "artifact_sync_to_local": {"status": "ok"},
+            "timestamps": {
+                "started_at": "2026-01-01T00:00:00Z",
+                "completed_at": "2026-01-01T00:05:00Z",
+            },
+        }
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+
+        state = _read_state(repo)
+        state["last_run_id"] = "run_001"
+        _write_state(repo, state)
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 1
+        persisted = _read_state(repo)
+        assert persisted["stage"] in {"slurm_monitor", "human_review"}
+        assert (
+            "strict SLURM lifecycle requires run_manifest.status='synced'"
+            in outcome.message
+        )
+
+    def test_extract_results_strict_mode_finalizes_manifest_to_completed(
+        self, tmp_path: Path
+    ) -> None:
+        """Extract stage finalizes synced SLURM manifests to completed in strict mode."""
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="extract_results")
+        state = _read_state(repo)
+        state["last_run_id"] = "run_001"
+        _write_state(repo, state)
+        _seed_slurm_extract(it_dir, "run_001")
+        _write_slurm_ledger(repo, "run_001")
+
+        outcome = _run(state_path)
+
+        assert outcome.stage_after == "update_docs"
+        manifest_path = it_dir / "runs" / "run_001" / "run_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["status"] == "completed"
+        assert manifest.get("timestamps", {}).get("completed_at")
 
     def test_slurm_full_cycle_launch_to_stop(self, tmp_path: Path) -> None:
         """Walk through launch → slurm_monitor → extract → update_docs → decide_repeat → stop for SLURM."""

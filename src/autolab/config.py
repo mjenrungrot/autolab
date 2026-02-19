@@ -166,6 +166,24 @@ def _load_auto_commit_config(repo_root: Path) -> AutoCommitConfig:
     return AutoCommitConfig(mode=mode)
 
 
+def _load_launch_execute_policy(repo_root: Path) -> bool:
+    """Return whether launch stage is allowed to execute commands/submit jobs."""
+    policy = _load_verifier_policy(repo_root)
+    launch = policy.get("launch")
+    if not isinstance(launch, dict):
+        return True
+    return _coerce_bool(launch.get("execute"), default=True)
+
+
+def _load_slurm_lifecycle_strict_policy(repo_root: Path) -> bool:
+    """Return whether strict synced->completed SLURM lifecycle is enforced."""
+    policy = _load_verifier_policy(repo_root)
+    slurm = policy.get("slurm")
+    if not isinstance(slurm, dict):
+        return True
+    return _coerce_bool(slurm.get("lifecycle_strict"), default=True)
+
+
 def _default_agent_runner_edit_scope() -> AgentRunnerEditScopeConfig:
     return AgentRunnerEditScopeConfig(
         mode=DEFAULT_AGENT_RUNNER_EDIT_SCOPE_MODE,

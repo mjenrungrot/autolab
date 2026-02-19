@@ -9,6 +9,7 @@ Select exactly one in-scope task and emit a concise selection rationale.
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:assistant_guardrails.md}}
 
 ## OUTPUTS (STRICT)
 - `.autolab/todo_focus.json` updated by orchestration

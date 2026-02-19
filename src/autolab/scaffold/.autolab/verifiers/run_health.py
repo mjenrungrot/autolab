@@ -20,7 +20,30 @@ from verifier_lib import (
 )
 
 
-def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
+def _launch_execute_enabled() -> bool:
+    policy_path = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return True
+    if not policy_path.exists():
+        return True
+    try:
+        payload = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if not isinstance(payload, dict):
+        return True
+    launch = payload.get("launch")
+    if not isinstance(launch, dict):
+        return True
+    raw = str(launch.get("execute", "true")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _check_launch_artifacts(
+    iteration_id: str, run_id: str, *, launch_execute: bool
+) -> list[str]:
     failures: list[str] = []
     run_dir = resolve_iteration_dir(iteration_id) / "runs" / run_id
     manifest_path = run_dir / "run_manifest.json"
@@ -127,7 +150,7 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
             f"(expected completion-like or in-progress states)"
         )
 
-    if not (run_dir / "logs").exists():
+    if launch_execute and not (run_dir / "logs").exists():
         failures.append(f"{run_dir / 'logs'} is missing")
         return failures
 
@@ -181,7 +204,13 @@ def main() -> int:
         return 1
 
     try:
-        failures.extend(_check_launch_artifacts(iteration_id, run_id))
+        failures.extend(
+            _check_launch_artifacts(
+                iteration_id,
+                run_id,
+                launch_execute=_launch_execute_enabled(),
+            )
+        )
     except Exception as exc:
         result = make_result("run_health", stage, [], [str(exc)])
         print_result(result, as_json=args.json)

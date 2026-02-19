@@ -19,7 +19,11 @@ from autolab.constants import (
     PROMPT_TOKEN_PATTERN,
     STAGE_PROMPT_FILES,
 )
-from autolab.config import _load_verifier_policy, _resolve_policy_python_bin
+from autolab.config import (
+    _load_launch_execute_policy,
+    _load_verifier_policy,
+    _resolve_policy_python_bin,
+)
 from autolab.models import RenderedPromptBundle, StageCheckError
 from autolab.registry import (
     StageSpec,
@@ -376,6 +380,22 @@ def _target_comparison_text(
             "target comparison unavailable: no numeric target_delta found in hypothesis/design",
             "targets are unspecified; avoid stop decisions without explicit human confirmation",
         )
+    if metric_mode == "maximize" and target_delta <= 0:
+        return (
+            (
+                "target comparison unavailable: invalid target_delta semantics "
+                f"(metric_mode=maximize requires positive target_delta, got {target_delta:.4f})"
+            ),
+            "target semantics are inconsistent; prefer human_review instead of automated stop/design decision",
+        )
+    if metric_mode == "minimize" and target_delta >= 0:
+        return (
+            (
+                "target comparison unavailable: invalid target_delta semantics "
+                f"(metric_mode=minimize requires negative target_delta, got {target_delta:.4f})"
+            ),
+            "target semantics are inconsistent; prefer human_review instead of automated stop/design decision",
+        )
     if metric_mode == "minimize":
         met_target = metric_delta <= target_delta
     else:
@@ -480,6 +500,7 @@ def _build_prompt_context(
     )
     host_mode = _detect_priority_host_mode()
     launch_mode = host_mode
+    launch_execute = _load_launch_execute_policy(repo_root)
 
     iteration_dir = Path()
     iteration_path = ""
@@ -672,6 +693,7 @@ def _build_prompt_context(
         "stage": stage,
         "host_mode": host_mode,
         "launch_mode": launch_mode,
+        "launch_execute": "true" if launch_execute else "false",
         "iteration_id": iteration_id,
         "iteration_path": iteration_path,
         "experiment_id": experiment_id,
@@ -747,6 +769,7 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
             context.get("auto_metrics_evidence"), "auto_metrics_evidence"
         ),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
+        "launch_execute": _to_text(context.get("launch_execute"), "launch_execute"),
         "task_context": context.get("task_context", ""),
         "run_group": _to_text(context.get("run_group"), "run_group"),
         "replicate_count": str(context.get("replicate_count", 1)),

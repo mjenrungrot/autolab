@@ -22,6 +22,7 @@ class StageSpec:
     required_outputs: tuple[str, ...]
     next_stage: str
     verifier_categories: dict[str, bool]
+    optional_tokens: frozenset[str] = field(default_factory=frozenset)
     required_outputs_any_of: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
     required_outputs_if: tuple[
         tuple[tuple[tuple[str, str], ...], tuple[str, ...]], ...
@@ -46,6 +47,9 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
     required_tokens_raw = raw.get("required_tokens") or []
     if not isinstance(required_tokens_raw, list):
         required_tokens_raw = []
+    optional_tokens_raw = raw.get("optional_tokens") or []
+    if not isinstance(optional_tokens_raw, list):
+        optional_tokens_raw = []
 
     required_outputs_raw = raw.get("required_outputs") or []
     if not isinstance(required_outputs_raw, list):
@@ -99,6 +103,7 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
         name=name,
         prompt_file=str(raw.get("prompt_file", f"stage_{name}.md")),
         required_tokens=frozenset(str(t) for t in required_tokens_raw),
+        optional_tokens=frozenset(str(t) for t in optional_tokens_raw),
         required_outputs=tuple(required_outputs),
         required_outputs_any_of=tuple(required_outputs_any_of),
         required_outputs_if=tuple(required_outputs_if),
@@ -162,6 +167,15 @@ def registry_required_tokens(registry: dict[str, StageSpec]) -> dict[str, set[st
         name: set(spec.required_tokens)
         for name, spec in registry.items()
         if spec.required_tokens
+    }
+
+
+def registry_optional_tokens(registry: dict[str, StageSpec]) -> dict[str, set[str]]:
+    """Return per-stage optional prompt tokens from the workflow registry."""
+    return {
+        name: set(spec.optional_tokens)
+        for name, spec in registry.items()
+        if spec.optional_tokens
     }
 
 

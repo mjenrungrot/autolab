@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 
 def _copy_scaffold(repo: Path) -> None:
     source = (
@@ -216,3 +218,108 @@ def test_template_fill_launch_local_does_not_require_slurm_ledger(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "template_fill: PASS" in result.stdout
+
+
+def test_template_fill_hypothesis_rejects_minimize_with_positive_delta(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="hypothesis")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "hypothesis.md").write_text(
+        (
+            "# Hypothesis\n\n"
+            "PrimaryMetric: validation_loss; Unit: nats; Success: baseline -0.200\n\n"
+            "- metric_mode: minimize\n"
+            "- target_delta: +0.200\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="hypothesis")
+
+    assert result.returncode == 1
+    assert "target_delta must be negative when metric_mode=minimize" in result.stdout
+
+
+def test_template_fill_implementation_evidence_requires_excerpt_and_command_for_textual_artifacts(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "implementation_plan.md").write_text(
+        (
+            "# Implementation Plan\n\n"
+            "- Added deterministic data pipeline wiring.\n\n"
+            "- artifact_path: src/pipeline.py\n"
+            "  what_it_proves: pipeline code was updated\n"
+            "  verifier_output_pointer: .autolab/verification_result.json\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert "missing required field 'excerpt'" in result.stdout
+    assert "missing required field 'command'" in result.stdout
+
+
+def test_template_fill_implementation_evidence_allows_binary_artifacts_without_excerpt_or_command(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "implementation_plan.md").write_text(
+        (
+            "# Implementation Plan\n\n"
+            "- Captured render evidence.\n\n"
+            "- artifact_path: artifacts/ablation_plot.png\n"
+            "  what_it_proves: visual metric trend after refactor\n"
+            "  verifier_output_pointer: .autolab/verification_result.json\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="implementation")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "template_fill: PASS" in result.stdout
+
+
+def test_template_fill_rejects_registry_required_outputs_with_prompt_mustache_tokens(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+    _write_launch_fixture(repo, host_mode="local", include_ledger=False)
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow_payload = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    assert isinstance(workflow_payload, dict)
+    stages = workflow_payload.get("stages", {})
+    assert isinstance(stages, dict)
+    launch_stage = stages.get("launch", {})
+    assert isinstance(launch_stage, dict)
+    launch_stage["required_outputs"] = ["runs/{{run_id}}/run_manifest.json"]
+    workflow_path.write_text(
+        yaml.safe_dump(workflow_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_template_fill(repo, stage="launch")
+
+    assert result.returncode == 1
+    assert "uses prompt-style mustache token(s)" in result.stdout

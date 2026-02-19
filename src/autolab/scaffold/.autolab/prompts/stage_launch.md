@@ -23,6 +23,9 @@ Submit the approved run and write launch artifacts:
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - `docs/slurm_job_list.md` for SLURM mode
 
+## GOLDEN EXAMPLE
+Examples: `examples/golden_iteration/experiments/plan/iter_golden/launch/run_local.sh`, `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
@@ -46,6 +49,7 @@ Submit the approved run and write launch artifacts:
 - `{{iteration_path}}/design.yaml`
 - `{{iteration_path}}/review_result.json`
 - Launch mode context `{{launch_mode}}`
+- Launch execution policy flag `{{launch_execute}}`
 - System run context token: `run_id={{run_id}}`
 
 ## MISSING-INPUT FALLBACKS
@@ -57,6 +61,13 @@ Submit the approved run and write launch artifacts:
 - `review_result.json.status` must be `pass`.
 - `design.yaml.compute.location` must match resolved launch host mode.
 - `run_id` must come from Autolab orchestration context (`.autolab/run_context.json` / state prompt context).
+
+## EXECUTION TOGGLE
+- If `{{launch_execute}}` is `false`, this stage is **artifact-only**:
+  - Generate launch script + run manifest (+ SLURM ledger entry when applicable).
+  - Do **not** execute local commands and do **not** submit scheduler jobs.
+  - Record intent/status clearly in `run_manifest.json` so later stages can verify contracts safely.
+- If `{{launch_execute}}` is `true`, perform normal execution/submission flow.
 
 ## LAUNCH LIFECYCLE (SLURM ASYNC CONTRACT)
 - In SLURM mode, `launch` is primarily a **submission + tracking** stage.
@@ -90,13 +101,14 @@ If `{{replicate_count}}` is greater than 1, create `runs/<run_id>_rN/run_manifes
 
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
-2. Execute locally or submit to SLURM with the appropriate script and capture command/resource details.
-3. Set `run_manifest.resource_request.memory` from design memory planning using the high-memory rule (`{{recommended_memory_estimate}}` when capacity allows).
-4. Write `run_manifest.json` that matches schema and uses `{{run_id}}`.
-5. For SLURM, append `docs/slurm_job_list.md` with initial run/job tracking:
+2. If `{{launch_execute}}=true`, execute locally or submit to SLURM with the appropriate script and capture command/resource details.
+3. If `{{launch_execute}}=false`, skip execution/submission and write artifact-only launch metadata.
+4. Set `run_manifest.resource_request.memory` from design memory planning using the high-memory rule (`{{recommended_memory_estimate}}` when capacity allows).
+5. Write `run_manifest.json` that matches schema and uses `{{run_id}}`.
+6. For SLURM, append `docs/slurm_job_list.md` with initial run/job tracking:
    `autolab slurm-job-list append --manifest {{iteration_path}}/runs/{{run_id}}/run_manifest.json --doc docs/slurm_job_list.md`
-6. Capture a scheduler probe snapshot (`squeue`, `sinfo`) when available to make submit-time state explicit.
-7. Do not require `metrics.json` at launch; metrics are produced during `extract_results`.
+7. Capture a scheduler probe snapshot (`squeue`, `sinfo`) when available to make submit-time state explicit.
+8. Do not require `metrics.json` at launch; metrics are produced during `extract_results`.
 
 {{shared:verification_ritual.md}}
 

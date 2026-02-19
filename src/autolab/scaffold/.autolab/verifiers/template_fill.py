@@ -78,6 +78,10 @@ DECISION_RESULT_ALLOWED = {"hypothesis", "design", "stop", "human_review"}
 PRIMARY_METRIC_LINE_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$"
 )
+HYPOTHESIS_KEY_PATTERN = re.compile(
+    r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+)$"
+)
+HYPOTHESIS_NUMBER_PATTERN = re.compile(r"[-+]?\s*\d+(?:\.\d+)?")
 
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}"),
@@ -91,6 +95,23 @@ PLACEHOLDER_PATTERNS = (
 )
 
 COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")
+EVIDENCE_ARTIFACT_PATTERN = re.compile(r"^\s*-\s*artifact_path\s*:\s*(.+)\s*$")
+EVIDENCE_FIELD_PATTERN = re.compile(r"^\s{2,}([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$")
+NON_TEXT_EVIDENCE_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".npz",
+    ".pt",
+    ".pth",
+    ".onnx",
+)
 
 BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
     "hypothesis.md": "# Hypothesis\n\n- metric: primary_metric\n- target_delta: 0.0\n",
@@ -177,6 +198,32 @@ def _count_lines(text: str) -> int:
     if not text:
         return 0
     return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def _extract_markdown_key_values(text: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = HYPOTHESIS_KEY_PATTERN.match(line)
+        if not match:
+            continue
+        raw_key = match.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        raw_value = match.group(2).strip()
+        if raw_key and raw_value and raw_key not in values:
+            values[raw_key] = raw_value
+    return values
+
+
+def _parse_numeric_delta(value: str) -> float | None:
+    match = HYPOTHESIS_NUMBER_PATTERN.search(str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(" ", ""))
+    except Exception:
+        return None
 
 
 def _coerce_positive_int(
@@ -548,6 +595,80 @@ def _check_file_text(path: Path, *, relative: Path) -> list[Failure]:
     return []
 
 
+def _normalize_evidence_value(value: str) -> str:
+    normalized = str(value).strip()
+    if normalized.startswith("`") and normalized.endswith("`") and len(normalized) >= 2:
+        normalized = normalized[1:-1].strip()
+    return normalized
+
+
+def _artifact_is_textual(path_text: str) -> bool:
+    normalized = _normalize_evidence_value(path_text).lower()
+    if not normalized:
+        return False
+    if " or " in normalized:
+        return True
+    return not normalized.endswith(NON_TEXT_EVIDENCE_SUFFIXES)
+
+
+def _check_evidence_records_markdown(path: Path) -> list[Failure]:
+    if not path.exists():
+        return []
+    text = _read_text(path)
+    lines = text.splitlines()
+    failures: list[Failure] = []
+    index = 0
+    found_evidence_block = False
+
+    while index < len(lines):
+        match = EVIDENCE_ARTIFACT_PATTERN.match(lines[index])
+        if not match:
+            index += 1
+            continue
+
+        found_evidence_block = True
+        fields: dict[str, str] = {"artifact_path": match.group(1).strip()}
+        cursor = index + 1
+        while cursor < len(lines):
+            if EVIDENCE_ARTIFACT_PATTERN.match(lines[cursor]):
+                break
+            field_match = EVIDENCE_FIELD_PATTERN.match(lines[cursor])
+            if field_match:
+                key = str(field_match.group(1)).strip().lower()
+                value = str(field_match.group(2)).strip()
+                if key and value and key not in fields:
+                    fields[key] = value
+            cursor += 1
+
+        for required in ("what_it_proves", "verifier_output_pointer"):
+            if not str(fields.get(required, "")).strip():
+                failures.append(
+                    Failure(
+                        str(path),
+                        f"evidence block for artifact_path '{fields['artifact_path']}' is missing required field '{required}'",
+                    )
+                )
+
+        artifact_path = fields.get("artifact_path", "")
+        if _artifact_is_textual(artifact_path):
+            for required in ("excerpt", "command"):
+                if not str(fields.get(required, "")).strip():
+                    failures.append(
+                        Failure(
+                            str(path),
+                            (
+                                "evidence block for textual artifact_path "
+                                f"'{artifact_path}' is missing required field '{required}'"
+                            ),
+                        )
+                    )
+        index = cursor
+
+    if not found_evidence_block:
+        return []
+    return failures
+
+
 def _check_hypothesis(path: Path) -> list[Failure]:
     failures: list[Failure] = []
     if not path.exists():
@@ -566,6 +687,47 @@ def _check_hypothesis(path: Path) -> list[Failure]:
             Failure(
                 str(path),
                 "PrimaryMetric line must match 'PrimaryMetric: metric_name; Unit: unit_name; Success: ...' format",
+            )
+        )
+
+    key_values = _extract_markdown_key_values(text)
+    metric_mode = str(key_values.get("metric_mode", "")).strip().lower()
+    if metric_mode not in {"maximize", "minimize"}:
+        failures.append(
+            Failure(
+                str(path),
+                "metric_mode must be present in hypothesis metadata and equal to maximize|minimize",
+            )
+        )
+        return failures
+
+    target_delta_raw = (
+        key_values.get("target_delta")
+        or key_values.get("expected_delta")
+        or key_values.get("success_delta")
+        or ""
+    )
+    target_delta = _parse_numeric_delta(target_delta_raw)
+    if target_delta is None:
+        failures.append(
+            Failure(
+                str(path),
+                "target_delta must include a numeric value in hypothesis metadata",
+            )
+        )
+        return failures
+    if metric_mode == "maximize" and target_delta <= 0:
+        failures.append(
+            Failure(
+                str(path),
+                "target_delta must be positive when metric_mode=maximize",
+            )
+        )
+    if metric_mode == "minimize" and target_delta >= 0:
+        failures.append(
+            Failure(
+                str(path),
+                "target_delta must be negative when metric_mode=minimize",
             )
         )
     return failures
@@ -829,6 +991,15 @@ def _resolve_required_output_path(
     iteration_dir: Path,
     context: dict[str, str],
 ) -> tuple[Path | None, str | None]:
+    if "{{" in str(path_template) or "}}" in str(path_template):
+        return (
+            None,
+            (
+                f"required output path '{path_template}' uses prompt-style mustache token(s); "
+                "workflow output contracts must use pattern tokens like <RUN_ID>"
+            ),
+        )
+
     resolved = _replace_pattern_tokens(path_template, context)
     if "<" in resolved and ">" in resolved:
         return (
@@ -1050,6 +1221,7 @@ def _stage_checks(
         relative = Path("implementation_plan.md")
         path = iteration_dir / relative
         checks.extend(_check_file_text(path, relative=relative))
+        checks.extend(_check_evidence_records_markdown(path))
         checks.extend(_check_size_limits(path, line_limit_policy, relative.as_posix()))
         return checks
 
@@ -1060,6 +1232,7 @@ def _stage_checks(
                 checks.extend(_check_review_result(path))
             else:
                 checks.extend(_check_file_text(path, relative=relative))
+                checks.extend(_check_evidence_records_markdown(path))
             checks.extend(
                 _check_size_limits(path, line_limit_policy, relative.as_posix())
             )
@@ -1100,12 +1273,22 @@ def _stage_checks(
             _check_size_limits(metrics_path, line_limit_policy, RUN_METRICS_POLICY_KEY)
         )
         checks.extend(_check_run_manifest_limits(manifest_path, line_limit_policy))
+        summary_relative = Path("analysis/summary.md")
+        summary_path = iteration_dir / summary_relative
+        checks.extend(_check_file_text(summary_path, relative=summary_relative))
+        checks.extend(_check_evidence_records_markdown(summary_path))
+        checks.extend(
+            _check_size_limits(
+                summary_path, line_limit_policy, summary_relative.as_posix()
+            )
+        )
         return checks
 
     if stage == "update_docs":
         for relative in [Path("docs_update.md"), Path("analysis/summary.md")]:
             path = iteration_dir / relative
             checks.extend(_check_file_text(path, relative=relative))
+            checks.extend(_check_evidence_records_markdown(path))
             checks.extend(
                 _check_size_limits(path, line_limit_policy, relative.as_posix())
             )

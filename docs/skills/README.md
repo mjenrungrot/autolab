@@ -1,27 +1,35 @@
 # Skill Distribution Notes
 
-Autolab keeps one canonical Codex skill source in:
+Autolab ships canonical skill sources in `src/autolab/skills/` by provider.
+
+## Canonical Sources
+
+- Codex provider skills: `src/autolab/skills/codex/`
+- Claude provider skills: `src/autolab/skills/claude/`
+
+Canonical workflow operator skills:
 
 - `src/autolab/skills/codex/autolab/SKILL.md`
+- `src/autolab/skills/claude/autolab/SKILL.md`
 
-Generated/installed copies are intentionally indirect:
+## Installed Skill Paths
 
-- `docs/skills/autolab/SKILL.md`: redirect stub for documentation readers.
-- `<repo>/.codex/skills/autolab/SKILL.md`: installed copy written by `autolab install-skill codex`.
+`autolab install-skill <provider>` installs packaged skill content into provider-specific project directories:
 
-Why this indirection exists:
+- `codex` -> `<project-root>/.codex/skills/<skill>/SKILL.md`
+- `claude` -> `<project-root>/.claude/skills/<skill>/SKILL.md`
 
-- Packaging: the canonical file ships with the Python package from `src/`.
-- Docs stability: docs can point to a stable path without duplicating skill content.
-- Install reproducibility: `autolab install-skill` always uses the canonical packaged source.
+Install always writes full content copies from packaged assets.
 
-Contributor rule:
+## Contributor Rules
 
-- Edit only `src/autolab/skills/codex/autolab/SKILL.md`.
-- Do not edit redirect stubs.
+- Edit canonical sources under `src/autolab/skills/<provider>/...`.
+- Do not edit generated installed copies under project-local `.codex/` or `.claude/` directories.
+- Keep provider variants aligned on workflow semantics; only provider/runtime handling should differ.
 
-Provider scope:
+## Bundled Scope
 
-- Bundled workflow skills are intentionally Codex-first today (`autolab install-skill codex`).
-- `claude` / `custom` runners are supported for execution in `verifier_policy.yaml`, but first-class packaged skills for those runners are not shipped yet.
-- If non-Codex skill packaging is required, add a provider-specific canonical skill under `src/autolab/skills/<provider>/...` and extend installer support in `autolab.commands`.
+- Codex bundle includes workflow and orchestration skills (`autolab`, `llm-council`, `swarm-planner`, `parallel-task`).
+- Claude bundle currently includes the `autolab` workflow operator skill.
+
+To add more provider-specific skills, create `src/autolab/skills/<provider>/<skill>/SKILL.md` and ensure installer/test coverage is updated.

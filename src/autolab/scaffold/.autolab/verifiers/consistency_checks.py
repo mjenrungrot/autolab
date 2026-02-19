@@ -15,11 +15,13 @@ from invariant_checks import (
     check_state_run_scoped_fields,
 )
 from verifier_lib import (
+    REPO_ROOT,
     RUN_MANIFEST_STATUSES,
     load_json,
     load_yaml,
     load_state,
     make_result,
+    normalize_sync_status,
     print_result,
     resolve_iteration_dir,
 )
@@ -108,6 +110,83 @@ def _check_manifest_status_canonical(
         return [
             f"run_manifest.status='{raw_status}' is not a canonical status "
             f"(expected one of: {', '.join(sorted(RUN_MANIFEST_STATUSES))})"
+        ]
+    return []
+
+
+def _strict_slurm_lifecycle_enabled() -> bool:
+    policy_path = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
+    if not policy_path.exists():
+        return True
+    try:
+        payload = load_yaml(policy_path)
+    except Exception:
+        return True
+    slurm = payload.get("slurm")
+    if not isinstance(slurm, dict):
+        return True
+    raw = str(slurm.get("lifecycle_strict", "true")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _check_strict_slurm_lifecycle(
+    *,
+    stage: str,
+    manifest_payload: dict[str, Any] | None,
+    metrics_payload: dict[str, Any] | None,
+) -> list[str]:
+    if not _strict_slurm_lifecycle_enabled():
+        return []
+    if stage not in {"slurm_monitor", "update_docs", "decide_repeat"}:
+        return []
+    if not isinstance(manifest_payload, dict):
+        return []
+
+    host_mode = (
+        str(
+            manifest_payload.get("host_mode")
+            or manifest_payload.get("launch_mode")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if host_mode != "slurm":
+        return []
+
+    if stage == "slurm_monitor":
+        sync = manifest_payload.get("artifact_sync_to_local")
+        sync_status_raw = ""
+        if isinstance(sync, dict):
+            sync_status_raw = str(sync.get("status", "")).strip().lower()
+        sync_status = normalize_sync_status(sync_status_raw)
+        manifest_status = str(manifest_payload.get("status", "")).strip().lower()
+        if sync_status == "ok" and manifest_status not in {
+            "synced",
+            "failed",
+            "partial",
+        }:
+            return [
+                (
+                    "strict SLURM lifecycle violation: artifact sync is success-like but "
+                    f"run_manifest.status is '{manifest_status or '<missing>'}' (expected 'synced' before extraction)"
+                )
+            ]
+        return []
+
+    metrics_status = (
+        str(metrics_payload.get("status", "")).strip().lower()
+        if isinstance(metrics_payload, dict)
+        else ""
+    )
+    manifest_status = str(manifest_payload.get("status", "")).strip().lower()
+    if metrics_status == "completed" and manifest_status != "completed":
+        return [
+            (
+                "strict SLURM lifecycle violation: metrics are completed but "
+                f"run_manifest.status is '{manifest_status or '<missing>'}' "
+                "(expected 'completed' after extract_results)"
+            )
         ]
     return []
 
@@ -336,6 +415,13 @@ def main() -> int:
         )
     )
     failures.extend(_check_manifest_status_canonical(manifest_payload))
+    failures.extend(
+        _check_strict_slurm_lifecycle(
+            stage=stage,
+            manifest_payload=manifest_payload,
+            metrics_payload=metrics_payload,
+        )
+    )
     failures.extend(_check_decision_evidence_pointers(iteration_dir))
     failures.extend(_check_iteration_id_chain(iteration_dir, run_id))
     failures.extend(_check_replicate_manifests(iteration_dir, state))

@@ -6,7 +6,7 @@ Valid values for `run_manifest.json` `status` field:
 - `submitted` -- job submitted to scheduler (SLURM)
 - `running` -- execution in progress
 - `synced` -- remote artifacts synchronized to local; the run itself finished on the remote host but downstream extraction (`extract_results`) has not yet confirmed metrics. Use only in SLURM/remote workflows where artifact sync is a distinct step; local runs skip this status entirely.
-- `completed` -- run finished successfully
+- `completed` -- run finished successfully **and** extraction finalized metrics
 - `failed` -- run terminated with error
 - `partial` -- run produced incomplete results
 
@@ -34,6 +34,11 @@ When `run_manifest.status` is one of these, `timestamps.completed_at` is require
 ### In-Progress Statuses
 When `run_manifest.status` is one of these, `timestamps.completed_at` may be omitted:
 `pending`, `submitted`, `running`, `synced`
+
+### Canonical SLURM Lifecycle Rule
+- `slurm_monitor` should set `status: synced` after successful artifact synchronization.
+- `extract_results` should set `status: completed` only after metrics extraction succeeds.
+- If extraction fails after sync, keep status truthful (`failed` or `partial`) with explicit rationale.
 
 ### Metrics Status (metrics.json)
 Valid values for `metrics.json` `status` field:

@@ -218,6 +218,7 @@ _HYPOTHESIS_PRIMARY_METRIC_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$",
     flags=re.IGNORECASE | re.MULTILINE,
 )
+_HYPOTHESIS_NUMBER_PATTERN = re.compile(r"[-+]?\s*\d+(?:\.\d+)?")
 _MARKDOWN_DRY_RUN_SECTION_PATTERN = re.compile(
     r"^#{2,6}\s*dry[\s_-]?run\b", flags=re.IGNORECASE | re.MULTILINE
 )
@@ -237,6 +238,16 @@ def _extract_markdown_key_values(text: str) -> dict[str, str]:
         if raw_key and raw_value and raw_key not in values:
             values[raw_key] = raw_value
     return values
+
+
+def _parse_numeric_delta(value: str) -> float | None:
+    match = _HYPOTHESIS_NUMBER_PATTERN.search(str(value))
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(" ", ""))
+    except Exception:
+        return None
 
 
 def _validate_hypothesis(path: Path) -> None:
@@ -276,6 +287,34 @@ def _validate_hypothesis(path: Path) -> None:
         raise StageCheckError(
             "hypothesis.md is missing required hypothesis contract field(s): "
             f"{', '.join(missing)}"
+        )
+
+    raw_metric_mode = str(key_values.get("metric_mode", "")).strip().lower()
+    if raw_metric_mode and raw_metric_mode not in {"maximize", "minimize"}:
+        raise StageCheckError(
+            "hypothesis.md metric_mode must be either 'maximize' or 'minimize'"
+        )
+    if not raw_metric_mode:
+        raise StageCheckError(
+            "hypothesis.md must define metric_mode ('maximize' or 'minimize')"
+        )
+
+    target_delta_raw = (
+        key_values.get("target_delta")
+        or key_values.get("expected_delta")
+        or key_values.get("success_delta")
+        or ""
+    )
+    parsed_target_delta = _parse_numeric_delta(target_delta_raw)
+    if parsed_target_delta is None:
+        raise StageCheckError("hypothesis.md target_delta must include a numeric value")
+    if raw_metric_mode == "maximize" and parsed_target_delta <= 0:
+        raise StageCheckError(
+            "hypothesis.md target_delta must be positive when metric_mode=maximize"
+        )
+    if raw_metric_mode == "minimize" and parsed_target_delta >= 0:
+        raise StageCheckError(
+            "hypothesis.md target_delta must be negative when metric_mode=minimize"
         )
 
 

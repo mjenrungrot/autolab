@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,11 @@ except Exception:  # pragma: no cover — optional dependency
 
 from autolab.constants import ACTIVE_STAGES, SYNC_SUCCESS_STATUSES
 from autolab.models import EvalResult, StageCheckError
-from autolab.config import _load_verifier_policy, _resolve_stage_requirements
+from autolab.config import (
+    _load_slurm_lifecycle_strict_policy,
+    _load_verifier_policy,
+    _resolve_stage_requirements,
+)
 from autolab.state import _resolve_iteration_directory
 from autolab.validators import (
     _require_non_empty,
@@ -33,6 +39,49 @@ from autolab.utils import _detect_priority_host_mode
 # ---------------------------------------------------------------------------
 # Per-stage evaluator functions
 # ---------------------------------------------------------------------------
+
+
+def _finalize_slurm_manifest_after_extract(
+    repo_root: Path, iteration_dir: Path, run_id: str
+) -> None:
+    if not _load_slurm_lifecycle_strict_policy(repo_root):
+        return
+    if not run_id or run_id.startswith("<"):
+        return
+
+    manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
+    if not manifest_path.exists():
+        return
+    payload = _load_dict_json(manifest_path, "runs/<run_id>/run_manifest.json")
+    host_mode = str(
+        payload.get("host_mode") or payload.get("launch_mode") or ""
+    ).strip()
+    if host_mode.lower() != "slurm":
+        return
+
+    status = str(payload.get("status", "")).strip().lower()
+    if status in {"failed", "partial"}:
+        return
+    if status == "completed":
+        return
+    if status != "synced":
+        raise StageCheckError(
+            "strict SLURM lifecycle requires run_manifest.status='synced' before extract_results finalizes completion"
+        )
+
+    payload["status"] = "completed"
+    timestamps = payload.get("timestamps")
+    if not isinstance(timestamps, dict):
+        timestamps = {}
+    completed_at = str(timestamps.get("completed_at", "")).strip()
+    if not completed_at:
+        timestamps["completed_at"] = (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+    payload["timestamps"] = timestamps
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _eval_hypothesis(
@@ -231,18 +280,41 @@ def _eval_slurm_monitor(
     if isinstance(sync_block, dict):
         sync_status = str(sync_block.get("status", "")).strip().lower()
 
-    # Extraction can proceed once artifacts are local-ready or terminal failure
-    # is recorded. Keep pending/running/unsynced runs in slurm_monitor.
-    if sync_status in SYNC_SUCCESS_STATUSES:
-        return EvalResult(
-            "extract_results", "complete", "slurm_monitor: artifacts synced"
-        )
-    if run_status in {"synced", "failed", "partial"}:
-        return EvalResult(
-            "extract_results",
-            "complete",
-            f"slurm_monitor: terminal status '{run_status}'",
-        )
+    strict_lifecycle = _load_slurm_lifecycle_strict_policy(repo_root)
+    if strict_lifecycle:
+        if run_status == "synced":
+            return EvalResult(
+                "extract_results",
+                "complete",
+                "slurm_monitor: strict lifecycle ready (status=synced)",
+            )
+        if run_status in {"failed", "partial"}:
+            return EvalResult(
+                "extract_results",
+                "complete",
+                f"slurm_monitor: terminal status '{run_status}'",
+            )
+        if (
+            sync_status in SYNC_SUCCESS_STATUSES
+            and run_status
+            and run_status != "synced"
+        ):
+            raise StageCheckError(
+                "strict SLURM lifecycle requires run_manifest.status='synced' after sync success and before extraction"
+            )
+    else:
+        # Backward-compatible mode: proceed once artifacts are local-ready
+        # or terminal failure is recorded.
+        if sync_status in SYNC_SUCCESS_STATUSES:
+            return EvalResult(
+                "extract_results", "complete", "slurm_monitor: artifacts synced"
+            )
+        if run_status in {"synced", "failed", "partial"}:
+            return EvalResult(
+                "extract_results",
+                "complete",
+                f"slurm_monitor: terminal status '{run_status}'",
+            )
 
     return EvalResult(
         "slurm_monitor",
@@ -261,6 +333,9 @@ def _eval_extract_results(
     if isinstance(run_group, list) and run_group:
         # Multi-run: validate aggregated metrics at the base run_id
         _validate_extract(iteration_dir, state["last_run_id"])
+        _finalize_slurm_manifest_after_extract(
+            repo_root, iteration_dir, state["last_run_id"]
+        )
         # Also verify per-replicate metrics exist
         missing_replicates = []
         for rid in run_group:
@@ -275,6 +350,9 @@ def _eval_extract_results(
             "update_docs", "complete", "'extract_results' multi-run checks passed"
         )
     _validate_extract(iteration_dir, state["last_run_id"])
+    _finalize_slurm_manifest_after_extract(
+        repo_root, iteration_dir, state["last_run_id"]
+    )
     return EvalResult("update_docs", "complete", "'extract_results' checks passed")
 
 

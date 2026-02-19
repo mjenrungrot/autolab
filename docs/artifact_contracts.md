@@ -62,7 +62,7 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 
 ## run_manifest.json
 
-- **Path**: `experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json`
+- **Path**: `experiments/<type>/<iteration_id>/runs/<RUN_ID>/run_manifest.json`
 - **Format**: JSON
 - **Schema**: `.autolab/schemas/run_manifest.schema.json`
 - **Required fields**: `schema_version`, `run_id`, `iteration_id`, `host_mode`, `command`, `resource_request`, `timestamps`, `artifact_sync_to_local`
@@ -82,7 +82,7 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 
 ## metrics.json
 
-- **Path**: `experiments/<type>/<iteration_id>/runs/<run_id>/metrics.json`
+- **Path**: `experiments/<type>/<iteration_id>/runs/<RUN_ID>/metrics.json`
 - **Format**: JSON
 - **Schema**: `.autolab/schemas/metrics.schema.json`
 - **Required fields**: `schema_version`, `iteration_id`, `run_id`, `status`, `primary_metric`
@@ -148,7 +148,9 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 
 Throughout this document and in `workflow.yaml`, paths containing angle-bracket tokens like `<RUN_ID>`, `<ITERATION_ID>`, or `<type>` are **pattern paths** -- templates that are resolved at runtime.
 
-**Pattern path**: `experiments/<type>/<iteration_id>/runs/<run_id>/metrics.json`
+Prompt-style mustache tokens such as `{{run_id}}` are **not** valid in registry/policy path contracts; they are reserved for prompt rendering only.
+
+**Pattern path**: `experiments/<type>/<iteration_id>/runs/<RUN_ID>/metrics.json`
 
 **Runtime path**: `experiments/plan/h1-focal-loss/runs/20260218T160045Z/metrics.json`
 
@@ -156,6 +158,6 @@ Resolution rules:
 
 - `<type>` -> experiment type from backlog (`plan`, `in_progress`, `done`)
 - `<iteration_id>` -> active iteration ID from `.autolab/state.json`
-- `<run_id>` -> current run ID from `state.last_run_id`
+- `<RUN_ID>` -> current run ID from `state.last_run_id`
 
 Never create filesystem paths containing unresolved angle-bracket tokens. If you see `runs/<RUN_ID>/...` in a schema or config file, it means "the path after substitution", not a literal directory named `<RUN_ID>`.

@@ -14,6 +14,9 @@ Update run tracking artifacts for the current run:
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - `docs/slurm_job_list.md` (SLURM mode)
 
+## GOLDEN EXAMPLE
+Example: `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
@@ -47,7 +50,7 @@ Update run tracking artifacts for the current run:
 Use canonical run-manifest statuses only:
 - `SLURM PENDING` -> `pending`
 - `SLURM RUNNING` -> `running`
-- `SLURM COMPLETED` + artifacts synced -> `completed` (or `synced` if your workflow explicitly tracks sync-finalized before completion)
+- `SLURM COMPLETED` + artifacts synced -> `synced` (extraction finalizes `completed`)
 - `SLURM FAILED` / `CANCELLED` / `TIMEOUT` -> `failed`
 
 Never use non-canonical tokens such as `queued` or `in_progress` in `run_manifest.json`.
@@ -56,7 +59,7 @@ Never use non-canonical tokens such as `queued` or `in_progress` in `run_manifes
 - Local host mode: no monitor work required; stage should pass through.
 - SLURM host mode:
   - If job is still pending/running or artifacts are not synced, remain in `slurm_monitor` and keep tracking artifacts up to date.
-  - Advance to extraction only when artifacts are local-ready (sync success-like) or terminal failure is recorded.
+  - Advance to extraction only when artifacts are local-ready (`status=synced`) or terminal failure is recorded.
 - For completion-like statuses (`completed`, `failed`), set `timestamps.completed_at`.
 
 ## VERIFIER MAPPING

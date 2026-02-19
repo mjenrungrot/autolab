@@ -21,13 +21,12 @@ def _copy_scaffold(repo: Path) -> None:
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
     policy_path = target / "verifier_policy.yaml"
-    policy_text = policy_path.read_text(encoding="utf-8")
-    policy_path.write_text(
-        policy_text.replace(
-            'python_bin: "python3"', f'python_bin: "{sys.executable}"', 1
-        ),
-        encoding="utf-8",
-    )
+    policy_lines = policy_path.read_text(encoding="utf-8").splitlines()
+    for idx, line in enumerate(policy_lines):
+        if line.strip().startswith("python_bin:"):
+            policy_lines[idx] = f'python_bin: "{sys.executable}"'
+            break
+    policy_path.write_text("\n".join(policy_lines) + "\n", encoding="utf-8")
 
 
 def _write_state(repo: Path) -> Path:

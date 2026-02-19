@@ -21,6 +21,9 @@ You are the **Experiment Designer** -- the protocol engineer who converts the ap
 ## PRIMARY OBJECTIVE
 Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to schema and launch constraints.
 
+## GOLDEN EXAMPLE
+Example: `examples/golden_iteration/experiments/plan/iter_golden/design.yaml`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
