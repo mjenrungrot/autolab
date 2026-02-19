@@ -44,5 +44,5 @@ Result:
 ## Recommended Validation Loop
 
 1. `autolab explain stage <stage>`
-1. `autolab verify --stage <stage>`
-1. `python3 .autolab/verifiers/registry_consistency.py --json`
+2. `autolab verify --stage <stage>`
+3. `python3 .autolab/verifiers/registry_consistency.py --json`

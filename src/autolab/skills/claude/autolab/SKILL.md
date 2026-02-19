@@ -1,10 +1,9 @@
-## name: autolab
-
-## description: Operate and troubleshoot Autolab workflows when using Claude as the primary runner.
-
-## metadata:
-
-## short-description: Autolab Workflow Operator (Claude)
+---
+name: autolab
+description: Operate and troubleshoot Autolab workflows when using Claude as the primary runner.
+metadata:
+  short-description: Autolab Workflow Operator (Claude)
+---
 
 # /autolab - Autolab Workflow Operator (Claude)
 
@@ -13,8 +12,8 @@ Use this skill when running Autolab with `agent_runner.runner: claude`.
 ## Fast Triage
 
 1. `autolab status`
-1. `autolab verify --stage <stage>`
-1. `autolab run`
+2. `autolab verify --stage <stage>`
+3. `autolab run`
 
 ## Claude-Specific Defaults
 
@@ -34,27 +33,27 @@ Use `autolab explain <stage>` to inspect active verifier requirements.
 ### Stuck Stage
 
 1. `autolab status`
-1. `autolab verify --stage <stage>`
-1. Fix artifacts/policy mismatches.
-1. `autolab run`
+2. `autolab verify --stage <stage>`
+3. Fix artifacts/policy mismatches.
+4. `autolab run`
 
 ### SLURM Issues
 
 1. Validate `runs/<run_id>/run_manifest.json`.
-1. Validate ledger entry with `autolab slurm-job-list verify --manifest <manifest> --doc docs/slurm_job_list.md`.
-1. Re-run stage verification.
+2. Validate ledger entry with `autolab slurm-job-list verify --manifest <manifest> --doc docs/slurm_job_list.md`.
+3. Re-run stage verification.
 
 ### Assistant/Automation Loop Issues
 
 1. Inspect guardrail counters in `autolab status`.
-1. Check `autorun.guardrails` and `autorun.meaningful_change` policy blocks.
-1. Escalate to `human_review` if retries churn without progress.
+2. Check `autorun.guardrails` and `autorun.meaningful_change` policy blocks.
+3. Escalate to `human_review` if retries churn without progress.
 
 ### Policy Misconfiguration
 
 1. Run `autolab configure --check`.
-1. Verify `python_bin`, `dry_run_command`, and `requirements_by_stage`.
-1. Keep requirements as a subset of stage capabilities in `.autolab/workflow.yaml`.
+2. Verify `python_bin`, `dry_run_command`, and `requirements_by_stage`.
+3. Keep requirements as a subset of stage capabilities in `.autolab/workflow.yaml`.
 
 ## Safe Defaults
 
