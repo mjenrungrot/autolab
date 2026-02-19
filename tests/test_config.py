@@ -167,7 +167,7 @@ def test_resolve_policy_python_bin_respects_explicit_custom_binary() -> None:
     assert _resolve_policy_python_bin({"python_bin": "/usr/bin/python3"}) == "/usr/bin/python3"
 
 
-def test_load_agent_runner_config_defaults_to_codex_full_auto(
+def test_load_agent_runner_config_defaults_to_codex_dangerous(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -176,9 +176,8 @@ def test_load_agent_runner_config_defaults_to_codex_full_auto(
     runner = _load_agent_runner_config(repo)
 
     assert runner.runner == "codex"
-    assert "--full-auto" in runner.command
-    assert " -a " not in runner.command
-    assert runner.codex_dangerously_bypass_approvals_and_sandbox is False
+    assert "--dangerously-bypass-approvals-and-sandbox" in runner.command
+    assert runner.codex_dangerously_bypass_approvals_and_sandbox is True
 
 
 def test_load_agent_runner_config_uses_codex_dangerous_preset_from_policy(

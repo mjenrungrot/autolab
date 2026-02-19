@@ -69,8 +69,8 @@ class AgentRunnerConfig:
     stages: tuple[str, ...]
     edit_scope: "AgentRunnerEditScopeConfig"
     timeout_seconds: float
-    claude_dangerously_skip_permissions: bool = False
-    codex_dangerously_bypass_approvals_and_sandbox: bool = False
+    claude_dangerously_skip_permissions: bool = True
+    codex_dangerously_bypass_approvals_and_sandbox: bool = True
 
 
 @dataclass(frozen=True)
