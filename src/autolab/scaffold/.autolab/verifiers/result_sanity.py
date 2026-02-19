@@ -9,34 +9,14 @@ import math
 import re
 from pathlib import Path
 
+from verifier_lib import load_state, make_result, print_result, resolve_iteration_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
 PLACEHOLDER_TOKENS = {"<iteration_id>", "<run_id>", "<TODO>", "placeholder"}
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{\s*[A-Za-z0-9_]+\s*\}\}"),
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bTBD\b", re.IGNORECASE),
 )
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized_iteration = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
-
-
-def _load_state() -> dict:
-    data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RuntimeError("state.json must contain an object")
-    return data
 
 
 def _has_placeholders(payload) -> bool:
@@ -109,62 +89,35 @@ def main() -> int:
     failures: list[str] = []
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "result_sanity", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
-        else:
-            print(f"result_sanity: ERROR {exc}")
+        result = make_result("result_sanity", "", [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     iteration_id = str(state.get("iteration_id", "")).strip()
     run_id = str(state.get("last_run_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
     if not iteration_id or not run_id:
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "result_sanity", "stage": stage, "checks": [], "errors": ["missing iteration_id/last_run_id in state"]}
-            print(_json.dumps(envelope))
-        else:
-            print("result_sanity: ERROR missing iteration_id/last_run_id in state")
+        result = make_result("result_sanity", stage, [], ["missing iteration_id/last_run_id in state"])
+        print_result(result, as_json=args.json)
         return 1
 
     if stage != "extract_results":
-        if args.json:
-            import json as _json
-            envelope = {"status": "pass", "verifier": "result_sanity", "stage": stage, "checks": [{"name": "result_sanity", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
-            print(_json.dumps(envelope))
-        else:
-            print("result_sanity: PASS")
+        result = make_result("result_sanity", stage, [{"name": "result_sanity", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        print_result(result, as_json=args.json)
         return 0
 
-    metrics_path = _resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
+    metrics_path = resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
     _validate_metrics(metrics_path, failures)
 
     passed = not failures
 
-    if args.json:
-        import json as _json
-        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
-        if passed:
-            checks = [{"name": "result_sanity", "status": "pass", "detail": "all result sanity checks passed"}]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "result_sanity",
-            "stage": stage,
-            "checks": checks,
-            "errors": failures,
-        }
-        print(_json.dumps(envelope))
-    else:
-        if failures:
-            print("result_sanity: FAIL")
-            for reason in failures:
-                print(reason)
-        else:
-            print("result_sanity: PASS")
+    checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+    if passed:
+        checks = [{"name": "result_sanity", "status": "pass", "detail": "all result sanity checks passed"}]
+    result = make_result("result_sanity", stage, checks, failures)
+    print_result(result, as_json=args.json)
 
     return 0 if passed else 1
 

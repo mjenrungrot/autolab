@@ -20,3 +20,9 @@ prompt_lint:
   mode: warn
 
 safe_automation_protected_files: false
+
+autorun:
+  guardrails:
+    max_same_decision_streak: 5
+    max_no_progress_decisions: 3
+    max_update_docs_cycles: 5

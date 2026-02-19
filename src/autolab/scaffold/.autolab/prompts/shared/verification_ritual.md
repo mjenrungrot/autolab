@@ -8,3 +8,5 @@
 5. **Scope audit**: Confirm every file you created or edited is inside the `allowed_edit_dirs` from your runtime context. If you touched anything outside, revert it.
 
 Do not declare the stage complete until all five steps pass. If a verifier fails, fix the artifact and rerun from step 2.
+
+> See stage-specific verification notes in your stage prompt below for additional checks.

@@ -3,6 +3,12 @@
 # =============================================================================
 # This file controls verification behavior for each stage transition.
 # Customize commands, stage requirements, and runner settings for your project.
+#
+# Resolution model:
+#   workflow.yaml.verifier_categories = CAPABILITIES (what CAN run)
+#   verifier_policy.yaml.requirements_by_stage = REQUIREMENTS (what MUST run)
+#   Rule: requirements must be a subset of capabilities
+#   Enforced by: registry_consistency.py verifier
 
 # ---------------------------------------------------------------------------
 # Tool paths
@@ -16,9 +22,10 @@ python_bin: "python3"
 test_command: "{{python_bin}} -m pytest"
 
 # dry_run_command: invoked when a stage requires dry_run.
-# DEFAULT: exits non-zero so that dry-run verification fails until you
-# configure a real command.  Replace with your project's smoke-test, e.g.:
-#   dry_run_command: "{{python_bin}} -m myproject.dry_run"
+# DEFAULT: Stub that intentionally fails. Replace with a project-specific
+# smoke check or set `dry_run: false` in requirements_by_stage.
+# Example of a minimal passing dry-run:
+#   dry_run_command: "{{python_bin}} -c 'import sys; print(\"dry-run: ok\"); sys.exit(0)'"
 dry_run_command: "{{python_bin}} -c \"import sys; print('AUTOLAB DRY-RUN STUB: No dry_run_command configured. Set dry_run_command in .autolab/verifier_policy.yaml or set requirements_by_stage.implementation.dry_run: false to skip.'); sys.exit(1)\""
 
 # ---------------------------------------------------------------------------
@@ -59,7 +66,7 @@ template_fill_by_stage:
 #   env_smoke        – run run_health.py + result_sanity.py
 #   docs_target_update – run docs_targets.py
 requirements_by_stage:
-  hypothesis:
+  hypothesis:  # Early stage: only validate structure and prompts
     tests: false
     dry_run: false
     schema: true
@@ -67,7 +74,7 @@ requirements_by_stage:
     consistency: false
     env_smoke: false
     docs_target_update: false
-  design:
+  design:  # Schema validation ensures design.yaml meets spec
     tests: false
     dry_run: false
     schema: true
@@ -75,7 +82,7 @@ requirements_by_stage:
     consistency: false
     env_smoke: false
     docs_target_update: false
-  implementation:
+  implementation:  # Enable dry_run here after configuring dry_run_command above
     tests: false
     dry_run: false
     schema: true
@@ -83,7 +90,7 @@ requirements_by_stage:
     consistency: false
     env_smoke: false
     docs_target_update: false
-  implementation_review:
+  implementation_review:  # Full verification gate before launch
     tests: false
     dry_run: false
     schema: true
@@ -91,7 +98,7 @@ requirements_by_stage:
     consistency: true
     env_smoke: true
     docs_target_update: true
-  launch:
+  launch:  # Verify run health and cross-artifact consistency
     tests: false
     dry_run: false
     schema: true
@@ -99,7 +106,7 @@ requirements_by_stage:
     consistency: true
     env_smoke: true
     docs_target_update: false
-  extract_results:
+  extract_results:  # Validate metrics and run artifacts
     tests: false
     dry_run: false
     schema: true
@@ -107,7 +114,7 @@ requirements_by_stage:
     consistency: true
     env_smoke: true
     docs_target_update: false
-  update_docs:
+  update_docs:  # Ensure docs match metrics; no env checks needed
     tests: false
     dry_run: false
     schema: true
@@ -115,7 +122,7 @@ requirements_by_stage:
     consistency: true
     env_smoke: false
     docs_target_update: true
-  decide_repeat:
+  decide_repeat:  # Decision stage: validate consistency of evidence
     tests: false
     dry_run: false
     schema: true

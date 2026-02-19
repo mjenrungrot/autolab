@@ -28,6 +28,7 @@ from autolab.constants import (
     STAGE_PROMPT_FILES,
     TERMINAL_STAGES,
 )
+from autolab.registry import load_registry, StageSpec
 from autolab.models import RunOutcome, StateError
 from autolab.config import (
     _load_guardrail_config,
@@ -352,6 +353,26 @@ def _cmd_status(args: argparse.Namespace) -> int:
         if entry is not None:
             exp_status = str(entry.get("status", "<unknown>")).strip()
             print(f"experiment_status: {exp_status}")
+
+    # --- Guardrail counters ---
+    repeat_guard = state.get("repeat_guard")
+    if isinstance(repeat_guard, dict):
+        try:
+            guardrail_cfg = _load_guardrail_config(repo_root)
+        except Exception:
+            guardrail_cfg = {}
+        max_streak = guardrail_cfg.get("max_same_decision_streak", 3)
+        max_no_prog = guardrail_cfg.get("max_no_progress_decisions", 2)
+        max_docs = guardrail_cfg.get("max_update_docs_cycles", 3)
+        on_breach = guardrail_cfg.get("on_breach", "human_review")
+
+        streak = repeat_guard.get("same_decision_streak", 0)
+        no_prog = repeat_guard.get("no_progress_decisions", 0)
+        docs_cyc = repeat_guard.get("update_docs_cycles", 0)
+        print("guardrails:")
+        print(f"  same_decision_streak: {streak}/{max_streak} (breach -> {on_breach})")
+        print(f"  no_progress_decisions: {no_prog}/{max_no_prog} (breach -> {on_breach})")
+        print(f"  update_docs_cycles: {docs_cyc}/{max_docs} (breach -> {on_breach})")
 
     return 0
 
@@ -1336,8 +1357,10 @@ def _cmd_skip(args: argparse.Namespace) -> int:
         print(f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'", file=sys.stderr)
         return 1
 
-    # Validate forward-only skip within ACTIVE_STAGES + decide_repeat
-    ordered_stages = list(ACTIVE_STAGES) + ["decide_repeat"]
+    # Validate forward-only skip within ACTIVE_STAGES (includes decide_repeat)
+    ordered_stages = list(ACTIVE_STAGES)
+    if "decide_repeat" not in ordered_stages:
+        ordered_stages.append("decide_repeat")
     if current_stage not in ordered_stages:
         print(f"autolab skip: ERROR current stage '{current_stage}' is not skippable", file=sys.stderr)
         return 1
@@ -1427,7 +1450,9 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
         )
         return 1
 
-    stages = list(ACTIVE_STAGES) + ["decide_repeat"]
+    stages = list(ACTIVE_STAGES)
+    if "decide_repeat" not in stages:
+        stages.append("decide_repeat")
     results: list[tuple[str, bool]] = []
 
     with tempfile.TemporaryDirectory(prefix="autolab_verify_golden_") as tmp:
@@ -1511,6 +1536,172 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
         print("autolab verify-golden: FAIL", file=sys.stderr)
         return 1
     print("autolab verify-golden: ALL PASSED")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Explain stage command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    stage_name = str(args.stage).strip()
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+
+    registry = load_registry(repo_root)
+    if not registry:
+        print("autolab explain: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        return 1
+
+    spec = registry.get(stage_name)
+    if spec is None:
+        print(f"autolab explain: ERROR unknown stage '{stage_name}'", file=sys.stderr)
+        print(f"available stages: {', '.join(sorted(registry.keys()))}")
+        return 1
+
+    policy = _load_verifier_policy(repo_root)
+
+    print(f"autolab explain stage {stage_name}")
+    print("")
+    print(f"prompt_file: {spec.prompt_file}")
+    print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
+    print(f"required_outputs: {', '.join(spec.required_outputs) or '(none)'}")
+    print(f"next_stage: {spec.next_stage or '(branching)'}")
+    if spec.decision_map:
+        print(f"decision_map: {spec.decision_map}")
+    print("")
+
+    from autolab.config import _resolve_stage_requirements, _resolve_stage_max_retries
+    effective = _resolve_stage_requirements(
+        policy,
+        stage_name,
+        registry_verifier_categories=spec.verifier_categories,
+    )
+    print("effective verifier requirements:")
+    for key in sorted(effective.keys()):
+        eff_val = effective[key]
+        reg_val = spec.verifier_categories.get(key, False)
+        # Determine source annotation
+        if eff_val and not reg_val:
+            note = "(policy override)"
+        elif reg_val and not eff_val:
+            note = f"(registry: {reg_val}, policy: {eff_val}) # capable but not required"
+        else:
+            note = ""
+        print(f"  {key}: {eff_val}{' ' + note if note else ''}")
+
+    max_retries = _resolve_stage_max_retries(policy, stage_name)
+    print("")
+    print(f"retry_policy: max_retries={max_retries}")
+    print(f"classifications: active={spec.is_active}, terminal={spec.is_terminal}, decision={spec.is_decision}, runner_eligible={spec.is_runner_eligible}")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Policy list/show commands
+# ---------------------------------------------------------------------------
+
+
+def _cmd_policy_list(args: argparse.Namespace) -> int:
+    try:
+        scaffold_source = _resolve_scaffold_source()
+    except RuntimeError as exc:
+        print(f"autolab policy list: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    policy_dir = scaffold_source / "policy"
+    if not policy_dir.exists():
+        print("autolab policy list: no presets found")
+        return 0
+
+    print("autolab policy list")
+    print("available presets:")
+    for path in sorted(policy_dir.glob("*.yaml")):
+        print(f"  {path.stem}")
+    return 0
+
+
+def _cmd_policy_show(args: argparse.Namespace) -> int:
+    preset_name = str(args.preset).strip()
+    try:
+        scaffold_source = _resolve_scaffold_source()
+    except RuntimeError as exc:
+        print(f"autolab policy show: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    preset_path = scaffold_source / "policy" / f"{preset_name}.yaml"
+    if not preset_path.exists():
+        print(f"autolab policy show: ERROR preset '{preset_name}' not found", file=sys.stderr)
+        return 1
+
+    print(f"autolab policy show {preset_name}")
+    print(f"file: {preset_path}")
+    print("---")
+    print(preset_path.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Docs generate command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_docs_generate(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    registry = load_registry(repo_root)
+
+    if not registry:
+        print("autolab docs generate: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        return 1
+
+    # 1. Stage flow diagram
+    print("# Autolab Stage Flow")
+    print("")
+    active = [name for name, spec in registry.items() if spec.is_active and not spec.is_terminal]
+    flow_parts: list[str] = []
+    for name in active:
+        spec = registry[name]
+        if spec.decision_map:
+            targets = ", ".join(sorted(spec.decision_map.values()))
+            flow_parts.append(f"{name} -> {{{targets}}}")
+        elif spec.next_stage:
+            flow_parts.append(f"{name} -> {spec.next_stage}")
+        else:
+            flow_parts.append(name)
+    print(" | ".join(flow_parts))
+    print("")
+
+    # 2. Artifact map
+    print("## Artifact Map")
+    print("")
+    print("| Stage | Required Outputs |")
+    print("|-------|-----------------|")
+    for name, spec in registry.items():
+        outputs = ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
+        print(f"| {name} | {outputs} |")
+    print("")
+
+    # 3. Token reference
+    print("## Token Reference")
+    print("")
+    print("| Stage | Required Tokens |")
+    print("|-------|----------------|")
+    for name, spec in registry.items():
+        tokens = ", ".join(sorted(spec.required_tokens)) if spec.required_tokens else "(none)"
+        print(f"| {name} | {tokens} |")
+    print("")
+
+    # 4. Classifications
+    print("## Classifications")
+    print("")
+    print("| Stage | Active | Terminal | Decision | Runner Eligible |")
+    print("|-------|--------|----------|----------|----------------|")
+    for name, spec in registry.items():
+        print(f"| {name} | {spec.is_active} | {spec.is_terminal} | {spec.is_decision} | {spec.is_runner_eligible} |")
+
     return 0
 
 
@@ -1839,11 +2030,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     lint.set_defaults(handler=_cmd_lint)
 
+    # Explain stage
+    explain = subparsers.add_parser("explain", help="Show effective configuration for a stage")
+    explain_subparsers = explain.add_subparsers(dest="explain_command")
+    explain_stage = explain_subparsers.add_parser("stage", help="Show effective stage config")
+    explain_stage.add_argument("stage", help="Stage name to explain")
+    explain_stage.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    explain_stage.set_defaults(handler=_cmd_explain)
+
+    # Policy management
     policy = subparsers.add_parser(
         "policy",
         help="Manage verifier policy profiles",
     )
     policy_subparsers = policy.add_subparsers(dest="policy_command")
+
+    policy_list = policy_subparsers.add_parser("list", help="List available policy presets")
+    policy_list.set_defaults(handler=_cmd_policy_list)
+
+    policy_show = policy_subparsers.add_parser("show", help="Show contents of a policy preset")
+    policy_show.add_argument("preset", help="Preset name to show")
+    policy_show.set_defaults(handler=_cmd_policy_show)
 
     policy_apply = policy_subparsers.add_parser("apply", help="Apply policy changes")
     policy_apply_subparsers = policy_apply.add_subparsers(dest="policy_apply_command")
@@ -1862,6 +2073,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     policy_preset.set_defaults(handler=_cmd_policy_apply_preset)
+
+    # Docs generation
+    docs = subparsers.add_parser("docs", help="Generate documentation from registry")
+    docs_subparsers = docs.add_subparsers(dest="docs_command")
+    docs_generate = docs_subparsers.add_parser("generate", help="Generate stage flow, artifact map, and token reference")
+    docs_generate.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    docs_generate.set_defaults(handler=_cmd_docs_generate)
 
     return parser
 

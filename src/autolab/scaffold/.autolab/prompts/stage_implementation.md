@@ -29,6 +29,8 @@ Implement design-scoped changes and produce `{{iteration_path}}/implementation_p
 {{shared:runtime_context.md}}
 {{shared:skill_playbook.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - Updated repo files for this iteration
 - `{{iteration_path}}/implementation_plan.md`

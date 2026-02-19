@@ -8,58 +8,21 @@ import json
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except Exception:  # pragma: no cover
-    yaml = None
+from verifier_lib import (
+    load_json,
+    load_yaml,
+    load_state,
+    resolve_iteration_dir,
+)
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_PATH = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
 SYNC_SUCCESS_STATUSES = {"ok", "completed", "success", "passed"}
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a JSON object")
-    return payload
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required for consistency checks")
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a YAML mapping")
-    return payload
-
-
-def _load_state() -> dict[str, Any]:
-    if not STATE_PATH.exists():
-        raise RuntimeError(f"missing state file: {STATE_PATH}")
-    return _load_json(STATE_PATH)
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized = str(iteration_id).strip()
-    if not normalized:
-        raise RuntimeError("state.iteration_id is required")
-    experiments_root = REPO_ROOT / "experiments"
-    for experiment_type in EXPERIMENT_TYPES:
-        candidate = experiments_root / experiment_type / normalized
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized
 
 
 def _read_optional_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return _load_json(path)
+        return load_json(path)
     except Exception:
         return None
 
@@ -68,7 +31,7 @@ def _read_optional_yaml(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return _load_yaml(path)
+        return load_yaml(path)
     except Exception:
         return None
 
@@ -184,7 +147,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
         if args.json:
             envelope = {
@@ -200,7 +163,7 @@ def main() -> int:
         return 1
 
     stage = str(args.stage or state.get("stage", "")).strip()
-    iteration_dir = _resolve_iteration_dir(str(state.get("iteration_id", "")))
+    iteration_dir = resolve_iteration_dir(str(state.get("iteration_id", "")))
     run_id = str(state.get("last_run_id", "")).strip()
 
     design_payload = _read_optional_yaml(iteration_dir / "design.yaml")

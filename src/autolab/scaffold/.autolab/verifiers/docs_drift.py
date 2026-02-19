@@ -14,32 +14,9 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
+from verifier_lib import REPO_ROOT, load_state, make_result, print_result, resolve_iteration_dir
 
 TOLERANCE = 0.05
-
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        raise RuntimeError("Missing .autolab/state.json")
-    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RuntimeError("state.json must contain an object")
-    return state
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    for experiment_type in EXPERIMENT_TYPES:
-        candidate = experiments_root / experiment_type / normalized
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized
 
 
 def _iter_targets(paper_targets: object) -> list[Path]:
@@ -251,36 +228,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
-        if args.json:
-            payload = {
-                "status": "fail",
-                "verifier": "docs_drift",
-                "stage": "",
-                "checks": [],
-                "errors": [str(exc)],
-            }
-            print(json.dumps(payload))
-        else:
-            print(f"docs_drift: ERROR {exc}")
+        result = make_result("docs_drift", "", [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     stage = args.stage or str(state.get("stage", "")).strip()
 
     # Only run for update_docs stage
     if stage != "update_docs":
-        if args.json:
-            payload = {
-                "status": "pass",
-                "verifier": "docs_drift",
-                "stage": stage,
-                "checks": [],
-                "errors": [],
-            }
-            print(json.dumps(payload))
-        else:
-            print(f"docs_drift: PASS (stage={stage}, skipped)")
+        result = make_result("docs_drift", stage, [], [])
+        print_result(result, as_json=args.json)
         return 0
 
     iteration_id = str(state.get("iteration_id", "")).strip()
@@ -289,70 +248,31 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     if not iteration_id or not run_id:
         msg = "missing iteration_id or last_run_id in state"
-        if args.json:
-            payload = {
-                "status": "fail",
-                "verifier": "docs_drift",
-                "stage": stage,
-                "checks": [],
-                "errors": [msg],
-            }
-            print(json.dumps(payload))
-        else:
-            print(f"docs_drift: ERROR {msg}")
+        result = make_result("docs_drift", stage, [], [msg])
+        print_result(result, as_json=args.json)
         return 1
 
-    iteration_dir = _resolve_iteration_dir(iteration_id)
+    iteration_dir = resolve_iteration_dir(iteration_id)
     metrics_path = iteration_dir / "runs" / run_id / "metrics.json"
 
     if not metrics_path.exists():
         msg = f"metrics.json not found at {metrics_path}"
-        if args.json:
-            payload = {
-                "status": "fail",
-                "verifier": "docs_drift",
-                "stage": stage,
-                "checks": [],
-                "errors": [msg],
-            }
-            print(json.dumps(payload))
-        else:
-            print(f"docs_drift: FAIL")
-            print(msg)
+        result = make_result("docs_drift", stage, [], [msg])
+        print_result(result, as_json=args.json)
         return 1
 
     try:
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     except Exception as exc:
         msg = f"metrics.json is not valid JSON: {exc}"
-        if args.json:
-            payload = {
-                "status": "fail",
-                "verifier": "docs_drift",
-                "stage": stage,
-                "checks": [],
-                "errors": [msg],
-            }
-            print(json.dumps(payload))
-        else:
-            print("docs_drift: FAIL")
-            print(msg)
+        result = make_result("docs_drift", stage, [], [msg])
+        print_result(result, as_json=args.json)
         return 1
 
     if not isinstance(metrics, dict):
         msg = "metrics.json must contain a JSON object"
-        if args.json:
-            payload = {
-                "status": "fail",
-                "verifier": "docs_drift",
-                "stage": stage,
-                "checks": [],
-                "errors": [msg],
-            }
-            print(json.dumps(payload))
-        else:
-            print("docs_drift: FAIL")
-            print(msg)
+        result = make_result("docs_drift", stage, [], [msg])
+        print_result(result, as_json=args.json)
         return 1
 
     # Load docs_update.md
@@ -367,21 +287,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     checks, errors = _check_drift(metrics, docs_text, target_texts)
 
-    status = "fail" if errors else "pass"
-
-    if args.json:
-        payload = {
-            "status": status,
-            "verifier": "docs_drift",
-            "stage": stage,
-            "checks": checks,
-            "errors": errors,
-        }
-        print(json.dumps(payload))
-    else:
-        print(f"docs_drift: {status.upper()}")
-        for error in errors:
-            print(f"  {error}")
+    result = make_result("docs_drift", stage, checks, errors)
+    print_result(result, as_json=args.json)
 
     return 1 if errors else 0
 

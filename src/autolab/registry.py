@@ -22,6 +22,7 @@ class StageSpec:
     required_outputs: tuple[str, ...]
     next_stage: str
     verifier_categories: dict[str, bool]
+    decision_map: dict[str, str] = field(default_factory=dict)
     is_active: bool = False
     is_terminal: bool = False
     is_decision: bool = False
@@ -46,6 +47,10 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
     if not isinstance(required_outputs_raw, list):
         required_outputs_raw = []
 
+    decision_map_raw = raw.get("decision_map") or {}
+    if not isinstance(decision_map_raw, dict):
+        decision_map_raw = {}
+
     return StageSpec(
         name=name,
         prompt_file=str(raw.get("prompt_file", f"stage_{name}.md")),
@@ -53,6 +58,7 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
         required_outputs=tuple(str(o) for o in required_outputs_raw),
         next_stage=str(raw.get("next_stage", "")),
         verifier_categories={str(k): bool(v) for k, v in verifier_cats.items()},
+        decision_map={str(k): str(v) for k, v in decision_map_raw.items()},
         is_active=bool(classifications.get("active", False)),
         is_terminal=bool(classifications.get("terminal", False)),
         is_decision=bool(classifications.get("decision", False)),
@@ -131,6 +137,15 @@ def registry_decision_stages(registry: dict[str, StageSpec]) -> tuple[str, ...]:
 def registry_runner_eligible(registry: dict[str, StageSpec]) -> tuple[str, ...]:
     """Return a ``RUNNER_ELIGIBLE_STAGES``-compatible tuple."""
     return tuple(name for name, spec in registry.items() if spec.is_runner_eligible)
+
+
+def registry_decision_map(registry: dict[str, StageSpec]) -> dict[str, dict[str, str]]:
+    """Return a mapping of stage name to its decision_map (only non-empty entries)."""
+    return {
+        name: dict(spec.decision_map)
+        for name, spec in registry.items()
+        if spec.decision_map
+    }
 
 
 def registry_all_stages(registry: dict[str, StageSpec]) -> set[str]:

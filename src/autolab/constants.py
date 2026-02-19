@@ -29,13 +29,14 @@ _FALLBACK_ACTIVE_STAGES = (
     "launch",
     "extract_results",
     "update_docs",
+    "decide_repeat",
 )
 PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 _FALLBACK_TERMINAL_STAGES = ("human_review", "stop")
 _FALLBACK_DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
-_FALLBACK_RUNNER_ELIGIBLE_STAGES = _FALLBACK_ACTIVE_STAGES + ("decide_repeat",)
+_FALLBACK_RUNNER_ELIGIBLE_STAGES = _FALLBACK_ACTIVE_STAGES
 _FALLBACK_ALL_STAGES = set(
-    _FALLBACK_ACTIVE_STAGES + ("decide_repeat",) + _FALLBACK_TERMINAL_STAGES
+    _FALLBACK_ACTIVE_STAGES + _FALLBACK_TERMINAL_STAGES
 )
 _FALLBACK_STAGE_PROMPT_FILES = {
     "hypothesis": "stage_hypothesis.md",

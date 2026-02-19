@@ -4,15 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from pathlib import Path
 
+from verifier_lib import REPO_ROOT, load_json, load_state, make_result, print_result, resolve_iteration_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{[^{}\n]+\}\}"),
     re.compile(r"<[^>\n]+>"),
@@ -21,25 +17,6 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"\bFIXME\b", re.IGNORECASE),
     re.compile(r"\bplaceholder\b", re.IGNORECASE),
 )
-
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        raise RuntimeError("Missing .autolab/state.json")
-    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RuntimeError("state.json must contain an object")
-    return state
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized_iteration = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
 
 
 def _iter_targets(paper_targets: object) -> list[Path]:
@@ -80,12 +57,50 @@ def _iter_reference(iteration_id: str, run_id: str, targets: list[Path]) -> bool
     return False
 
 
+def _load_metrics(iteration_dir: Path, run_id: str) -> dict:
+    """Attempt to load metrics.json for the given run."""
+    if not run_id:
+        return {}
+    metrics_path = iteration_dir / "runs" / run_id / "metrics.json"
+    if not metrics_path.exists():
+        return {}
+    try:
+        return load_json(metrics_path)
+    except Exception:
+        return {}
+
+
+def _has_concrete_metric_value(text: str, metrics: dict) -> bool:
+    """Check that docs_update.md contains at least one concrete metric value from metrics.json."""
+    if not metrics:
+        return True  # No metrics to validate against
+    for key, value in metrics.items():
+        if isinstance(value, (int, float)) and str(value) in text:
+            return True
+        if isinstance(value, str) and value.strip() and value.strip() in text:
+            return True
+    return False
+
+
+RUN_EVIDENCE_PATTERNS = (
+    re.compile(r"run[_ ]evidence", re.IGNORECASE),
+    re.compile(r"runs/[A-Za-z0-9_-]+/", re.IGNORECASE),
+    re.compile(r"metrics\.json", re.IGNORECASE),
+)
+
+
+def _has_run_evidence_block(text: str) -> bool:
+    """Check that docs_update.md contains a Run Evidence block with file paths."""
+    return any(pattern.search(text) for pattern in RUN_EVIDENCE_PATTERNS)
+
+
 def _validate_docs_update(
     docs_update_path: Path,
     *,
     iteration_id: str,
     run_id: str,
     targets: list[Path],
+    metrics: dict,
 ) -> list[str]:
     failures: list[str] = []
     text = _load_text(docs_update_path)
@@ -112,6 +127,19 @@ def _validate_docs_update(
         failures.append(
             "paper targets do not contain this iteration or run reference and no no-change rationale is provided"
         )
+
+    # Check for concrete metric values from metrics.json
+    if metrics and not _has_concrete_metric_value(text, metrics):
+        failures.append(
+            f"{docs_update_path} does not contain any concrete metric values from metrics.json"
+        )
+
+    # Check for Run Evidence block with file paths
+    if run_id and not _has_run_evidence_block(text):
+        failures.append(
+            f"{docs_update_path} should contain a Run Evidence block referencing run artifact file paths"
+        )
+
     return failures
 
 
@@ -121,14 +149,10 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "docs_targets", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
-        else:
-            print(f"docs_targets: ERROR {exc}")
+        result = make_result("docs_targets", "", [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     stage = str(state.get("stage", "")).strip()
@@ -137,16 +161,13 @@ def main() -> int:
     targets = _iter_targets(state.get("paper_targets"))
 
     if stage != "update_docs":
-        if args.json:
-            import json as _json
-            envelope = {"status": "pass", "verifier": "docs_targets", "stage": stage, "checks": [{"name": "docs_targets", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
-            print(_json.dumps(envelope))
-        else:
-            print("docs_targets: PASS")
+        result = make_result("docs_targets", stage, [{"name": "docs_targets", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        print_result(result, as_json=args.json)
         return 0
 
-    iteration_dir = _resolve_iteration_dir(iteration_id)
+    iteration_dir = resolve_iteration_dir(iteration_id)
     docs_update_path = iteration_dir / "docs_update.md"
+    metrics = _load_metrics(iteration_dir, run_id)
 
     failures: list[str] = []
     for path in targets:
@@ -159,30 +180,16 @@ def main() -> int:
             iteration_id=iteration_id,
             run_id=run_id,
             targets=targets,
+            metrics=metrics,
         )
 
     passed = not failures
 
-    if args.json:
-        import json as _json
-        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
-        if passed:
-            checks = [{"name": "docs_targets", "status": "pass", "detail": "all docs target checks passed"}]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "docs_targets",
-            "stage": stage,
-            "checks": checks,
-            "errors": failures,
-        }
-        print(_json.dumps(envelope))
-    else:
-        if failures:
-            print("docs_targets: FAIL")
-            for reason in failures:
-                print(reason)
-        else:
-            print("docs_targets: PASS")
+    checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+    if passed:
+        checks = [{"name": "docs_targets", "status": "pass", "detail": "all docs target checks passed"}]
+    result = make_result("docs_targets", stage, checks, failures)
+    print_result(result, as_json=args.json)
 
     return 0 if passed else 1
 

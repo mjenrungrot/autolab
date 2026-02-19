@@ -46,6 +46,8 @@ Stage flow at a glance:
 
 ## Stage/Artifact/Verifier cheat sheet
 
+Verifier categories below show **registry capabilities**. Actual requirements depend on `verifier_policy.yaml`. Use `autolab explain stage <stage>` to see effective config.
+
 - `stage`: `hypothesis`; `artifacts`: `hypothesis.md`; `verifier_categories`: `schema`, `prompt_lint`.
 - `stage`: `design`; `artifacts`: `design.yaml`; `verifier_categories`: `schema`, `prompt_lint`.
 - `stage`: `implementation`; `artifacts`: `implementation_plan.md` + code changes; `verifier_categories`: `dry_run`, `schema`, `prompt_lint`.

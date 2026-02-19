@@ -27,6 +27,8 @@ Update iteration documentation and configured paper targets after result extract
 {{shared:runtime_context.md}}
 {{shared:run_artifacts.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/docs_update.md`
 - paper target updates referenced by `.autolab/state.json` (`paper_targets={{paper_targets}}`) or explicit `No changes needed` rationale
@@ -49,6 +51,7 @@ Update iteration documentation and configured paper targets after result extract
 ## SCHEMA GOTCHAS
 - The `template_fill` verifier checks for unresolved placeholders (e.g. double-brace tokens, angle-bracket tokens, `TODO`, `TBD`, `FIXME`, `...`) and trivial/boilerplate content.
 - Ensure all template tokens are replaced with real values before finalizing outputs.
+- **No fabricated deltas**: Never recompute metric deltas from memory. Always quote values directly from `runs/<run_id>/metrics.json`. If metrics are unavailable, state "metrics not yet available" instead of estimating.
 
 ## VERIFIER MAPPING
 - `verifier`: docs_target_update; `checks`: `docs_targets.py` paper target checks; `common_failure_fix`: Update configured paper targets or provide explicit no-change rationale.
