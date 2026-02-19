@@ -210,7 +210,15 @@ def _resolve_prompt_run_id(
     run_id = str(state.get("last_run_id", "")).strip()
     if run_id and not run_id.startswith("<"):
         return run_id
-    if stage in {"launch", "slurm_monitor", "extract_results", "update_docs"}:
+
+    registry = load_registry(repo_root)
+    required_tokens_by_stage = (
+        registry_required_tokens(registry)
+        if registry
+        else PROMPT_REQUIRED_TOKENS_BY_STAGE
+    )
+    required_tokens = required_tokens_by_stage.get(stage, {"iteration_id"})
+    if "run_id" in required_tokens:
         raise StageCheckError(
             f"prompt token '{{{{run_id}}}}' requires a resolved run_id for stage '{stage}'"
         )
@@ -842,13 +850,28 @@ def _inject_registry_boilerplate(
         )
         return bool(pattern.search(markdown))
 
+    def _iter_output_contract_lines() -> list[str]:
+        lines: list[str] = []
+        for output in spec.required_outputs:
+            lines.append(f"- {{{{iteration_path}}}}/{output}")
+        for group in spec.required_outputs_any_of:
+            group_text = " OR ".join(
+                f"`{{{{iteration_path}}}}/{item}`" for item in group
+            )
+            lines.append(f"- one of: {group_text}")
+        for conditions, outputs in spec.required_outputs_if:
+            condition_text = ", ".join(f"{key}={value}" for key, value in conditions)
+            outputs_text = ", ".join(f"`{item}`" for item in outputs)
+            lines.append(f"- when {condition_text}: {outputs_text}")
+        return lines
+
     sections: list[str] = []
 
     # 1. ## OUTPUTS (STRICT)
-    if not _has_heading_prefix(text, "outputs") and spec.required_outputs:
+    output_contract_lines = _iter_output_contract_lines()
+    if not _has_heading_prefix(text, "outputs") and output_contract_lines:
         lines = ["## OUTPUTS (STRICT)"]
-        for output in spec.required_outputs:
-            lines.append(f"- {{{{iteration_path}}}}/{output}")
+        lines.extend(output_contract_lines)
         sections.append("\n".join(lines))
 
     # 2. ## REQUIRED INPUTS
@@ -859,11 +882,20 @@ def _inject_registry_boilerplate(
         sections.append("\n".join(lines))
 
     # 3. ## FILE CHECKLIST
-    if not _has_heading_prefix(text, "file checklist") and spec.required_outputs:
+    if not _has_heading_prefix(text, "file checklist") and output_contract_lines:
         lines = ["## FILE CHECKLIST"]
         for output in spec.required_outputs:
             filename = Path(output).name
             lines.append(f"- [ ] `{filename}` exists and is valid")
+        for index, group in enumerate(spec.required_outputs_any_of, start=1):
+            group_text = " or ".join(f"`{Path(item).name}`" for item in group)
+            lines.append(f"- [ ] one-of output group {index} exists: {group_text}")
+        for conditions, outputs in spec.required_outputs_if:
+            condition_text = ", ".join(f"{key}={value}" for key, value in conditions)
+            for output in outputs:
+                lines.append(
+                    f"- [ ] `{Path(output).name}` exists when {condition_text}"
+                )
         sections.append("\n".join(lines))
 
     # 4. ## VERIFIER MAPPING

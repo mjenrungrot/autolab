@@ -66,9 +66,11 @@ from verifier_lib import (
     load_yaml,
     load_state,
     resolve_iteration_dir,
+    suggest_fix_hints,
 )
 
 TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
+WORKFLOW_FILE = REPO_ROOT / ".autolab" / "workflow.yaml"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
 RUN_MANIFEST_POLICY_KEY = "runs/<RUN_ID>/run_manifest.json"
@@ -750,6 +752,254 @@ def _check_metrics(path: Path) -> list[Failure]:
     return []
 
 
+def _load_stage_output_contract(
+    stage: str,
+) -> tuple[list[str], list[list[str]], list[tuple[dict[str, str], list[str]]]]:
+    try:
+        workflow = load_yaml(WORKFLOW_FILE)
+    except Exception:
+        return ([], [], [])
+    stages = workflow.get("stages")
+    if not isinstance(stages, dict):
+        return ([], [], [])
+    stage_spec = stages.get(stage)
+    if not isinstance(stage_spec, dict):
+        return ([], [], [])
+
+    required_outputs_raw = stage_spec.get("required_outputs", [])
+    required_outputs = (
+        [str(item).strip() for item in required_outputs_raw if str(item).strip()]
+        if isinstance(required_outputs_raw, list)
+        else []
+    )
+
+    any_of_outputs_raw = stage_spec.get("required_outputs_any_of", [])
+    any_of_outputs: list[list[str]] = []
+    if isinstance(any_of_outputs_raw, list):
+        for group in any_of_outputs_raw:
+            if not isinstance(group, list):
+                continue
+            normalized_group = [
+                str(item).strip() for item in group if str(item).strip()
+            ]
+            if normalized_group:
+                any_of_outputs.append(normalized_group)
+
+    conditional_raw = stage_spec.get("required_outputs_if", [])
+    if isinstance(conditional_raw, dict):
+        conditional_raw = [conditional_raw]
+    conditional_outputs: list[tuple[dict[str, str], list[str]]] = []
+    if isinstance(conditional_raw, list):
+        for raw_rule in conditional_raw:
+            if not isinstance(raw_rule, dict):
+                continue
+            outputs_raw = raw_rule.get("outputs", [])
+            if not isinstance(outputs_raw, list):
+                continue
+            outputs = [str(item).strip() for item in outputs_raw if str(item).strip()]
+            if not outputs:
+                continue
+            conditions: dict[str, str] = {}
+            for raw_key, raw_value in raw_rule.items():
+                key = str(raw_key).strip()
+                if not key or key == "outputs":
+                    continue
+                conditions[key] = str(raw_value).strip().lower()
+            if conditions:
+                conditional_outputs.append((conditions, outputs))
+
+    return (required_outputs, any_of_outputs, conditional_outputs)
+
+
+def _replace_pattern_tokens(path_template: str, context: dict[str, str]) -> str:
+    resolved = str(path_template)
+    replacements = {
+        "<RUN_ID>": context.get("run_id", ""),
+        "<ITERATION_ID>": context.get("iteration_id", ""),
+    }
+    for token, value in replacements.items():
+        if value:
+            resolved = resolved.replace(token, value)
+    return resolved
+
+
+def _resolve_required_output_path(
+    path_template: str,
+    *,
+    iteration_dir: Path,
+    context: dict[str, str],
+) -> tuple[Path | None, str | None]:
+    resolved = _replace_pattern_tokens(path_template, context)
+    if "<" in resolved and ">" in resolved:
+        return (
+            None,
+            f"required output path '{path_template}' has unresolved pattern token(s)",
+        )
+
+    candidate = Path(resolved)
+    if candidate.is_absolute():
+        return (candidate, None)
+
+    root_scoped_prefixes = (
+        ".autolab/",
+        "docs/",
+        "paper/",
+        "src/",
+        "scripts/",
+        "tests/",
+        "examples/",
+        "experiments/",
+    )
+    normalized = resolved.replace("\\", "/")
+    if normalized.startswith(root_scoped_prefixes):
+        return (REPO_ROOT / candidate, None)
+    return (iteration_dir / candidate, None)
+
+
+def _resolve_host_mode_for_contract(iteration_dir: Path, run_id: str) -> str:
+    run_id_value = str(run_id).strip()
+    if run_id_value and not run_id_value.startswith("<"):
+        manifest_path = iteration_dir / "runs" / run_id_value / "run_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest_payload = load_json(manifest_path)
+            except Exception:
+                manifest_payload = {}
+            if isinstance(manifest_payload, dict):
+                manifest_host_mode = (
+                    str(
+                        manifest_payload.get("host_mode")
+                        or manifest_payload.get("launch_mode")
+                        or manifest_payload.get("location")
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                )
+                if manifest_host_mode in {"local", "slurm"}:
+                    return manifest_host_mode
+
+    design_path = iteration_dir / "design.yaml"
+    if design_path.exists():
+        try:
+            design_payload = load_yaml(design_path)
+        except Exception:
+            design_payload = {}
+        if isinstance(design_payload, dict):
+            compute = design_payload.get("compute")
+            if isinstance(compute, dict):
+                design_host_mode = str(compute.get("location", "")).strip().lower()
+                if design_host_mode in {"local", "slurm"}:
+                    return design_host_mode
+    return ""
+
+
+def _check_registry_required_outputs(
+    *,
+    stage: str,
+    iteration_dir: Path,
+    state: dict,
+) -> list[Failure]:
+    required_outputs, any_of_outputs, conditional_outputs = _load_stage_output_contract(
+        stage
+    )
+    if not required_outputs and not any_of_outputs and not conditional_outputs:
+        return []
+
+    run_id = str(state.get("last_run_id", "")).strip()
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    context = {
+        "iteration_id": iteration_id,
+        "run_id": run_id,
+        "host_mode": _resolve_host_mode_for_contract(iteration_dir, run_id),
+    }
+
+    failures: list[Failure] = []
+
+    for output in required_outputs:
+        resolved_path, error = _resolve_required_output_path(
+            output,
+            iteration_dir=iteration_dir,
+            context=context,
+        )
+        if error:
+            failures.append(Failure(output, error))
+            continue
+        assert resolved_path is not None
+        if not resolved_path.exists():
+            failures.append(
+                Failure(
+                    str(resolved_path),
+                    f"required output from workflow.yaml is missing for stage '{stage}'",
+                )
+            )
+
+    for group in any_of_outputs:
+        resolved_candidates: list[Path] = []
+        group_errors: list[str] = []
+        for output in group:
+            resolved_path, error = _resolve_required_output_path(
+                output,
+                iteration_dir=iteration_dir,
+                context=context,
+            )
+            if error:
+                group_errors.append(error)
+                continue
+            assert resolved_path is not None
+            resolved_candidates.append(resolved_path)
+        if any(path.exists() for path in resolved_candidates):
+            continue
+        if group_errors:
+            failures.append(Failure(" | ".join(group), "; ".join(group_errors)))
+            continue
+        candidate_text = ", ".join(str(path) for path in resolved_candidates)
+        failures.append(
+            Failure(
+                candidate_text,
+                (
+                    "required one-of outputs from workflow.yaml are all missing "
+                    f"for stage '{stage}'"
+                ),
+            )
+        )
+
+    for conditions, outputs in conditional_outputs:
+        should_enforce = True
+        for key, expected in conditions.items():
+            actual = str(context.get(key, "")).strip().lower()
+            if actual != expected:
+                should_enforce = False
+                break
+        if not should_enforce:
+            continue
+
+        for output in outputs:
+            resolved_path, error = _resolve_required_output_path(
+                output,
+                iteration_dir=iteration_dir,
+                context=context,
+            )
+            if error:
+                failures.append(Failure(output, error))
+                continue
+            assert resolved_path is not None
+            if not resolved_path.exists():
+                condition_text = ", ".join(
+                    f"{key}={value}" for key, value in conditions.items()
+                )
+                failures.append(
+                    Failure(
+                        str(resolved_path),
+                        (
+                            "conditional required output from workflow.yaml is missing "
+                            f"(condition: {condition_text})"
+                        ),
+                    )
+                )
+    return failures
+
+
 def _check_launch_scripts(
     iteration_dir: Path, policy: LineLimitPolicy
 ) -> list[Failure]:
@@ -759,12 +1009,7 @@ def _check_launch_scripts(
         relative for relative in candidates if (iteration_dir / relative).exists()
     ]
     if not existing:
-        return [
-            Failure(
-                str(iteration_dir / "launch"),
-                "launch stage requires run_local.sh or run_slurm.sbatch",
-            )
-        ]
+        return []
 
     for relative in existing:
         path = iteration_dir / relative
@@ -779,7 +1024,11 @@ def _stage_checks(
     state: dict,
     line_limit_policy: LineLimitPolicy,
 ) -> list[Failure]:
-    checks: list[Failure] = []
+    checks: list[Failure] = _check_registry_required_outputs(
+        stage=stage,
+        iteration_dir=iteration_dir,
+        state=state,
+    )
     run_id = str(state.get("last_run_id", "")).strip()
     iteration_id = str(state.get("iteration_id", "")).strip()
 
@@ -992,6 +1241,15 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             print(f"template_fill: FAIL stage={stage} issues={len(failures)}")
             for failure in failures:
                 print(f"{failure.path}\t{failure.reason}")
+            hint_texts = suggest_fix_hints(
+                [f"{failure.path}\t{failure.reason}" for failure in failures],
+                stage=stage,
+                verifier="template_fill",
+            )
+            if hint_texts:
+                print("\nMost likely fixes:")
+                for hint in hint_texts:
+                    print(f"- {hint}")
         else:
             print(f"template_fill: PASS stage={stage} iteration={iteration_id}")
 

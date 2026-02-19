@@ -185,6 +185,52 @@ Tune conservatively; prefer explicit escalation over silent infinite loops.
    - guardrail counters in `repeat_guard`
 1. Apply the smallest policy change needed, rerun, and re-check status.
 
+## Failure Playbooks
+
+### If `prompt_lint` fails
+
+1. `autolab verify --stage <stage>`
+1. `python -m autolab lint --stage <stage>`
+1. Inspect:
+   - `.autolab/prompts/stage_<stage>.md`
+   - `.autolab/workflow.yaml` (`required_tokens`)
+1. Fix:
+   - remove unsupported `{{token}}`, or
+   - add token to stage `required_tokens` (if mandatory), or
+   - document token as optional and include `## MISSING-INPUT FALLBACKS`.
+
+### If `schema_checks` fails
+
+1. `autolab verify --stage <stage>`
+1. `python .autolab/verifiers/schema_checks.py --stage <stage> --json`
+1. Inspect artifact + schema pair:
+   - `.autolab/schemas/*.schema.json`
+   - failing file path from verifier output
+1. Fix missing required fields/types first, then rerun verification.
+
+### If SLURM ledger is missing `run_id`
+
+1. Inspect manifest:
+   - `cat experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json`
+1. Verify ledger:
+   - `autolab slurm-job-list verify --manifest experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json --doc docs/slurm_job_list.md`
+1. Append/repair entry:
+   - `autolab slurm-job-list append --manifest experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json --doc docs/slurm_job_list.md`
+1. Re-run:
+   - `autolab verify --stage launch`
+
+### If `docs_targets` fails
+
+1. `python .autolab/verifiers/docs_targets.py --json`
+1. Inspect:
+   - `experiments/<type>/<iteration_id>/docs_update.md`
+   - `experiments/<type>/<iteration_id>/runs/<run_id>/metrics.json`
+   - `experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json`
+1. Ensure `docs_update.md` includes:
+   - primary metric `name`, `value`, and `delta_vs_baseline`
+   - exact metrics + manifest artifact paths
+   - explicit no-target rationale when `paper_targets` is empty
+
 ## Response style for this skill
 
 When answering users:

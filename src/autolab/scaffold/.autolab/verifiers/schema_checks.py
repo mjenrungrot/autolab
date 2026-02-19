@@ -41,6 +41,12 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from invariant_checks import (
+    check_design_manifest_host_mode,
+    check_manifest_sync_status,
+    check_metric_name_match,
+)
+
 try:
     import yaml
 except Exception:  # pragma: no cover
@@ -82,6 +88,7 @@ from verifier_lib import (
     load_yaml,
     load_state,
     resolve_iteration_dir,
+    suggest_fix_hints,
 )
 
 SCHEMA_DIR = REPO_ROOT / ".autolab" / "schemas"
@@ -99,7 +106,6 @@ SCHEMAS: dict[str, str] = {
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
 }
-SYNC_SUCCESS_STATUSES = {"ok", "completed", "success", "passed"}
 
 
 def _load_policy() -> dict:
@@ -390,33 +396,71 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
         except Exception as exc:
             failures.append(f"{design_path} {exc}")
             design_payload = {}
-        design_compute = (
-            design_payload.get("compute") if isinstance(design_payload, dict) else {}
-        )
-        design_location = (
-            str((design_compute or {}).get("location", "")).strip().lower()
-        )
-        host_mode = (
-            str(payload.get("host_mode", payload.get("launch_mode", "")))
-            .strip()
-            .lower()
-        )
-        if design_location and host_mode and design_location != host_mode:
-            failures.append(
-                f"{path} host mode '{host_mode}' does not match design.compute.location '{design_location}'"
+        mode_failures = check_design_manifest_host_mode(design_payload, payload)
+        for failure in mode_failures:
+            failures.append(f"{path} {failure}")
+
+    if stage in {"launch", "extract_results", "update_docs", "decide_repeat"}:
+        failures.extend(
+            check_manifest_sync_status(
+                payload,
+                require_success=stage == "extract_results",
+                context=stage,
             )
+        )
 
-    if stage == "extract_results":
-        sync = payload.get("artifact_sync_to_local")
-        if not isinstance(sync, dict):
-            failures.append(f"{path} artifact_sync_to_local must be a mapping")
-        else:
-            sync_status = str(sync.get("status", "")).strip().lower()
-            if sync_status not in SYNC_SUCCESS_STATUSES:
-                failures.append(
-                    f"{path} artifact_sync_to_local.status must be success-like for extract_results"
-                )
+    return failures
 
+
+def _normalized_run_group(state: dict[str, Any]) -> list[str]:
+    raw_group = state.get("run_group", [])
+    if not isinstance(raw_group, list):
+        return []
+    normalized: list[str] = []
+    for raw_run_id in raw_group:
+        run_id = str(raw_run_id).strip()
+        if run_id and run_id not in normalized:
+            normalized.append(run_id)
+    return normalized
+
+
+def _validate_replicate_run_manifests(
+    state: dict[str, Any], *, stage: str
+) -> list[str]:
+    if stage not in {"launch", "extract_results", "update_docs", "decide_repeat"}:
+        return []
+
+    run_group = _normalized_run_group(state)
+    if len(run_group) <= 1:
+        return []
+
+    failures: list[str] = []
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    iteration_dir = _iteration_dir(state)
+
+    for replicate_run_id in run_group:
+        path = iteration_dir / "runs" / replicate_run_id / "run_manifest.json"
+        try:
+            payload = load_json(path)
+        except Exception as exc:
+            failures.append(f"{path} {exc}")
+            continue
+        failures.extend(_schema_validate(payload, schema_key="run_manifest", path=path))
+
+        manifest_run_id = str(payload.get("run_id", "")).strip()
+        if manifest_run_id and manifest_run_id != replicate_run_id:
+            failures.append(
+                f"{path} run_id '{manifest_run_id}' does not match replicate id '{replicate_run_id}'"
+            )
+        manifest_iteration_id = str(payload.get("iteration_id", "")).strip()
+        if (
+            iteration_id
+            and manifest_iteration_id
+            and manifest_iteration_id != iteration_id
+        ):
+            failures.append(
+                f"{path} iteration_id '{manifest_iteration_id}' does not match state.iteration_id '{iteration_id}'"
+            )
     return failures
 
 
@@ -448,26 +492,14 @@ def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
     ):
         failures.append(f"{path} run_id mismatch")
 
-    primary_metric = payload.get("primary_metric")
-    primary_metric_name = ""
-    if isinstance(primary_metric, dict):
-        primary_metric_name = str(primary_metric.get("name", "")).strip()
-    if primary_metric_name:
-        design_path = _iteration_dir(state) / "design.yaml"
-        try:
-            design_payload = load_yaml(design_path)
-        except Exception:
-            design_payload = {}
-        if isinstance(design_payload, dict):
-            metrics = design_payload.get("metrics")
-            if isinstance(metrics, dict):
-                primary = metrics.get("primary")
-                if isinstance(primary, dict):
-                    design_name = str(primary.get("name", "")).strip()
-                    if design_name and design_name != primary_metric_name:
-                        failures.append(
-                            f"{path} primary_metric.name '{primary_metric_name}' does not match design.metrics.primary.name '{design_name}'"
-                        )
+    design_path = _iteration_dir(state) / "design.yaml"
+    try:
+        design_payload = load_yaml(design_path)
+    except Exception:
+        design_payload = {}
+    metric_failures = check_metric_name_match(design_payload, payload)
+    for failure in metric_failures:
+        failures.append(f"{path} {failure}")
     return failures
 
 
@@ -598,6 +630,7 @@ def main() -> int:
     failures.extend(_validate_design(state, stage=stage))
     failures.extend(_validate_review_result(state, policy, stage=stage))
     failures.extend(_validate_run_manifest(state, stage=stage))
+    failures.extend(_validate_replicate_run_manifests(state, stage=stage))
     failures.extend(_validate_metrics(state, stage=stage))
     failures.extend(_validate_decision_result(state, stage=stage))
     failures.extend(_validate_todo_state(state))
@@ -652,6 +685,15 @@ def main() -> int:
                 print(
                     f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`"
                 )
+            hint_texts = suggest_fix_hints(
+                failures,
+                stage=stage,
+                verifier="schema_checks",
+            )
+            if hint_texts:
+                print("\nMost likely fixes:")
+                for hint in hint_texts:
+                    print(f"- {hint}")
         else:
             print("schema_checks: PASS")
 

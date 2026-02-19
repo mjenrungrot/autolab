@@ -22,6 +22,10 @@ class StageSpec:
     required_outputs: tuple[str, ...]
     next_stage: str
     verifier_categories: dict[str, bool]
+    required_outputs_any_of: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
+    required_outputs_if: tuple[
+        tuple[tuple[tuple[str, str], ...], tuple[str, ...]], ...
+    ] = field(default_factory=tuple)
     decision_map: dict[str, str] = field(default_factory=dict)
     is_active: bool = False
     is_terminal: bool = False
@@ -46,6 +50,46 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
     required_outputs_raw = raw.get("required_outputs") or []
     if not isinstance(required_outputs_raw, list):
         required_outputs_raw = []
+    required_outputs = [
+        str(output).strip() for output in required_outputs_raw if str(output).strip()
+    ]
+
+    required_outputs_any_of_raw = raw.get("required_outputs_any_of") or []
+    required_outputs_any_of: list[tuple[str, ...]] = []
+    if isinstance(required_outputs_any_of_raw, list):
+        for raw_group in required_outputs_any_of_raw:
+            if not isinstance(raw_group, list):
+                continue
+            normalized_group = tuple(
+                str(output).strip() for output in raw_group if str(output).strip()
+            )
+            if normalized_group:
+                required_outputs_any_of.append(normalized_group)
+
+    required_outputs_if_raw = raw.get("required_outputs_if") or []
+    if isinstance(required_outputs_if_raw, dict):
+        required_outputs_if_raw = [required_outputs_if_raw]
+    required_outputs_if: list[tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = []
+    if isinstance(required_outputs_if_raw, list):
+        for raw_rule in required_outputs_if_raw:
+            if not isinstance(raw_rule, dict):
+                continue
+            outputs_raw = raw_rule.get("outputs") or []
+            if not isinstance(outputs_raw, list):
+                continue
+            outputs = tuple(
+                str(output).strip() for output in outputs_raw if str(output).strip()
+            )
+            if not outputs:
+                continue
+            conditions = tuple(
+                (str(key).strip(), str(value).strip().lower())
+                for key, value in raw_rule.items()
+                if str(key).strip() and str(key).strip() != "outputs"
+            )
+            if not conditions:
+                continue
+            required_outputs_if.append((conditions, outputs))
 
     decision_map_raw = raw.get("decision_map") or {}
     if not isinstance(decision_map_raw, dict):
@@ -55,7 +99,9 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
         name=name,
         prompt_file=str(raw.get("prompt_file", f"stage_{name}.md")),
         required_tokens=frozenset(str(t) for t in required_tokens_raw),
-        required_outputs=tuple(str(o) for o in required_outputs_raw),
+        required_outputs=tuple(required_outputs),
+        required_outputs_any_of=tuple(required_outputs_any_of),
+        required_outputs_if=tuple(required_outputs_if),
         next_stage=str(raw.get("next_stage", "")),
         verifier_categories={str(k): bool(v) for k, v in verifier_cats.items()},
         decision_map={str(k): str(v) for k, v in decision_map_raw.items()},

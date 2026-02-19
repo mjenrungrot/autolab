@@ -102,6 +102,11 @@ stages:
     prompt_file: stage_launch.md
     required_tokens: [iteration_id, iteration_path, run_id]
     required_outputs: [runs/<RUN_ID>/run_manifest.json]
+    required_outputs_any_of:
+      - [launch/run_local.sh, launch/run_slurm.sbatch]
+    required_outputs_if:
+      - host_mode: slurm
+        outputs: [docs/slurm_job_list.md]
     next_stage: slurm_monitor
     verifier_categories:
       tests: false
@@ -172,7 +177,7 @@ stages:
       runner_eligible: true
   decide_repeat:
     prompt_file: stage_decide_repeat.md
-    required_tokens: [iteration_id, iteration_path]
+    required_tokens: [iteration_id, iteration_path, run_id]
     required_outputs: [decision_result.json]
     next_stage: ''
     decision_map:

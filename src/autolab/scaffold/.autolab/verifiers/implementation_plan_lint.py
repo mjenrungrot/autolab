@@ -22,6 +22,7 @@ from verifier_lib import (
     DEFAULT_EXPERIMENT_TYPE,
     load_state,
     resolve_iteration_dir,
+    suggest_fix_hints,
 )
 
 TASK_HEADING_PATTERN = re.compile(r"^###\s+(T\d+):\s*(.*)$", re.MULTILINE)
@@ -523,10 +524,28 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             print(f"implementation_plan_lint: FAIL issues={len(issues)}")
             for issue in issues:
                 print(f"  {issue}")
+            hint_texts = suggest_fix_hints(
+                issues,
+                stage=stage,
+                verifier="implementation_plan_lint",
+            )
+            if hint_texts:
+                print("\nMost likely fixes:")
+                for hint in hint_texts:
+                    print(f"- {hint}")
         elif scope_failures:
             print(f"implementation_plan_lint: FAIL scope issues={len(scope_failures)}")
             for warning in scope_failures:
                 print(f"  {warning}")
+            hint_texts = suggest_fix_hints(
+                scope_failures,
+                stage=stage,
+                verifier="implementation_plan_lint",
+            )
+            if hint_texts:
+                print("\nMost likely fixes:")
+                for hint in hint_texts:
+                    print(f"- {hint}")
         else:
             if allowed_dirs:
                 scope_warnings_only = (

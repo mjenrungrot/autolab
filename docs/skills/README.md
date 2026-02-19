@@ -19,3 +19,9 @@ Contributor rule:
 
 - Edit only `src/autolab/skills/codex/autolab/SKILL.md`.
 - Do not edit redirect stubs.
+
+Provider scope:
+
+- Bundled workflow skills are intentionally Codex-first today (`autolab install-skill codex`).
+- `claude` / `custom` runners are supported for execution in `verifier_policy.yaml`, but first-class packaged skills for those runners are not shipped yet.
+- If non-Codex skill packaging is required, add a provider-specific canonical skill under `src/autolab/skills/<provider>/...` and extend installer support in `autolab.commands`.

@@ -1749,12 +1749,26 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         )
 
     # Pattern-path notes on required_outputs
-    output_notes: list[dict[str, str]] = []
+    output_notes: list[dict[str, Any]] = []
     for output in spec.required_outputs:
-        note = {"pattern": output}
+        note: dict[str, Any] = {"pattern": output}
         if "<RUN_ID>" in output:
             note["note"] = "<RUN_ID> is replaced at runtime with state.last_run_id"
         output_notes.append(note)
+    for group in spec.required_outputs_any_of:
+        output_notes.append(
+            {
+                "any_of": list(group),
+                "note": "at least one of these outputs must exist",
+            }
+        )
+    for conditions, outputs in spec.required_outputs_if:
+        output_notes.append(
+            {
+                "if": {key: value for key, value in conditions},
+                "outputs": list(outputs),
+            }
+        )
 
     if output_json:
         payload: dict[str, Any] = {
@@ -1782,9 +1796,27 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         print(f"prompt_file: {spec.prompt_file}")
         print(f"resolved_prompt_path: {resolved_prompt_path}")
         print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
-        print(f"required_outputs: {', '.join(spec.required_outputs) or '(none)'}")
+        required_outputs_text = (
+            ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
+        )
+        print(f"required_outputs: {required_outputs_text}")
+        if spec.required_outputs_any_of:
+            for index, group in enumerate(spec.required_outputs_any_of, start=1):
+                print(
+                    f"required_outputs_any_of[{index}]: {' | '.join(group)} (at least one)"
+                )
+        if spec.required_outputs_if:
+            for index, (conditions, outputs) in enumerate(
+                spec.required_outputs_if, start=1
+            ):
+                condition_text = ", ".join(
+                    f"{key}={value}" for key, value in conditions
+                )
+                print(
+                    f"required_outputs_if[{index}] when {condition_text}: {', '.join(outputs)}"
+                )
         for note in output_notes:
-            if "note" in note:
+            if "pattern" in note and "note" in note:
                 print(f"  {note['pattern']}: {note['note']}")
         print(f"next_stage: {spec.next_stage or '(branching)'}")
         if spec.decision_map:
@@ -2009,9 +2041,15 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     print("| Stage | Required Outputs |")
     print("|-------|-----------------|")
     for name, spec in registry.items():
-        outputs = (
-            ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
-        )
+        outputs_parts: list[str] = []
+        if spec.required_outputs:
+            outputs_parts.append(", ".join(spec.required_outputs))
+        for group in spec.required_outputs_any_of:
+            outputs_parts.append(f"one-of({', '.join(group)})")
+        for conditions, outputs in spec.required_outputs_if:
+            condition_text = ", ".join(f"{key}={value}" for key, value in conditions)
+            outputs_parts.append(f"when {condition_text}: {', '.join(outputs)}")
+        outputs = "; ".join(outputs_parts) if outputs_parts else "(none)"
         print(f"| {name} | {outputs} |")
     print("")
 
