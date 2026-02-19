@@ -96,6 +96,7 @@ class GuardrailConfig:
     max_update_docs_cycles: int
     max_generated_todo_tasks: int
     on_breach: str
+    max_stalled_blocker_cycles: int = 3
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,13 @@ class MeaningfulChangeConfig:
     require_git_for_progress: bool
     on_non_git_behavior: str
     exclude_paths: tuple[str, ...]
+    require_non_review_progress_in_implementation_cycle: bool = True
+    implementation_cycle_exclude_paths: tuple[str, ...] = (
+        ".autolab/**",
+        "docs/todo.md",
+        "**/implementation_review.md",
+        "**/review_result.json",
+    )
 
 
 @dataclass(frozen=True)

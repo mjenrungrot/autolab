@@ -24,6 +24,7 @@ from autolab.constants import (
     DEFAULT_AGENT_RUNNER_STAGES,
     DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
     DEFAULT_AUTO_COMMIT_MODE,
+    DEFAULT_IMPLEMENTATION_CYCLE_EXCLUDE_PATHS,
     DEFAULT_MEANINGFUL_EXCLUDE_PATHS,
     RUNNER_ELIGIBLE_STAGES,
     TERMINAL_STAGES,
@@ -65,6 +66,9 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
     max_no_progress = int(guardrails.get("max_no_progress_decisions", 2) or 2)
     max_update_docs = int(guardrails.get("max_update_docs_cycles", 3) or 3)
     max_generated_todo_tasks = int(guardrails.get("max_generated_todo_tasks", 5) or 5)
+    max_stalled_blocker_cycles = int(
+        guardrails.get("max_stalled_blocker_cycles", 3) or 3
+    )
     on_breach = (
         str(guardrails.get("on_breach", "human_review")).strip() or "human_review"
     )
@@ -78,12 +82,15 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
         max_update_docs = 1
     if max_generated_todo_tasks < 1:
         max_generated_todo_tasks = 1
+    if max_stalled_blocker_cycles < 1:
+        max_stalled_blocker_cycles = 1
     return GuardrailConfig(
         max_same_decision_streak=max_same,
         max_no_progress_decisions=max_no_progress,
         max_update_docs_cycles=max_update_docs,
         max_generated_todo_tasks=max_generated_todo_tasks,
         on_breach=on_breach,
+        max_stalled_blocker_cycles=max_stalled_blocker_cycles,
     )
 
 
@@ -114,12 +121,30 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
                 patterns.append(candidate)
     if not patterns:
         patterns = list(DEFAULT_MEANINGFUL_EXCLUDE_PATHS)
+    require_non_review_progress_in_implementation_cycle = _coerce_bool(
+        meaningful.get("require_non_review_progress_in_implementation_cycle"),
+        default=True,
+    )
+    raw_implementation_cycle_patterns = meaningful.get(
+        "implementation_cycle_exclude_paths",
+        list(DEFAULT_IMPLEMENTATION_CYCLE_EXCLUDE_PATHS),
+    )
+    implementation_cycle_patterns: list[str] = []
+    if isinstance(raw_implementation_cycle_patterns, list):
+        for entry in raw_implementation_cycle_patterns:
+            candidate = str(entry).strip()
+            if candidate:
+                implementation_cycle_patterns.append(candidate)
+    if not implementation_cycle_patterns:
+        implementation_cycle_patterns = list(DEFAULT_IMPLEMENTATION_CYCLE_EXCLUDE_PATHS)
     return MeaningfulChangeConfig(
         require_verification=require_verification,
         require_implementation_progress=require_implementation_progress,
         require_git_for_progress=require_git_for_progress,
         on_non_git_behavior=on_non_git_behavior,
         exclude_paths=tuple(patterns),
+        require_non_review_progress_in_implementation_cycle=require_non_review_progress_in_implementation_cycle,
+        implementation_cycle_exclude_paths=tuple(implementation_cycle_patterns),
     )
 
 

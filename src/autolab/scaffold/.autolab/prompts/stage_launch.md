@@ -68,6 +68,9 @@ Examples: `examples/golden_iteration/experiments/plan/iter_golden/launch/run_loc
   - Do **not** execute local commands and do **not** submit scheduler jobs.
   - Record intent/status clearly in `run_manifest.json` so later stages can verify contracts safely.
 - If `{{launch_execute}}` is `true`, perform normal execution/submission flow.
+- The orchestrator may execute launch commands directly. If launch evidence for the
+  same `run_id` already exists (manifest/logs or submitted SLURM `job_id`), avoid
+  duplicate execution and only backfill missing invariants.
 
 ## LAUNCH LIFECYCLE (SLURM ASYNC CONTRACT)
 - In SLURM mode, `launch` is primarily a **submission + tracking** stage.
@@ -101,7 +104,7 @@ If `{{replicate_count}}` is greater than 1, create `runs/<run_id>_rN/run_manifes
 
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
-2. If `{{launch_execute}}=true`, execute locally or submit to SLURM with the appropriate script and capture command/resource details.
+2. If `{{launch_execute}}=true`, execute locally or submit to SLURM with the appropriate script and capture command/resource details. The orchestrator may perform this step directly.
 3. If `{{launch_execute}}=false`, skip execution/submission and write artifact-only launch metadata.
 4. Set `run_manifest.resource_request.memory` from design memory planning using the high-memory rule (`{{recommended_memory_estimate}}` when capacity allows).
 5. Write `run_manifest.json` that matches schema and uses `{{run_id}}`.

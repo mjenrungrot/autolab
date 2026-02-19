@@ -643,10 +643,6 @@ def _resolve_latest_run_state(
         .strip()
         .lower()
     )
-    if launch_mode == "slurm" and sync_status not in {"completed", "ok", "success"}:
-        raise StageCheckError(
-            f"latest run {run_id} has incomplete artifact synchronization for slurm mode: {sync_status}"
-        )
     return (run_id, sync_status)
 
 

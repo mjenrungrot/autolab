@@ -113,10 +113,7 @@ def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> 
 
     assert "{{hypothesis_id}}" not in bundle.prompt_text
     assert "hypothesis_id: h1" in bundle.prompt_text
-    assert (
-        "python3 .autolab/verifiers/template_fill.py --stage design"
-        in bundle.prompt_text
-    )
+    assert ".autolab/verifiers/template_fill.py --stage design" in bundle.prompt_text
 
 
 def test_render_prompt_auto_injects_registry_boilerplate_when_missing(

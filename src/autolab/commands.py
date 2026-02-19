@@ -1284,6 +1284,14 @@ def _cmd_guardrails(args: argparse.Namespace) -> int:
         print(f"  require_git_for_progress: {meaningful_cfg.require_git_for_progress}")
         print(f"  on_non_git_behavior: {meaningful_cfg.on_non_git_behavior}")
         print(f"  exclude_paths: {list(meaningful_cfg.exclude_paths)}")
+        print(
+            "  require_non_review_progress_in_implementation_cycle: "
+            f"{meaningful_cfg.require_non_review_progress_in_implementation_cycle}"
+        )
+        print(
+            "  implementation_cycle_exclude_paths: "
+            f"{list(meaningful_cfg.implementation_cycle_exclude_paths)}"
+        )
     except Exception:
         pass
 

@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.33
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.34
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -113,7 +113,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 - **design** -- `design.yaml`; advances when required keys are present.
 - **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`).
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
-- **launch** -- `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`; advances to slurm_monitor.
+- **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.
 - **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.
 - **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting.
 - **update_docs** -- `docs_update.md`; advances when run evidence references are present.

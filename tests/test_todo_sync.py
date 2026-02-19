@@ -13,6 +13,29 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _seed_review_result(
+    repo: Path,
+    *,
+    iteration_id: str = "iter1",
+    status: str = "needs_retry",
+    blocking_findings: list[object] | None = None,
+) -> None:
+    payload = {
+        "status": status,
+        "blocking_findings": blocking_findings or [],
+        "required_checks": {
+            "tests": "pass",
+            "dry_run": "skip",
+            "schema": "pass",
+            "env_smoke": "skip",
+            "docs_target_update": "skip",
+        },
+        "reviewed_at": "2026-02-19T00:00:00Z",
+    }
+    path = repo / "experiments" / "plan" / iteration_id / "review_result.json"
+    _write(path, json.dumps(payload, indent=2) + "\n")
+
+
 def test_todo_sync_parses_nested_and_wrapped_markdown_tasks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -97,4 +120,127 @@ def test_todo_sync_uses_policy_fallback_task_configuration(tmp_path: Path) -> No
         and task.get("stage") == "update_docs"
         and "Custom local fallback task" in task.get("text", "")
         for task in tasks
+    )
+
+
+def test_todo_sync_extracts_generated_tasks_from_review_blockers(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write(
+        repo / "docs" / "todo.md",
+        ("# TODO\n\n## Tasks\n<!-- empty -->\n\n## Notes\nnotes\n"),
+    )
+    _seed_review_result(
+        repo,
+        status="needs_retry",
+        blocking_findings=[
+            "Fix parser bug in scripts/method_b_av10_experiment.py",
+            "SLURM launch submit fails due to missing job_id",
+            {"stage": "extract_results", "summary": "metrics aggregation missing"},
+        ],
+    )
+
+    state = {
+        "iteration_id": "iter1",
+        "stage": "implementation_review",
+        "assistant_mode": "off",
+    }
+    sync_todo_pre_run(repo, state, host_mode="local")
+
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    open_tasks = [
+        task for task in todo_state["tasks"].values() if task.get("status") == "open"
+    ]
+    blocker_tasks = [
+        task
+        for task in open_tasks
+        if str(task.get("scope", "")).startswith("review:blocker:")
+    ]
+    assert blocker_tasks
+    stages = {str(task.get("stage", "")) for task in blocker_tasks}
+    assert "implementation" in stages
+    assert "launch" in stages
+    assert "extract_results" in stages
+
+
+def test_todo_sync_skips_fallback_when_unresolved_review_blockers_exist(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write(
+        repo / "docs" / "todo.md",
+        ("# TODO\n\n## Tasks\n<!-- empty -->\n\n## Notes\nnotes\n"),
+    )
+    _seed_review_result(
+        repo,
+        status="needs_retry",
+        blocking_findings=["Fix blocker in scripts/train.py before launch"],
+    )
+
+    state = {
+        "iteration_id": "iter1",
+        "stage": "decide_repeat",
+        "assistant_mode": "on",
+    }
+    sync_todo_pre_run(repo, state, host_mode="local")
+
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    open_tasks = [
+        task for task in todo_state["tasks"].values() if task.get("status") == "open"
+    ]
+    assert any(
+        str(task.get("scope", "")).startswith("review:blocker:") for task in open_tasks
+    )
+    assert not any(
+        str(task.get("scope", "")).startswith("policy:no_task_fallback:")
+        for task in open_tasks
+    )
+
+
+def test_todo_sync_keeps_manual_blocker_tasks_sticky_with_unresolved_blockers(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write(
+        repo / "docs" / "todo.md",
+        (
+            "# TODO\n\n## Tasks\n"
+            "- [ ] [stage:implementation] Fix blocker in scripts/method.py\n\n"
+            "## Notes\nnotes\n"
+        ),
+    )
+    _seed_review_result(
+        repo,
+        status="needs_retry",
+        blocking_findings=["Fix blocker in scripts/method.py"],
+    )
+    state = {
+        "iteration_id": "iter1",
+        "stage": "implementation_review",
+        "assistant_mode": "off",
+    }
+    sync_todo_pre_run(repo, state, host_mode="local")
+
+    _write(
+        repo / "docs" / "todo.md",
+        "# TODO\n\n## Tasks\n<!-- empty -->\n\n## Notes\nnotes\n",
+    )
+    sync_todo_pre_run(repo, state, host_mode="local")
+
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    assert any(
+        task.get("source") == "manual"
+        and task.get("status") == "open"
+        and "Fix blocker in scripts/method.py" in str(task.get("text", ""))
+        for task in todo_state["tasks"].values()
     )

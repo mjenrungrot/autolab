@@ -22,6 +22,7 @@ import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -134,6 +135,11 @@ def _write_policy(repo: Path, *, guardrails: dict[str, Any] | None = None) -> No
         "require_dry_run": False,
         "require_env_smoke": False,
         "require_docs_target_update": False,
+        "launch": {
+            "execute": True,
+            "local_timeout_seconds": 900,
+            "slurm_submit_timeout_seconds": 30,
+        },
         "template_fill": {"enabled": False},
         "agent_runner": {"enabled": False, "stages": []},
         "autorun": {
@@ -469,7 +475,8 @@ def _setup_repo(
 def _run(state_path: Path, **kwargs: Any) -> RunOutcome:
     kwargs.setdefault("run_agent_mode", "force_off")
     kwargs.setdefault("strict_implementation_progress", False)
-    return _run_once(state_path, kwargs.pop("decision", None), **kwargs)
+    with mock.patch("autolab.run_standard._generate_run_id", return_value="run_001"):
+        return _run_once(state_path, kwargs.pop("decision", None), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -690,16 +697,10 @@ class TestLockLimitations:
 
 
 class TestSlurmSyncRetryBudgetExhaustion:
-    """Documents that pending SLURM sync exhausts the retry budget and that
-    cross-device checks double-count attempts.
-    """
+    """Pending sync now hands off to monitor without launch retry churn."""
 
     def test_pending_sync_exhausts_budget(self, tmp_path: Path) -> None:
-        """Set stage=launch, max_stage_attempts=3, seed SLURM launch with
-        sync_status='pending'.  Run 3 times.  First 2 stay at launch with
-        incrementing stage_attempt, third escalates to human_review.
-        Documents GAP-4.
-        """
+        """Pending sync should remain in slurm_monitor without retry exhaustion."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -709,32 +710,28 @@ class TestSlurmSyncRetryBudgetExhaustion:
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
-        # Attempt 1
+        # Attempt 1: launch -> monitor
         outcome1 = _run(state_path)
-        assert outcome1.exit_code == 1
+        assert outcome1.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # Attempt 2
+        # Attempt 2: still waiting in monitor
         outcome2 = _run(state_path)
-        assert outcome2.exit_code == 1
+        assert outcome2.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 2
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # Attempt 3 -> exhaustion -> human_review
+        # Attempt 3: still waiting, no budget exhaustion
         outcome3 = _run(state_path)
-        assert outcome3.exit_code == 1
+        assert outcome3.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "human_review"
+        assert persisted["stage"] == "slurm_monitor"
 
     def test_cross_device_attempt_double_counting(self, tmp_path: Path) -> None:
-        """Set stage=launch, stage_attempt=0.  Run once ('REMOTE' check,
-        attempt->1).  The state is persisted.  Run again ('LOCAL' check,
-        attempt->2).  Assert 2 attempts consumed for a single wait condition.
-        Documents GAP-8.
-        """
+        """Cross-device monitor checks should not consume launch retry budget."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -744,48 +741,50 @@ class TestSlurmSyncRetryBudgetExhaustion:
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
-        # "REMOTE" checks -- sync is pending, attempt increments
+        # "REMOTE" checks -- launch hands off to monitor
         outcome_remote = _run(state_path)
-        assert outcome_remote.exit_code == 1
+        assert outcome_remote.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # "LOCAL" checks same state -- sync still pending, attempt increments again
+        # "LOCAL" checks same state -- still waiting, stage_attempt unchanged
         outcome_local = _run(state_path)
-        assert outcome_local.exit_code == 1
+        assert outcome_local.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage_attempt"] == 2
-
-        # Two attempts consumed for a single underlying wait condition
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
     def test_sync_transitions_from_pending_to_completed(self, tmp_path: Path) -> None:
-        """Set stage=launch, stage_attempt=1.  First run with sync='running'
-        (attempt->2).  Then update manifest to sync='completed' and run again.
-        Assert transition to extract_results with stage_attempt reset to 0.
-        Documents GAP-4 recovery path.
-        """
+        """Running sync waits in monitor; completed sync then advances to extract."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
-            stage_attempt=1,
+            stage_attempt=0,
             max_stage_attempts=5,
         )
         _seed_slurm_launch(it_dir, sync_status="running")
         _write_slurm_ledger(repo, "run_001")
 
-        # Run with sync still in-progress
+        # Launch -> monitor
         outcome1 = _run(state_path)
-        assert outcome1.exit_code == 1
+        assert outcome1.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 2
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
+
+        # Monitor remains waiting while sync is still in-progress
+        outcome_wait = _run(state_path)
+        assert outcome_wait.exit_code == 0
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "slurm_monitor"
 
         # Now sync completes -- update the manifest
         _seed_slurm_launch(it_dir, sync_status="completed")
 
         outcome2 = _run(state_path)
         assert outcome2.transitioned
-        assert outcome2.stage_after == "slurm_monitor"
+        assert outcome2.stage_after == "extract_results"
         persisted = _read_state(repo)
         assert persisted["stage_attempt"] == 0
 
@@ -944,10 +943,7 @@ class TestMultiDeviceEndToEnd:
     def test_slurm_launch_pending_then_local_check_double_counts(
         self, tmp_path: Path
     ) -> None:
-        """Seed SLURM launch with pending sync.  Run once ('REMOTE' check,
-        attempt=1).  Run again ('LOCAL' check, attempt=2).  Assert the single
-        wait condition consumed 2 attempts.  Documents GAP-4 + GAP-8.
-        """
+        """Pending sync across devices should not consume launch retry attempts."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -959,17 +955,15 @@ class TestMultiDeviceEndToEnd:
 
         # "REMOTE" device checks
         outcome_remote = _run(state_path)
-        assert outcome_remote.exit_code == 1
+        assert outcome_remote.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
         # "LOCAL" device checks the same (pushed/pulled) state
         outcome_local = _run(state_path)
-        assert outcome_local.exit_code == 1
+        assert outcome_local.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 2
-
-        # Single wait condition (SLURM job still syncing) consumed 2 attempts
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
         # across two "devices"

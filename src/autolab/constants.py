@@ -148,6 +148,12 @@ DEFAULT_MEANINGFUL_EXCLUDE_PATHS = (
     "docs/wiki/**",
     "experiments/*/*/docs_update.md",
 )
+DEFAULT_IMPLEMENTATION_CYCLE_EXCLUDE_PATHS = (
+    ".autolab/**",
+    "docs/todo.md",
+    "**/implementation_review.md",
+    "**/review_result.json",
+)
 ASSISTANT_CYCLE_STAGES = ("select", "implement", "verify", "review", "done")
 ASSISTANT_CONTROL_COMMIT_PATHS = (
     ".autolab/agent_result.json",

@@ -243,6 +243,13 @@ def _eval_slurm_monitor(
     iteration_id: str,
 ) -> EvalResult:
     """Evaluate slurm_monitor stage -- auto-skip for local runs."""
+
+    def _normalize_sync_status(raw: str) -> str:
+        lowered = str(raw).strip().lower()
+        if lowered in SYNC_SUCCESS_STATUSES:
+            return "completed"
+        return lowered
+
     run_id = (
         str(state.get("pending_run_id", "")).strip()
         or str(state.get("last_run_id", "")).strip()
@@ -279,6 +286,8 @@ def _eval_slurm_monitor(
     sync_status = ""
     if isinstance(sync_block, dict):
         sync_status = str(sync_block.get("status", "")).strip().lower()
+    if sync_status:
+        state["sync_status"] = _normalize_sync_status(sync_status)
 
     strict_lifecycle = _load_slurm_lifecycle_strict_policy(repo_root)
     if strict_lifecycle:

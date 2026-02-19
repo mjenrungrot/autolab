@@ -10,6 +10,7 @@ from autolab.config import (
     _load_guardrail_config,
     _load_launch_execute_policy,
     _load_launch_runtime_config,
+    _load_meaningful_change_config,
     _load_protected_files,
     _resolve_policy_python_bin,
     _load_slurm_lifecycle_strict_policy,
@@ -38,6 +39,62 @@ def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) ->
     guardrails = _load_guardrail_config(repo)
 
     assert guardrails.max_generated_todo_tasks == 11
+
+
+def test_load_guardrail_config_reads_stalled_blocker_limit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "autorun": {
+            "guardrails": {
+                "max_stalled_blocker_cycles": 7,
+            }
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    guardrails = _load_guardrail_config(repo)
+    assert guardrails.max_stalled_blocker_cycles == 7
+
+
+def test_load_meaningful_change_config_defaults_include_review_artifact_filter(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    config = _load_meaningful_change_config(repo)
+
+    assert config.require_non_review_progress_in_implementation_cycle is True
+    assert "**/implementation_review.md" in config.implementation_cycle_exclude_paths
+    assert "**/review_result.json" in config.implementation_cycle_exclude_paths
+
+
+def test_load_meaningful_change_config_reads_custom_cycle_filters(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "autorun": {
+            "meaningful_change": {
+                "require_non_review_progress_in_implementation_cycle": False,
+                "implementation_cycle_exclude_paths": [
+                    "a.md",
+                    "b.json",
+                ],
+            }
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    config = _load_meaningful_change_config(repo)
+    assert config.require_non_review_progress_in_implementation_cycle is False
+    assert config.implementation_cycle_exclude_paths == ("a.md", "b.json")
 
 
 def test_load_protected_files_applies_safe_profile() -> None:
