@@ -21,7 +21,7 @@ from autolab.constants import (
 )
 from autolab.config import _load_verifier_policy, _resolve_policy_python_bin
 from autolab.models import RenderedPromptBundle, StageCheckError
-from autolab.registry import load_registry, registry_prompt_files, registry_required_tokens
+from autolab.registry import StageSpec, load_registry, registry_prompt_files, registry_required_tokens
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
@@ -197,7 +197,7 @@ def _resolve_prompt_run_id(*, repo_root: Path, stage: str, state: dict[str, Any]
     run_id = str(state.get("last_run_id", "")).strip()
     if run_id and not run_id.startswith("<"):
         return run_id
-    if stage in {"launch", "extract_results", "update_docs"}:
+    if stage in {"launch", "slurm_monitor", "extract_results", "update_docs"}:
         raise StageCheckError(
             f"prompt token '{{{{run_id}}}}' requires a resolved run_id for stage '{stage}'"
         )
@@ -590,6 +590,11 @@ def _build_prompt_context(
             except Exception:
                 pass
 
+    run_group = state.get("run_group", [])
+    if not isinstance(run_group, list):
+        run_group = []
+    replicate_count = len(run_group) if run_group else 1
+
     scope_payload = runner_scope if isinstance(runner_scope, dict) else {}
     return {
         "generated_at": _utc_now(),
@@ -620,6 +625,8 @@ def _build_prompt_context(
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,
         "task_context": task_context_text,
+        "run_group": run_group,
+        "replicate_count": replicate_count,
     }
 
 
@@ -658,6 +665,8 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "auto_metrics_evidence": _to_text(context.get("auto_metrics_evidence"), "auto_metrics_evidence"),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
         "task_context": context.get("task_context", ""),
+        "run_group": _to_text(context.get("run_group"), "run_group"),
+        "replicate_count": str(context.get("replicate_count", 1)),
     }
 
 
@@ -732,6 +741,76 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     )
 
 
+def _inject_registry_boilerplate(
+    text: str,
+    stage: str,
+    registry: dict[str, StageSpec],
+) -> str:
+    """Auto-inject missing boilerplate sections from the workflow registry.
+
+    Checks whether each boilerplate section heading is already present in the
+    expanded template text and only injects missing sections.  Manual sections
+    in the prompt always win (override semantics).
+    """
+    spec = registry.get(stage)
+    if spec is None:
+        return text
+
+    def _has_heading_prefix(markdown: str, heading_prefix: str) -> bool:
+        pattern = re.compile(
+            rf"^\s*##\s*{re.escape(heading_prefix)}\b",
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        return bool(pattern.search(markdown))
+
+    sections: list[str] = []
+
+    # 1. ## OUTPUTS (STRICT)
+    if not _has_heading_prefix(text, "outputs") and spec.required_outputs:
+        lines = ["## OUTPUTS (STRICT)"]
+        for output in spec.required_outputs:
+            lines.append(f"- {{{{iteration_path}}}}/{output}")
+        sections.append("\n".join(lines))
+
+    # 2. ## REQUIRED INPUTS
+    if not _has_heading_prefix(text, "required inputs") and spec.required_tokens:
+        lines = ["## REQUIRED INPUTS"]
+        for token in sorted(spec.required_tokens):
+            lines.append(f"- `{{{{{token}}}}}`")
+        sections.append("\n".join(lines))
+
+    # 3. ## FILE CHECKLIST
+    if not _has_heading_prefix(text, "file checklist") and spec.required_outputs:
+        lines = ["## FILE CHECKLIST"]
+        for output in spec.required_outputs:
+            filename = Path(output).name
+            lines.append(f"- [ ] `{filename}` exists and is valid")
+        sections.append("\n".join(lines))
+
+    # 4. ## VERIFIER MAPPING
+    if not _has_heading_prefix(text, "verifier mapping") and spec.verifier_categories:
+        enabled = [cat for cat, active in spec.verifier_categories.items() if active]
+        if enabled:
+            lines = ["## VERIFIER MAPPING"]
+            for cat in enabled:
+                lines.append(f"- `{cat}`")
+            sections.append("\n".join(lines))
+
+    if not sections:
+        return text
+
+    injected_block = "\n\n".join(sections)
+
+    # Insert before ## STEPS if present, otherwise append
+    steps_match = re.search(r"^\s*##\s*steps\b", text, flags=re.IGNORECASE | re.MULTILINE)
+    if steps_match is not None:
+        steps_idx = steps_match.start()
+        before = text[:steps_idx].rstrip()
+        after = text[steps_idx:].lstrip("\n")
+        return f"{before}\n\n{injected_block}\n\n{after}"
+    return f"{text.rstrip()}\n\n{injected_block}\n"
+
+
 def _render_stage_prompt(
     repo_root: Path,
     *,
@@ -740,11 +819,15 @@ def _render_stage_prompt(
     template_path: Path,
     runner_scope: dict[str, Any] | None = None,
 ) -> RenderedPromptBundle:
+    registry = load_registry(repo_root)
+
     try:
         template_text = template_path.read_text(encoding="utf-8")
         template_text = _render_prompt_includes(repo_root, template_text, stage=stage)
     except Exception as exc:
         raise StageCheckError(f"agent runner prompt could not be read at {template_path}: {exc}") from exc
+
+    template_text = _inject_registry_boilerplate(template_text, stage, registry)
 
     context_payload = _build_prompt_context(
         repo_root,
@@ -766,7 +849,6 @@ def _render_stage_prompt(
             f"prompt template has unsupported token(s) for stage '{stage}': {', '.join(unsupported_tokens)}"
         )
 
-    registry = load_registry(repo_root)
     reg_required = registry_required_tokens(registry) if registry else {}
     required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
     required_values = {
