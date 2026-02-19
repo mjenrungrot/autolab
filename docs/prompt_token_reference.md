@@ -26,6 +26,8 @@ Token records:
 - `token`: `{{decision_suggestion}}`; `meaning`: Autolab suggested next-stage decision; `typical_stages`: decide_repeat.
 - `token`: `{{auto_metrics_evidence}}`; `meaning`: Structured evidence payload behind auto metrics suggestion; `typical_stages`: decide_repeat.
 - `token`: `{{diff_summary}}`; `meaning`: Git diff summary and changed path context; `typical_stages`: implementation_review.
+- `token`: `{{run_group}}`; `meaning`: JSON list of replicate run IDs for multi-run iterations (empty list for single runs); `typical_stages`: launch, extract_results.
+- `token`: `{{replicate_count}}`; `meaning`: Number of replicates configured in design.yaml (1 for single runs); `typical_stages`: launch, extract_results.
 
 Notes:
 

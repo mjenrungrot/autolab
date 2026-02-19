@@ -3,6 +3,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except Exception:
+    yaml = None
+
 from autolab.constants import DECISION_STAGES, TERMINAL_STAGES
 from autolab.models import EvalResult, RunOutcome, StageCheckError
 from autolab.config import (
@@ -268,6 +273,38 @@ def _write_auto_decision_artifact(
     _write_json(repo_root / ".autolab" / "auto_decision.json", payload)
 
 
+def _read_design_replicate_count(repo_root: Path, state: dict[str, Any]) -> int:
+    """Read replicates.count from design.yaml, returning 1 if absent."""
+    if yaml is None:
+        return 1
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    if not iteration_id:
+        return 1
+    iteration_dir, _type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        require_exists=False,
+    )
+    design_path = iteration_dir / "design.yaml"
+    if not design_path.exists():
+        return 1
+    try:
+        loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    except Exception:
+        return 1
+    if not isinstance(loaded, dict):
+        return 1
+    replicates = loaded.get("replicates")
+    if not isinstance(replicates, dict):
+        return 1
+    count = replicates.get("count")
+    if not isinstance(count, int) or count < 1:
+        return 1
+    return count
+
+
 def _prepare_launch_run_context(
     repo_root: Path,
     *,
@@ -275,6 +312,31 @@ def _prepare_launch_run_context(
     state_path: Path,
 ) -> Path:
     run_id = _generate_run_id()
+    replicate_count = _read_design_replicate_count(repo_root, state)
+
+    if replicate_count > 1:
+        run_ids = [f"{run_id}_r{i}" for i in range(1, replicate_count + 1)]
+        state["run_group"] = run_ids
+        state["pending_run_id"] = run_id
+        _write_json(state_path, state)
+
+        context_path = repo_root / ".autolab" / "run_context.json"
+        _write_json(
+            context_path,
+            {
+                "schema_version": "1.0",
+                "generated_at": _utc_now(),
+                "iteration_id": str(state.get("iteration_id", "")).strip(),
+                "experiment_id": str(state.get("experiment_id", "")).strip(),
+                "stage": "launch",
+                "run_id": run_id,
+                "run_ids": run_ids,
+                "replicate_count": replicate_count,
+            },
+        )
+        _append_log(repo_root, f"launch multi-run prepared by orchestrator: {run_id} ({replicate_count} replicates)")
+        return context_path
+
     state["pending_run_id"] = run_id
     _write_json(state_path, state)
 

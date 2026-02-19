@@ -34,6 +34,28 @@
         "type": "object",
         "additionalProperties": true
       }
+    },
+    "aggregation_method": {"type": "string"},
+    "per_run_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "primary_metric"],
+        "properties": {
+          "run_id": {"type": "string"},
+          "primary_metric": {
+            "type": "object",
+            "required": ["name", "value", "delta_vs_baseline"],
+            "properties": {
+              "name": {"type": "string"},
+              "value": {"type": ["number", "null"]},
+              "delta_vs_baseline": {"type": ["number", "null"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "additionalProperties": false
