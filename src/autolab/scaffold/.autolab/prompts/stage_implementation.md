@@ -161,7 +161,7 @@ Canonical minimal task block:
 - [ ] `implementation_plan.md` records verifier outcomes with explicit status tokens.
 - [ ] `implementation_plan.md` records exact commands and evidence locations.
 - [ ] `implementation_plan.md` includes `## Dry Run` when policy requires `dry_run` for implementation.
-- [ ] Output paths avoid unresolved placeholders and literal `runs//...` style paths.
+- [ ] Output paths avoid unresolved placeholders and literal double-slash style paths.
 - [ ] If task blocks exist, each has depends_on, location, description, touches, scope_ok, validation, status fields.
 - [ ] Parallel execution groups are consistent with task dependencies.
 - [ ] Run `{{python_bin}} .autolab/verifiers/implementation_plan_lint.py --stage implementation` passes when task blocks are present.

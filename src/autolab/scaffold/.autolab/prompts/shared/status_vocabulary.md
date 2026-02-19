@@ -5,7 +5,7 @@ Valid values for `run_manifest.json` `status` field:
 - `pending` -- run created but not yet submitted
 - `submitted` -- job submitted to scheduler (SLURM)
 - `running` -- execution in progress
-- `synced` -- remote artifacts synchronized to local
+- `synced` -- remote artifacts synchronized to local; the run itself finished on the remote host but downstream extraction (`extract_results`) has not yet confirmed metrics. Use only in SLURM/remote workflows where artifact sync is a distinct step; local runs skip this status entirely.
 - `completed` -- run finished successfully
 - `failed` -- run terminated with error
 - `partial` -- run produced incomplete results

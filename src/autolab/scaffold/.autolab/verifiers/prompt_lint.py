@@ -51,6 +51,7 @@ _FALLBACK_ALLOWED_TOKENS = {
     "diff_summary",
     "run_group",
     "replicate_count",
+    "task_context",
 }
 
 # Shared tokens always allowed (not stage-specific).
@@ -106,6 +107,7 @@ def _resolve_allowed_tokens() -> set[str]:
                     "hypothesis_id",
                     "run_group",
                     "replicate_count",
+                    "task_context",
                 }
             )
             return tokens
@@ -223,6 +225,13 @@ def _lint_stage_prompt(
                 f"{prompt_path} contains unresolved legacy literal token: {literal}"
             )
 
+    # Flag literal double-slash pattern paths in prompt content.
+    for ds_match in re.finditer(r"(?:runs|experiments|paper)//", text):
+        failures.append(
+            f"{prompt_path} contains literal double-slash path "
+            f"'{ds_match.group()}' at an unresolved path token"
+        )
+
     if "## file checklist" in lowered and "{{shared:checklist.md}}" not in text:
         failures.append(
             f"{prompt_path} checklist section must include {{shared:checklist.md}}"
@@ -316,6 +325,13 @@ def _lint_assistant_prompt(prompt_path: Path) -> list[str]:
     if unsupported_tokens:
         failures.append(
             f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}"
+        )
+
+    # Flag literal double-slash pattern paths in prompt content.
+    for ds_match in re.finditer(r"(?:runs|experiments|paper)//", text):
+        failures.append(
+            f"{prompt_path} contains literal double-slash path "
+            f"'{ds_match.group()}' at an unresolved path token"
         )
 
     return failures

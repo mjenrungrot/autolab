@@ -28,6 +28,7 @@ Token records:
 - `token`: `{{diff_summary}}`; `meaning`: Git diff summary and changed path context; `typical_stages`: implementation_review.
 - `token`: `{{run_group}}`; `meaning`: JSON list of replicate run IDs for multi-run iterations (empty list for single runs); `typical_stages`: launch, extract_results.
 - `token`: `{{replicate_count}}`; `meaning`: Number of replicates configured in design.yaml (1 for single runs); `typical_stages`: launch, extract_results.
+- `token`: `{{task_context}}`; `meaning`: Resolved task context for assistant mode (task_id, title, description, acceptance criteria); `typical_stages`: assistant phases (select, implement).
 
 Notes:
 

@@ -9,7 +9,6 @@ Select exactly one in-scope task and emit a concise selection rationale.
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - `.autolab/todo_focus.json` updated by orchestration
@@ -25,6 +24,9 @@ Select exactly one in-scope task and emit a concise selection rationale.
 1. Prefer explicit open tasks over generated fallback tasks.
 2. Enforce scope using `runner_scope.allowed_edit_dirs`.
 3. Select one highest-priority task and explain why.
+
+## RESPONSE FORMAT
+{{shared:assistant_output_contract.md}}
 
 ## FILE CHECKLIST (machine-auditable)
 {{shared:checklist.md}}

@@ -9,7 +9,6 @@ Produce a clear completion decision with evidence and residual-risk notes.
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - Completion decision (`complete` or `needs_retry`)
@@ -25,6 +24,9 @@ Produce a clear completion decision with evidence and residual-risk notes.
 1. Confirm changes map to focused task acceptance criteria.
 2. Confirm verification results are acceptable per policy.
 3. Emit completion decision with concise rationale.
+
+## RESPONSE FORMAT
+{{shared:assistant_output_contract.md}}
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}

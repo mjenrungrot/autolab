@@ -9,7 +9,6 @@ Summarize verification status for the focused task and identify blocking failure
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
-{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - Verification summary mapped to policy checks
@@ -28,5 +27,8 @@ Summarize verification status for the focused task and identify blocking failure
 1. Run/inspect required checks for the current stage.
 2. Mark pass/fail with concrete evidence pointers.
 3. If failing, provide explicit remediation steps.
+
+## RESPONSE FORMAT
+{{shared:assistant_output_contract.md}}
 
 {{shared:failure_retry.md}}

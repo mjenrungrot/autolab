@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.20
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.21
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:

@@ -49,7 +49,7 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 - Existing `{{iteration_path}}/hypothesis.md` (optional)
 
 ## MISSING-INPUT FALLBACKS
-- If `.autolab/backlog.yaml` is missing, create a minimal backlog entry for this iteration and continue with one hypothesis.
+- If `.autolab/backlog.yaml` is missing **and** `.autolab/` is within `allowed_edit_dirs`, create a minimal backlog entry for this iteration and continue with one hypothesis. If `.autolab/` is not writable (e.g. `iteration_only` scope), stop and request the operator to run `autolab init` or broaden edit scope.
 - If `.autolab/todo_focus.json` is missing, proceed without task focus narrowing.
 - If prior hypothesis content is missing, create a full file from scratch.
 

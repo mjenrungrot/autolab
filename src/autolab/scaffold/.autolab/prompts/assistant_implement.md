@@ -10,7 +10,6 @@ Produce the requested code/documentation changes for the focused task without vi
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 {{shared:skill_playbook.md}}
-{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - In-scope repo edits for the focused task
@@ -25,6 +24,9 @@ Produce the requested code/documentation changes for the focused task without vi
 1. Implement only the focused task scope.
 2. Run targeted validation where feasible.
 3. Report files changed, checks run, and residual risks.
+
+## RESPONSE FORMAT
+{{shared:assistant_output_contract.md}}
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}

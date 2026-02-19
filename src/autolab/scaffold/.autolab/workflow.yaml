@@ -125,13 +125,16 @@ stages:
     prompt_file: stage_slurm_monitor.md
     required_tokens: [iteration_id, iteration_path, run_id]
     required_outputs: [runs/<RUN_ID>/run_manifest.json]
+    required_outputs_if:
+      - host_mode: slurm
+        outputs: [docs/slurm_job_list.md]
     next_stage: extract_results
     verifier_categories:
       tests: false
       dry_run: false
-      schema: false
-      prompt_lint: false
-      consistency: false
+      schema: true
+      prompt_lint: true
+      consistency: true
       env_smoke: true
       docs_target_update: false
     classifications:

@@ -107,12 +107,12 @@ requirements_by_stage:
     consistency: true
     env_smoke: true
     docs_target_update: false
-  slurm_monitor:  # Lightweight async gate for SLURM polling/sync
+  slurm_monitor:  # Schema/consistency checks on run_manifest.json + prompt lint
     tests: false
     dry_run: false
-    schema: false
-    prompt_lint: false
-    consistency: false
+    schema: true
+    prompt_lint: true
+    consistency: true
     env_smoke: true
     docs_target_update: false
   extract_results:  # Validate metrics and run artifacts
@@ -170,7 +170,7 @@ prompt_lint:
     implementation: true
     implementation_review: true
     launch: true
-    slurm_monitor: false
+    slurm_monitor: true
     extract_results: true
     update_docs: true
     decide_repeat: true
