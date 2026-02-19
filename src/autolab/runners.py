@@ -3,9 +3,11 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -73,6 +75,9 @@ def _redact_sensitive_text(text: str) -> str:
 
 
 _SHELL_META_PATTERN = re.compile(r"[|&;<>()$`]")
+RUNNER_WAIT_SLICE_SECONDS = 0.25
+RUNNER_DEAD_CHANNEL_GRACE_SECONDS = 15.0
+RUNNER_TERMINATION_WAIT_SECONDS = 2.0
 
 
 def _command_uses_shell_syntax(command: str) -> bool:
@@ -81,6 +86,11 @@ def _command_uses_shell_syntax(command: str) -> bool:
 
 def _command_has_codex_dangerous_flag(command: str) -> bool:
     return "--dangerously-bypass-approvals-and-sandbox" in str(command)
+
+
+def _looks_like_runner_dead_channel_message(text: str) -> bool:
+    haystack = str(text).lower()
+    return "failed to queue rollout items" in haystack and "channel closed" in haystack
 
 
 def _looks_like_codex_sandbox_permission_failure(
@@ -106,6 +116,71 @@ def _write_runner_execution_report(
     report_path = repo_root / ".autolab" / "runner_execution_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _finalize_runner_execution_report(
+    repo_root: Path,
+    *,
+    run_report: dict[str, Any],
+    status: str,
+    exit_code: int | None,
+    error: str = "",
+    termination_reason: str = "",
+) -> None:
+    run_report["status"] = status
+    run_report["exit_code"] = int(exit_code) if exit_code is not None else None
+    run_report["finalized_at"] = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
+    if error:
+        run_report["error"] = str(error)
+    else:
+        run_report.pop("error", None)
+    if termination_reason:
+        run_report["termination_reason"] = str(termination_reason)
+    else:
+        run_report.pop("termination_reason", None)
+    _write_runner_execution_report(repo_root, payload=run_report)
+
+
+def _terminate_runner_process(process: subprocess.Popen[str]) -> int | None:
+    if process.poll() is not None:
+        return process.poll()
+
+    sent_signal = False
+    if hasattr(os, "getpgid") and hasattr(os, "killpg"):
+        try:
+            pgid = os.getpgid(process.pid)
+            os.killpg(pgid, signal.SIGTERM)
+            sent_signal = True
+        except Exception:
+            sent_signal = False
+    if not sent_signal:
+        try:
+            process.terminate()
+        except Exception:
+            pass
+
+    try:
+        return process.wait(timeout=RUNNER_TERMINATION_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        killed = False
+        if hasattr(os, "getpgid") and hasattr(os, "killpg"):
+            try:
+                pgid = os.getpgid(process.pid)
+                os.killpg(pgid, signal.SIGKILL)
+                killed = True
+            except Exception:
+                killed = False
+        if not killed:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        try:
+            return process.wait(timeout=RUNNER_TERMINATION_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            return process.poll()
 
 
 def _collect_filesystem_snapshot(repo_root: Path) -> dict[str, tuple[float, int]]:
@@ -473,12 +548,35 @@ def _invoke_agent_runner(
         ),
     )
 
+    run_report_finalized = False
+
+    def _finalize_report(
+        *,
+        status: str,
+        exit_code: int | None,
+        error: str = "",
+        termination_reason: str = "",
+    ) -> None:
+        nonlocal run_report_finalized
+        if run_report_finalized:
+            return
+        _finalize_runner_execution_report(
+            repo_root,
+            run_report=run_report,
+            status=status,
+            exit_code=exit_code,
+            error=error,
+            termination_reason=termination_reason,
+        )
+        run_report_finalized = True
+
     process: subprocess.Popen[str] | None = None
     captured_stdout_chunks: list[str] = []
     captured_stderr_chunks: list[str] = []
     captured_stdout_len = [0]
     captured_stderr_len = [0]
     max_capture_chars = 2400
+    dead_channel_seen = threading.Event()
 
     def _pump_stream(
         stream: Any,
@@ -492,6 +590,8 @@ def _invoke_agent_runner(
             for line in iter(stream.readline, ""):
                 sink.write(line)
                 sink.flush()
+                if _looks_like_runner_dead_channel_message(line):
+                    dead_channel_seen.set()
                 if captured_len[0] < max_capture_chars:
                     room = max_capture_chars - captured_len[0]
                     snippet = line[:room]
@@ -505,6 +605,11 @@ def _invoke_agent_runner(
 
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
+    returncode: int | None = None
+    runner_status_override: str = ""
+    runner_termination_reason: str = ""
+    runner_error_message: str = ""
+    dead_channel_deadline: float | None = None
     try:
         if _command_uses_shell_syntax(command):
             raise StageCheckError(
@@ -534,6 +639,7 @@ def _invoke_agent_runner(
             stderr=subprocess.PIPE,
             bufsize=1,
             env=env,
+            start_new_session=True,
         )
         if process.stdin is not None:
             try:
@@ -567,35 +673,66 @@ def _invoke_agent_runner(
         stdout_thread.start()
         stderr_thread.start()
 
-        try:
-            returncode = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _append_log(
-                repo_root,
-                f"agent runner timeout stage={stage} timeout_seconds={runner.timeout_seconds}",
-            )
-            run_report["status"] = "timeout"
-            run_report["exit_code"] = None
-            _write_runner_execution_report(repo_root, payload=run_report)
-            process.terminate()
+        timeout_deadline = (
+            None if timeout is None else time.monotonic() + float(timeout)
+        )
+        while True:
+            now = time.monotonic()
+            if dead_channel_seen.is_set() and dead_channel_deadline is None:
+                dead_channel_deadline = now + RUNNER_DEAD_CHANNEL_GRACE_SECONDS
+                _append_log(
+                    repo_root,
+                    (
+                        f"agent runner detected closed channel stage={stage}; "
+                        f"waiting up to {RUNNER_DEAD_CHANNEL_GRACE_SECONDS:.1f}s for graceful exit"
+                    ),
+                )
+
+            if timeout_deadline is not None and now >= timeout_deadline:
+                runner_status_override = "timeout"
+                runner_termination_reason = "timeout"
+                _append_log(
+                    repo_root,
+                    f"agent runner timeout stage={stage} timeout_seconds={runner.timeout_seconds}",
+                )
+                returncode = _terminate_runner_process(process)
+                break
+
+            if dead_channel_deadline is not None and now >= dead_channel_deadline:
+                runner_status_override = "failed"
+                runner_termination_reason = "dead_channel"
+                _append_log(
+                    repo_root,
+                    (
+                        f"agent runner dead channel persisted stage={stage}; "
+                        "terminating runner process"
+                    ),
+                )
+                returncode = _terminate_runner_process(process)
+                break
+
+            wait_timeout = RUNNER_WAIT_SLICE_SECONDS
+            if timeout_deadline is not None:
+                wait_timeout = min(wait_timeout, max(0.01, timeout_deadline - now))
+            if dead_channel_deadline is not None:
+                wait_timeout = min(
+                    wait_timeout, max(0.01, dead_channel_deadline - now)
+                )
             try:
-                process.wait(timeout=2)
+                returncode = process.wait(timeout=wait_timeout)
+                break
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            return
+                continue
     except Exception as exc:
+        runner_status_override = "error"
+        runner_termination_reason = "execution_error"
+        runner_error_message = str(exc)
         _append_log(repo_root, f"agent runner execution error stage={stage}: {exc}")
-        run_report["status"] = "error"
-        run_report["error"] = str(exc)
-        run_report["exit_code"] = None
-        _write_runner_execution_report(repo_root, payload=run_report)
-        return
     finally:
         if stdout_thread is not None:
-            stdout_thread.join(timeout=2)
+            stdout_thread.join(timeout=RUNNER_TERMINATION_WAIT_SECONDS)
         if stderr_thread is not None:
-            stderr_thread.join(timeout=2)
+            stderr_thread.join(timeout=RUNNER_TERMINATION_WAIT_SECONDS)
 
     captured_stdout = "".join(captured_stdout_chunks).strip()
     captured_stderr = "".join(captured_stderr_chunks).strip()
@@ -609,8 +746,26 @@ def _invoke_agent_runner(
             repo_root,
             f"agent runner stderr stage={stage}: {_compact_log_text(_redact_sensitive_text(captured_stderr))}",
         )
+
+    if runner_status_override == "error":
+        _finalize_report(
+            status="error",
+            exit_code=returncode,
+            error=runner_error_message,
+            termination_reason=runner_termination_reason,
+        )
+        return
+    if runner_status_override == "timeout":
+        _finalize_report(
+            status="timeout",
+            exit_code=None,
+            termination_reason=runner_termination_reason,
+        )
+        return
+
     if (
         runner.runner == "codex"
+        and returncode is not None
         and returncode != 0
         and not runner.codex_dangerously_bypass_approvals_and_sandbox
         and not _command_has_codex_dangerous_flag(command)
@@ -628,79 +783,133 @@ def _invoke_agent_runner(
             ),
         )
 
-    effective_delta_paths: list[str] = []
-    if baseline_snapshot is not None:
-        current_snapshot = _collect_change_snapshot(repo_root)
-        delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
-        effective_delta_paths = delta_paths
-        out_of_scope = sorted(
-            path for path in delta_paths if not _is_within_scope(path, allowed_roots)
-        )
-        if out_of_scope:
-            sample = ", ".join(out_of_scope[:8])
-            _append_log(
-                repo_root,
-                (
-                    "agent runner scope violation: changed paths outside allowed dirs "
-                    f"allowed={allowed_roots} out_of_scope={sample}"
-                ),
+    scope_error: StageCheckError | None = None
+    try:
+        effective_delta_paths: list[str] = []
+        if baseline_snapshot is not None:
+            current_snapshot = _collect_change_snapshot(repo_root)
+            delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
+            effective_delta_paths = delta_paths
+            out_of_scope = sorted(
+                path for path in delta_paths if not _is_within_scope(path, allowed_roots)
             )
-            raise StageCheckError(
-                "agent runner edited paths outside allowed edit scope; "
-                f"out_of_scope={sample}"
-            )
-    elif fs_baseline_snapshot is not None:
-        fs_current_snapshot = _collect_filesystem_snapshot(repo_root)
-        fs_delta_paths = _filesystem_snapshot_delta_paths(
-            fs_baseline_snapshot, fs_current_snapshot
-        )
-        effective_delta_paths = fs_delta_paths
-        fs_out_of_scope = sorted(
-            path for path in fs_delta_paths if not _is_within_scope(path, allowed_roots)
-        )
-        if fs_out_of_scope:
-            sample = ", ".join(fs_out_of_scope[:8])
-            _append_log(
-                repo_root,
-                (
-                    "agent runner scope violation (filesystem snapshot): changed paths outside allowed dirs "
-                    f"allowed={allowed_roots} out_of_scope={sample}"
-                ),
-            )
-            raise StageCheckError(
-                "agent runner edited paths outside allowed edit scope (detected via filesystem snapshot); "
-                f"out_of_scope={sample}"
-            )
-
-    # -- Protected files denylist check --
-    if effective_delta_paths:
-        policy = _load_verifier_policy(repo_root)
-        protected_files = _load_protected_files(policy, auto_mode=auto_mode)
-        if protected_files:
-            protected_patterns = tuple(protected_files)
-            violated = sorted(
-                path
-                for path in effective_delta_paths
-                if _path_matches_any(path.replace("\\", "/"), protected_patterns)
-            )
-            if violated:
-                sample = ", ".join(violated[:8])
+            if out_of_scope:
+                sample = ", ".join(out_of_scope[:8])
                 _append_log(
                     repo_root,
                     (
-                        f"agent runner modified protected file(s): {sample}. "
-                        f"Protected files: {protected_files}"
+                        "agent runner scope violation: changed paths outside allowed dirs "
+                        f"allowed={allowed_roots} out_of_scope={sample}"
                     ),
                 )
                 raise StageCheckError(
-                    f"agent runner modified protected file(s): {sample}. "
-                    f"Protected files: {protected_files}"
+                    "agent runner edited paths outside allowed edit scope; "
+                    f"out_of_scope={sample}"
+                )
+        elif fs_baseline_snapshot is not None:
+            fs_current_snapshot = _collect_filesystem_snapshot(repo_root)
+            fs_delta_paths = _filesystem_snapshot_delta_paths(
+                fs_baseline_snapshot, fs_current_snapshot
+            )
+            effective_delta_paths = fs_delta_paths
+            fs_out_of_scope = sorted(
+                path
+                for path in fs_delta_paths
+                if not _is_within_scope(path, allowed_roots)
+            )
+            if fs_out_of_scope:
+                sample = ", ".join(fs_out_of_scope[:8])
+                _append_log(
+                    repo_root,
+                    (
+                        "agent runner scope violation (filesystem snapshot): changed paths outside allowed dirs "
+                        f"allowed={allowed_roots} out_of_scope={sample}"
+                    ),
+                )
+                raise StageCheckError(
+                    "agent runner edited paths outside allowed edit scope (detected via filesystem snapshot); "
+                    f"out_of_scope={sample}"
                 )
 
-    _append_log(repo_root, f"agent runner exit stage={stage} returncode={returncode}")
-    run_report["status"] = "completed" if returncode == 0 else "failed"
-    run_report["exit_code"] = int(returncode)
-    _write_runner_execution_report(repo_root, payload=run_report)
+        # -- Protected files denylist check --
+        if effective_delta_paths:
+            policy = _load_verifier_policy(repo_root)
+            protected_files = _load_protected_files(policy, auto_mode=auto_mode)
+            if protected_files:
+                protected_patterns = tuple(protected_files)
+                violated = sorted(
+                    path
+                    for path in effective_delta_paths
+                    if _path_matches_any(path.replace("\\", "/"), protected_patterns)
+                )
+                if violated:
+                    sample = ", ".join(violated[:8])
+                    _append_log(
+                        repo_root,
+                        (
+                            f"agent runner modified protected file(s): {sample}. "
+                            f"Protected files: {protected_files}"
+                        ),
+                    )
+                    raise StageCheckError(
+                        f"agent runner modified protected file(s): {sample}. "
+                        f"Protected files: {protected_files}"
+                    )
+    except StageCheckError as exc:
+        scope_error = exc
+
+    if scope_error is not None:
+        _finalize_report(
+            status="failed",
+            exit_code=returncode,
+            error=str(scope_error),
+            termination_reason="post_run_validation",
+        )
+        raise scope_error
+
+    if returncode is None:
+        _finalize_report(
+            status="error",
+            exit_code=None,
+            error="agent runner ended without an exit code",
+            termination_reason=runner_termination_reason or "missing_exit_code",
+        )
+        _append_log(
+            repo_root,
+            f"agent runner ended without exit code stage={stage}; continuing with stage evaluation",
+        )
+        return
+
+    _append_log(
+        repo_root,
+        (
+            f"agent runner exit stage={stage} returncode={returncode}"
+            + (
+                f" termination_reason={runner_termination_reason}"
+                if runner_termination_reason
+                else ""
+            )
+        ),
+    )
+    if runner_termination_reason == "dead_channel":
+        _finalize_report(
+            status="failed",
+            exit_code=returncode,
+            error=(
+                "runner channel closed before process exit and the process did not terminate during grace period"
+            ),
+            termination_reason=runner_termination_reason,
+        )
+        _append_log(
+            repo_root,
+            f"agent runner terminated due to dead channel at stage={stage}; continuing with stage evaluation",
+        )
+        return
+
+    _finalize_report(
+        status="completed" if returncode == 0 else "failed",
+        exit_code=returncode,
+    )
     if returncode != 0:
         _append_log(
             repo_root,
