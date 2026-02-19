@@ -70,6 +70,7 @@ class AgentRunnerConfig:
     edit_scope: "AgentRunnerEditScopeConfig"
     timeout_seconds: float
     claude_dangerously_skip_permissions: bool = False
+    codex_dangerously_bypass_approvals_and_sandbox: bool = False
 
 
 @dataclass(frozen=True)

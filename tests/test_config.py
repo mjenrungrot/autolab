@@ -178,3 +178,46 @@ def test_load_agent_runner_config_defaults_to_codex_full_auto(
     assert runner.runner == "codex"
     assert "--full-auto" in runner.command
     assert " -a " not in runner.command
+    assert runner.codex_dangerously_bypass_approvals_and_sandbox is False
+
+
+def test_load_agent_runner_config_uses_codex_dangerous_preset_from_policy(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "agent_runner": {
+            "enabled": True,
+            "runner": "codex",
+            "codex_dangerously_bypass_approvals_and_sandbox": True,
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    runner = _load_agent_runner_config(repo)
+
+    assert runner.runner == "codex"
+    assert "--dangerously-bypass-approvals-and-sandbox" in runner.command
+    assert runner.codex_dangerously_bypass_approvals_and_sandbox is True
+
+
+def test_load_agent_runner_config_uses_codex_dangerous_preset_from_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AUTOLAB_CODEX_ALLOW_DANGEROUS", "true")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {"agent_runner": {"enabled": True, "runner": "codex"}}
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    runner = _load_agent_runner_config(repo)
+
+    assert runner.runner == "codex"
+    assert "--dangerously-bypass-approvals-and-sandbox" in runner.command
+    assert runner.codex_dangerously_bypass_approvals_and_sandbox is True

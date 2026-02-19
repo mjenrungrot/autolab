@@ -102,7 +102,46 @@
     "history": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "timestamp_utc": {
+            "type": "string"
+          },
+          "stage_before": {
+            "type": "string"
+          },
+          "stage_after": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "stage_attempt": {
+            "type": "integer"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "passed": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
       }
     }
   },

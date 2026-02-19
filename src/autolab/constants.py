@@ -123,6 +123,7 @@ AGENT_RUNNER_PRESETS: dict[str, str] = {
     "codex": "codex exec --full-auto -C {workspace_dir} {core_add_dirs} -",
     "claude": "env -u CLAUDECODE claude -p --output-format text --verbose -",
 }
+AGENT_RUNNER_CODEX_DANGEROUS_PRESET = "codex exec --dangerously-bypass-approvals-and-sandbox -C {workspace_dir} {core_add_dirs} -"
 AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
 DEFAULT_AGENT_RUNNER_NAME = "codex"
 DEFAULT_AGENT_RUNNER_COMMAND = AGENT_RUNNER_PRESETS[DEFAULT_AGENT_RUNNER_NAME]

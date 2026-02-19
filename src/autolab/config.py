@@ -12,6 +12,7 @@ except Exception:
 from autolab.constants import (
     ACTIVE_STAGES,
     AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET,
+    AGENT_RUNNER_CODEX_DANGEROUS_PRESET,
     AGENT_RUNNER_EDIT_SCOPE_MODES,
     AGENT_RUNNER_PRESETS,
     AUTO_COMMIT_MODES,
@@ -246,6 +247,10 @@ def _load_agent_runner_edit_scope(runner: dict[str, Any]) -> AgentRunnerEditScop
 
 def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
+    codex_dangerous_env_opt_in = _coerce_bool(
+        os.environ.get("AUTOLAB_CODEX_ALLOW_DANGEROUS"),
+        default=False,
+    )
     if yaml is None or not policy_path.exists():
         return AgentRunnerConfig(
             runner=DEFAULT_AGENT_RUNNER_NAME,
@@ -255,6 +260,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
             claude_dangerously_skip_permissions=False,
+            codex_dangerously_bypass_approvals_and_sandbox=codex_dangerous_env_opt_in,
         )
 
     try:
@@ -273,6 +279,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
             claude_dangerously_skip_permissions=False,
+            codex_dangerously_bypass_approvals_and_sandbox=codex_dangerous_env_opt_in,
         )
 
     runner_section = loaded.get("agent_runner")
@@ -285,6 +292,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
             edit_scope=_default_agent_runner_edit_scope(),
             timeout_seconds=DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS,
             claude_dangerously_skip_permissions=False,
+            codex_dangerously_bypass_approvals_and_sandbox=codex_dangerous_env_opt_in,
         )
     if not isinstance(runner_section, dict):
         raise StageCheckError("agent_runner policy must be a mapping")
@@ -302,11 +310,17 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         runner_section.get("claude_dangerously_skip_permissions"),
         default=False,
     ) or _coerce_bool(os.environ.get("AUTOLAB_CLAUDE_ALLOW_DANGEROUS"), default=False)
+    codex_dangerous_opt_in = _coerce_bool(
+        runner_section.get("codex_dangerously_bypass_approvals_and_sandbox"),
+        default=False,
+    ) or codex_dangerous_env_opt_in
     if raw_command is not None:
         command = str(raw_command).strip()
     else:
         if runner_name == "claude" and claude_dangerous_opt_in:
             command = AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET
+        elif runner_name == "codex" and codex_dangerous_opt_in:
+            command = AGENT_RUNNER_CODEX_DANGEROUS_PRESET
         else:
             command = AGENT_RUNNER_PRESETS.get(
                 runner_name, DEFAULT_AGENT_RUNNER_COMMAND
@@ -360,6 +374,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         edit_scope=edit_scope,
         timeout_seconds=timeout_seconds,
         claude_dangerously_skip_permissions=claude_dangerous_opt_in,
+        codex_dangerously_bypass_approvals_and_sandbox=codex_dangerous_opt_in,
     )
 
 

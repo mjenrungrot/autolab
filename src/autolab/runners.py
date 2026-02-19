@@ -79,6 +79,25 @@ def _command_uses_shell_syntax(command: str) -> bool:
     return bool(_SHELL_META_PATTERN.search(command))
 
 
+def _command_has_codex_dangerous_flag(command: str) -> bool:
+    return "--dangerously-bypass-approvals-and-sandbox" in str(command)
+
+
+def _looks_like_codex_sandbox_permission_failure(
+    stdout_text: str, stderr_text: str
+) -> bool:
+    haystack = f"{stdout_text}\n{stderr_text}".lower()
+    if (
+        "sandbox-exec" in haystack
+        and "sandbox_apply" in haystack
+        and "operation not permitted" in haystack
+    ):
+        return True
+    return (
+        "failed to queue rollout items" in haystack and "channel closed" in haystack
+    )
+
+
 def _write_runner_execution_report(
     repo_root: Path,
     *,
@@ -589,6 +608,24 @@ def _invoke_agent_runner(
         _append_log(
             repo_root,
             f"agent runner stderr stage={stage}: {_compact_log_text(_redact_sensitive_text(captured_stderr))}",
+        )
+    if (
+        runner.runner == "codex"
+        and returncode != 0
+        and not runner.codex_dangerously_bypass_approvals_and_sandbox
+        and not _command_has_codex_dangerous_flag(command)
+        and _looks_like_codex_sandbox_permission_failure(
+            captured_stdout,
+            captured_stderr,
+        )
+    ):
+        _append_log(
+            repo_root,
+            (
+                "agent runner codex sandbox failure detected; to run codex without sandbox in trusted "
+                "environments set agent_runner.codex_dangerously_bypass_approvals_and_sandbox: true "
+                "in .autolab/verifier_policy.yaml or export AUTOLAB_CODEX_ALLOW_DANGEROUS=true"
+            ),
         )
 
     effective_delta_paths: list[str] = []
