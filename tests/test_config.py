@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from autolab.config import (
+    _load_agent_runner_config,
     _load_guardrail_config,
     _load_launch_execute_policy,
     _load_protected_files,
@@ -164,3 +165,16 @@ def test_resolve_policy_python_bin_normalizes_generic_python_binaries() -> None:
 
 def test_resolve_policy_python_bin_respects_explicit_custom_binary() -> None:
     assert _resolve_policy_python_bin({"python_bin": "/usr/bin/python3"}) == "/usr/bin/python3"
+
+
+def test_load_agent_runner_config_defaults_to_codex_full_auto(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    runner = _load_agent_runner_config(repo)
+
+    assert runner.runner == "codex"
+    assert "--full-auto" in runner.command
+    assert " -a " not in runner.command

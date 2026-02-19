@@ -6,7 +6,7 @@ This document covers agent runner configuration, command substitution, environme
 
 Configure in `.autolab/verifier_policy.yaml` under `agent_runner`:
 
-- `preset`: `codex`; `command`: `codex --approval-mode full-auto -q ...`; `notes`: OpenAI Codex CLI.
+- `preset`: `codex`; `command`: `codex exec --full-auto -C {workspace_dir} {core_add_dirs} -`; `notes`: OpenAI Codex CLI.
 - `preset`: `claude`; `command`: `claude -p ... --allowedTools ...`; `notes`: Anthropic Claude Code.
 - `preset`: `custom`; `command`: User-defined `command` field; `notes`: Any CLI tool.
 

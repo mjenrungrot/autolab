@@ -120,7 +120,7 @@ DEFAULT_VERIFIER_POLICY = (PACKAGE_SCAFFOLD_DIR / "verifier_policy.yaml").read_t
 LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_MAX_HOURS = 8.0
 AGENT_RUNNER_PRESETS: dict[str, str] = {
-    "codex": "codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
+    "codex": "codex exec --full-auto -C {workspace_dir} {core_add_dirs} -",
     "claude": "env -u CLAUDECODE claude -p --output-format text --verbose -",
 }
 AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
