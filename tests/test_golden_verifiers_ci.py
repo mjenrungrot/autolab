@@ -60,7 +60,13 @@ def _copy_scaffold(repo: Path) -> None:
     - ``strict_additional_properties`` -> false (golden iteration uses free-form
       objects in design.yaml that strict mode would reject)
     """
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
     policy_path = target / "verifier_policy.yaml"
@@ -90,10 +96,16 @@ def _copy_scaffold(repo: Path) -> None:
 def _copy_golden_iteration(repo: Path) -> None:
     """Copy golden iteration experiments/, paper/, and .autolab state files."""
     golden_root = Path(__file__).resolve().parents[1] / "examples" / "golden_iteration"
-    shutil.copytree(golden_root / "experiments", repo / "experiments", dirs_exist_ok=True)
+    shutil.copytree(
+        golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
+    )
     shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
-    shutil.copy2(golden_root / ".autolab" / "state.json", repo / ".autolab" / "state.json")
-    shutil.copy2(golden_root / ".autolab" / "backlog.yaml", repo / ".autolab" / "backlog.yaml")
+    shutil.copy2(
+        golden_root / ".autolab" / "state.json", repo / ".autolab" / "state.json"
+    )
+    shutil.copy2(
+        golden_root / ".autolab" / "backlog.yaml", repo / ".autolab" / "backlog.yaml"
+    )
 
 
 def _write_agent_result(repo: Path) -> None:
@@ -122,9 +134,7 @@ def _patch_docs_for_drift_verifier(repo: Path) -> None:
     keep the delta (1.2) far enough from the metric name to avoid
     triggering the 200-char contradiction window.
     """
-    docs_update_path = (
-        repo / "experiments" / "plan" / "iter_golden" / "docs_update.md"
-    )
+    docs_update_path = repo / "experiments" / "plan" / "iter_golden" / "docs_update.md"
     # Rewrite docs_update.md with the metric value included and the delta
     # separated from the metric name mention by enough text to exceed the
     # 200-character contradiction window.
@@ -283,9 +293,7 @@ def test_negative_empty_hypothesis(tmp_path: Path) -> None:
     hypothesis_path.write_text("", encoding="utf-8")
 
     exit_code = _verify(repo, "hypothesis")
-    assert exit_code == 1, (
-        "expected verification to fail with an empty hypothesis.md"
-    )
+    assert exit_code == 1, "expected verification to fail with an empty hypothesis.md"
 
 
 def test_negative_remove_required_checks_from_review_result(tmp_path: Path) -> None:
@@ -323,8 +331,7 @@ def test_negative_remove_status_from_review_result(tmp_path: Path) -> None:
 
     exit_code = _verify(repo, "implementation_review")
     assert exit_code == 1, (
-        "expected verification to fail after removing status "
-        "from review_result.json"
+        "expected verification to fail after removing status from review_result.json"
     )
 
 
@@ -388,9 +395,7 @@ def test_negative_placeholder_in_hypothesis(tmp_path: Path) -> None:
     and rejects files that still contain unfilled templates.
     """
     repo = _setup_repo(tmp_path)
-    hypothesis_path = (
-        repo / "experiments" / "plan" / "iter_golden" / "hypothesis.md"
-    )
+    hypothesis_path = repo / "experiments" / "plan" / "iter_golden" / "hypothesis.md"
     hypothesis_path.write_text(
         "# Hypothesis\n\n- metric: TODO\n- target_delta: TBD\n",
         encoding="utf-8",

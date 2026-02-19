@@ -7,7 +7,14 @@ import argparse
 import re
 from pathlib import Path
 
-from verifier_lib import REPO_ROOT, load_json, load_state, make_result, print_result, resolve_iteration_dir
+from verifier_lib import (
+    REPO_ROOT,
+    load_json,
+    load_state,
+    make_result,
+    print_result,
+    resolve_iteration_dir,
+)
 
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\{\{[^{}\n]+\}\}"),
@@ -145,7 +152,12 @@ def _validate_docs_update(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     try:
@@ -161,7 +173,18 @@ def main() -> int:
     targets = _iter_targets(state.get("paper_targets"))
 
     if stage != "update_docs":
-        result = make_result("docs_targets", stage, [{"name": "docs_targets", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        result = make_result(
+            "docs_targets",
+            stage,
+            [
+                {
+                    "name": "docs_targets",
+                    "status": "pass",
+                    "detail": f"skipped for stage={stage}",
+                }
+            ],
+            [],
+        )
         print_result(result, as_json=args.json)
         return 0
 
@@ -187,7 +210,13 @@ def main() -> int:
 
     checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
     if passed:
-        checks = [{"name": "docs_targets", "status": "pass", "detail": "all docs target checks passed"}]
+        checks = [
+            {
+                "name": "docs_targets",
+                "status": "pass",
+                "detail": "all docs target checks passed",
+            }
+        ]
     result = make_result("docs_targets", stage, checks, failures)
     print_result(result, as_json=args.json)
 

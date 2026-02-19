@@ -10,7 +10,13 @@ from autolab.utils import _generate_run_id
 
 
 def _copy_scaffold(repo: Path) -> None:
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
 
@@ -88,7 +94,12 @@ def test_decide_repeat_writes_auto_decision_artifact(tmp_path: Path) -> None:
     assert payload.get("stage") == "decide_repeat"
     outputs = payload.get("outputs", {})
     assert isinstance(outputs, dict)
-    assert outputs.get("selected_decision") in {"hypothesis", "design", "stop", "human_review"}
+    assert outputs.get("selected_decision") in {
+        "hypothesis",
+        "design",
+        "stop",
+        "human_review",
+    }
 
 
 def test_prepare_launch_run_context_populates_replicate_group(tmp_path: Path) -> None:

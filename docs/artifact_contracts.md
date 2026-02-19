@@ -153,6 +153,7 @@ Throughout this document and in `workflow.yaml`, paths containing angle-bracket 
 **Runtime path**: `experiments/plan/h1-focal-loss/runs/20260218T160045Z/metrics.json`
 
 Resolution rules:
+
 - `<type>` -> experiment type from backlog (`plan`, `in_progress`, `done`)
 - `<iteration_id>` -> active iteration ID from `.autolab/state.json`
 - `<run_id>` -> current run ID from `state.last_run_id`

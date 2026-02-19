@@ -1,13 +1,10 @@
+---
 name: release
-
 on:
   push:
-    tags:
-      - "v*"
-
+    tags: [v*]
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -16,26 +13,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
+          python-version: '3.11'
       - name: Install package
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest
-
+          python -m pip install pytest ruff mdformat yamlfix
+      - name: Run style checks
+        run: |
+          ./scripts/check_style.sh
       - name: Run tests
         run: |
           python -m pytest -q
-
       - name: Verify golden iteration
         run: |
           python -m autolab verify-golden
-
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:

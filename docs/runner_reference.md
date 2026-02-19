@@ -47,6 +47,7 @@ Configured via `agent_runner.edit_scope.mode`:
 ### `iteration_plus_core` (default)
 
 Allows edits to:
+
 - The current iteration directory: `experiments/<type>/<iteration_id>/`
 - Core directories listed in `edit_scope.core_dirs` (default: `src`, `scripts`, `.autolab`, `docs`, `paper`, `tests`)
 
@@ -55,6 +56,7 @@ Best for: normal implementation work that spans experiment artifacts and shared 
 ### `iteration_only`
 
 Allows edits only to:
+
 - The current iteration directory: `experiments/<type>/<iteration_id>/`
 - `core_dirs` is ignored
 
@@ -81,9 +83,10 @@ When `ensure_iteration_dir: true`, the iteration directory is created before run
 Autolab detects out-of-scope edits after runner execution:
 
 1. **Git-based** (default): Compares git diff before/after runner execution
-2. **Filesystem snapshot** (fallback): When not a git worktree, uses `os.walk()` to detect file changes by mtime/size
+1. **Filesystem snapshot** (fallback): When not a git worktree, uses `os.walk()` to detect file changes by mtime/size
 
 Policy for non-git repos (`meaningful_change.on_non_git_behavior`):
+
 - `warn_and_continue` (default): Log warning, allow the run to proceed
 - `fail`: Fail the run immediately if git is unavailable
 

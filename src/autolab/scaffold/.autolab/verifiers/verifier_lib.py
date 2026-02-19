@@ -29,17 +29,30 @@ DEFAULT_EXPERIMENT_TYPE: str = "plan"
 # Canonical status vocabularies
 # ---------------------------------------------------------------------------
 
-SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset({"ok", "completed", "success", "passed"})
+SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset(
+    {"ok", "completed", "success", "passed"}
+)
 COMPLETION_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "failed"})
-IN_PROGRESS_STATUSES: frozenset[str] = frozenset({"pending", "submitted", "running", "synced"})
-RUN_MANIFEST_STATUSES: frozenset[str] = frozenset({
-    "pending", "submitted", "running", "synced", "completed", "failed", "partial",
-})
+IN_PROGRESS_STATUSES: frozenset[str] = frozenset(
+    {"pending", "submitted", "running", "synced"}
+)
+RUN_MANIFEST_STATUSES: frozenset[str] = frozenset(
+    {
+        "pending",
+        "submitted",
+        "running",
+        "synced",
+        "completed",
+        "failed",
+        "partial",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Iteration directory resolution
 # ---------------------------------------------------------------------------
+
 
 def resolve_iteration_dir(iteration_id: str) -> Path:
     """Locate the experiment directory for *iteration_id*.
@@ -61,6 +74,7 @@ def resolve_iteration_dir(iteration_id: str) -> Path:
 # ---------------------------------------------------------------------------
 # File loaders
 # ---------------------------------------------------------------------------
+
 
 def load_state() -> dict[str, Any]:
     """Load and validate ``.autolab/state.json``."""
@@ -97,6 +111,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # JSON envelope helpers
 # ---------------------------------------------------------------------------
+
 
 def make_result(
     verifier: str,

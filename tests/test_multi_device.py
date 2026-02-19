@@ -69,7 +69,8 @@ def _make_state(
         "assistant_mode": assistant_mode,
         "current_task_id": current_task_id,
         "task_cycle_stage": task_cycle_stage,
-        "repeat_guard": repeat_guard or {
+        "repeat_guard": repeat_guard
+        or {
             "last_decision": "",
             "same_decision_streak": 0,
             "last_open_task_count": -1,
@@ -103,10 +104,21 @@ def _write_backlog(
 ) -> None:
     backlog = {
         "hypotheses": [
-            {"id": "h1", "status": hypothesis_status, "title": "Test hypothesis", "success_metric": "metric", "target_delta": 0.0},
+            {
+                "id": "h1",
+                "status": hypothesis_status,
+                "title": "Test hypothesis",
+                "success_metric": "metric",
+                "target_delta": 0.0,
+            },
         ],
         "experiments": [
-            {"id": experiment_id, "hypothesis_id": "h1", "status": status, "iteration_id": iteration_id},
+            {
+                "id": experiment_id,
+                "hypothesis_id": "h1",
+                "status": status,
+                "iteration_id": iteration_id,
+            },
         ],
     }
     path = repo / ".autolab" / "backlog.yaml"
@@ -125,7 +137,8 @@ def _write_policy(repo: Path, *, guardrails: dict[str, Any] | None = None) -> No
         "template_fill": {"enabled": False},
         "agent_runner": {"enabled": False, "stages": []},
         "autorun": {
-            "guardrails": guardrails or {
+            "guardrails": guardrails
+            or {
                 "max_same_decision_streak": 3,
                 "max_no_progress_decisions": 2,
                 "max_update_docs_cycles": 3,
@@ -189,15 +202,21 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
         "metrics": ["loss"],
         "baselines": [{"name": "baseline1", "value": 1.0}],
     }
-    (iteration_dir / "design.yaml").write_text(yaml.safe_dump(design, sort_keys=False), encoding="utf-8")
+    (iteration_dir / "design.yaml").write_text(
+        yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
+    )
 
 
 def _seed_implementation(iteration_dir: Path) -> None:
-    (iteration_dir / "implementation_plan.md").write_text("# Implementation\nStep 1.", encoding="utf-8")
+    (iteration_dir / "implementation_plan.md").write_text(
+        "# Implementation\nStep 1.", encoding="utf-8"
+    )
 
 
 def _seed_review_pass(iteration_dir: Path) -> None:
-    (iteration_dir / "implementation_review.md").write_text("# Review\nLGTM.", encoding="utf-8")
+    (iteration_dir / "implementation_review.md").write_text(
+        "# Review\nLGTM.", encoding="utf-8"
+    )
     review = {
         "status": "pass",
         "blocking_findings": [],
@@ -210,7 +229,9 @@ def _seed_review_pass(iteration_dir: Path) -> None:
         },
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
-    (iteration_dir / "review_result.json").write_text(json.dumps(review, indent=2), encoding="utf-8")
+    (iteration_dir / "review_result.json").write_text(
+        json.dumps(review, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
@@ -238,7 +259,9 @@ def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
@@ -259,7 +282,9 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     metrics = {
         "iteration_id": iteration_dir.name,
         "run_id": run_id,
@@ -272,7 +297,9 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
         "baseline_results": [],
         "variant_results": [],
     }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
@@ -308,13 +335,16 @@ def _seed_slurm_launch(
             compute = {}
         compute["location"] = "slurm"
         design_payload["compute"] = compute
-        design_path.write_text(yaml.safe_dump(design_payload, sort_keys=False), encoding="utf-8")
+        design_path.write_text(
+            yaml.safe_dump(design_payload, sort_keys=False), encoding="utf-8"
+        )
     if not (iteration_dir / "review_result.json").exists():
         _seed_review_pass(iteration_dir)
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
     (launch_dir / "run_slurm.sbatch").write_text(
-        "#!/bin/bash\n#SBATCH --job-name=test\necho run", encoding="utf-8",
+        "#!/bin/bash\n#SBATCH --job-name=test\necho run",
+        encoding="utf-8",
     )
     run_dir = iteration_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -335,7 +365,9 @@ def _seed_slurm_launch(
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_slurm_extract(
@@ -364,7 +396,9 @@ def _seed_slurm_extract(
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     metrics = {
         "iteration_id": iteration_id,
         "run_id": run_id,
@@ -377,10 +411,18 @@ def _seed_slurm_extract(
         "baseline_results": [],
         "variant_results": [],
     }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
 
 
-def _write_slurm_ledger(repo: Path, run_id: str, *, job_id: str = "12345", iteration_id: str = "iter_test_001") -> None:
+def _write_slurm_ledger(
+    repo: Path,
+    run_id: str,
+    *,
+    job_id: str = "12345",
+    iteration_id: str = "iter_test_001",
+) -> None:
     path = repo / "docs" / "slurm_job_list.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = f"- 2026-01-01 | job_id={job_id} | iteration_id={iteration_id} | run_id={run_id} | status=completed"
@@ -422,6 +464,7 @@ def _run(state_path: Path, **kwargs: Any) -> RunOutcome:
 # Test Class 1: TestStaleStateTransitions (GAP-1, GAP-5)
 # ---------------------------------------------------------------------------
 
+
 class TestStaleStateTransitions:
     """Simulates what happens when state.json on one device is behind the other."""
 
@@ -451,7 +494,9 @@ class TestStaleStateTransitions:
         persisted = _read_state(repo)
         assert persisted["stage"] == "design"
 
-    def test_both_devices_at_same_stage_produce_independent_transitions(self, tmp_path: Path) -> None:
+    def test_both_devices_at_same_stage_produce_independent_transitions(
+        self, tmp_path: Path
+    ) -> None:
         """Run _run_once twice on the same stage, resetting state between runs
         to simulate two devices.  Both succeed independently with no conflict
         detection.  Documents GAP-1/GAP-5.
@@ -509,6 +554,7 @@ class TestStaleStateTransitions:
 # Test Class 2: TestLockLimitations (GAP-2, GAP-3)
 # ---------------------------------------------------------------------------
 
+
 class TestLockLimitations:
     """Documents that locks are local-only and `run` has no lock."""
 
@@ -564,8 +610,10 @@ class TestLockLimitations:
 
         # Write a stale lock from a different host
         stale_time = (
-            datetime.now(timezone.utc) - timedelta(seconds=LOCK_STALE_SECONDS + 60)
-        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+            (datetime.now(timezone.utc) - timedelta(seconds=LOCK_STALE_SECONDS + 60))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
         stale_lock = {
             "pid": 99999,
             "host": "remote-cluster",
@@ -628,6 +676,7 @@ class TestLockLimitations:
 # Test Class 3: TestSlurmSyncRetryBudgetExhaustion (GAP-4, GAP-8)
 # ---------------------------------------------------------------------------
 
+
 class TestSlurmSyncRetryBudgetExhaustion:
     """Documents that pending SLURM sync exhausts the retry budget and that
     cross-device checks double-count attempts.
@@ -640,7 +689,10 @@ class TestSlurmSyncRetryBudgetExhaustion:
         Documents GAP-4.
         """
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=0, max_stage_attempts=3,
+            tmp_path,
+            stage="launch",
+            stage_attempt=0,
+            max_stage_attempts=3,
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
@@ -672,7 +724,10 @@ class TestSlurmSyncRetryBudgetExhaustion:
         Documents GAP-8.
         """
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=0, max_stage_attempts=5,
+            tmp_path,
+            stage="launch",
+            stage_attempt=0,
+            max_stage_attempts=5,
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
@@ -698,7 +753,10 @@ class TestSlurmSyncRetryBudgetExhaustion:
         Documents GAP-4 recovery path.
         """
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=1, max_stage_attempts=5,
+            tmp_path,
+            stage="launch",
+            stage_attempt=1,
+            max_stage_attempts=5,
         )
         _seed_slurm_launch(it_dir, sync_status="running")
         _write_slurm_ledger(repo, "run_001")
@@ -723,6 +781,7 @@ class TestSlurmSyncRetryBudgetExhaustion:
 # ---------------------------------------------------------------------------
 # Test Class 4: TestRepeatGuardCrossDevice (GAP-8)
 # ---------------------------------------------------------------------------
+
 
 class TestRepeatGuardCrossDevice:
     """Documents cross-device repeat guard accumulation issues."""
@@ -798,6 +857,7 @@ class TestRepeatGuardCrossDevice:
 # Test Class 5: TestMultiDeviceEndToEnd (Full scenario)
 # ---------------------------------------------------------------------------
 
+
 class TestMultiDeviceEndToEnd:
     """Full Dr. Maya multi-device scenario tests."""
 
@@ -869,13 +929,18 @@ class TestMultiDeviceEndToEnd:
         assert persisted["stage"] == "stop"
         assert persisted["stage_attempt"] == 0
 
-    def test_slurm_launch_pending_then_local_check_double_counts(self, tmp_path: Path) -> None:
+    def test_slurm_launch_pending_then_local_check_double_counts(
+        self, tmp_path: Path
+    ) -> None:
         """Seed SLURM launch with pending sync.  Run once ('REMOTE' check,
         attempt=1).  Run again ('LOCAL' check, attempt=2).  Assert the single
         wait condition consumed 2 attempts.  Documents GAP-4 + GAP-8.
         """
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=0, max_stage_attempts=5,
+            tmp_path,
+            stage="launch",
+            stage_attempt=0,
+            max_stage_attempts=5,
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")

@@ -1,4 +1,5 @@
 """Autolab CLI entry point — delegates to submodules."""
+
 from __future__ import annotations
 
 import importlib
@@ -227,6 +228,7 @@ def __dir__() -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     from autolab.commands import main as commands_main
+
     return commands_main(argv)
 
 

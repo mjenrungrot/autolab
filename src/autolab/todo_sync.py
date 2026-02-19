@@ -93,7 +93,9 @@ class _GeneratedCandidate:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _normalize_space(value: str) -> str:
@@ -163,7 +165,9 @@ def _coerce_policy_fallback_candidate(
     iteration_implementation_path: str,
 ) -> _GeneratedCandidate:
     if not isinstance(raw_section, dict):
-        return _GeneratedCandidate(stage=default_stage, scope=default_scope, text=default_text)
+        return _GeneratedCandidate(
+            stage=default_stage, scope=default_scope, text=default_text
+        )
     raw_stage = _normalize_space(str(raw_section.get("stage", ""))).lower()
     stage = raw_stage if raw_stage in ALL_STAGES else default_stage
     scope = _normalize_space(str(raw_section.get("scope", ""))) or default_scope
@@ -183,18 +187,27 @@ def _fallback_candidates_for_host_with_policy(
     iteration_implementation_path: str,
 ) -> list[_GeneratedCandidate]:
     defaults = _fallback_candidates_for_host(host_mode)
-    default = defaults[0] if defaults else _GeneratedCandidate(
-        stage="implementation",
-        scope=FALLBACK_SCOPE_LOCAL,
-        text=_DEFAULT_FALLBACK_TASK_TEXT_LOCAL,
+    default = (
+        defaults[0]
+        if defaults
+        else _GeneratedCandidate(
+            stage="implementation",
+            scope=FALLBACK_SCOPE_LOCAL,
+            text=_DEFAULT_FALLBACK_TASK_TEXT_LOCAL,
+        )
     )
     default_text = default.text
-    if iteration_implementation_path and iteration_implementation_path not in default_text:
+    if (
+        iteration_implementation_path
+        and iteration_implementation_path not in default_text
+    ):
         default_text = (
             f"{default_text} Scope guardrail: keep experiment-specific implementation under "
             f"`{iteration_implementation_path}` to avoid unrelated file edits."
         )
-        default = _GeneratedCandidate(stage=default.stage, scope=default.scope, text=default_text)
+        default = _GeneratedCandidate(
+            stage=default.stage, scope=default.scope, text=default_text
+        )
     normalized_host_mode = _normalize_host_mode(host_mode)
 
     try:
@@ -252,11 +265,20 @@ def _classify_task(*, stage: str, text: str) -> str:
         return "feature"
     if stage == "update_docs":
         return "docs"
-    if any(token in lowered for token in ("paper", "docs", "documentation", "wiki", "readme", "manuscript")):
+    if any(
+        token in lowered
+        for token in ("paper", "docs", "documentation", "wiki", "readme", "manuscript")
+    ):
         return "docs"
-    if any(token in lowered for token in ("hypothesis", "experiment", "baseline", "metric", "run", "launch")):
+    if any(
+        token in lowered
+        for token in ("hypothesis", "experiment", "baseline", "metric", "run", "launch")
+    ):
         return "experiment"
-    if any(token in lowered for token in ("feature", "implement", "code", "refactor", "fix", "module")):
+    if any(
+        token in lowered
+        for token in ("feature", "implement", "code", "refactor", "fix", "module")
+    ):
         return "feature"
     return "unknown"
 
@@ -264,11 +286,31 @@ def _classify_task(*, stage: str, text: str) -> str:
 def _infer_manual_stage(*, text: str, current_stage: str) -> str:
     lowered = _normalize_space(text).lower()
     token_groups = (
-        ("update_docs", ("paper", "docs", "documentation", "wiki", "readme", "manuscript", "write docs")),
+        (
+            "update_docs",
+            (
+                "paper",
+                "docs",
+                "documentation",
+                "wiki",
+                "readme",
+                "manuscript",
+                "write docs",
+            ),
+        ),
         ("extract_results", ("extract", "analysis", "metrics", "summary", "aggregate")),
-        ("launch", ("launch", "submit", "slurm", "run_local", "run_slurm", "sync artifacts")),
-        ("implementation_review", ("implementation review", "review_result", "gate review")),
-        ("implementation", ("implement", "feature", "code", "refactor", "fix", "module", "wrapper")),
+        (
+            "launch",
+            ("launch", "submit", "slurm", "run_local", "run_slurm", "sync artifacts"),
+        ),
+        (
+            "implementation_review",
+            ("implementation review", "review_result", "gate review"),
+        ),
+        (
+            "implementation",
+            ("implement", "feature", "code", "refactor", "fix", "module", "wrapper"),
+        ),
         ("design", ("design", "spec", "schema", "experiment plan", "baseline")),
         ("hypothesis", ("hypothesis", "success criteria", "metric", "expected delta")),
     )
@@ -279,7 +321,9 @@ def _infer_manual_stage(*, text: str, current_stage: str) -> str:
 
 
 def _hash_task_id(source: str, scope: str, stage: str, text_key: str) -> str:
-    digest = hashlib.sha1(f"{source}|{scope}|{stage}|{text_key}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(
+        f"{source}|{scope}|{stage}|{text_key}".encode("utf-8")
+    ).hexdigest()
     return f"task_{digest[:12]}"
 
 
@@ -453,25 +497,39 @@ def _parse_bullets(tasks_lines: list[str]) -> list[_ParsedBullet]:
                 text = match_unchecked.group(1).strip()
 
         stage_tag = None
-        match_stage = re.search(r"\[\s*stage\s*:\s*([a-z_]+)\s*\]", text, flags=re.IGNORECASE)
+        match_stage = re.search(
+            r"\[\s*stage\s*:\s*([a-z_]+)\s*\]", text, flags=re.IGNORECASE
+        )
         if match_stage:
             stage_tag = match_stage.group(1).strip().lower()
-            text = _normalize_space(text[: match_stage.start()] + " " + text[match_stage.end() :])
+            text = _normalize_space(
+                text[: match_stage.start()] + " " + text[match_stage.end() :]
+            )
 
         priority = None
-        match_priority = re.search(r"\[\s*priority\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE)
+        match_priority = re.search(
+            r"\[\s*priority\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE
+        )
         if match_priority:
             priority = match_priority.group(1).strip().lower()
-            text = _normalize_space(text[: match_priority.start()] + " " + text[match_priority.end() :])
+            text = _normalize_space(
+                text[: match_priority.start()] + " " + text[match_priority.end() :]
+            )
 
         owner = None
-        match_owner = re.search(r"\[\s*owner\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE)
+        match_owner = re.search(
+            r"\[\s*owner\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE
+        )
         if match_owner:
             owner = match_owner.group(1).strip()
-            text = _normalize_space(text[: match_owner.start()] + " " + text[match_owner.end() :])
+            text = _normalize_space(
+                text[: match_owner.start()] + " " + text[match_owner.end() :]
+            )
 
         labels: list[str] = []
-        for match_label in re.finditer(r"\[\s*label\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE):
+        for match_label in re.finditer(
+            r"\[\s*label\s*:\s*([^\]]+)\]", text, flags=re.IGNORECASE
+        ):
             labels.append(match_label.group(1).strip().lower())
         text = re.sub(r"\[\s*label\s*:[^\]]+\]", "", text, flags=re.IGNORECASE)
 
@@ -479,10 +537,17 @@ def _parse_bullets(tasks_lines: list[str]) -> list[_ParsedBullet]:
         if not text:
             continue
 
-        parsed.append(_ParsedBullet(
-            text=text, stage_tag=stage_tag, checked=checked, order=idx,
-            priority=priority, owner=owner, labels=tuple(labels),
-        ))
+        parsed.append(
+            _ParsedBullet(
+                text=text,
+                stage_tag=stage_tag,
+                checked=checked,
+                order=idx,
+                priority=priority,
+                owner=owner,
+                labels=tuple(labels),
+            )
+        )
 
     return parsed
 
@@ -541,7 +606,11 @@ def _resolve_iteration_dir(
         return experiments_root
 
     preferred_type = ""
-    experiments = backlog_payload.get("experiments") if isinstance(backlog_payload, dict) else None
+    experiments = (
+        backlog_payload.get("experiments")
+        if isinstance(backlog_payload, dict)
+        else None
+    )
     if isinstance(experiments, list):
         for entry in experiments:
             if not isinstance(entry, dict):
@@ -570,11 +639,15 @@ def _resolve_iteration_dir(
     return experiments_root / fallback_type / normalized_iteration
 
 
-def _resolve_iteration_implementation_path(repo_root: Path, state: dict[str, Any] | None) -> str:
+def _resolve_iteration_implementation_path(
+    repo_root: Path, state: dict[str, Any] | None
+) -> str:
     iteration_id = _normalize_space(str((state or {}).get("iteration_id", "")))
     if not iteration_id or iteration_id.startswith("<"):
         return ""
-    iteration_dir = _resolve_iteration_dir(repo_root, iteration_id=iteration_id, backlog_payload=None)
+    iteration_dir = _resolve_iteration_dir(
+        repo_root, iteration_id=iteration_id, backlog_payload=None
+    )
     try:
         relative = iteration_dir.relative_to(repo_root).as_posix()
     except Exception:
@@ -582,7 +655,9 @@ def _resolve_iteration_implementation_path(repo_root: Path, state: dict[str, Any
     return f"{relative}/implementation"
 
 
-def _is_iteration_completed_in_backlog(backlog_payload: dict[str, Any], iteration_id: str) -> bool:
+def _is_iteration_completed_in_backlog(
+    backlog_payload: dict[str, Any], iteration_id: str
+) -> bool:
     normalized_iteration = _normalize_space(iteration_id)
     if not normalized_iteration:
         return False
@@ -613,7 +688,9 @@ def _extract_open_questions(path: Path) -> list[str]:
         if stripped.startswith("## "):
             in_open_section = lowered.startswith("## open questions")
 
-        labeled = re.search(r"\*\*\s*Open Question\.\s*\*\*\s*(.+)$", stripped, flags=re.IGNORECASE)
+        labeled = re.search(
+            r"\*\*\s*Open Question\.\s*\*\*\s*(.+)$", stripped, flags=re.IGNORECASE
+        )
         if labeled:
             candidate = _normalize_space(labeled.group(1))
             if candidate and "none at this stage" not in candidate.lower():
@@ -684,7 +761,9 @@ def _extract_pending_lines(path: Path) -> list[str]:
     return deduped
 
 
-def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None) -> list[_GeneratedCandidate]:
+def _collect_generated_candidates(
+    repo_root: Path, state: dict[str, Any] | None
+) -> list[_GeneratedCandidate]:
     candidates: list[_GeneratedCandidate] = []
     iteration_id = _normalize_space(str((state or {}).get("iteration_id", "")))
 
@@ -719,7 +798,9 @@ def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None)
             parsed_backlog = None
         if isinstance(parsed_backlog, dict):
             backlog_payload = parsed_backlog
-            iteration_is_completed = _is_iteration_completed_in_backlog(backlog_payload, iteration_id)
+            iteration_is_completed = _is_iteration_completed_in_backlog(
+                backlog_payload, iteration_id
+            )
             hypotheses = backlog_payload.get("hypotheses")
             if isinstance(hypotheses, list):
                 for entry in hypotheses:
@@ -727,9 +808,19 @@ def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None)
                         continue
                     if _is_closed_hypothesis_status(entry.get("status")):
                         continue
-                    hypothesis_id = _normalize_space(str(entry.get("id", "hypothesis"))) or "hypothesis"
-                    title = _normalize_space(str(entry.get("title", "untitled hypothesis")))
-                    metric = _normalize_space(str(entry.get("success_metric", "primary metric"))) or "primary metric"
+                    hypothesis_id = (
+                        _normalize_space(str(entry.get("id", "hypothesis")))
+                        or "hypothesis"
+                    )
+                    title = _normalize_space(
+                        str(entry.get("title", "untitled hypothesis"))
+                    )
+                    metric = (
+                        _normalize_space(
+                            str(entry.get("success_metric", "primary metric"))
+                        )
+                        or "primary metric"
+                    )
                     candidates.append(
                         _GeneratedCandidate(
                             stage="hypothesis",
@@ -748,19 +839,33 @@ def _collect_generated_candidates(repo_root: Path, state: dict[str, Any] | None)
                         continue
                     if _is_read_only_experiment_entry(entry):
                         continue
-                    experiment_id = _normalize_space(str(entry.get("id", "experiment"))) or "experiment"
-                    experiment_iteration = _normalize_space(str(entry.get("iteration_id", "current iteration"))) or "current iteration"
+                    experiment_id = (
+                        _normalize_space(str(entry.get("id", "experiment")))
+                        or "experiment"
+                    )
+                    experiment_iteration = (
+                        _normalize_space(
+                            str(entry.get("iteration_id", "current iteration"))
+                        )
+                        or "current iteration"
+                    )
                     experiment_type = _normalize_experiment_type(entry.get("type"))
                     if experiment_type == "plan":
                         target_stage = "hypothesis"
-                        guidance = "by refining the plan and hypothesis before implementation."
+                        guidance = (
+                            "by refining the plan and hypothesis before implementation."
+                        )
                     elif experiment_type == "in_progress":
                         target_stage = "implementation"
                         guidance = "by progressing implementation, launch readiness, or result extraction."
                     else:
                         target_stage = "design"
-                        guidance = "by keeping the design runnable and implementation-ready."
-                    type_suffix = f" (type={experiment_type})" if experiment_type else ""
+                        guidance = (
+                            "by keeping the design runnable and implementation-ready."
+                        )
+                    type_suffix = (
+                        f" (type={experiment_type})" if experiment_type else ""
+                    )
                     candidates.append(
                         _GeneratedCandidate(
                             stage=target_stage,
@@ -878,7 +983,11 @@ _PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
 def _open_tasks_sorted(todo_state: dict[str, Any]) -> list[dict[str, Any]]:
-    tasks = [task for task in todo_state.get("tasks", {}).values() if task.get("status") == "open"]
+    tasks = [
+        task
+        for task in todo_state.get("tasks", {}).values()
+        if task.get("status") == "open"
+    ]
     tasks.sort(
         key=lambda item: (
             _PRIORITY_ORDER.get(str(item.get("priority", "")).lower(), 4),
@@ -910,7 +1019,9 @@ def _prune_non_open_tasks(todo_state: dict[str, Any]) -> int:
     return len(removable_ids)
 
 
-def _manual_task_done_by_outcome(task_stage: str, run_outcome: dict[str, Any] | None) -> bool:
+def _manual_task_done_by_outcome(
+    task_stage: str, run_outcome: dict[str, Any] | None
+) -> bool:
     if run_outcome is None:
         return False
 
@@ -925,9 +1036,17 @@ def _manual_task_done_by_outcome(task_stage: str, run_outcome: dict[str, Any] | 
         return stage_before == "decide_repeat" and transitioned
 
     if task_stage in {"stop", "human_review"}:
-        if transitioned and stage_before == "decide_repeat" and stage_after == task_stage:
+        if (
+            transitioned
+            and stage_before == "decide_repeat"
+            and stage_after == task_stage
+        ):
             return True
-        return stage_before == task_stage and stage_after == task_stage and not transitioned
+        return (
+            stage_before == task_stage
+            and stage_after == task_stage
+            and not transitioned
+        )
 
     expected_after = SUCCESS_STAGE_TRANSITIONS.get(task_stage)
     if not expected_after:
@@ -989,8 +1108,12 @@ def _sync_internal(
     changed_files: list[Path] = []
     removed_count = 0
     resolved_host_mode = _normalize_host_mode(host_mode)
-    iteration_implementation_path = _resolve_iteration_implementation_path(repo_root, state)
-    assistant_mode = _normalize_space(str((state or {}).get("assistant_mode", ""))).lower() == "on"
+    iteration_implementation_path = _resolve_iteration_implementation_path(
+        repo_root, state
+    )
+    assistant_mode = (
+        _normalize_space(str((state or {}).get("assistant_mode", ""))).lower() == "on"
+    )
 
     todo_path = repo_root / "docs" / "todo.md"
     todo_state_path = repo_root / ".autolab" / "todo_state.json"
@@ -999,21 +1122,29 @@ def _sync_internal(
         if _write_text_if_changed(todo_path, _default_todo_content()):
             changed_files.append(todo_path)
 
-    todo_text = todo_path.read_text(encoding="utf-8") if todo_path.exists() else _default_todo_content()
+    todo_text = (
+        todo_path.read_text(encoding="utf-8")
+        if todo_path.exists()
+        else _default_todo_content()
+    )
     tasks_lines, notes_lines, _ = _extract_sections(todo_text)
     parsed_bullets = _parse_bullets(tasks_lines)
 
     todo_state = _load_todo_state(todo_state_path)
     tasks = todo_state["tasks"]
 
-    current_stage = _normalize_stage(str((state or {}).get("stage", "")).lower(), "hypothesis")
+    current_stage = _normalize_stage(
+        str((state or {}).get("stage", "")).lower(), "hypothesis"
+    )
     manual_has_actionable_decision = _manual_bullets_have_actionable_decision(
         parsed_bullets,
         current_stage=current_stage,
     )
     generated_candidates = _collect_generated_candidates(repo_root, state)
     if current_stage != "decide_repeat":
-        generated_candidates = [item for item in generated_candidates if item.stage == current_stage]
+        generated_candidates = [
+            item for item in generated_candidates if item.stage == current_stage
+        ]
     if (
         current_stage == "decide_repeat"
         and not manual_has_actionable_decision
@@ -1029,7 +1160,9 @@ def _sync_internal(
     max_generated_tasks = _load_max_generated_todo_tasks(repo_root)
     if len(generated_candidates) > max_generated_tasks:
         generated_candidates = generated_candidates[:max_generated_tasks]
-    generated_norm_stage = {(_normalize_text_key(item.text), item.stage) for item in generated_candidates}
+    generated_norm_stage = {
+        (_normalize_text_key(item.text), item.stage) for item in generated_candidates
+    }
     existing_generated_norm_stage = {
         (str(task.get("text_key", "")), str(task.get("stage", "")))
         for task in tasks.values()
@@ -1047,7 +1180,10 @@ def _sync_internal(
         if not text_key:
             continue
 
-        is_generated_echo = (text_key, stage) in generated_norm_stage or (text_key, stage) in existing_generated_norm_stage
+        is_generated_echo = (text_key, stage) in generated_norm_stage or (
+            text_key,
+            stage,
+        ) in existing_generated_norm_stage
         if is_generated_echo:
             if parsed.checked:
                 for task in tasks.values():
@@ -1085,7 +1221,11 @@ def _sync_internal(
                 removed_count += 1
 
     for task_id, task in tasks.items():
-        if task.get("source") == "manual" and task.get("status") == "open" and task_id not in seen_manual_ids:
+        if (
+            task.get("source") == "manual"
+            and task.get("status") == "open"
+            and task_id not in seen_manual_ids
+        ):
             task["status"] = "removed"
             task["last_evidence_at"] = now
 
@@ -1102,7 +1242,11 @@ def _sync_internal(
         active_generated_ids.add(generated_id)
 
     for task_id, task in tasks.items():
-        if task.get("source") == "generated" and task.get("status") == "open" and task_id not in active_generated_ids:
+        if (
+            task.get("source") == "generated"
+            and task.get("status") == "open"
+            and task_id not in active_generated_ids
+        ):
             if _mark_completed(task, now):
                 removed_count += 1
 
@@ -1135,7 +1279,11 @@ def _sync_internal(
     deduped: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, str]] = set()
     for task in open_tasks:
-        source_scope = "manual" if task.get("source") == "manual" else str(task.get("scope", "generated"))
+        source_scope = (
+            "manual"
+            if task.get("source") == "manual"
+            else str(task.get("scope", "generated"))
+        )
         key = (str(task.get("text_key", "")), str(task.get("stage", "")), source_scope)
         if key in seen_keys:
             task["status"] = "completed"
@@ -1157,11 +1305,18 @@ def _sync_internal(
     if _write_json_if_changed(todo_state_path, todo_state):
         changed_files.append(todo_state_path)
 
-    if _write_focus_snapshot(repo_root, stage=current_stage, open_tasks=open_tasks, now=now):
+    if _write_focus_snapshot(
+        repo_root, stage=current_stage, open_tasks=open_tasks, now=now
+    ):
         changed_files.append(repo_root / ".autolab" / "todo_focus.json")
 
     message = f"todo_sync open={len(open_tasks)} removed={removed_count}"
-    return TodoSyncResult(changed_files=changed_files, open_count=len(open_tasks), removed_count=removed_count, message=message)
+    return TodoSyncResult(
+        changed_files=changed_files,
+        open_count=len(open_tasks),
+        removed_count=removed_count,
+        message=message,
+    )
 
 
 def sync_todo_pre_run(
@@ -1170,7 +1325,9 @@ def sync_todo_pre_run(
     *,
     host_mode: str | None = None,
 ) -> TodoSyncResult:
-    return _sync_internal(repo_root=repo_root, state=state, run_outcome=None, host_mode=host_mode)
+    return _sync_internal(
+        repo_root=repo_root, state=state, run_outcome=None, host_mode=host_mode
+    )
 
 
 def sync_todo_post_run(
@@ -1186,7 +1343,9 @@ def _map_stage_to_decision(stage: str) -> str | None:
     return _decision_for_stage(stage)
 
 
-def select_decision_from_todo(repo_root: Path, *, prioritize_implementation: bool = False) -> str | None:
+def select_decision_from_todo(
+    repo_root: Path, *, prioritize_implementation: bool = False
+) -> str | None:
     state_path = repo_root / ".autolab" / "todo_state.json"
     todo_state = _load_todo_state(state_path)
     open_tasks = _open_tasks_sorted(todo_state)
@@ -1216,7 +1375,9 @@ def select_decision_from_todo(repo_root: Path, *, prioritize_implementation: boo
     return baseline_decision
 
 
-def select_open_task(repo_root: Path, *, prioritize_implementation: bool = False) -> dict[str, Any] | None:
+def select_open_task(
+    repo_root: Path, *, prioritize_implementation: bool = False
+) -> dict[str, Any] | None:
     state_path = repo_root / ".autolab" / "todo_state.json"
     todo_state = _load_todo_state(state_path)
     open_tasks = _open_tasks_sorted(todo_state)
@@ -1257,7 +1418,11 @@ def mark_task_completed(repo_root: Path, task_id: str) -> bool:
         return False
     _prune_non_open_tasks(todo_state)
     _write_json_if_changed(todo_state_path, todo_state)
-    todo_text = todo_path.read_text(encoding="utf-8") if todo_path.exists() else _default_todo_content()
+    todo_text = (
+        todo_path.read_text(encoding="utf-8")
+        if todo_path.exists()
+        else _default_todo_content()
+    )
     _, notes_lines, _ = _extract_sections(todo_text)
     open_tasks = _open_tasks_sorted(todo_state)
     rendered = _render_todo(open_tasks, notes_lines)
@@ -1265,7 +1430,9 @@ def mark_task_completed(repo_root: Path, task_id: str) -> bool:
     return True
 
 
-def build_focus_tasks(repo_root: Path, stage: str, limit: int = 5) -> list[dict[str, Any]]:
+def build_focus_tasks(
+    repo_root: Path, stage: str, limit: int = 5
+) -> list[dict[str, Any]]:
     state_path = repo_root / ".autolab" / "todo_state.json"
     todo_state = _load_todo_state(state_path)
     open_tasks = _open_tasks_sorted(todo_state)

@@ -1,11 +1,6 @@
----
-name: parallel-task
-description: >
-  [EXPLICIT INVOCATION ONLY] Execute dependency-aware implementation plans in parallel subagent
-  waves with Autolab-aware logging.
-metadata:
-  invocation: explicit-only
----
+______________________________________________________________________
+
+## name: parallel-task description: > [EXPLICIT INVOCATION ONLY] Execute dependency-aware implementation plans in parallel subagent waves with Autolab-aware logging. metadata: invocation: explicit-only
 
 # Parallel Task
 
@@ -27,17 +22,17 @@ If no `task_ids` are provided, execute the full plan.
 ## Preflight checks
 
 1. Confirm `plan_file` exists and is readable.
-2. Parse task blocks (for example `### T1: ...`).
-3. For each task, extract:
+1. Parse task blocks (for example `### T1: ...`).
+1. For each task, extract:
    - ID and name
    - `depends_on` list
    - `location`, `description`, `validation`
    - `touches`, `scope_ok`
    - `status`, `log`, `files edited/created`
-4. Validate unique IDs and dependency references.
-5. If `.autolab/state.json` exists, load iteration and stage context for prompts.
-6. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and verify each task's `touches` are within allowed scope before launching subagents.
-7. Fail preflight if any task omits `touches` or `scope_ok`, or if `scope_ok` is not set to true.
+1. Validate unique IDs and dependency references.
+1. If `.autolab/state.json` exists, load iteration and stage context for prompts.
+1. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and verify each task's `touches` are within allowed scope before launching subagents.
+1. Fail preflight if any task omits `touches` or `scope_ok`, or if `scope_ok` is not set to true.
 
 ## Subset execution rules
 
@@ -49,31 +44,33 @@ If no `task_ids` are provided, execute the full plan.
 1. Identify unblocked tasks:
    - task not completed
    - all `depends_on` tasks completed
-2. Extract `touches` and `conflict_group` from each unblocked task during preflight.
-3. When building a wave, exclude tasks whose `touches` overlap or share a `conflict_group` with already-selected tasks in the wave.
-4. Launch all wave tasks in parallel subagents.
-5. Wait for completion, collect outputs, and validate results.
-6. Mark task as complete only when plan updates are present:
+1. Extract `touches` and `conflict_group` from each unblocked task during preflight.
+1. When building a wave, exclude tasks whose `touches` overlap or share a `conflict_group` with already-selected tasks in the wave.
+1. Launch all wave tasks in parallel subagents.
+1. Wait for completion, collect outputs, and validate results.
+1. Mark task as complete only when plan updates are present:
    - `status: Completed`
    - non-empty `log`
    - non-empty `files edited/created`
-7. If a task fails validation, retry once; otherwise report blocked status.
-8. Repeat until no pending tasks remain.
+1. If a task fails validation, retry once; otherwise report blocked status.
+1. Repeat until no pending tasks remain.
 
 ## Subagent prompt contract
 
 Each task prompt must include:
+
 - plan file path
 - iteration/stage context (if available)
 - full task section
 - acceptance/validation requirements
 
 Instruction requirements for subagent:
+
 1. Read affected files before editing.
-2. Implement only the assigned task.
-3. Run validation when feasible.
-4. Update the task block in `plan_file` immediately after completion.
-5. Return a concise summary of files changed, validation run, and residual risks.
+1. Implement only the assigned task.
+1. Run validation when feasible.
+1. Update the task block in `plan_file` immediately after completion.
+1. Return a concise summary of files changed, validation run, and residual risks.
 
 ## Guardrails
 
@@ -90,6 +87,7 @@ Instruction requirements for subagent:
 ## Execution summary
 
 Return:
+
 - tasks completed
 - tasks failed/blocked with reasons
 - plan file path
@@ -98,6 +96,7 @@ Return:
 Emit `plan_execution_summary.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `plan_file`, `tasks_total`, `tasks_completed`, `tasks_failed`, `tasks_blocked`. Optional: `waves_executed`, `task_details[]`.
 
 Example `plan_execution_summary.json`:
+
 ```json
 {
   "schema_version": "1.0",

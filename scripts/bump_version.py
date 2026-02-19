@@ -86,7 +86,7 @@ def _sync_readme_tag_line(lines: list[str], new_version: str) -> tuple[list[str]
         if match is None:
             continue
         old_version = match.group("version")
-        lines[idx] = f'{match.group("prefix")}{new_version}{match.group("suffix")}'
+        lines[idx] = f"{match.group('prefix')}{new_version}{match.group('suffix')}"
         return lines, old_version
     raise ValueError("could not find pinned release install command in README.md")
 

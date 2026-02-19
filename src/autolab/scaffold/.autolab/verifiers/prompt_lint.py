@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from verifier_lib import REPO_ROOT, make_result, print_result
+
 PROMPTS_DIR = REPO_ROOT / ".autolab" / "prompts"
 TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 LEGACY_LITERAL_TOKENS = ("<ITERATION_ID>", "<ITERATION_PATH>", "<RUN_ID>")
@@ -60,20 +61,34 @@ def _resolve_allowed_tokens() -> set[str]:
     """Build ALLOWED_TOKENS dynamically from workflow.yaml required_tokens."""
     try:
         from autolab.registry import load_registry
+
         registry = load_registry(REPO_ROOT)
         if registry:
             tokens: set[str] = set(_SHARED_TOKENS)
             for spec in registry.values():
                 tokens.update(spec.required_tokens)
             # Also include known runtime-injected tokens not in registry.
-            tokens.update({
-                "review_feedback", "verifier_errors", "verifier_outputs",
-                "dry_run_output", "metrics_summary", "target_comparison",
-                "decision_suggestion", "auto_metrics_evidence", "diff_summary",
-                "experiment_id", "paper_targets", "launch_mode",
-                "recommended_memory_estimate", "available_memory_gb",
-                "hypothesis_id", "run_group", "replicate_count",
-            })
+            tokens.update(
+                {
+                    "review_feedback",
+                    "verifier_errors",
+                    "verifier_outputs",
+                    "dry_run_output",
+                    "metrics_summary",
+                    "target_comparison",
+                    "decision_suggestion",
+                    "auto_metrics_evidence",
+                    "diff_summary",
+                    "experiment_id",
+                    "paper_targets",
+                    "launch_mode",
+                    "recommended_memory_estimate",
+                    "available_memory_gb",
+                    "hypothesis_id",
+                    "run_group",
+                    "replicate_count",
+                }
+            )
             return tokens
     except Exception:
         pass
@@ -112,7 +127,7 @@ def _resolve_stage_prompt_files() -> dict[str, str]:
 
     discovered: dict[str, str] = {}
     for prompt_path in sorted(PROMPTS_DIR.glob("stage_*.md")):
-        stage = prompt_path.stem[len("stage_"):].strip()
+        stage = prompt_path.stem[len("stage_") :].strip()
         if stage:
             discovered[stage] = prompt_path.name
     return discovered
@@ -130,7 +145,9 @@ def _resolve_required_tokens_by_stage() -> dict[str, set[str]]:
             if not stage_name:
                 continue
             if isinstance(raw_tokens, (set, list, tuple)):
-                tokens = {str(token).strip() for token in raw_tokens if str(token).strip()}
+                tokens = {
+                    str(token).strip() for token in raw_tokens if str(token).strip()
+                }
                 resolved[stage_name] = tokens
         if resolved:
             return resolved
@@ -177,25 +194,41 @@ def _lint_stage_prompt(
             equivalent = _section_shared_equivalents.get(section, "")
             if equivalent and equivalent in text:
                 continue
-            failures.append(f"{prompt_path} missing required section heading: {section}")
+            failures.append(
+                f"{prompt_path} missing required section heading: {section}"
+            )
 
     for literal in LEGACY_LITERAL_TOKENS:
         if literal in text:
-            failures.append(f"{prompt_path} contains unresolved legacy literal token: {literal}")
+            failures.append(
+                f"{prompt_path} contains unresolved legacy literal token: {literal}"
+            )
 
     if "## file checklist" in lowered and "{{shared:checklist.md}}" not in text:
-        failures.append(f"{prompt_path} checklist section must include {{shared:checklist.md}}")
+        failures.append(
+            f"{prompt_path} checklist section must include {{shared:checklist.md}}"
+        )
 
     required_tokens = required_tokens_by_stage.get(stage, set())
     if "run_id" in required_tokens and "{{run_id}}" not in text:
-        failures.append(f"{prompt_path} must reference {{run_id}} for run-scoped stages")
+        failures.append(
+            f"{prompt_path} must reference {{run_id}} for run-scoped stages"
+        )
 
-    tokens_in_prompt = {match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)}
-    unsupported_tokens = sorted(token for token in tokens_in_prompt if token not in ALLOWED_TOKENS)
+    tokens_in_prompt = {
+        match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)
+    }
+    unsupported_tokens = sorted(
+        token for token in tokens_in_prompt if token not in ALLOWED_TOKENS
+    )
     if unsupported_tokens:
-        failures.append(f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}")
+        failures.append(
+            f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}"
+        )
 
-    missing_required_tokens = sorted(token for token in required_tokens if token not in tokens_in_prompt)
+    missing_required_tokens = sorted(
+        token for token in required_tokens if token not in tokens_in_prompt
+    )
     if missing_required_tokens:
         failures.append(
             f"{prompt_path} missing required token(s) for stage '{stage}': {', '.join(missing_required_tokens)}"
@@ -229,25 +262,45 @@ def _lint_assistant_prompt(prompt_path: Path) -> list[str]:
 
     for section in ASSISTANT_REQUIRED_SECTIONS:
         if section.lower() not in lowered:
-            failures.append(f"{prompt_path} missing required section heading: {section}")
+            failures.append(
+                f"{prompt_path} missing required section heading: {section}"
+            )
 
     for include in ASSISTANT_REQUIRED_SHARED_INCLUDES:
         if include not in text:
             failures.append(f"{prompt_path} missing required shared include: {include}")
 
-    tokens_in_prompt = {match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)}
-    unsupported_tokens = sorted(token for token in tokens_in_prompt if token not in ALLOWED_TOKENS)
+    tokens_in_prompt = {
+        match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)
+    }
+    unsupported_tokens = sorted(
+        token for token in tokens_in_prompt if token not in ALLOWED_TOKENS
+    )
     if unsupported_tokens:
-        failures.append(f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}")
+        failures.append(
+            f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}"
+        )
 
     return failures
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", default=None, help="Stage to lint (default: all stage prompts)")
-    parser.add_argument("--assistant", action="store_true", default=False, help="Lint assistant prompts instead of stage prompts")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--stage", default=None, help="Stage to lint (default: all stage prompts)"
+    )
+    parser.add_argument(
+        "--assistant",
+        action="store_true",
+        default=False,
+        help="Lint assistant prompts instead of stage prompts",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     stage_label = args.stage or ""
@@ -257,7 +310,9 @@ def main() -> int:
         # Lint assistant-mode prompts
         assistant_files = sorted(ASSISTANT_PROMPTS_DIR.glob("assistant_*.md"))
         if not assistant_files:
-            result = make_result("prompt_lint", "assistant", [], ["no assistant prompts found"])
+            result = make_result(
+                "prompt_lint", "assistant", [], ["no assistant prompts found"]
+            )
             print_result(result, as_json=args.json)
             return 1
         for prompt_path in assistant_files:
@@ -270,7 +325,9 @@ def main() -> int:
         if args.stage:
             requested = str(args.stage).strip()
             if requested not in stage_prompt_files:
-                result = make_result("prompt_lint", requested, [], [f"unsupported stage '{requested}'"])
+                result = make_result(
+                    "prompt_lint", requested, [], [f"unsupported stage '{requested}'"]
+                )
                 print_result(result, as_json=args.json)
                 return 1
             stages = [requested]
@@ -289,8 +346,19 @@ def main() -> int:
 
     checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
     if not failures:
-        checks = [{"name": "prompt_lint", "status": "pass", "detail": "all prompt checks passed"}]
-    result = make_result("prompt_lint", stage_label or ("assistant" if args.assistant else ""), checks, failures)
+        checks = [
+            {
+                "name": "prompt_lint",
+                "status": "pass",
+                "detail": "all prompt checks passed",
+            }
+        ]
+    result = make_result(
+        "prompt_lint",
+        stage_label or ("assistant" if args.assistant else ""),
+        checks,
+        failures,
+    )
     print_result(result, as_json=args.json)
 
     return 0 if not failures else 1

@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.18
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.19
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -25,6 +25,12 @@ Enable auto version bump on each commit:
 
 ```bash
 ./scripts/install-hooks.sh
+```
+
+Run formatter/style checks locally:
+
+```bash
+./scripts/check_style.sh
 ```
 
 This also syncs the pinned release tag in `README.md` and can sync the current

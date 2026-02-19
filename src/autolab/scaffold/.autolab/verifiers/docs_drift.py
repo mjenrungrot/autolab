@@ -14,7 +14,13 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from verifier_lib import REPO_ROOT, load_state, make_result, print_result, resolve_iteration_dir
+from verifier_lib import (
+    REPO_ROOT,
+    load_state,
+    make_result,
+    print_result,
+    resolve_iteration_dir,
+)
 
 TOLERANCE = 0.05
 
@@ -161,12 +167,14 @@ def _check_drift(
 
         if value_float is not None:
             found_in_docs = _number_appears_in_text(value_float, docs_text)
-            checks.append({
-                "name": "value_in_docs_update",
-                "passed": found_in_docs,
-                "metric_name": metric_name,
-                "expected_value": value_float,
-            })
+            checks.append(
+                {
+                    "name": "value_in_docs_update",
+                    "passed": found_in_docs,
+                    "metric_name": metric_name,
+                    "expected_value": value_float,
+                }
+            )
             if not found_in_docs:
                 errors.append(
                     f"docs_update.md does not reference primary metric "
@@ -182,12 +190,14 @@ def _check_drift(
 
         if delta_float is not None:
             found_delta = _number_appears_in_text(delta_float, docs_text)
-            checks.append({
-                "name": "delta_in_docs_update",
-                "passed": found_delta,
-                "metric_name": metric_name,
-                "expected_delta": delta_float,
-            })
+            checks.append(
+                {
+                    "name": "delta_in_docs_update",
+                    "passed": found_delta,
+                    "metric_name": metric_name,
+                    "expected_delta": delta_float,
+                }
+            )
             # Delta missing is a soft signal, not a hard error
 
     # Check 3: contradictory numbers in all doc texts
@@ -206,14 +216,14 @@ def _check_drift(
                     metric_name, value_float, doc_text
                 )
                 passed = contradiction is None
-                checks.append({
-                    "name": f"no_contradiction_{label}",
-                    "passed": passed,
-                })
+                checks.append(
+                    {
+                        "name": f"no_contradiction_{label}",
+                        "passed": passed,
+                    }
+                )
                 if not passed:
-                    errors.append(
-                        f"contradictory value in {label}: {contradiction}"
-                    )
+                    errors.append(f"contradictory value in {label}: {contradiction}")
 
     return checks, errors
 
@@ -222,7 +232,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override current stage")
     parser.add_argument(
-        "--json", action="store_true", default=False,
+        "--json",
+        action="store_true",
+        default=False,
         help="Output machine-readable JSON envelope",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)

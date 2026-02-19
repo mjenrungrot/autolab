@@ -1,12 +1,13 @@
+---
 hypotheses:
   - id: h_golden
     status: open
-    title: "Increase validation accuracy with calibrated augmentation schedule"
-    success_metric: "validation_accuracy"
+    title: Increase validation accuracy with calibrated augmentation schedule
+    success_metric: validation_accuracy
     target_delta: 1.0
 experiments:
   - id: e_golden
     hypothesis_id: h_golden
     status: open
     type: plan
-    iteration_id: "iter_golden"
+    iteration_id: iter_golden

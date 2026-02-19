@@ -6,6 +6,7 @@ cd "$repo_root"
 
 chmod +x .githooks/pre-commit .githooks/post-commit
 chmod +x scripts/sync_release_tags.py
+chmod +x scripts/check_style.sh
 git config core.hooksPath .githooks
 
 echo "Installed Git hooks: core.hooksPath=.githooks"

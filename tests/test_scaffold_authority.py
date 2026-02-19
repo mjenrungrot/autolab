@@ -7,7 +7,13 @@ from autolab.__main__ import _build_parser
 
 
 def _canonical_scaffold_root() -> Path:
-    return Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    return (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
 
 
 def test_sync_scaffold_copies_from_canonical_scaffold(tmp_path: Path) -> None:

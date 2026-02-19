@@ -15,7 +15,13 @@ pytest.importorskip("jsonschema")
 
 
 def _copy_scaffold(repo: Path) -> None:
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
 
@@ -121,7 +127,9 @@ def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _run_schema_checks(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_schema_checks(
+    repo: Path, *, stage: str | None = None
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "schema_checks.py"
     command = [sys.executable, str(verifier)]
     if stage:
@@ -135,7 +143,9 @@ def _run_schema_checks(repo: Path, *, stage: str | None = None) -> subprocess.Co
     )
 
 
-def _run_prompt_lint(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_prompt_lint(
+    repo: Path, *, stage: str | None = None
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "prompt_lint.py"
     command = [sys.executable, str(verifier)]
     if stage:
@@ -149,7 +159,9 @@ def _run_prompt_lint(repo: Path, *, stage: str | None = None) -> subprocess.Comp
     )
 
 
-def _run_registry_consistency(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_registry_consistency(
+    repo: Path, *, stage: str | None = None
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "registry_consistency.py"
     command = [sys.executable, str(verifier)]
     if stage:
@@ -163,7 +175,9 @@ def _run_registry_consistency(repo: Path, *, stage: str | None = None) -> subpro
     )
 
 
-def _run_consistency_checks(repo: Path, *, stage: str | None = None) -> subprocess.CompletedProcess[str]:
+def _run_consistency_checks(
+    repo: Path, *, stage: str | None = None
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "consistency_checks.py"
     command = [sys.executable, str(verifier)]
     if stage:
@@ -199,30 +213,42 @@ def _run_run_health(repo: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _run_result_sanity(repo: Path, *, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+def _run_result_sanity(
+    repo: Path, *, json_flag: bool = False
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "result_sanity.py"
     command = [sys.executable, str(verifier)]
     if json_flag:
         command.append("--json")
-    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        command, cwd=repo, text=True, capture_output=True, check=False
+    )
 
 
-def _run_docs_drift(repo: Path, *, stage: str | None = None, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+def _run_docs_drift(
+    repo: Path, *, stage: str | None = None, json_flag: bool = False
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "docs_drift.py"
     command = [sys.executable, str(verifier)]
     if stage:
         command.extend(["--stage", stage])
     if json_flag:
         command.append("--json")
-    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        command, cwd=repo, text=True, capture_output=True, check=False
+    )
 
 
-def _run_closed_experiment_guard(repo: Path, *, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+def _run_closed_experiment_guard(
+    repo: Path, *, json_flag: bool = False
+) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "closed_experiment_guard.py"
     command = [sys.executable, str(verifier)]
     if json_flag:
         command.append("--json")
-    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        command, cwd=repo, text=True, capture_output=True, check=False
+    )
 
 
 def _setup_review_repo(tmp_path: Path) -> Path:
@@ -256,7 +282,9 @@ def test_schema_checks_fail_when_required_check_key_missing(tmp_path: Path) -> N
     assert "docs_target_update" in result.stdout
 
 
-def test_registry_consistency_fails_when_policy_requires_unsupported_capability(tmp_path: Path) -> None:
+def test_registry_consistency_fails_when_policy_requires_unsupported_capability(
+    tmp_path: Path,
+) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=True)
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
@@ -266,7 +294,9 @@ def test_registry_consistency_fails_when_policy_requires_unsupported_capability(
     assert isinstance(req, dict)
     design_req = req.setdefault("design", {})
     assert isinstance(design_req, dict)
-    design_req["env_smoke"] = True  # design stage capability is false in workflow registry
+    design_req["env_smoke"] = (
+        True  # design stage capability is false in workflow registry
+    )
     policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
 
     result = _run_registry_consistency(repo, stage="design")
@@ -303,8 +333,12 @@ def test_consistency_checks_fail_on_metric_name_mismatch(tmp_path: Path) -> None
         "baseline_results": [],
         "variant_results": [],
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(run_manifest, indent=2), encoding="utf-8"
+    )
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
 
     result = _run_consistency_checks(repo, stage="extract_results")
 
@@ -312,7 +346,9 @@ def test_consistency_checks_fail_on_metric_name_mismatch(tmp_path: Path) -> None
     assert "does not match design.metrics.primary.name" in result.stdout
 
 
-def test_schema_checks_design_stage_override_skips_review_artifacts(tmp_path: Path) -> None:
+def test_schema_checks_design_stage_override_skips_review_artifacts(
+    tmp_path: Path,
+) -> None:
     repo = _setup_review_repo(tmp_path)
 
     result = _run_schema_checks(repo, stage="design")
@@ -321,7 +357,9 @@ def test_schema_checks_design_stage_override_skips_review_artifacts(tmp_path: Pa
     assert "schema_checks: PASS" in result.stdout
 
 
-def test_schema_checks_extract_results_skips_run_checks_when_run_id_missing(tmp_path: Path) -> None:
+def test_schema_checks_extract_results_skips_run_checks_when_run_id_missing(
+    tmp_path: Path,
+) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_state(repo, stage="extract_results", last_run_id="")
     _write_review_result(repo, include_docs_check=True)
@@ -379,7 +417,9 @@ def test_schema_checks_fail_for_invalid_todo_state_schema(tmp_path: Path) -> Non
     assert "todo_state.json" in result.stdout
 
 
-def test_schema_checks_require_todo_files_when_assistant_mode_on(tmp_path: Path) -> None:
+def test_schema_checks_require_todo_files_when_assistant_mode_on(
+    tmp_path: Path,
+) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=True)
     state_path = repo / ".autolab" / "state.json"
@@ -398,7 +438,9 @@ def test_schema_checks_require_todo_files_when_assistant_mode_on(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
-def test_docs_targets_passes_with_no_paper_targets_and_required_rationale(tmp_path: Path) -> None:
+def test_docs_targets_passes_with_no_paper_targets_and_required_rationale(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -417,7 +459,9 @@ def test_docs_targets_passes_with_no_paper_targets_and_required_rationale(tmp_pa
     assert "docs_targets: PASS" in result.stdout
 
 
-def test_docs_targets_fails_with_no_paper_targets_and_missing_rationale(tmp_path: Path) -> None:
+def test_docs_targets_fails_with_no_paper_targets_and_missing_rationale(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -445,7 +489,9 @@ def test_docs_targets_fails_with_no_paper_targets_and_missing_rationale(tmp_path
         "Needs <metric_value> replacement.",
     ],
 )
-def test_docs_targets_fails_placeholder_patterns(tmp_path: Path, placeholder_text: str) -> None:
+def test_docs_targets_fails_placeholder_patterns(
+    tmp_path: Path, placeholder_text: str
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -493,7 +539,9 @@ def test_run_health_launch_passes_without_metrics_json(tmp_path: Path) -> None:
         "artifact_sync_to_local": {"status": "ok"},
         "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
     result = _run_run_health(repo)
 
@@ -501,7 +549,9 @@ def test_run_health_launch_passes_without_metrics_json(tmp_path: Path) -> None:
     assert "run_health: PASS" in result.stdout
 
 
-def test_run_health_fails_completion_like_status_missing_completed_at(tmp_path: Path) -> None:
+def test_run_health_fails_completion_like_status_missing_completed_at(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -521,7 +571,9 @@ def test_run_health_fails_completion_like_status_missing_completed_at(tmp_path: 
         "artifact_sync_to_local": {"status": "ok"},
         "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
     result = _run_run_health(repo)
 
@@ -550,7 +602,9 @@ def test_run_health_slurm_submitted_allows_pending_sync(tmp_path: Path) -> None:
         "artifact_sync_to_local": {"status": "pending"},
         "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     slurm_ledger = repo / "docs" / "slurm_job_list.md"
     slurm_ledger.parent.mkdir(parents=True, exist_ok=True)
     slurm_ledger.write_text(
@@ -564,7 +618,9 @@ def test_run_health_slurm_submitted_allows_pending_sync(tmp_path: Path) -> None:
     assert "run_health: PASS" in result.stdout
 
 
-def test_run_health_slurm_launch_fails_when_ledger_entry_missing(tmp_path: Path) -> None:
+def test_run_health_slurm_launch_fails_when_ledger_entry_missing(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -585,7 +641,9 @@ def test_run_health_slurm_launch_fails_when_ledger_entry_missing(tmp_path: Path)
         "artifact_sync_to_local": {"status": "pending"},
         "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     slurm_ledger = repo / "docs" / "slurm_job_list.md"
     slurm_ledger.parent.mkdir(parents=True, exist_ok=True)
     slurm_ledger.write_text(
@@ -647,35 +705,38 @@ def _setup_lint_repo(tmp_path: Path) -> Path:
 
 def test_implementation_plan_lint_passes_valid_plan(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nAdded feature X.\n\n"
-        "## Tasks\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/foo.py\n"
-        "- **description**: Create foo module\n"
-        "- **touches**: [src/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n\n"
-        "### T2: Integration\n"
-        "- **depends_on**: [T1]\n"
-        "- **location**: src/bar.py\n"
-        "- **description**: Integrate foo into bar\n"
-        "- **touches**: [src/bar.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n\n"
-        "## Parallel Execution Groups\n"
-        "| Wave | Tasks | Can Start When |\n"
-        "|------|-------|----------------|\n"
-        "| 1 | T1 | Immediately |\n"
-        "| 2 | T2 | T1 complete |\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nAdded feature X.\n\n"
+            "## Tasks\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/foo.py\n"
+            "- **description**: Create foo module\n"
+            "- **touches**: [src/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n\n"
+            "### T2: Integration\n"
+            "- **depends_on**: [T1]\n"
+            "- **location**: src/bar.py\n"
+            "- **description**: Integrate foo into bar\n"
+            "- **touches**: [src/bar.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n\n"
+            "## Parallel Execution Groups\n"
+            "| Wave | Tasks | Can Start When |\n"
+            "|------|-------|----------------|\n"
+            "| 1 | T1 | Immediately |\n"
+            "| 2 | T2 | T1 complete |\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -685,17 +746,20 @@ def test_implementation_plan_lint_passes_valid_plan(tmp_path: Path) -> None:
 
 def test_implementation_plan_lint_fails_missing_change_summary(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Tasks\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/foo.py\n"
-        "- **description**: Create foo\n"
-        "- **touches**: [src/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Tasks\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/foo.py\n"
+            "- **description**: Create foo\n"
+            "- **touches**: [src/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -705,14 +769,17 @@ def test_implementation_plan_lint_fails_missing_change_summary(tmp_path: Path) -
 
 def test_implementation_plan_lint_fails_missing_depends_on(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **location**: src/foo.py\n"
-        "- **description**: Create foo\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **location**: src/foo.py\n"
+            "- **description**: Create foo\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -722,21 +789,24 @@ def test_implementation_plan_lint_fails_missing_depends_on(tmp_path: Path) -> No
 
 def test_implementation_plan_lint_fails_circular_dependency(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: First\n"
-        "- **depends_on**: [T2]\n"
-        "- **location**: src/a.py\n"
-        "- **description**: A\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "### T2: Second\n"
-        "- **depends_on**: [T1]\n"
-        "- **location**: src/b.py\n"
-        "- **description**: B\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: First\n"
+            "- **depends_on**: [T2]\n"
+            "- **location**: src/a.py\n"
+            "- **description**: A\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "### T2: Second\n"
+            "- **depends_on**: [T1]\n"
+            "- **location**: src/b.py\n"
+            "- **description**: B\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -746,15 +816,18 @@ def test_implementation_plan_lint_fails_circular_dependency(tmp_path: Path) -> N
 
 def test_implementation_plan_lint_fails_dangling_dependency(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: First\n"
-        "- **depends_on**: [T99]\n"
-        "- **location**: src/a.py\n"
-        "- **description**: A\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: First\n"
+            "- **depends_on**: [T99]\n"
+            "- **location**: src/a.py\n"
+            "- **description**: A\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -764,10 +837,13 @@ def test_implementation_plan_lint_fails_dangling_dependency(tmp_path: Path) -> N
 
 def test_implementation_plan_lint_passes_no_task_blocks(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nSmall refactor of helper function.\n\n"
-        "## Files Updated\n- src/utils.py\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nSmall refactor of helper function.\n\n"
+            "## Files Updated\n- src/utils.py\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -775,7 +851,9 @@ def test_implementation_plan_lint_passes_no_task_blocks(tmp_path: Path) -> None:
     assert "implementation_plan_lint: PASS" in result.stdout
 
 
-def test_implementation_plan_lint_skips_non_implementation_stage(tmp_path: Path) -> None:
+def test_implementation_plan_lint_skips_non_implementation_stage(
+    tmp_path: Path,
+) -> None:
     repo = _setup_lint_repo(tmp_path)
 
     result = _run_plan_lint(repo, stage="design")
@@ -786,29 +864,32 @@ def test_implementation_plan_lint_skips_non_implementation_stage(tmp_path: Path)
 
 def test_implementation_plan_lint_fails_wave_overlap(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Edit config\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/config.py\n"
-        "- **description**: Update config\n"
-        "- **touches**: [src/config.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "### T2: Also edit config\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/config.py\n"
-        "- **description**: Also modify config\n"
-        "- **touches**: [src/config.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "## Parallel Execution Groups\n"
-        "| Wave | Tasks | Can Start When |\n"
-        "|------|-------|----------------|\n"
-        "| 1 | T1, T2 | Immediately |\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Edit config\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/config.py\n"
+            "- **description**: Update config\n"
+            "- **touches**: [src/config.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "### T2: Also edit config\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/config.py\n"
+            "- **description**: Also modify config\n"
+            "- **touches**: [src/config.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "## Parallel Execution Groups\n"
+            "| Wave | Tasks | Can Start When |\n"
+            "|------|-------|----------------|\n"
+            "| 1 | T1, T2 | Immediately |\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -818,31 +899,34 @@ def test_implementation_plan_lint_fails_wave_overlap(tmp_path: Path) -> None:
 
 def test_implementation_plan_lint_fails_wave_conflict_group(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Task A\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/a.py\n"
-        "- **description**: A\n"
-        "- **touches**: [src/a.py]\n"
-        "- **scope_ok**: true\n"
-        "- **conflict_group**: database\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "### T2: Task B\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/b.py\n"
-        "- **description**: B\n"
-        "- **touches**: [src/b.py]\n"
-        "- **scope_ok**: true\n"
-        "- **conflict_group**: database\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "## Parallel Execution Groups\n"
-        "| Wave | Tasks | Can Start When |\n"
-        "|------|-------|----------------|\n"
-        "| 1 | T1, T2 | Immediately |\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Task A\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/a.py\n"
+            "- **description**: A\n"
+            "- **touches**: [src/a.py]\n"
+            "- **scope_ok**: true\n"
+            "- **conflict_group**: database\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "### T2: Task B\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/b.py\n"
+            "- **description**: B\n"
+            "- **touches**: [src/b.py]\n"
+            "- **scope_ok**: true\n"
+            "- **conflict_group**: database\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "## Parallel Execution Groups\n"
+            "| Wave | Tasks | Can Start When |\n"
+            "|------|-------|----------------|\n"
+            "| 1 | T1, T2 | Immediately |\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -918,6 +1002,7 @@ def test_schema_checks_pass_with_valid_plan_execution_summary(tmp_path: Path) ->
 
 def test_parse_signed_delta_prioritizes_signed_value() -> None:
     from autolab.prompts import _parse_signed_delta
+
     assert _parse_signed_delta("80 +5.0%") == 5.0
     assert _parse_signed_delta("2.0 -0.3") == -0.3
     assert _parse_signed_delta("5.0") == 5.0
@@ -927,31 +1012,44 @@ def test_parse_signed_delta_prioritizes_signed_value() -> None:
 
 def test_target_comparison_text_all_mode_combinations() -> None:
     from autolab.prompts import _target_comparison_text
+
     payload = {"primary_metric": {"name": "m", "delta_vs_baseline": 6.0}}
     # maximize met
     _, s = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=5.0,
-        design_target_delta="", run_id="r1", metric_mode="maximize",
+        metrics_payload=payload,
+        hypothesis_target_delta=5.0,
+        design_target_delta="",
+        run_id="r1",
+        metric_mode="maximize",
     )
     assert "stop" in s
     # maximize not met
     _, s = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=10.0,
-        design_target_delta="", run_id="r1", metric_mode="maximize",
+        metrics_payload=payload,
+        hypothesis_target_delta=10.0,
+        design_target_delta="",
+        run_id="r1",
+        metric_mode="maximize",
     )
     assert "design" in s
     # minimize met
     payload_min = {"primary_metric": {"name": "m", "delta_vs_baseline": -3.0}}
     _, s = _target_comparison_text(
-        metrics_payload=payload_min, hypothesis_target_delta=-2.0,
-        design_target_delta="", run_id="r1", metric_mode="minimize",
+        metrics_payload=payload_min,
+        hypothesis_target_delta=-2.0,
+        design_target_delta="",
+        run_id="r1",
+        metric_mode="minimize",
     )
     assert "stop" in s
     # minimize not met
     payload_min2 = {"primary_metric": {"name": "m", "delta_vs_baseline": -1.0}}
     _, s = _target_comparison_text(
-        metrics_payload=payload_min2, hypothesis_target_delta=-2.0,
-        design_target_delta="", run_id="r1", metric_mode="minimize",
+        metrics_payload=payload_min2,
+        hypothesis_target_delta=-2.0,
+        design_target_delta="",
+        run_id="r1",
+        metric_mode="minimize",
     )
     assert "design" in s
 
@@ -974,19 +1072,38 @@ def test_suggest_decision_minimize_mode_via_design(tmp_path: Path) -> None:
     }
     (repo / ".autolab").mkdir(parents=True, exist_ok=True)
     (repo / ".autolab" / "state.json").write_text(_json.dumps(state), encoding="utf-8")
-    backlog = {"experiments": [{"id": "e1", "hypothesis_id": "h1", "status": "open", "iteration_id": "iter1"}]}
-    (repo / ".autolab" / "backlog.yaml").write_text(yaml.safe_dump(backlog), encoding="utf-8")
+    backlog = {
+        "experiments": [
+            {
+                "id": "e1",
+                "hypothesis_id": "h1",
+                "status": "open",
+                "iteration_id": "iter1",
+            }
+        ]
+    }
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog), encoding="utf-8"
+    )
 
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
-    (iteration_dir / "hypothesis.md").write_text("# H\n- target_delta: -2.0\n", encoding="utf-8")
+    (iteration_dir / "hypothesis.md").write_text(
+        "# H\n- target_delta: -2.0\n", encoding="utf-8"
+    )
     design = {
-        "metrics": {"primary": {"name": "loss", "unit": "nats", "mode": "minimize"}, "success_delta": "-2.0"},
+        "metrics": {
+            "primary": {"name": "loss", "unit": "nats", "mode": "minimize"},
+            "success_delta": "-2.0",
+        },
     }
     (iteration_dir / "design.yaml").write_text(yaml.safe_dump(design), encoding="utf-8")
     run_dir = iteration_dir / "runs" / "run_001"
     run_dir.mkdir(parents=True, exist_ok=True)
-    metrics = {"status": "complete", "primary_metric": {"name": "loss", "value": 1.0, "delta_vs_baseline": -3.0}}
+    metrics = {
+        "status": "complete",
+        "primary_metric": {"name": "loss", "value": 1.0, "delta_vs_baseline": -3.0},
+    }
     (run_dir / "metrics.json").write_text(_json.dumps(metrics), encoding="utf-8")
 
     result, evidence = _suggest_decision_from_metrics(repo, state)
@@ -997,19 +1114,22 @@ def test_suggest_decision_minimize_mode_via_design(tmp_path: Path) -> None:
 def test_implementation_plan_lint_fails_ellipsis_placeholder(tmp_path: Path) -> None:
     """#8: Ellipsis patterns are detected as placeholders."""
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/foo.py\n"
-        "- **description**: Create foo module with ... details\n"
-        "- **touches**: [src/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/foo.py\n"
+            "- **description**: Create foo module with ... details\n"
+            "- **touches**: [src/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -1017,22 +1137,27 @@ def test_implementation_plan_lint_fails_ellipsis_placeholder(tmp_path: Path) -> 
     assert "placeholder" in result.stdout.lower() or "ellipsis" in result.stdout.lower()
 
 
-def test_implementation_plan_lint_fails_unicode_ellipsis_placeholder(tmp_path: Path) -> None:
+def test_implementation_plan_lint_fails_unicode_ellipsis_placeholder(
+    tmp_path: Path,
+) -> None:
     """#8: Unicode ellipsis \u2026 is detected as a placeholder."""
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/foo.py\n"
-        "- **description**: Create foo module with\u2026 details\n"
-        "- **touches**: [src/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/foo.py\n"
+            "- **description**: Create foo module with\u2026 details\n"
+            "- **touches**: [src/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -1050,19 +1175,22 @@ def test_implementation_plan_lint_scope_enforcement_warn_mode(tmp_path: Path) ->
         json.dumps({"runner_scope": {"allowed_edit_dirs": ["src"]}}),
         encoding="utf-8",
     )
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: outside/foo.py\n"
-        "- **description**: Create foo\n"
-        "- **touches**: [outside/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: outside/foo.py\n"
+            "- **description**: Create foo\n"
+            "- **touches**: [outside/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -1088,19 +1216,22 @@ def test_implementation_plan_lint_scope_enforcement_fail_mode(tmp_path: Path) ->
     }
     policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
 
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: outside/foo.py\n"
-        "- **description**: Create foo\n"
-        "- **touches**: [outside/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: outside/foo.py\n"
+            "- **description**: Create foo\n"
+            "- **touches**: [outside/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -1108,7 +1239,9 @@ def test_implementation_plan_lint_scope_enforcement_fail_mode(tmp_path: Path) ->
     assert "outside allowed scope" in result.stdout
 
 
-def test_implementation_plan_lint_scope_enforcement_auto_mode_defaults_to_fail(tmp_path: Path) -> None:
+def test_implementation_plan_lint_scope_enforcement_auto_mode_defaults_to_fail(
+    tmp_path: Path,
+) -> None:
     """Out-of-scope touches fail in auto mode when policy key is absent."""
     repo = _setup_lint_repo(tmp_path)
     context_dir = repo / ".autolab" / "prompts" / "rendered"
@@ -1129,19 +1262,22 @@ def test_implementation_plan_lint_scope_enforcement_auto_mode_defaults_to_fail(t
                 lint_policy.pop("scope_enforcement", None)
     policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
 
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Setup\n"
-        "- **depends_on**: []\n"
-        "- **location**: outside/foo.py\n"
-        "- **description**: Create foo\n"
-        "- **touches**: [outside/foo.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: run tests\n"
-        "- **status**: Not Completed\n"
-        "- **log**:\n"
-        "- **files edited/created**:\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Setup\n"
+            "- **depends_on**: []\n"
+            "- **location**: outside/foo.py\n"
+            "- **description**: Create foo\n"
+            "- **touches**: [outside/foo.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: run tests\n"
+            "- **status**: Not Completed\n"
+            "- **log**:\n"
+            "- **files edited/created**:\n"
+        ),
+    )
 
     result = _run_plan_lint(repo, env={"AUTOLAB_AUTO_MODE": "1"})
 
@@ -1152,13 +1288,18 @@ def test_implementation_plan_lint_scope_enforcement_auto_mode_defaults_to_fail(t
 def test_allowed_edit_dirs_field_name_in_context(tmp_path: Path) -> None:
     """#4: Verify allowed_edit_dirs is the canonical field name used in context JSON."""
     from autolab.prompts import _build_runtime_stage_context_block
+
     context = {
         "stage": "implementation",
         "iteration_id": "iter1",
         "iteration_path": "experiments/plan/iter1",
         "host_mode": "local",
         "state_snapshot": {"stage_attempt": 0, "max_stage_attempts": 3},
-        "runner_scope": {"mode": "iteration_plus_core", "workspace_dir": "/w", "allowed_edit_dirs": ["src", "tests"]},
+        "runner_scope": {
+            "mode": "iteration_plus_core",
+            "workspace_dir": "/w",
+            "allowed_edit_dirs": ["src", "tests"],
+        },
     }
     block = _build_runtime_stage_context_block(context)
     assert "src" in block
@@ -1168,29 +1309,32 @@ def test_allowed_edit_dirs_field_name_in_context(tmp_path: Path) -> None:
 
 def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None:
     repo = _setup_lint_repo(tmp_path)
-    _write_plan(repo, (
-        "## Change Summary\nDone.\n\n"
-        "### T1: Edit config\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/config.py\n"
-        "- **description**: Update config\n"
-        "- **touches**: [src/config.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "### T2: Edit utils\n"
-        "- **depends_on**: []\n"
-        "- **location**: src/utils.py\n"
-        "- **description**: Update utils\n"
-        "- **touches**: [src/utils.py]\n"
-        "- **scope_ok**: true\n"
-        "- **validation**: tests\n"
-        "- **status**: Not Completed\n\n"
-        "## Parallel Execution Groups\n"
-        "| Wave | Tasks | Can Start When |\n"
-        "|------|-------|----------------|\n"
-        "| 1 | T1, T2 | Immediately |\n"
-    ))
+    _write_plan(
+        repo,
+        (
+            "## Change Summary\nDone.\n\n"
+            "### T1: Edit config\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/config.py\n"
+            "- **description**: Update config\n"
+            "- **touches**: [src/config.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "### T2: Edit utils\n"
+            "- **depends_on**: []\n"
+            "- **location**: src/utils.py\n"
+            "- **description**: Update utils\n"
+            "- **touches**: [src/utils.py]\n"
+            "- **scope_ok**: true\n"
+            "- **validation**: tests\n"
+            "- **status**: Not Completed\n\n"
+            "## Parallel Execution Groups\n"
+            "| Wave | Tasks | Can Start When |\n"
+            "|------|-------|----------------|\n"
+            "| 1 | T1, T2 | Immediately |\n"
+        ),
+    )
 
     result = _run_plan_lint(repo)
 
@@ -1214,7 +1358,9 @@ def _setup_extract_results_repo(tmp_path: Path, *, metrics: dict | None = None) 
     if metrics is not None:
         run_dir = iter_dir / "runs" / "run1"
         run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        (run_dir / "metrics.json").write_text(
+            json.dumps(metrics, indent=2), encoding="utf-8"
+        )
     return repo
 
 
@@ -1248,7 +1394,10 @@ def test_result_sanity_fails_nan_metric(tmp_path: Path) -> None:
     repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
     result = _run_result_sanity(repo)
     assert result.returncode != 0
-    assert "invalid numeric value" in result.stdout.lower() or "nan" in result.stdout.lower()
+    assert (
+        "invalid numeric value" in result.stdout.lower()
+        or "nan" in result.stdout.lower()
+    )
 
 
 def test_result_sanity_fails_inf_metric(tmp_path: Path) -> None:
@@ -1265,7 +1414,10 @@ def test_result_sanity_fails_inf_metric(tmp_path: Path) -> None:
     repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
     result = _run_result_sanity(repo)
     assert result.returncode != 0
-    assert "invalid numeric value" in result.stdout.lower() or "inf" in result.stdout.lower()
+    assert (
+        "invalid numeric value" in result.stdout.lower()
+        or "inf" in result.stdout.lower()
+    )
 
 
 def test_result_sanity_fails_placeholder_in_metrics(tmp_path: Path) -> None:
@@ -1316,7 +1468,9 @@ def _setup_docs_drift_repo(
     if metrics is not None:
         run_dir = iter_dir / "runs" / "run1"
         run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        (run_dir / "metrics.json").write_text(
+            json.dumps(metrics, indent=2), encoding="utf-8"
+        )
     (iter_dir / "docs_update.md").write_text(docs_update_text, encoding="utf-8")
     return repo
 
@@ -1347,7 +1501,10 @@ def test_docs_drift_fails_when_metric_value_missing(tmp_path: Path) -> None:
     repo = _setup_docs_drift_repo(tmp_path, metrics=metrics, docs_update_text=docs_text)
     result = _run_docs_drift(repo)
     assert result.returncode != 0
-    assert "does not reference" in result.stdout.lower() or "accuracy" in result.stdout.lower()
+    assert (
+        "does not reference" in result.stdout.lower()
+        or "accuracy" in result.stdout.lower()
+    )
 
 
 def test_docs_drift_detects_contradiction(tmp_path: Path) -> None:
@@ -1398,24 +1555,45 @@ def test_docs_drift_no_changes_needed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _setup_closed_guard_repo(tmp_path: Path, *, backlog_experiments: list[dict]) -> Path:
+def _setup_closed_guard_repo(
+    tmp_path: Path, *, backlog_experiments: list[dict]
+) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
     _write_state(repo)
     backlog = {
         "hypotheses": [
-            {"id": "h1", "status": "open", "title": "hyp", "success_metric": "accuracy", "target_delta": 0.1}
+            {
+                "id": "h1",
+                "status": "open",
+                "title": "hyp",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            }
         ],
         "experiments": backlog_experiments,
     }
-    (repo / ".autolab" / "backlog.yaml").write_text(yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8")
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8"
+    )
     # Initialize git repo for git status to work
     subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "-m", "init"],
-        cwd=repo, capture_output=True, check=True,
+        [
+            "git",
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "init",
+        ],
+        cwd=repo,
+        capture_output=True,
+        check=True,
     )
     return repo
 
@@ -1429,9 +1607,16 @@ def test_closed_experiment_guard_passes_when_iteration_open(tmp_path: Path) -> N
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_closed_experiment_guard_detects_edit_to_closed_iteration(tmp_path: Path) -> None:
+def test_closed_experiment_guard_detects_edit_to_closed_iteration(
+    tmp_path: Path,
+) -> None:
     experiments = [
-        {"id": "e1", "hypothesis_id": "h1", "status": "done", "iteration_id": "iter_closed"},
+        {
+            "id": "e1",
+            "hypothesis_id": "h1",
+            "status": "done",
+            "iteration_id": "iter_closed",
+        },
     ]
     repo = _setup_closed_guard_repo(tmp_path, backlog_experiments=experiments)
     # Create a file under the closed iteration path

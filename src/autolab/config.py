@@ -61,7 +61,9 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
     max_no_progress = int(guardrails.get("max_no_progress_decisions", 2) or 2)
     max_update_docs = int(guardrails.get("max_update_docs_cycles", 3) or 3)
     max_generated_todo_tasks = int(guardrails.get("max_generated_todo_tasks", 5) or 5)
-    on_breach = str(guardrails.get("on_breach", "human_review")).strip() or "human_review"
+    on_breach = (
+        str(guardrails.get("on_breach", "human_review")).strip() or "human_review"
+    )
     if on_breach not in TERMINAL_STAGES:
         on_breach = "human_review"
     if max_same < 1:
@@ -92,12 +94,14 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
         meaningful.get("require_implementation_progress", True)
     )
     require_git_for_progress = bool(meaningful.get("require_git_for_progress", True))
-    on_non_git_behavior = str(
-        meaningful.get("on_non_git_behavior", "warn_and_continue")
-    ).strip().lower()
+    on_non_git_behavior = (
+        str(meaningful.get("on_non_git_behavior", "warn_and_continue")).strip().lower()
+    )
     if on_non_git_behavior not in {"warn_and_continue", "fail"}:
         on_non_git_behavior = "warn_and_continue"
-    raw_patterns = meaningful.get("exclude_paths", list(DEFAULT_MEANINGFUL_EXCLUDE_PATHS))
+    raw_patterns = meaningful.get(
+        "exclude_paths", list(DEFAULT_MEANINGFUL_EXCLUDE_PATHS)
+    )
     patterns: list[str] = []
     if isinstance(raw_patterns, list):
         for entry in raw_patterns:
@@ -115,7 +119,9 @@ def _load_meaningful_change_config(repo_root: Path) -> MeaningfulChangeConfig:
     )
 
 
-def _load_strict_mode_config(repo_root: Path, *, auto_mode: bool = False) -> StrictModeConfig:
+def _load_strict_mode_config(
+    repo_root: Path, *, auto_mode: bool = False
+) -> StrictModeConfig:
     policy = _load_verifier_policy(repo_root)
     autorun = policy.get("autorun")
     strict = autorun.get("strict_mode") if isinstance(autorun, dict) else {}
@@ -123,7 +129,9 @@ def _load_strict_mode_config(repo_root: Path, *, auto_mode: bool = False) -> Str
         strict = {}
     raw_forbid_auto_stop = strict.get("forbid_auto_stop")
     raw_require_human_review_for_stop = strict.get("require_human_review_for_stop")
-    require_human_review_default = bool(auto_mode and raw_require_human_review_for_stop is None)
+    require_human_review_default = bool(
+        auto_mode and raw_require_human_review_for_stop is None
+    )
     return StrictModeConfig(
         forbid_auto_stop=_coerce_bool(raw_forbid_auto_stop, default=False),
         require_human_review_for_stop=_coerce_bool(
@@ -173,27 +181,39 @@ def _load_agent_runner_edit_scope(runner: dict[str, Any]) -> AgentRunnerEditScop
     if not isinstance(raw_edit_scope, dict):
         raise StageCheckError("agent_runner.edit_scope must be a mapping")
 
-    mode = str(raw_edit_scope.get("mode", DEFAULT_AGENT_RUNNER_EDIT_SCOPE_MODE)).strip().lower()
+    mode = (
+        str(raw_edit_scope.get("mode", DEFAULT_AGENT_RUNNER_EDIT_SCOPE_MODE))
+        .strip()
+        .lower()
+    )
     if mode not in AGENT_RUNNER_EDIT_SCOPE_MODES:
         raise StageCheckError(
             f"agent_runner.edit_scope.mode must be one of {', '.join(AGENT_RUNNER_EDIT_SCOPE_MODES)}"
         )
 
-    raw_core_dirs = raw_edit_scope.get("core_dirs", list(DEFAULT_AGENT_RUNNER_CORE_DIRS))
+    raw_core_dirs = raw_edit_scope.get(
+        "core_dirs", list(DEFAULT_AGENT_RUNNER_CORE_DIRS)
+    )
     if raw_core_dirs is None:
         raw_core_dirs = list(DEFAULT_AGENT_RUNNER_CORE_DIRS)
     if not isinstance(raw_core_dirs, list):
-        raise StageCheckError("agent_runner.edit_scope.core_dirs must be a list of repo-relative directory paths")
+        raise StageCheckError(
+            "agent_runner.edit_scope.core_dirs must be a list of repo-relative directory paths"
+        )
     core_dirs: list[str] = []
     for raw_dir in raw_core_dirs:
         value = str(raw_dir).strip()
         if not value:
-            raise StageCheckError("agent_runner.edit_scope.core_dirs entries must be non-empty")
+            raise StageCheckError(
+                "agent_runner.edit_scope.core_dirs entries must be non-empty"
+            )
         if value not in core_dirs:
             core_dirs.append(value)
 
     ensure_iteration_dir = bool(
-        raw_edit_scope.get("ensure_iteration_dir", DEFAULT_AGENT_RUNNER_ENSURE_ITERATION_DIR)
+        raw_edit_scope.get(
+            "ensure_iteration_dir", DEFAULT_AGENT_RUNNER_ENSURE_ITERATION_DIR
+        )
     )
     if mode == "iteration_only":
         core_dirs = []
@@ -221,7 +241,9 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     try:
         loaded = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise StageCheckError(f"agent_runner policy could not be parsed at {policy_path}: {exc}") from exc
+        raise StageCheckError(
+            f"agent_runner policy could not be parsed at {policy_path}: {exc}"
+        ) from exc
 
     if not isinstance(loaded, dict):
         return AgentRunnerConfig(
@@ -267,9 +289,13 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         if runner_name == "claude" and claude_dangerous_opt_in:
             command = AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET
         else:
-            command = AGENT_RUNNER_PRESETS.get(runner_name, DEFAULT_AGENT_RUNNER_COMMAND)
+            command = AGENT_RUNNER_PRESETS.get(
+                runner_name, DEFAULT_AGENT_RUNNER_COMMAND
+            )
     if enabled and not command:
-        raise StageCheckError("agent_runner.command must be set when agent_runner.enabled is true")
+        raise StageCheckError(
+            "agent_runner.command must be set when agent_runner.enabled is true"
+        )
 
     raw_stages = runner_section.get("stages")
     if raw_stages is None:
@@ -281,17 +307,25 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         for raw_stage in raw_stages:
             stage = str(raw_stage).strip()
             if stage not in RUNNER_ELIGIBLE_STAGES:
-                raise StageCheckError(f"agent_runner.stages includes unsupported stage '{stage}'")
+                raise StageCheckError(
+                    f"agent_runner.stages includes unsupported stage '{stage}'"
+                )
             if stage not in stages:
                 stages.append(stage)
     if enabled and not stages:
-        raise StageCheckError("agent_runner.stages must include at least one active stage")
+        raise StageCheckError(
+            "agent_runner.stages must include at least one active stage"
+        )
 
-    raw_timeout = runner_section.get("timeout_seconds", DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS)
+    raw_timeout = runner_section.get(
+        "timeout_seconds", DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS
+    )
     try:
         timeout_seconds = float(raw_timeout)
     except Exception as exc:
-        raise StageCheckError("agent_runner.timeout_seconds must be a non-negative number") from exc
+        raise StageCheckError(
+            "agent_runner.timeout_seconds must be a non-negative number"
+        ) from exc
     if timeout_seconds < 0:
         raise StageCheckError("agent_runner.timeout_seconds must be >= 0")
     if timeout_seconds == 0:
@@ -310,7 +344,9 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
     )
 
 
-def _load_protected_files(policy: dict[str, Any], *, auto_mode: bool = False) -> list[str]:
+def _load_protected_files(
+    policy: dict[str, Any], *, auto_mode: bool = False
+) -> list[str]:
     """Return normalized protected file paths from verifier policy.
 
     Supports:
@@ -319,6 +355,7 @@ def _load_protected_files(policy: dict[str, Any], *, auto_mode: bool = False) ->
     - ``safe_automation_protected_files`` toggle (profile: ``safe_automation``)
     - ``auto_mode`` runtime overlay for unattended safety defaults
     """
+
     def _normalize_list(raw_values: Any) -> list[str]:
         if not isinstance(raw_values, list):
             return []
@@ -332,7 +369,9 @@ def _load_protected_files(policy: dict[str, Any], *, auto_mode: bool = False) ->
     result = _normalize_list(policy.get("protected_files", []))
 
     profile_name = str(policy.get("protected_profile", "default")).strip() or "default"
-    safe_automation_profile_enabled = _coerce_bool(policy.get("safe_automation_protected_files"), default=False)
+    safe_automation_profile_enabled = _coerce_bool(
+        policy.get("safe_automation_protected_files"), default=False
+    )
     if auto_mode:
         safe_automation_profile_enabled = True
     if safe_automation_profile_enabled:
@@ -401,7 +440,9 @@ def _resolve_stage_requirements(
     }
     for key, legacy_key in legacy_mapping.items():
         if legacy_key in policy:
-            requirements[key] = _coerce_bool(policy.get(legacy_key), default=requirements[key])
+            requirements[key] = _coerce_bool(
+                policy.get(legacy_key), default=requirements[key]
+            )
 
     # Layer 3: per-stage policy overrides (highest priority).
     requirements_by_stage = policy.get("requirements_by_stage", {})
@@ -410,11 +451,15 @@ def _resolve_stage_requirements(
         if isinstance(stage_section, dict):
             for key in requirements:
                 if key in stage_section:
-                    requirements[key] = _coerce_bool(stage_section.get(key), default=requirements[key])
+                    requirements[key] = _coerce_bool(
+                        stage_section.get(key), default=requirements[key]
+                    )
     return requirements
 
 
-def _resolve_stage_max_retries(policy: dict[str, Any], stage: str, *, fallback: int = 5) -> int:
+def _resolve_stage_max_retries(
+    policy: dict[str, Any], stage: str, *, fallback: int = 5
+) -> int:
     """Return the per-stage max_retries from retry_policy_by_stage.
 
     Falls back to *fallback* (typically the global max_stage_attempts) when the
@@ -434,4 +479,6 @@ def _resolve_policy_command(raw: str, *, python_bin: str) -> str:
     command = str(raw).strip()
     if not command:
         return ""
-    return command.replace("<PYTHON_BIN>", python_bin).replace("{{python_bin}}", python_bin)
+    return command.replace("<PYTHON_BIN>", python_bin).replace(
+        "{{python_bin}}", python_bin
+    )

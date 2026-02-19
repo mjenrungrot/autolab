@@ -56,8 +56,8 @@ These files are the exact payload passed to agent runners.
 Use a consistent top block:
 
 1. `# Stage: <name>`
-2. `## ROLE`
-3. `## PRIMARY OBJECTIVE`
+1. `## ROLE`
+1. `## PRIMARY OBJECTIVE`
 
 Then include:
 
@@ -70,9 +70,9 @@ Then include:
 ## Adding a new stage prompt
 
 1. Add `src/autolab/scaffold/.autolab/prompts/stage_<name>.md`.
-2. Register the stage in `.autolab/workflow.yaml` (`prompt_file`, `required_tokens`, `required_outputs`, `verifier_categories`, `classifications`).
-3. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
-4. Run tests and `autolab sync-scaffold --force` in downstream repos.
+1. Register the stage in `.autolab/workflow.yaml` (`prompt_file`, `required_tokens`, `required_outputs`, `verifier_categories`, `classifications`).
+1. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
+1. Run tests and `autolab sync-scaffold --force` in downstream repos.
 
 ## Verifier alignment
 
@@ -93,6 +93,6 @@ This keeps registry contracts explicit and avoids stage-specific implicit path a
 When adding a new prompt token:
 
 1. Add token resolution logic in `src/autolab/prompts.py`.
-2. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
-3. Add/adjust stage required tokens in `.autolab/workflow.yaml` when the token is mandatory for a stage.
-4. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).
+1. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
+1. Add/adjust stage required tokens in `.autolab/workflow.yaml` when the token is mandatory for a stage.
+1. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).

@@ -4,7 +4,11 @@ from pathlib import Path
 
 import yaml
 
-from autolab.config import _load_guardrail_config, _load_protected_files, _load_strict_mode_config
+from autolab.config import (
+    _load_guardrail_config,
+    _load_protected_files,
+    _load_strict_mode_config,
+)
 
 
 def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) -> None:
@@ -47,7 +51,9 @@ def test_load_protected_files_applies_safe_profile() -> None:
     assert ".autolab/schemas/**" in protected
 
 
-def test_load_protected_files_auto_mode_applies_safe_profile_even_when_toggle_false() -> None:
+def test_load_protected_files_auto_mode_applies_safe_profile_even_when_toggle_false() -> (
+    None
+):
     policy = {
         "protected_files": [".autolab/state.json"],
         "safe_automation_protected_files": False,
@@ -68,7 +74,9 @@ def test_load_protected_files_auto_mode_applies_safe_profile_even_when_toggle_fa
     assert ".autolab/verifiers/**" in protected
 
 
-def test_load_strict_mode_config_auto_mode_defaults_human_review_for_stop_when_unset(tmp_path: Path) -> None:
+def test_load_strict_mode_config_auto_mode_defaults_human_review_for_stop_when_unset(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
@@ -87,7 +95,9 @@ def test_load_strict_mode_config_auto_mode_defaults_human_review_for_stop_when_u
     assert strict.require_human_review_for_stop is True
 
 
-def test_load_strict_mode_config_auto_mode_respects_explicit_override(tmp_path: Path) -> None:
+def test_load_strict_mode_config_auto_mode_respects_explicit_override(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     policy_path = repo / ".autolab" / "verifier_policy.yaml"

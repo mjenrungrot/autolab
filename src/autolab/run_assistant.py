@@ -136,7 +136,9 @@ def _run_once_assistant(
         state["task_change_baseline"] = {}
         state["stage_attempt"] = 0
         _write_json(state_path, state)
-        pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
+        pre_sync_changed, _ = _safe_todo_pre_sync(
+            repo_root, state, host_mode=detected_host_mode
+        )
         _write_block_reason(
             repo_root,
             reason=completion_summary,
@@ -179,7 +181,10 @@ def _run_once_assistant(
             )
         except Exception as exc:
             _append_log(repo_root, f"assistant task ledger write failed: {exc}")
-        _append_log(repo_root, f"assistant blocked completed experiment from stage {current_stage}")
+        _append_log(
+            repo_root,
+            f"assistant blocked completed experiment from stage {current_stage}",
+        )
         return RunOutcome(
             exit_code=0,
             transitioned=True,
@@ -190,13 +195,17 @@ def _run_once_assistant(
             commit_cycle_stage="done",
         )
 
-    pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
+    pre_sync_changed, _ = _safe_todo_pre_sync(
+        repo_root, state, host_mode=detected_host_mode
+    )
     stage_before = str(state.get("stage", ""))
     current_task_id = str(state.get("current_task_id", ""))
     cycle_stage = str(state.get("task_cycle_stage", "select"))
     force_task_selection = stage_before == "human_review"
     baseline_snapshot_raw = state.get("task_change_baseline", {})
-    baseline_snapshot = baseline_snapshot_raw if isinstance(baseline_snapshot_raw, dict) else {}
+    baseline_snapshot = (
+        baseline_snapshot_raw if isinstance(baseline_snapshot_raw, dict) else {}
+    )
 
     def _persist_simple(
         *,
@@ -239,7 +248,12 @@ def _run_once_assistant(
             repo_root,
             status=status,
             summary=summary,
-            changed_files=[state_path, *changed_files, *pre_sync_changed, *post_sync_changed],
+            changed_files=[
+                state_path,
+                *changed_files,
+                *pre_sync_changed,
+                *post_sync_changed,
+            ],
         )
         try:
             _append_task_ledger(
@@ -306,9 +320,11 @@ def _run_once_assistant(
             _write_json(state_path, state)
             changed: list[Path] = [state_path]
             completion_msg = ""
-            completed, backlog_path, completion_summary = _mark_backlog_experiment_completed(
-                repo_root,
-                str(state.get("experiment_id", "")).strip(),
+            completed, backlog_path, completion_summary = (
+                _mark_backlog_experiment_completed(
+                    repo_root,
+                    str(state.get("experiment_id", "")).strip(),
+                )
             )
             if completed and backlog_path is not None:
                 changed.append(backlog_path)
@@ -347,7 +363,9 @@ def _run_once_assistant(
         )
 
     if cycle_stage == "verify":
-        verified, verify_message = _run_verification_step(repo_root, state, auto_mode=auto_mode)
+        verified, verify_message = _run_verification_step(
+            repo_root, state, auto_mode=auto_mode
+        )
         repeat_guard = dict(state.get("repeat_guard", {}))
         repeat_guard["last_verification_passed"] = verified
         state["repeat_guard"] = repeat_guard
@@ -370,14 +388,18 @@ def _run_once_assistant(
 
     if cycle_stage == "review":
         meaningful_config = _load_meaningful_change_config(repo_root)
-        meaningful, changed_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
-            repo_root,
-            meaningful_config,
-            baseline_snapshot=baseline_snapshot,
+        meaningful, changed_paths, meaningful_paths, _current_snapshot = (
+            _evaluate_meaningful_change(
+                repo_root,
+                meaningful_config,
+                baseline_snapshot=baseline_snapshot,
+            )
         )
         repeat_guard = dict(state.get("repeat_guard", {}))
         verification_passed = bool(repeat_guard.get("last_verification_passed", False))
-        passes_gate = meaningful and (not meaningful_config.require_verification or verification_passed)
+        passes_gate = meaningful and (
+            not meaningful_config.require_verification or verification_passed
+        )
 
         if passes_gate:
             mark_task_completed(repo_root, current_task_id)
@@ -389,7 +411,11 @@ def _run_once_assistant(
                 try:
                     result = subprocess.run(
                         ["git", "rev-parse", "HEAD"],
-                        cwd=repo_root, capture_output=True, text=True, check=False, timeout=5,
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=5,
                     )
                     if result.returncode == 0:
                         commit_hash = result.stdout.strip()
@@ -401,11 +427,15 @@ def _run_once_assistant(
                     "verification_passed": verification_passed,
                     "verification_message": "review gate considered last verification state",
                     "changed_files": sorted(changed_paths) if changed_paths else [],
-                    "meaningful_files": sorted(meaningful_paths) if meaningful_paths else [],
+                    "meaningful_files": sorted(meaningful_paths)
+                    if meaningful_paths
+                    else [],
                     "commit_hash": commit_hash,
                 }
                 evidence_path = completions_dir / f"{current_task_id}.json"
-                evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+                evidence_path.write_text(
+                    json.dumps(evidence, indent=2) + "\n", encoding="utf-8"
+                )
             except Exception:
                 pass
             state["current_task_id"] = ""
@@ -413,7 +443,9 @@ def _run_once_assistant(
             state["task_change_baseline"] = {}
             repeat_guard["no_progress_decisions"] = 0
             state["repeat_guard"] = repeat_guard
-            scoped_commit_paths = _assistant_commit_paths(changed_paths, meaningful_paths)
+            scoped_commit_paths = _assistant_commit_paths(
+                changed_paths, meaningful_paths
+            )
             _write_json(state_path, state)
             return _persist_simple(
                 status="complete",
@@ -432,13 +464,19 @@ def _run_once_assistant(
                 commit_reason="meaningful-change gate passed",
                 ledger_event="review",
                 changed_files_summary=sorted(changed_paths) if changed_paths else [],
-                meaningful_files_summary=sorted(meaningful_paths) if meaningful_paths else [],
+                meaningful_files_summary=sorted(meaningful_paths)
+                if meaningful_paths
+                else [],
             )
 
-        repeat_guard["no_progress_decisions"] = int(repeat_guard.get("no_progress_decisions", 0)) + 1
+        repeat_guard["no_progress_decisions"] = (
+            int(repeat_guard.get("no_progress_decisions", 0)) + 1
+        )
         state["repeat_guard"] = repeat_guard
         guardrails = _load_guardrail_config(repo_root)
-        if auto_mode and int(repeat_guard["no_progress_decisions"]) >= int(guardrails.max_no_progress_decisions):
+        if auto_mode and int(repeat_guard["no_progress_decisions"]) >= int(
+            guardrails.max_no_progress_decisions
+        ):
             state["task_cycle_stage"] = "done"
             state["current_task_id"] = ""
             state["task_change_baseline"] = {}
@@ -449,7 +487,9 @@ def _run_once_assistant(
                 rule="no_progress",
                 counters={
                     "no_progress_decisions": int(repeat_guard["no_progress_decisions"]),
-                    "max_no_progress_decisions": int(guardrails.max_no_progress_decisions),
+                    "max_no_progress_decisions": int(
+                        guardrails.max_no_progress_decisions
+                    ),
                 },
                 stage=stage_before,
                 remediation=f"Escalated to '{guardrails.on_breach}'. Assistant review found no meaningful changes after multiple attempts.",
@@ -471,11 +511,17 @@ def _run_once_assistant(
 
         state["task_cycle_stage"] = "implement"
         _write_json(state_path, state)
-        missing_verification = meaningful_config.require_verification and not verification_passed
+        missing_verification = (
+            meaningful_config.require_verification and not verification_passed
+        )
         details: list[str] = []
         if not meaningful:
-            changed_summary = ", ".join(sorted(changed_paths)[:5]) if changed_paths else "none"
-            meaningful_summary = ", ".join(sorted(meaningful_paths)[:5]) if meaningful_paths else "none"
+            changed_summary = (
+                ", ".join(sorted(changed_paths)[:5]) if changed_paths else "none"
+            )
+            meaningful_summary = (
+                ", ".join(sorted(meaningful_paths)[:5]) if meaningful_paths else "none"
+            )
             details.append(
                 f"no meaningful code/config/docs targets changed "
                 f"(changed_paths=[{changed_summary}], meaningful_paths=[{meaningful_summary}])"
@@ -513,7 +559,11 @@ def _run_once_assistant(
         refreshed = _normalize_state(_load_state(state_path))
     except StateError:
         refreshed = None
-    if refreshed is not None and outcome.exit_code == 0 and refreshed.get("stage") not in TERMINAL_STAGES:
+    if (
+        refreshed is not None
+        and outcome.exit_code == 0
+        and refreshed.get("stage") not in TERMINAL_STAGES
+    ):
         refreshed["assistant_mode"] = "on"
         refreshed["task_cycle_stage"] = "verify"
         _write_json(state_path, refreshed)

@@ -1,11 +1,6 @@
----
-name: swarm-planner
-description: >
-  [EXPLICIT INVOCATION ONLY] Create dependency-aware Autolab implementation plans optimized for
-  parallel multi-agent execution.
-metadata:
-  invocation: explicit-only
----
+______________________________________________________________________
+
+## name: swarm-planner description: > [EXPLICIT INVOCATION ONLY] Create dependency-aware Autolab implementation plans optimized for parallel multi-agent execution. metadata: invocation: explicit-only
 
 # Swarm Planner
 
@@ -20,14 +15,14 @@ Use this skill when the user explicitly asks for `$swarm-planner` to create or r
 ## Mandatory context pass (read first)
 
 1. Confirm repository root and `.autolab` availability.
-2. Read:
+1. Read:
    - `.autolab/state.json`
    - `.autolab/verifier_policy.yaml`
    - active-stage prompt in `.autolab/prompts/` when relevant
    - iteration artifacts under `experiments/<iteration_id>/` when available
-3. Inspect code paths implicated by the user request before drafting tasks.
-4. If a council `final-plan.md` exists in the plan directory (e.g. from `$llm-council`), use it as starting input rather than generating from scratch.
-5. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and constrain task `location` and `touches` to paths within allowed dirs.
+1. Inspect code paths implicated by the user request before drafting tasks.
+1. If a council `final-plan.md` exists in the plan directory (e.g. from `$llm-council`), use it as starting input rather than generating from scratch.
+1. Load `.autolab/prompts/rendered/<stage>.context.json` when present. Extract `allowed_edit_dirs` from `runner_scope` and constrain task `location` and `touches` to paths within allowed dirs.
 
 ## Clarification policy
 
@@ -37,12 +32,14 @@ Use this skill when the user explicitly asks for `$swarm-planner` to create or r
 ## Plan output contract
 
 Write the plan to:
+
 - `experiments/<iteration_id>/implementation_plan.md` when `iteration_id` exists.
 - Otherwise `experiments/plan/<topic>/implementation_plan.md`.
 
 Emit `plan_metadata.json` alongside the plan with fields: `schema_version` ("1.0"), `iteration_id`, `generated_at`, `skill_used` ("swarm-planner"), `task_count`. Optional: `wave_count`, `dependency_depth`, `conflict_groups`, `total_touches_count`.
 
 Example `plan_metadata.json`:
+
 ```json
 {
   "schema_version": "1.0",
@@ -58,6 +55,7 @@ Example `plan_metadata.json`:
 ```
 
 Every task must include:
+
 - `id`
 - `depends_on`
 - `location`
@@ -70,9 +68,11 @@ Every task must include:
 - `files edited/created` (empty placeholder)
 
 Optional per task:
+
 - `conflict_group` -- tasks sharing a group must not run in the same wave
 
 Include:
+
 - overview
 - dependency graph
 - parallel execution wave table
@@ -83,21 +83,22 @@ Include:
 ## Task design rules
 
 1. All dependencies must be explicit (`depends_on: []` for roots).
-2. Tasks must be atomic and independently executable by one agent.
-3. Validation must be concrete (commands, checks, or artifact assertions).
-4. File paths in `location` must be specific.
-5. Sequence tasks to maximize safe parallelism.
-6. Each task must include `touches` (list of file paths/globs the task edits).
-7. Each task must include `scope_ok: true` only after validating touches/location against `allowed_edit_dirs`.
-8. Optional `conflict_group` field: tasks sharing a group must not be in the same wave.
-9. Wave grouping must ensure no overlap in `touches` within a wave.
+1. Tasks must be atomic and independently executable by one agent.
+1. Validation must be concrete (commands, checks, or artifact assertions).
+1. File paths in `location` must be specific.
+1. Sequence tasks to maximize safe parallelism.
+1. Each task must include `touches` (list of file paths/globs the task edits).
+1. Each task must include `scope_ok: true` only after validating touches/location against `allowed_edit_dirs`.
+1. Optional `conflict_group` field: tasks sharing a group must not be in the same wave.
+1. Wave grouping must ensure no overlap in `touches` within a wave.
 
 ## Subagent review pass (required)
 
 After drafting the plan:
+
 1. Run one review subagent focused on dependency gaps, ordering errors, missing edge cases, and validation holes.
-2. Incorporate actionable feedback.
-3. Finalize only after review issues are resolved or explicitly justified.
+1. Incorporate actionable feedback.
+1. Finalize only after review issues are resolved or explicitly justified.
 
 ## Plan template
 
@@ -174,6 +175,7 @@ After drafting the plan:
 ```
 
 ## Linter Constraints
+
 - `status` must be one of: `Not Completed`, `Completed`, `In Progress`, `Blocked`
 - `## Change Summary` section is required by `implementation_plan_lint.py`
 - Tasks in the same wave must not have overlapping `touches` paths

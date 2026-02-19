@@ -5,8 +5,9 @@ Consolidated guide for running Autolab experiments on SLURM clusters.
 ## SLURM Detection
 
 Autolab detects SLURM availability by checking:
+
 1. `design.yaml` `compute.location` value (`"slurm"`)
-2. Environment probes (`squeue`, `sinfo`, `sbatch` availability)
+1. Environment probes (`squeue`, `sinfo`, `sbatch` availability)
 
 When `compute.location: slurm`, the launch stage produces `run_slurm.sbatch` instead of `run_local.sh`.
 
@@ -26,6 +27,7 @@ dry_run_command: "{{python_bin}} -m myproject.dry_run --config path/to/config.ya
 ```
 
 Key policy knobs for SLURM:
+
 - `requirements_by_stage.launch.env_smoke: true` -- validates run health after submission
 - `requirements_by_stage.slurm_monitor.env_smoke: true` -- validates monitor-stage run health while polling/syncing
 - `agent_runner.edit_scope.mode: "iteration_plus_core"` -- allows runner to update SLURM scripts
@@ -73,16 +75,17 @@ The ledger contains one entry per run with `run_id`, `job_id`, and status.
 When `slurm_monitor` is active for an in-progress SLURM manifest:
 
 1. Read `docs/slurm_job_list.md` entry for the run
-2. Query scheduler state (`squeue -u $USER`, `sacct`)
-3. If job completed and artifacts synced -> advance to extraction
-4. If job still running -> remain in `slurm_monitor` and update manifest/ledger
-5. If job failed/cancelled/timed out -> mark manifest `status: failed` and advance so extraction can emit failed/partial metrics with evidence
+1. Query scheduler state (`squeue -u $USER`, `sacct`)
+1. If job completed and artifacts synced -> advance to extraction
+1. If job still running -> remain in `slurm_monitor` and update manifest/ledger
+1. If job failed/cancelled/timed out -> mark manifest `status: failed` and advance so extraction can emit failed/partial metrics with evidence
 
 `extract_results` should only compute metrics when `artifact_sync_to_local.status` is success-like (`ok`, `completed`, `success`, `passed`), otherwise emit `partial|failed` with explicit missing evidence.
 
 ## Common Failure Recovery
 
 ### Job submission fails
+
 ```bash
 # Check SLURM scheduler
 squeue -u $USER
@@ -93,6 +96,7 @@ autolab run
 ```
 
 ### Artifacts not synced
+
 ```bash
 # Manually sync artifacts
 rsync -avz remote:path/to/outputs local/path/
@@ -103,6 +107,7 @@ autolab run
 ```
 
 ### Ledger missing entry
+
 ```bash
 autolab slurm-job-list append \
   --manifest <path-to-manifest> \
@@ -110,6 +115,7 @@ autolab slurm-job-list append \
 ```
 
 ### Verifier fails on SLURM run health
+
 ```bash
 # Inspect the specific failure
 autolab verify --stage launch
@@ -121,6 +127,7 @@ autolab verify --stage launch
 ```
 
 ### Stuck at slurm_monitor waiting for SLURM
+
 ```bash
 # Check job status
 squeue -j <job_id>

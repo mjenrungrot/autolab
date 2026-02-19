@@ -74,7 +74,7 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTBD\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),
     re.compile(r"(?<!\.)\.\.\.(?!\.)"),  # ASCII ellipsis (not part of longer run)
-    re.compile(r"\u2026"),                # Unicode ellipsis …
+    re.compile(r"\u2026"),  # Unicode ellipsis …
 )
 
 VALID_STATUSES = {"not completed", "completed", "in progress", "blocked"}
@@ -97,7 +97,6 @@ def _coerce_bool(value: object, *, default: bool = False) -> bool:
 
 def _auto_mode_enabled() -> bool:
     return _coerce_bool(os.environ.get("AUTOLAB_AUTO_MODE"), default=False)
-
 
 
 def _split_task_sections(text: str) -> dict[str, str]:
@@ -165,7 +164,11 @@ def _parse_wave_table(text: str) -> dict[int, list[str]]:
     for match in WAVE_TABLE_PATTERN.finditer(text):
         wave_num = int(match.group(1))
         raw_tasks = match.group(2).strip()
-        task_ids = [t.strip() for t in re.split(r"[,\s]+", raw_tasks) if re.match(r"T\d+", t.strip())]
+        task_ids = [
+            t.strip()
+            for t in re.split(r"[,\s]+", raw_tasks)
+            if re.match(r"T\d+", t.strip())
+        ]
         if task_ids:
             waves[wave_num] = task_ids
     return waves
@@ -225,7 +228,9 @@ def lint(plan_text: str) -> list[str]:
             deps_map[task_id] = dep_list
             for dep in dep_list:
                 if dep not in all_task_ids:
-                    issues.append(f"{task_id}: depends_on references unknown task '{dep}'")
+                    issues.append(
+                        f"{task_id}: depends_on references unknown task '{dep}'"
+                    )
 
         # status
         status_raw = _extract_field(section, STATUS_PATTERN)
@@ -303,7 +308,9 @@ def lint(plan_text: str) -> list[str]:
 
 def _load_allowed_dirs() -> list[str] | None:
     """Load allowed_edit_dirs from rendered context if available. Returns None if not found."""
-    context_path = REPO_ROOT / ".autolab" / "prompts" / "rendered" / "implementation.context.json"
+    context_path = (
+        REPO_ROOT / ".autolab" / "prompts" / "rendered" / "implementation.context.json"
+    )
     if not context_path.exists():
         return None
     try:
@@ -329,7 +336,9 @@ def _load_policy() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _check_scope(task_touches: dict[str, list[str]], allowed_dirs: list[str]) -> list[str]:
+def _check_scope(
+    task_touches: dict[str, list[str]], allowed_dirs: list[str]
+) -> list[str]:
     """Return messages for tasks with touches outside allowed scope."""
     warnings: list[str] = []
     for task_id, touches in task_touches.items():
@@ -339,21 +348,34 @@ def _check_scope(task_touches: dict[str, list[str]], allowed_dirs: list[str]) ->
                 for d in allowed_dirs
             )
             if not in_scope:
-                warnings.append(f"{task_id}: touches '{touch}' is outside allowed scope")
+                warnings.append(
+                    f"{task_id}: touches '{touch}' is outside allowed scope"
+                )
     return warnings
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Override current stage")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
         state = load_state()
     except Exception as exc:
         if args.json:
-            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": "", "checks": [], "errors": [str(exc)]}
+            envelope = {
+                "status": "fail",
+                "verifier": "implementation_plan_lint",
+                "stage": "",
+                "checks": [],
+                "errors": [str(exc)],
+            }
             print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: ERROR {exc}")
@@ -364,7 +386,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     # Only run for implementation stage
     if stage != "implementation":
         if args.json:
-            envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "stage_skip", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
+            envelope = {
+                "status": "pass",
+                "verifier": "implementation_plan_lint",
+                "stage": stage,
+                "checks": [
+                    {
+                        "name": "stage_skip",
+                        "status": "pass",
+                        "detail": f"skipped for stage={stage}",
+                    }
+                ],
+                "errors": [],
+            }
             print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: SKIP stage={stage}")
@@ -373,10 +407,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     iteration_id = str(state.get("iteration_id", "")).strip()
     if not iteration_id or iteration_id.startswith("<"):
         if args.json:
-            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [], "errors": ["iteration_id is missing or placeholder"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "implementation_plan_lint",
+                "stage": stage,
+                "checks": [],
+                "errors": ["iteration_id is missing or placeholder"],
+            }
             print(json.dumps(envelope))
         else:
-            print("implementation_plan_lint: ERROR iteration_id is missing or placeholder")
+            print(
+                "implementation_plan_lint: ERROR iteration_id is missing or placeholder"
+            )
         return 1
 
     iteration_dir = resolve_iteration_dir(iteration_id)
@@ -384,7 +426,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     if not plan_path.exists():
         if args.json:
-            envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "plan_file", "status": "pass", "detail": f"plan file not found at {plan_path}, skipped"}], "errors": []}
+            envelope = {
+                "status": "pass",
+                "verifier": "implementation_plan_lint",
+                "stage": stage,
+                "checks": [
+                    {
+                        "name": "plan_file",
+                        "status": "pass",
+                        "detail": f"plan file not found at {plan_path}, skipped",
+                    }
+                ],
+                "errors": [],
+            }
             print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: SKIP plan file not found at {plan_path}")
@@ -393,7 +447,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     plan_text = plan_path.read_text(encoding="utf-8")
     if not plan_text.strip():
         if args.json:
-            envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": str(plan_path), "status": "fail", "detail": "content is empty"}], "errors": [f"{plan_path}\tcontent is empty"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "implementation_plan_lint",
+                "stage": stage,
+                "checks": [
+                    {
+                        "name": str(plan_path),
+                        "status": "fail",
+                        "detail": "content is empty",
+                    }
+                ],
+                "errors": [f"{plan_path}\tcontent is empty"],
+            }
             print(json.dumps(envelope))
         else:
             print("implementation_plan_lint: FAIL issues=1")
@@ -409,7 +475,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         auto_mode = _auto_mode_enabled()
         policy = _load_policy()
         lint_policy = policy.get("implementation_plan_lint", {})
-        scope_cfg = lint_policy.get("scope_enforcement", {}) if isinstance(lint_policy, dict) else {}
+        scope_cfg = (
+            lint_policy.get("scope_enforcement", {})
+            if isinstance(lint_policy, dict)
+            else {}
+        )
         fail_on_scope = False
         if isinstance(scope_cfg, dict):
             raw_fail_on_scope = scope_cfg.get("fail_on_out_of_scope_touches")
@@ -433,7 +503,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     if args.json:
         checks = [{"name": f, "status": "fail", "detail": f} for f in all_failures]
         if passed:
-            checks = [{"name": "implementation_plan_lint", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
+            checks = [
+                {
+                    "name": "implementation_plan_lint",
+                    "status": "pass",
+                    "detail": f"stage={stage} iteration={iteration_id}",
+                }
+            ]
         envelope = {
             "status": "pass" if passed else "fail",
             "verifier": "implementation_plan_lint",
@@ -453,13 +529,22 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 print(f"  {warning}")
         else:
             if allowed_dirs:
-                scope_warnings_only = _check_scope(
-                    {tid: _parse_touches_from_section(sec) for tid, sec in _split_task_sections(plan_text).items()},
-                    allowed_dirs,
-                ) if not scope_failures else []
+                scope_warnings_only = (
+                    _check_scope(
+                        {
+                            tid: _parse_touches_from_section(sec)
+                            for tid, sec in _split_task_sections(plan_text).items()
+                        },
+                        allowed_dirs,
+                    )
+                    if not scope_failures
+                    else []
+                )
                 for warning in scope_warnings_only:
                     print(f"  WARN: {warning}")
-            print(f"implementation_plan_lint: PASS stage={stage} iteration={iteration_id}")
+            print(
+                f"implementation_plan_lint: PASS stage={stage} iteration={iteration_id}"
+            )
 
     return 0 if passed else 1
 

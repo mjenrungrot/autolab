@@ -8,7 +8,13 @@ from pathlib import Path
 
 
 def _copy_scaffold(repo: Path) -> None:
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
 
@@ -95,7 +101,9 @@ def test_template_fill_detects_unicode_ellipsis_placeholder(tmp_path: Path) -> N
     assert "placeholder pattern" in result.stdout
 
 
-def test_template_fill_detects_exact_bootstrap_implementation_template(tmp_path: Path) -> None:
+def test_template_fill_detects_exact_bootstrap_implementation_template(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)

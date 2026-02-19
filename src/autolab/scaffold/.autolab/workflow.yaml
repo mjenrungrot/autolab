@@ -1,3 +1,4 @@
+---
 # ---------------------------------------------------------------------------
 # Autolab Stage Registry (workflow.yaml)
 # ---------------------------------------------------------------------------
@@ -23,9 +24,7 @@
 #   target (e.g., decide_repeat.decision_map)", not "this stage itself makes
 #   a branching decision".
 # ---------------------------------------------------------------------------
-
-schema_version: "1.0"
-
+schema_version: '1.0'
 stages:
   hypothesis:
     prompt_file: stage_hypothesis.md
@@ -45,7 +44,6 @@ stages:
       terminal: false
       decision: true
       runner_eligible: true
-
   design:
     prompt_file: stage_design.md
     required_tokens: [iteration_id, iteration_path, hypothesis_id]
@@ -64,7 +62,6 @@ stages:
       terminal: false
       decision: true
       runner_eligible: true
-
   implementation:
     prompt_file: stage_implementation.md
     required_tokens: [iteration_id, iteration_path]
@@ -72,7 +69,7 @@ stages:
     next_stage: implementation_review
     verifier_categories:
       tests: false
-      dry_run: true   # Capability flag. Actual requirement controlled by verifier_policy.yaml
+      dry_run: true  # Capability flag. Actual requirement controlled by verifier_policy.yaml
       schema: true
       prompt_lint: true
       consistency: false
@@ -83,7 +80,6 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   implementation_review:
     prompt_file: stage_implementation_review.md
     required_tokens: [iteration_id, iteration_path]
@@ -102,7 +98,6 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   launch:
     prompt_file: stage_launch.md
     required_tokens: [iteration_id, iteration_path, run_id]
@@ -121,7 +116,6 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   slurm_monitor:
     prompt_file: stage_slurm_monitor.md
     required_tokens: [iteration_id, iteration_path, run_id]
@@ -140,7 +134,6 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   extract_results:
     prompt_file: stage_extract_results.md
     required_tokens: [iteration_id, iteration_path, run_id]
@@ -159,7 +152,6 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   update_docs:
     prompt_file: stage_update_docs.md
     required_tokens: [iteration_id, iteration_path, run_id]
@@ -178,12 +170,11 @@ stages:
       terminal: false
       decision: false
       runner_eligible: true
-
   decide_repeat:
     prompt_file: stage_decide_repeat.md
     required_tokens: [iteration_id, iteration_path]
     required_outputs: [decision_result.json]
-    next_stage: ""
+    next_stage: ''
     decision_map:
       design: design
       hypothesis: hypothesis
@@ -202,12 +193,11 @@ stages:
       terminal: false
       decision: true
       runner_eligible: true
-
   human_review:
     prompt_file: stage_human_review.md
     required_tokens: []
     required_outputs: []
-    next_stage: ""
+    next_stage: ''
     verifier_categories:
       tests: false
       dry_run: false
@@ -221,12 +211,11 @@ stages:
       terminal: true
       decision: true
       runner_eligible: false
-
   stop:
     prompt_file: stage_stop.md
     required_tokens: []
     required_outputs: []
-    next_stage: ""
+    next_stage: ''
     verifier_categories:
       tests: false
       dry_run: false

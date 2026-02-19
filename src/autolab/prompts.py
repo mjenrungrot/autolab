@@ -21,7 +21,12 @@ from autolab.constants import (
 )
 from autolab.config import _load_verifier_policy, _resolve_policy_python_bin
 from autolab.models import RenderedPromptBundle, StageCheckError
-from autolab.registry import StageSpec, load_registry, registry_prompt_files, registry_required_tokens
+from autolab.registry import (
+    StageSpec,
+    load_registry,
+    registry_prompt_files,
+    registry_required_tokens,
+)
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
@@ -119,7 +124,9 @@ def _recommended_memory_estimate(total_memory_gb: int | None) -> str:
     return f"{recommended_gb}GB"
 
 
-def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id: str) -> str:
+def _resolve_hypothesis_id(
+    repo_root: Path, *, iteration_id: str, experiment_id: str
+) -> str:
     candidate = ""
     if yaml is not None and iteration_id and not iteration_id.startswith("<"):
         iteration_dir, _iteration_type = _resolve_iteration_directory(
@@ -155,7 +162,11 @@ def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id:
                     entry_iteration = str(entry.get("iteration_id", "")).strip()
                     if experiment_id and entry_id != experiment_id:
                         continue
-                    if iteration_id and entry_iteration and entry_iteration != iteration_id:
+                    if (
+                        iteration_id
+                        and entry_iteration
+                        and entry_iteration != iteration_id
+                    ):
                         continue
                     candidate = str(entry.get("hypothesis_id", "")).strip()
                     if candidate and not candidate.startswith("<"):
@@ -174,7 +185,9 @@ def _resolve_hypothesis_id(repo_root: Path, *, iteration_id: str, experiment_id:
     return "h1"
 
 
-def _resolve_prompt_run_id(*, repo_root: Path, stage: str, state: dict[str, Any]) -> str:
+def _resolve_prompt_run_id(
+    *, repo_root: Path, stage: str, state: dict[str, Any]
+) -> str:
     if stage == "launch":
         pending_run_id = str(state.get("pending_run_id", "")).strip()
         if pending_run_id and not pending_run_id.startswith("<"):
@@ -237,7 +250,9 @@ def _load_metrics_payload(iteration_dir: Path, run_id: str) -> dict[str, Any] | 
     return None
 
 
-def _metrics_summary_text(metrics_payload: dict[str, Any] | None, *, run_id: str) -> str:
+def _metrics_summary_text(
+    metrics_payload: dict[str, Any] | None, *, run_id: str
+) -> str:
     if not isinstance(metrics_payload, dict):
         return f"unavailable: runs/{run_id}/metrics.json is missing or unreadable"
     status = str(metrics_payload.get("status", "")).strip() or "unknown"
@@ -335,7 +350,9 @@ def _target_comparison_text(
     if isinstance(primary_metric, dict):
         metric_delta = _coerce_float(primary_metric.get("delta_vs_baseline"))
         if metric_delta is None:
-            metric_delta = _parse_numeric_delta(str(primary_metric.get("delta_vs_baseline", "")))
+            metric_delta = _parse_numeric_delta(
+                str(primary_metric.get("delta_vs_baseline", ""))
+            )
     if metric_delta is None:
         return (
             "target comparison unavailable: primary_metric.delta_vs_baseline is missing/non-numeric",
@@ -427,15 +444,22 @@ def _build_prompt_context(
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
     if not experiment_id:
-        _append_log(repo_root, f"warning: experiment_id is empty for stage '{stage}'; prompt tokens referencing experiment_id will be blank")
+        _append_log(
+            repo_root,
+            f"warning: experiment_id is empty for stage '{stage}'; prompt tokens referencing experiment_id will be blank",
+        )
     policy = _load_verifier_policy(repo_root)
     python_bin = _resolve_policy_python_bin(policy)
     total_memory_gb = _detect_total_memory_gb()
     recommended_memory_estimate = _recommended_memory_estimate(total_memory_gb)
-    available_memory_gb = str(total_memory_gb) if total_memory_gb is not None else "unavailable"
+    available_memory_gb = (
+        str(total_memory_gb) if total_memory_gb is not None else "unavailable"
+    )
     paper_targets_raw = state.get("paper_targets")
     if isinstance(paper_targets_raw, list):
-        paper_targets = ", ".join(str(item).strip() for item in paper_targets_raw if str(item).strip())
+        paper_targets = ", ".join(
+            str(item).strip() for item in paper_targets_raw if str(item).strip()
+        )
     else:
         paper_targets = str(paper_targets_raw or "").strip()
     if not paper_targets:
@@ -470,7 +494,9 @@ def _build_prompt_context(
     if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
         metrics_payload = _load_metrics_payload(iteration_dir, run_id)
         metrics_summary = _metrics_summary_text(metrics_payload, run_id=run_id)
-        hypothesis_text = _safe_read_text(iteration_dir / "hypothesis.md", max_chars=12000)
+        hypothesis_text = _safe_read_text(
+            iteration_dir / "hypothesis.md", max_chars=12000
+        )
         hypothesis_target_delta = _extract_hypothesis_target_delta(hypothesis_text)
         design_target_delta = _extract_design_target_delta(iteration_dir)
         metric_mode = _extract_design_metric_mode(iteration_dir)
@@ -485,13 +511,23 @@ def _build_prompt_context(
     auto_metrics_evidence_record: dict = {}
     if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
         try:
-            _auto_decision, auto_metrics_evidence_record = _suggest_decision_from_metrics(repo_root, state)
+            _auto_decision, auto_metrics_evidence_record = (
+                _suggest_decision_from_metrics(repo_root, state)
+            )
         except Exception:
             pass
 
-    todo_focus_payload = _load_json_if_exists(repo_root / ".autolab" / "todo_focus.json")
-    agent_result_payload = _load_json_if_exists(repo_root / ".autolab" / "agent_result.json")
-    review_result_payload = _load_json_if_exists(iteration_dir / "review_result.json") if iteration_id else None
+    todo_focus_payload = _load_json_if_exists(
+        repo_root / ".autolab" / "todo_focus.json"
+    )
+    agent_result_payload = _load_json_if_exists(
+        repo_root / ".autolab" / "agent_result.json"
+    )
+    review_result_payload = (
+        _load_json_if_exists(iteration_dir / "review_result.json")
+        if iteration_id
+        else None
+    )
     state_excerpt = {
         "stage": str(state.get("stage", "")).strip(),
         "stage_attempt": int(state.get("stage_attempt", 0) or 0),
@@ -511,7 +547,9 @@ def _build_prompt_context(
         else ""
     )
     if not review_feedback:
-        review_feedback = "unavailable: no implementation review feedback recorded for this iteration"
+        review_feedback = (
+            "unavailable: no implementation review feedback recorded for this iteration"
+        )
 
     dry_run_output = (
         _extract_matching_lines(
@@ -523,26 +561,38 @@ def _build_prompt_context(
         else ""
     )
     if not dry_run_output:
-        dry_run_output = "unavailable: no dry-run excerpt was found in implementation artifacts"
+        dry_run_output = (
+            "unavailable: no dry-run excerpt was found in implementation artifacts"
+        )
 
     verifier_outputs_parts: list[str] = []
     if isinstance(review_result_payload, dict):
         required_checks = review_result_payload.get("required_checks")
         if isinstance(required_checks, dict):
-            verifier_outputs_parts.append(f"review_result.required_checks={_compact_json(required_checks, max_chars=400)}")
+            verifier_outputs_parts.append(
+                f"review_result.required_checks={_compact_json(required_checks, max_chars=400)}"
+            )
         status = str(review_result_payload.get("status", "")).strip()
         if status:
             verifier_outputs_parts.append(f"review_result.status={status}")
     template_fill_log = _extract_log_snippet(
         repo_root,
-        keywords=("template_fill:", "docs_targets:", "result_sanity:", "run_health:", "schema_checks:"),
+        keywords=(
+            "template_fill:",
+            "docs_targets:",
+            "result_sanity:",
+            "run_health:",
+            "schema_checks:",
+        ),
         limit=8,
     )
     if template_fill_log:
         verifier_outputs_parts.append(template_fill_log)
     verifier_outputs = "\n".join(verifier_outputs_parts).strip()
     if not verifier_outputs:
-        verifier_outputs = "unavailable: no verifier output snippets detected in recent artifacts/logs"
+        verifier_outputs = (
+            "unavailable: no verifier output snippets detected in recent artifacts/logs"
+        )
 
     verifier_errors = _extract_log_snippet(
         repo_root,
@@ -562,12 +612,18 @@ def _build_prompt_context(
         verifier_errors = "unavailable: no recent verifier error snippets found"
 
     git_summary, git_paths = _summarize_git_changes_for_prompt(repo_root, limit=12)
-    diff_summary = f"{git_summary}\n" + ("\n".join(git_paths) if git_paths else "no changed paths")
+    diff_summary = f"{git_summary}\n" + (
+        "\n".join(git_paths) if git_paths else "no changed paths"
+    )
 
     if todo_focus_payload is None:
-        todo_focus_payload = {"note": "unavailable: .autolab/todo_focus.json is missing or unreadable"}
+        todo_focus_payload = {
+            "note": "unavailable: .autolab/todo_focus.json is missing or unreadable"
+        }
     if agent_result_payload is None:
-        agent_result_payload = {"note": "unavailable: .autolab/agent_result.json is missing or unreadable"}
+        agent_result_payload = {
+            "note": "unavailable: .autolab/agent_result.json is missing or unreadable"
+        }
 
     task_context_text = ""
     if str(state.get("assistant_mode", "")).strip().lower() == "on":
@@ -582,7 +638,14 @@ def _build_prompt_context(
                         task = tasks.get(current_task_id)
                         if isinstance(task, dict):
                             parts = [f"task_id: {current_task_id}"]
-                            for field in ("title", "description", "acceptance_criteria", "text", "stage", "task_class"):
+                            for field in (
+                                "title",
+                                "description",
+                                "acceptance_criteria",
+                                "text",
+                                "stage",
+                                "task_class",
+                            ):
                                 val = str(task.get(field, "")).strip()
                                 if val:
                                     parts.append(f"{field}: {val}")
@@ -643,13 +706,17 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
     return {
         "iteration_id": _to_text(context.get("iteration_id"), "iteration_id"),
         "iteration_path": _to_text(context.get("iteration_path"), "iteration_path"),
-        "experiment_id": context.get("experiment_id", "").strip() if isinstance(context.get("experiment_id"), str) else "",
+        "experiment_id": context.get("experiment_id", "").strip()
+        if isinstance(context.get("experiment_id"), str)
+        else "",
         "paper_targets": _to_text(context.get("paper_targets"), "paper_targets"),
         "python_bin": _to_text(context.get("python_bin"), "python_bin"),
         "recommended_memory_estimate": _to_text(
             context.get("recommended_memory_estimate"), "recommended_memory_estimate"
         ),
-        "available_memory_gb": _to_text(context.get("available_memory_gb"), "available_memory_gb"),
+        "available_memory_gb": _to_text(
+            context.get("available_memory_gb"), "available_memory_gb"
+        ),
         "stage": _to_text(context.get("stage"), "stage"),
         "stage_context": _to_text(context.get("stage_context"), "stage_context"),
         "run_id": _to_text(context.get("run_id"), "run_id"),
@@ -657,12 +724,20 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "review_feedback": _to_text(context.get("review_feedback"), "review_feedback"),
         "verifier_errors": _to_text(context.get("verifier_errors"), "verifier_errors"),
         "diff_summary": _to_text(context.get("diff_summary"), "diff_summary"),
-        "verifier_outputs": _to_text(context.get("verifier_outputs"), "verifier_outputs"),
+        "verifier_outputs": _to_text(
+            context.get("verifier_outputs"), "verifier_outputs"
+        ),
         "dry_run_output": _to_text(context.get("dry_run_output"), "dry_run_output"),
         "metrics_summary": _to_text(context.get("metrics_summary"), "metrics_summary"),
-        "target_comparison": _to_text(context.get("target_comparison"), "target_comparison"),
-        "decision_suggestion": _to_text(context.get("decision_suggestion"), "decision_suggestion"),
-        "auto_metrics_evidence": _to_text(context.get("auto_metrics_evidence"), "auto_metrics_evidence"),
+        "target_comparison": _to_text(
+            context.get("target_comparison"), "target_comparison"
+        ),
+        "decision_suggestion": _to_text(
+            context.get("decision_suggestion"), "decision_suggestion"
+        ),
+        "auto_metrics_evidence": _to_text(
+            context.get("auto_metrics_evidence"), "auto_metrics_evidence"
+        ),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
         "task_context": context.get("task_context", ""),
         "run_group": _to_text(context.get("run_group"), "run_group"),
@@ -698,7 +773,9 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     iteration_path = str(context_payload.get("iteration_path", "")).strip() or "unknown"
     host_mode = str(context_payload.get("host_mode", "")).strip() or "unknown"
     stage_attempt = str(state_snapshot.get("stage_attempt", "")).strip() or "-"
-    max_stage_attempts = str(state_snapshot.get("max_stage_attempts", "")).strip() or "-"
+    max_stage_attempts = (
+        str(state_snapshot.get("max_stage_attempts", "")).strip() or "-"
+    )
     assistant_mode = str(state_snapshot.get("assistant_mode", "")).strip() or "off"
     current_task_id = str(state_snapshot.get("current_task_id", "")).strip() or "none"
     last_run_id = str(state_snapshot.get("last_run_id", "")).strip() or "none"
@@ -711,7 +788,9 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     scope_workspace = str(runner_scope.get("workspace_dir", "")).strip() or "unknown"
     allowed_dirs = runner_scope.get("allowed_edit_dirs")
     if isinstance(allowed_dirs, list):
-        allowed_dirs_text = ", ".join(str(item).strip() for item in allowed_dirs if str(item).strip())
+        allowed_dirs_text = ", ".join(
+            str(item).strip() for item in allowed_dirs if str(item).strip()
+        )
     else:
         allowed_dirs_text = ""
     if not allowed_dirs_text:
@@ -802,7 +881,9 @@ def _inject_registry_boilerplate(
     injected_block = "\n\n".join(sections)
 
     # Insert before ## STEPS if present, otherwise append
-    steps_match = re.search(r"^\s*##\s*steps\b", text, flags=re.IGNORECASE | re.MULTILINE)
+    steps_match = re.search(
+        r"^\s*##\s*steps\b", text, flags=re.IGNORECASE | re.MULTILINE
+    )
     if steps_match is not None:
         steps_idx = steps_match.start()
         before = text[:steps_idx].rstrip()
@@ -825,7 +906,9 @@ def _render_stage_prompt(
         template_text = template_path.read_text(encoding="utf-8")
         template_text = _render_prompt_includes(repo_root, template_text, stage=stage)
     except Exception as exc:
-        raise StageCheckError(f"agent runner prompt could not be read at {template_path}: {exc}") from exc
+        raise StageCheckError(
+            f"agent runner prompt could not be read at {template_path}: {exc}"
+        ) from exc
 
     template_text = _inject_registry_boilerplate(template_text, stage, registry)
 
@@ -835,11 +918,20 @@ def _render_stage_prompt(
         stage=stage,
         runner_scope=runner_scope,
     )
-    context_payload["stage_context"] = _build_runtime_stage_context_block(context_payload)
+    context_payload["stage_context"] = _build_runtime_stage_context_block(
+        context_payload
+    )
     token_values = _context_token_values(context_payload)
 
-    tokens_in_template = sorted({match.group(1).strip() for match in PROMPT_TOKEN_PATTERN.finditer(template_text)})
-    unsupported_tokens = sorted(token for token in tokens_in_template if token not in token_values)
+    tokens_in_template = sorted(
+        {
+            match.group(1).strip()
+            for match in PROMPT_TOKEN_PATTERN.finditer(template_text)
+        }
+    )
+    unsupported_tokens = sorted(
+        token for token in tokens_in_template if token not in token_values
+    )
     if unsupported_tokens:
         _append_log(
             repo_root,
@@ -850,10 +942,11 @@ def _render_stage_prompt(
         )
 
     reg_required = registry_required_tokens(registry) if registry else {}
-    required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(stage, {"iteration_id"})
+    required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(
+        stage, {"iteration_id"}
+    )
     required_values = {
-        token: str(context_payload.get(token, "")).strip()
-        for token in required_tokens
+        token: str(context_payload.get(token, "")).strip() for token in required_tokens
     }
     missing_required = sorted(
         token
@@ -883,8 +976,15 @@ def _render_stage_prompt(
         if stage_context_block:
             rendered_text = f"{rendered_text.rstrip()}\n\n{stage_context_block}\n"
 
-    unresolved_tokens = sorted({match.group(1).strip() for match in PROMPT_TOKEN_PATTERN.finditer(rendered_text)})
-    unresolved_literals = [literal for literal in PROMPT_LITERAL_TOKENS if literal in rendered_text]
+    unresolved_tokens = sorted(
+        {
+            match.group(1).strip()
+            for match in PROMPT_TOKEN_PATTERN.finditer(rendered_text)
+        }
+    )
+    unresolved_literals = [
+        literal for literal in PROMPT_LITERAL_TOKENS if literal in rendered_text
+    ]
     if unresolved_tokens or unresolved_literals:
         _append_log(
             repo_root,
@@ -893,7 +993,9 @@ def _render_stage_prompt(
                 f"tokens={unresolved_tokens} literals={unresolved_literals}"
             ),
         )
-        unresolved_text = ", ".join([*unresolved_tokens, *unresolved_literals]) or "<unknown>"
+        unresolved_text = (
+            ", ".join([*unresolved_tokens, *unresolved_literals]) or "<unknown>"
+        )
         raise StageCheckError(
             f"rendered prompt contains unresolved placeholders for stage '{stage}': {unresolved_text}"
         )

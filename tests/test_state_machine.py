@@ -26,6 +26,7 @@ from autolab.__main__ import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_state(
     *,
     stage: str = "hypothesis",
@@ -50,7 +51,8 @@ def _make_state(
         "assistant_mode": assistant_mode,
         "current_task_id": current_task_id,
         "task_cycle_stage": task_cycle_stage,
-        "repeat_guard": repeat_guard or {
+        "repeat_guard": repeat_guard
+        or {
             "last_decision": "",
             "same_decision_streak": 0,
             "last_open_task_count": -1,
@@ -84,10 +86,21 @@ def _write_backlog(
 ) -> None:
     backlog = {
         "hypotheses": [
-            {"id": "h1", "status": hypothesis_status, "title": "Test hypothesis", "success_metric": "metric", "target_delta": 0.0},
+            {
+                "id": "h1",
+                "status": hypothesis_status,
+                "title": "Test hypothesis",
+                "success_metric": "metric",
+                "target_delta": 0.0,
+            },
         ],
         "experiments": [
-            {"id": experiment_id, "hypothesis_id": "h1", "status": status, "iteration_id": iteration_id},
+            {
+                "id": experiment_id,
+                "hypothesis_id": "h1",
+                "status": status,
+                "iteration_id": iteration_id,
+            },
         ],
     }
     path = repo / ".autolab" / "backlog.yaml"
@@ -106,7 +119,8 @@ def _write_policy(repo: Path, *, guardrails: dict[str, Any] | None = None) -> No
         "template_fill": {"enabled": False},
         "agent_runner": {"enabled": False, "stages": []},
         "autorun": {
-            "guardrails": guardrails or {
+            "guardrails": guardrails
+            or {
                 "max_same_decision_streak": 3,
                 "max_no_progress_decisions": 2,
                 "max_update_docs_cycles": 3,
@@ -170,15 +184,21 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
         "metrics": ["loss"],
         "baselines": [{"name": "baseline1", "value": 1.0}],
     }
-    (iteration_dir / "design.yaml").write_text(yaml.safe_dump(design, sort_keys=False), encoding="utf-8")
+    (iteration_dir / "design.yaml").write_text(
+        yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
+    )
 
 
 def _seed_implementation(iteration_dir: Path) -> None:
-    (iteration_dir / "implementation_plan.md").write_text("# Implementation\nStep 1.", encoding="utf-8")
+    (iteration_dir / "implementation_plan.md").write_text(
+        "# Implementation\nStep 1.", encoding="utf-8"
+    )
 
 
 def _seed_review_pass(iteration_dir: Path) -> None:
-    (iteration_dir / "implementation_review.md").write_text("# Review\nLGTM.", encoding="utf-8")
+    (iteration_dir / "implementation_review.md").write_text(
+        "# Review\nLGTM.", encoding="utf-8"
+    )
     review = {
         "status": "pass",
         "blocking_findings": [],
@@ -191,11 +211,15 @@ def _seed_review_pass(iteration_dir: Path) -> None:
         },
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
-    (iteration_dir / "review_result.json").write_text(json.dumps(review, indent=2), encoding="utf-8")
+    (iteration_dir / "review_result.json").write_text(
+        json.dumps(review, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_review_retry(iteration_dir: Path) -> None:
-    (iteration_dir / "implementation_review.md").write_text("# Review\nNeeds work.", encoding="utf-8")
+    (iteration_dir / "implementation_review.md").write_text(
+        "# Review\nNeeds work.", encoding="utf-8"
+    )
     review = {
         "status": "needs_retry",
         "blocking_findings": ["issue1"],
@@ -208,7 +232,9 @@ def _seed_review_retry(iteration_dir: Path) -> None:
         },
         "reviewed_at": "2026-01-01T00:00:00Z",
     }
-    (iteration_dir / "review_result.json").write_text(json.dumps(review, indent=2), encoding="utf-8")
+    (iteration_dir / "review_result.json").write_text(
+        json.dumps(review, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
@@ -236,7 +262,9 @@ def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
@@ -257,7 +285,9 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     metrics = {
         "iteration_id": iteration_dir.name,
         "run_id": run_id,
@@ -270,7 +300,9 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
         "baseline_results": [],
         "variant_results": [],
     }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
@@ -325,8 +357,8 @@ def _run(state_path: Path, **kwargs: Any) -> RunOutcome:
 # Phase 2: Happy Path (hypothesis → design → implementation → review)
 # ---------------------------------------------------------------------------
 
-class TestHappyPath:
 
+class TestHappyPath:
     def test_hypothesis_to_design(self, tmp_path: Path) -> None:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
         _seed_hypothesis(it_dir)
@@ -452,10 +484,12 @@ class TestHappyPath:
 # Phase 3: Retry Cycle
 # ---------------------------------------------------------------------------
 
-class TestRetryCycle:
 
+class TestRetryCycle:
     def test_review_retry_increments_attempt(self, tmp_path: Path) -> None:
-        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation_review", stage_attempt=0)
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="implementation_review", stage_attempt=0
+        )
         _seed_review_retry(it_dir)
 
         outcome = _run(state_path)
@@ -468,7 +502,9 @@ class TestRetryCycle:
 
     def test_retry_carries_attempt_forward(self, tmp_path: Path) -> None:
         """impl(attempt=1) → impl_review should carry the attempt."""
-        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation", stage_attempt=1)
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="implementation", stage_attempt=1
+        )
         _seed_implementation(it_dir)
 
         outcome = _run(state_path)
@@ -480,7 +516,10 @@ class TestRetryCycle:
     def test_retry_budget_exhausted_escalates(self, tmp_path: Path) -> None:
         """At max attempts, retry should escalate to human_review."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="implementation_review", stage_attempt=2, max_stage_attempts=3,
+            tmp_path,
+            stage="implementation_review",
+            stage_attempt=2,
+            max_stage_attempts=3,
         )
         _seed_review_retry(it_dir)
 
@@ -493,7 +532,9 @@ class TestRetryCycle:
 
     def test_stage_check_failure_increments_attempt(self, tmp_path: Path) -> None:
         """Missing stage artifacts should increment attempt and retry."""
-        repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis", stage_attempt=0)
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="hypothesis", stage_attempt=0
+        )
         # Don't seed hypothesis.md — stage check will fail
 
         outcome = _run(state_path)
@@ -506,7 +547,10 @@ class TestRetryCycle:
     def test_stage_check_failure_exhaustion(self, tmp_path: Path) -> None:
         """Repeated stage failures should escalate to human_review."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="hypothesis", stage_attempt=2, max_stage_attempts=3,
+            tmp_path,
+            stage="hypothesis",
+            stage_attempt=2,
+            max_stage_attempts=3,
         )
         # Don't seed hypothesis.md
 
@@ -521,8 +565,8 @@ class TestRetryCycle:
 # Phase 4: decide_repeat with --decision and --auto-decision
 # ---------------------------------------------------------------------------
 
-class TestDecideRepeat:
 
+class TestDecideRepeat:
     def test_no_decision_pauses(self, tmp_path: Path) -> None:
         """At decide_repeat without --decision, nothing happens."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="decide_repeat")
@@ -594,8 +638,8 @@ class TestDecideRepeat:
 # Phase 5: Guardrail Tests
 # ---------------------------------------------------------------------------
 
-class TestGuardrails:
 
+class TestGuardrails:
     def test_same_decision_streak_breach(self, tmp_path: Path) -> None:
         """Streak exceeding max should escalate to on_breach."""
         repo, state_path, it_dir = _setup_repo(
@@ -611,13 +655,17 @@ class TestGuardrails:
             },
         )
 
-        outcome = _run(state_path, decision="design", auto_mode=True, auto_decision=True)
+        outcome = _run(
+            state_path, decision="design", auto_mode=True, auto_decision=True
+        )
 
         assert outcome.stage_after == "human_review"
         persisted = _read_state(repo)
         assert persisted["stage"] == "human_review"
 
-    def test_same_decision_streak_resets_on_different_decision(self, tmp_path: Path) -> None:
+    def test_same_decision_streak_resets_on_different_decision(
+        self, tmp_path: Path
+    ) -> None:
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="decide_repeat",
@@ -631,7 +679,9 @@ class TestGuardrails:
             },
         )
 
-        outcome = _run(state_path, decision="hypothesis", auto_mode=True, auto_decision=True)
+        outcome = _run(
+            state_path, decision="hypothesis", auto_mode=True, auto_decision=True
+        )
 
         assert outcome.stage_after == "hypothesis"
         persisted = _read_state(repo)
@@ -693,8 +743,8 @@ class TestGuardrails:
 # GAP 1: update_docs_cycle_count reset in decide_repeat
 # ---------------------------------------------------------------------------
 
-class TestGap1UpdateDocsCycleCountReset:
 
+class TestGap1UpdateDocsCycleCountReset:
     def test_reset_on_non_terminal_transition(self, tmp_path: Path) -> None:
         """decide_repeat → hypothesis should reset update_docs_cycle_count to 0."""
         repo, state_path, it_dir = _setup_repo(
@@ -784,8 +834,8 @@ class TestGap1UpdateDocsCycleCountReset:
 # GAP 2: Assistant mode stop marks backlog completed
 # ---------------------------------------------------------------------------
 
-class TestGap2AssistantStopMarksBacklog:
 
+class TestGap2AssistantStopMarksBacklog:
     def test_assistant_no_tasks_marks_backlog_completed(self, tmp_path: Path) -> None:
         """Assistant mode with no tasks → stop should mark backlog experiment done.
 
@@ -808,7 +858,9 @@ class TestGap2AssistantStopMarksBacklog:
         experiment = backlog["experiments"][0]
         assert experiment["status"] in {"done", "completed"}
 
-    def test_assistant_no_tasks_message_mentions_completion(self, tmp_path: Path) -> None:
+    def test_assistant_no_tasks_message_mentions_completion(
+        self, tmp_path: Path
+    ) -> None:
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="human_review",
@@ -826,8 +878,8 @@ class TestGap2AssistantStopMarksBacklog:
 # Phase 6: Assistant Mode
 # ---------------------------------------------------------------------------
 
-class TestAssistantMode:
 
+class TestAssistantMode:
     def test_assistant_with_task_selects_and_transitions(self, tmp_path: Path) -> None:
         """Assistant with an open manual task should select it and transition.
 
@@ -901,7 +953,9 @@ class TestAssistantMode:
             task_cycle_stage="select",
             hypothesis_status="done",
         )
-        _write_todo_md(repo, "# Tasks\n- [ ] [stage:implementation] Implement scoped fix\n")
+        _write_todo_md(
+            repo, "# Tasks\n- [ ] [stage:implementation] Implement scoped fix\n"
+        )
 
         outcome = _run(state_path, assistant=True)
 
@@ -928,7 +982,10 @@ class TestAssistantMode:
             current_task_id="task_abc",
             hypothesis_status="done",
         )
-        with mock.patch("autolab.run_assistant._run_verification_step", return_value=(False, "verification failed")):
+        with mock.patch(
+            "autolab.run_assistant._run_verification_step",
+            return_value=(False, "verification failed"),
+        ):
             outcome = _run(state_path, assistant=True)
 
         assert outcome.exit_code == 0
@@ -949,8 +1006,8 @@ class TestAssistantMode:
 # Full cycle integration: hypothesis → stop via decide_repeat
 # ---------------------------------------------------------------------------
 
-class TestFullCycle:
 
+class TestFullCycle:
     def test_full_happy_path_cycle(self, tmp_path: Path) -> None:
         """Walk through the entire happy path from hypothesis to stop."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
@@ -1030,6 +1087,7 @@ class TestFullCycle:
 # SLURM Cluster & Long-Running Launched Task Scenarios
 # ---------------------------------------------------------------------------
 
+
 def _seed_slurm_launch(
     iteration_dir: Path,
     run_id: str = "run_001",
@@ -1049,13 +1107,16 @@ def _seed_slurm_launch(
             compute = {}
         compute["location"] = "slurm"
         design_payload["compute"] = compute
-        design_path.write_text(yaml.safe_dump(design_payload, sort_keys=False), encoding="utf-8")
+        design_path.write_text(
+            yaml.safe_dump(design_payload, sort_keys=False), encoding="utf-8"
+        )
     if not (iteration_dir / "review_result.json").exists():
         _seed_review_pass(iteration_dir)
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
     (launch_dir / "run_slurm.sbatch").write_text(
-        "#!/bin/bash\n#SBATCH --job-name=test\necho run", encoding="utf-8",
+        "#!/bin/bash\n#SBATCH --job-name=test\necho run",
+        encoding="utf-8",
     )
     run_dir = iteration_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1076,7 +1137,9 @@ def _seed_slurm_launch(
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
 
 
 def _seed_slurm_extract(
@@ -1106,7 +1169,9 @@ def _seed_slurm_extract(
             "completed_at": "2026-01-01T00:05:00Z",
         },
     }
-    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
     metrics = {
         "iteration_id": iteration_id,
         "run_id": run_id,
@@ -1119,10 +1184,18 @@ def _seed_slurm_extract(
         "baseline_results": [],
         "variant_results": [],
     }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
 
 
-def _write_slurm_ledger(repo: Path, run_id: str, *, job_id: str = "12345", iteration_id: str = "iter_test_001") -> None:
+def _write_slurm_ledger(
+    repo: Path,
+    run_id: str,
+    *,
+    job_id: str = "12345",
+    iteration_id: str = "iter_test_001",
+) -> None:
     """Write a SLURM job ledger entry to docs/slurm_job_list.md."""
     path = repo / "docs" / "slurm_job_list.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1133,7 +1206,9 @@ def _write_slurm_ledger(repo: Path, run_id: str, *, job_id: str = "12345", itera
 class TestSlurmLaunchHappyPath:
     """SLURM launch → slurm_monitor when sync is complete and ledger exists."""
 
-    def test_slurm_launch_to_slurm_monitor_with_completed_sync(self, tmp_path: Path) -> None:
+    def test_slurm_launch_to_slurm_monitor_with_completed_sync(
+        self, tmp_path: Path
+    ) -> None:
         """SLURM run with completed artifact sync transitions to slurm_monitor."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="completed")
@@ -1189,9 +1264,13 @@ class TestSlurmIncompleteSync:
         persisted = _read_state(repo)
         assert persisted["stage"] in {"launch", "human_review"}
 
-    def test_slurm_incomplete_sync_increments_stage_attempt(self, tmp_path: Path) -> None:
+    def test_slurm_incomplete_sync_increments_stage_attempt(
+        self, tmp_path: Path
+    ) -> None:
         """Incomplete sync should trigger _handle_stage_failure and increment attempt."""
-        repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch", stage_attempt=0)
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="launch", stage_attempt=0
+        )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
@@ -1204,10 +1283,15 @@ class TestSlurmIncompleteSync:
             # Escalated to human_review
             assert persisted["stage"] == "human_review"
 
-    def test_slurm_sync_exhaustion_escalates_to_human_review(self, tmp_path: Path) -> None:
+    def test_slurm_sync_exhaustion_escalates_to_human_review(
+        self, tmp_path: Path
+    ) -> None:
         """Repeated SLURM sync failures exhaust retry budget → human_review."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=2, max_stage_attempts=3,
+            tmp_path,
+            stage="launch",
+            stage_attempt=2,
+            max_stage_attempts=3,
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
@@ -1289,7 +1373,9 @@ class TestSlurmManifestVariants:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         launch_dir = it_dir / "launch"
         launch_dir.mkdir(parents=True, exist_ok=True)
-        (launch_dir / "run_slurm.sbatch").write_text("#!/bin/bash\necho run", encoding="utf-8")
+        (launch_dir / "run_slurm.sbatch").write_text(
+            "#!/bin/bash\necho run", encoding="utf-8"
+        )
         run_dir = it_dir / "runs" / "run_001"
         run_dir.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -1301,7 +1387,9 @@ class TestSlurmManifestVariants:
             "slurm": {"job_id": "67890"},
             "artifact_sync_to_local": {"status": "completed"},
         }
-        (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
         _write_slurm_ledger(repo, "run_001", job_id="67890")
 
         outcome = _run(state_path)
@@ -1314,7 +1402,9 @@ class TestSlurmManifestVariants:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         launch_dir = it_dir / "launch"
         launch_dir.mkdir(parents=True, exist_ok=True)
-        (launch_dir / "run_slurm.sbatch").write_text("#!/bin/bash\necho run", encoding="utf-8")
+        (launch_dir / "run_slurm.sbatch").write_text(
+            "#!/bin/bash\necho run", encoding="utf-8"
+        )
         run_dir = it_dir / "runs" / "run_001"
         run_dir.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -1325,7 +1415,9 @@ class TestSlurmManifestVariants:
             "resource_request": {"mode": "slurm", "slurm": {"job_id": "11111"}},
             "artifact_sync_to_local": {"status": "completed"},
         }
-        (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
         _write_slurm_ledger(repo, "run_001", job_id="11111")
 
         outcome = _run(state_path)
@@ -1338,7 +1430,9 @@ class TestSlurmManifestVariants:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         launch_dir = it_dir / "launch"
         launch_dir.mkdir(parents=True, exist_ok=True)
-        (launch_dir / "run_slurm.sbatch").write_text("#!/bin/bash\necho run", encoding="utf-8")
+        (launch_dir / "run_slurm.sbatch").write_text(
+            "#!/bin/bash\necho run", encoding="utf-8"
+        )
         run_dir = it_dir / "runs" / "run_001"
         run_dir.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -1350,7 +1444,9 @@ class TestSlurmManifestVariants:
             # No slurm.job_id!
             "artifact_sync_to_local": {"status": "completed"},
         }
-        (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
         _write_slurm_ledger(repo, "run_001")
 
         outcome = _run(state_path)
@@ -1379,7 +1475,9 @@ class TestSlurmFullCycle:
             "artifact_sync_to_local": {"status": "pending"},
             "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
         }
-        (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
 
         state = _read_state(repo)
         state["last_run_id"] = "run_001"
@@ -1426,7 +1524,9 @@ class TestSlurmFullCycle:
 
     def test_slurm_sync_retry_then_success(self, tmp_path: Path) -> None:
         """Simulate SLURM job whose sync is initially pending, then completes."""
-        repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch", stage_attempt=0)
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="launch", stage_attempt=0
+        )
 
         # First attempt: sync pending → failure
         _seed_slurm_launch(it_dir, sync_status="pending")
@@ -1491,7 +1591,10 @@ class TestLongRunningRetryBudget:
     def test_repeated_sync_failures_exhaust_budget(self, tmp_path: Path) -> None:
         """3 consecutive SLURM sync failures (max_stage_attempts=3) → human_review."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="launch", stage_attempt=0, max_stage_attempts=3,
+            tmp_path,
+            stage="launch",
+            stage_attempt=0,
+            max_stage_attempts=3,
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
@@ -1560,7 +1663,10 @@ class TestSlurmNoProgressGuardrails:
             },
         )
         # Write 3 open tasks in todo to match last_open_task_count
-        _write_todo_md(repo, "# Tasks\n- [ ] [hypothesis] task1\n- [ ] [design] task2\n- [ ] [implementation] task3\n")
+        _write_todo_md(
+            repo,
+            "# Tasks\n- [ ] [hypothesis] task1\n- [ ] [design] task2\n- [ ] [implementation] task3\n",
+        )
         _write_todo_state(repo, {})  # fresh state, pre-sync will pick up bullets
 
         outcome = _run(
@@ -1595,7 +1701,9 @@ class TestSlurmNoProgressGuardrails:
             },
         )
         # 2 manual tasks + ~3 generated = ~5 total, well below last_open_task_count=20
-        _write_todo_md(repo, "# Tasks\n- [ ] [hypothesis] task1\n- [ ] [design] task2\n")
+        _write_todo_md(
+            repo, "# Tasks\n- [ ] [hypothesis] task1\n- [ ] [design] task2\n"
+        )
         _write_todo_state(repo, {})
 
         outcome = _run(
@@ -1641,6 +1749,7 @@ class TestLocalLaunchVsSlurm:
 # ---------------------------------------------------------------------------
 # Multi-iteration end-to-end test (Gap 1)
 # ---------------------------------------------------------------------------
+
 
 class TestMultiIterationEndToEnd:
     """Two full iterations: local run with review retry, then SLURM with sync retry."""
@@ -1815,12 +1924,14 @@ class TestMultiIterationEndToEnd:
 # Gap 2: review_result.json status "failed" → human_review
 # ---------------------------------------------------------------------------
 
+
 class TestGapReviewFailed:
     """Seed review_result.json with status: 'failed' and verify escalation."""
 
     def _seed_review_failed(self, iteration_dir: Path) -> None:
         (iteration_dir / "implementation_review.md").write_text(
-            "# Review\nFailed.", encoding="utf-8",
+            "# Review\nFailed.",
+            encoding="utf-8",
         )
         review = {
             "status": "failed",
@@ -1835,13 +1946,16 @@ class TestGapReviewFailed:
             "reviewed_at": "2026-01-01T00:00:00Z",
         }
         (iteration_dir / "review_result.json").write_text(
-            json.dumps(review, indent=2), encoding="utf-8",
+            json.dumps(review, indent=2),
+            encoding="utf-8",
         )
 
     def test_failed_review_escalates_to_human_review(self, tmp_path: Path) -> None:
         """status: 'failed' should go straight to human_review (not retry)."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="implementation_review", stage_attempt=0,
+            tmp_path,
+            stage="implementation_review",
+            stage_attempt=0,
         )
         self._seed_review_failed(it_dir)
 
@@ -1855,7 +1969,9 @@ class TestGapReviewFailed:
     def test_failed_review_does_not_consume_retry_budget(self, tmp_path: Path) -> None:
         """status: 'failed' escalation should not increment stage_attempt."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="implementation_review", stage_attempt=0,
+            tmp_path,
+            stage="implementation_review",
+            stage_attempt=0,
         )
         self._seed_review_failed(it_dir)
 
@@ -1871,23 +1987,26 @@ class TestGapReviewFailed:
 # Gap 3: Auto-decision from TODO tasks
 # ---------------------------------------------------------------------------
 
+
 class TestGapAutoDecisionFromTodo:
     """Test auto_decision=True integration with real TODO state."""
 
     def _write_todo_with_stage_tasks(
-        self, repo: Path, *, stages: list[str],
+        self,
+        repo: Path,
+        *,
+        stages: list[str],
     ) -> None:
         """Write TODO bullets with [stage:X] tags for auto-decision selection."""
-        bullets = "\n".join(
-            f"- [ ] [{stage}] Task for {stage}" for stage in stages
-        )
+        bullets = "\n".join(f"- [ ] [{stage}] Task for {stage}" for stage in stages)
         _write_todo_md(repo, f"# Tasks\n{bullets}\n")
         _write_todo_state(repo, {})  # fresh state; pre-sync will ingest bullets
 
     def test_auto_decision_selects_design_from_todo(self, tmp_path: Path) -> None:
         """Auto-decision with a [design] task in TODO selects 'design'."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="decide_repeat",
+            tmp_path,
+            stage="decide_repeat",
         )
         self._write_todo_with_stage_tasks(repo, stages=["design"])
 
@@ -1905,7 +2024,8 @@ class TestGapAutoDecisionFromTodo:
     def test_auto_decision_selects_hypothesis_from_todo(self, tmp_path: Path) -> None:
         """Auto-decision with a [hypothesis] task in TODO selects 'hypothesis'."""
         repo, state_path, it_dir = _setup_repo(
-            tmp_path, stage="decide_repeat",
+            tmp_path,
+            stage="decide_repeat",
         )
         self._write_todo_with_stage_tasks(repo, stages=["hypothesis"])
 
@@ -1924,6 +2044,7 @@ class TestGapAutoDecisionFromTodo:
 # ---------------------------------------------------------------------------
 # Gap 4: Completed experiment protection (backlog done → force stop)
 # ---------------------------------------------------------------------------
+
 
 class TestGapCompletedExperimentProtection:
     """When backlog experiment is already 'done'/'completed', force-stop from active stages."""
@@ -1979,10 +2100,13 @@ class TestGapCompletedExperimentProtection:
 # Gap 5: update_docs_cycle_count reset durability across iterations
 # ---------------------------------------------------------------------------
 
+
 class TestGapUpdateDocsCycleCountResetAcrossIterations:
     """Verify update_docs_cycle_count resets on loop-back and doesn't accumulate."""
 
-    def test_cycle_count_does_not_accumulate_across_iterations(self, tmp_path: Path) -> None:
+    def test_cycle_count_does_not_accumulate_across_iterations(
+        self, tmp_path: Path
+    ) -> None:
         """Full sequence: extract→update_docs (count=1), decide_repeat→hypothesis
         (count=0), full cycle back to extract→update_docs (count=1, not 2)."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="extract_results")
@@ -2047,20 +2171,34 @@ class TestGapUpdateDocsCycleCountResetAcrossIterations:
 # Gap 6: Multiple experiments in backlog (only matching one marked done)
 # ---------------------------------------------------------------------------
 
+
 class TestGapMultipleExperimentsBacklog:
     """Two experiments in backlog; stopping with experiment_id='e2' marks only e2 done."""
 
     def _write_multi_experiment_backlog(self, repo: Path) -> None:
         backlog = {
             "hypotheses": [
-                {"id": "h1", "status": "open", "title": "Hyp 1",
-                 "success_metric": "m", "target_delta": 0.0},
+                {
+                    "id": "h1",
+                    "status": "open",
+                    "title": "Hyp 1",
+                    "success_metric": "m",
+                    "target_delta": 0.0,
+                },
             ],
             "experiments": [
-                {"id": "e1", "hypothesis_id": "h1", "status": "open",
-                 "iteration_id": "iter_test_001"},
-                {"id": "e2", "hypothesis_id": "h1", "status": "open",
-                 "iteration_id": "iter_test_002"},
+                {
+                    "id": "e1",
+                    "hypothesis_id": "h1",
+                    "status": "open",
+                    "iteration_id": "iter_test_001",
+                },
+                {
+                    "id": "e2",
+                    "hypothesis_id": "h1",
+                    "status": "open",
+                    "iteration_id": "iter_test_002",
+                },
             ],
         }
         path = repo / ".autolab" / "backlog.yaml"
@@ -2090,6 +2228,7 @@ class TestGapMultipleExperimentsBacklog:
 # Gap 7: Combined no_progress + same_decision_streak guardrails
 # ---------------------------------------------------------------------------
 
+
 class TestGapDecideRepeatStreakAndNoProgressCombined:
     """Verify interaction between no_progress and same_decision_streak guardrails."""
 
@@ -2100,22 +2239,23 @@ class TestGapDecideRepeatStreakAndNoProgressCombined:
             stage="decide_repeat",
             repeat_guard={
                 "last_decision": "hypothesis",
-                "same_decision_streak": 1,     # below max (3)
+                "same_decision_streak": 1,  # below max (3)
                 "last_open_task_count": 5,
-                "no_progress_decisions": 1,     # one more with same/higher count → 2 >= max(2)
+                "no_progress_decisions": 1,  # one more with same/higher count → 2 >= max(2)
                 "update_docs_cycle_count": 0,
                 "last_verification_passed": False,
             },
         )
         # Ensure open task count stays >= last_open_task_count (5)
-        _write_todo_md(repo, "# Tasks\n" + "".join(
-            f"- [ ] [hypothesis] task{i}\n" for i in range(6)
-        ))
+        _write_todo_md(
+            repo,
+            "# Tasks\n" + "".join(f"- [ ] [hypothesis] task{i}\n" for i in range(6)),
+        )
         _write_todo_state(repo, {})
 
         outcome = _run(
             state_path,
-            decision="design",       # different decision, so streak resets to 1
+            decision="design",  # different decision, so streak resets to 1
             auto_mode=True,
             auto_decision=True,
         )
@@ -2131,9 +2271,9 @@ class TestGapDecideRepeatStreakAndNoProgressCombined:
             stage="decide_repeat",
             repeat_guard={
                 "last_decision": "design",
-                "same_decision_streak": 3,     # one more same → 4 > max(3)
+                "same_decision_streak": 3,  # one more same → 4 > max(3)
                 "last_open_task_count": 20,
-                "no_progress_decisions": 0,    # well below max
+                "no_progress_decisions": 0,  # well below max
                 "update_docs_cycle_count": 0,
                 "last_verification_passed": False,
             },
@@ -2144,7 +2284,7 @@ class TestGapDecideRepeatStreakAndNoProgressCombined:
 
         outcome = _run(
             state_path,
-            decision="design",       # same decision → streak = 4 > 3
+            decision="design",  # same decision → streak = 4 > 3
             auto_mode=True,
             auto_decision=True,
         )
@@ -2157,6 +2297,7 @@ class TestGapDecideRepeatStreakAndNoProgressCombined:
 # ---------------------------------------------------------------------------
 # Gap 8: Assistant mode verify → fail → implement → verify → pass → review
 # ---------------------------------------------------------------------------
+
 
 def _write_policy_with_test_command(
     repo: Path,
@@ -2240,7 +2381,6 @@ class TestGapAssistantVerifyReviewCycle:
 
 
 class TestStageGateContracts:
-
     def test_standard_run_records_state_history(self, tmp_path: Path) -> None:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
         _seed_hypothesis(it_dir)
@@ -2257,9 +2397,13 @@ class TestStageGateContracts:
         assert latest.get("stage_after") == "design"
         assert latest.get("status") == "complete"
 
-    def test_hypothesis_requires_metric_target_and_criteria(self, tmp_path: Path) -> None:
+    def test_hypothesis_requires_metric_target_and_criteria(
+        self, tmp_path: Path
+    ) -> None:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="hypothesis")
-        (it_dir / "hypothesis.md").write_text("# Hypothesis\n\nnon-empty but incomplete", encoding="utf-8")
+        (it_dir / "hypothesis.md").write_text(
+            "# Hypothesis\n\nnon-empty but incomplete", encoding="utf-8"
+        )
 
         outcome = _run(state_path)
 
@@ -2268,16 +2412,18 @@ class TestStageGateContracts:
         persisted = _read_state(repo)
         assert persisted["stage"] == "hypothesis"
 
-    def test_implementation_requires_dry_run_heading_when_policy_demands_it(self, tmp_path: Path) -> None:
+    def test_implementation_requires_dry_run_heading_when_policy_demands_it(
+        self, tmp_path: Path
+    ) -> None:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation")
         _seed_implementation(it_dir)
 
         policy_path = repo / ".autolab" / "verifier_policy.yaml"
         policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
-        policy["requirements_by_stage"] = {
-            "implementation": {"dry_run": True}
-        }
-        policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+        policy["requirements_by_stage"] = {"implementation": {"dry_run": True}}
+        policy_path.write_text(
+            yaml.safe_dump(policy, sort_keys=False), encoding="utf-8"
+        )
 
         outcome = _run(state_path)
 
@@ -2293,7 +2439,9 @@ class TestStageGateContracts:
         _write_state(repo, state)
 
         # Deliberately omit run_id + artifact references.
-        (it_dir / "docs_update.md").write_text("# Documentation Update\n\nNo references here.\n", encoding="utf-8")
+        (it_dir / "docs_update.md").write_text(
+            "# Documentation Update\n\nNo references here.\n", encoding="utf-8"
+        )
 
         outcome = _run(state_path)
 

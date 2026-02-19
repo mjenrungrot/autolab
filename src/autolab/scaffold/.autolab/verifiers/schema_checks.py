@@ -52,12 +52,17 @@ except Exception:  # pragma: no cover
     Draft202012Validator = None
 
 try:
-    from autolab.config import _resolve_stage_requirements as _shared_resolve_stage_requirements
+    from autolab.config import (
+        _resolve_stage_requirements as _shared_resolve_stage_requirements,
+    )
 except Exception:  # pragma: no cover
     _shared_resolve_stage_requirements = None  # type: ignore[assignment]
 
 try:
-    from autolab.constants import REVIEW_RESULT_REQUIRED_CHECKS, REVIEW_RESULT_CHECK_STATUSES
+    from autolab.constants import (
+        REVIEW_RESULT_REQUIRED_CHECKS,
+        REVIEW_RESULT_CHECK_STATUSES,
+    )
 except Exception:  # pragma: no cover
     REVIEW_RESULT_REQUIRED_CHECKS = (  # type: ignore[misc]
         "tests",
@@ -97,7 +102,6 @@ SCHEMAS: dict[str, str] = {
 SYNC_SUCCESS_STATUSES = {"ok", "completed", "success", "passed"}
 
 
-
 def _load_policy() -> dict:
     policy_path = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
     if not policy_path.exists():
@@ -129,6 +133,7 @@ def _format_error_path(error_path: Iterable[Any]) -> str:
 def _patch_strict_additional_properties(schema: dict[str, Any]) -> dict[str, Any]:
     """Recursively set additionalProperties: false on all object schemas."""
     import copy
+
     patched = copy.deepcopy(schema)
     _patch_object_schema(patched)
     return patched
@@ -162,7 +167,9 @@ def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
         schema = _patch_strict_additional_properties(schema)
     validator = Draft202012Validator(schema)
     failures: list[str] = []
-    for error in sorted(validator.iter_errors(payload), key=lambda item: _format_error_path(item.path)):
+    for error in sorted(
+        validator.iter_errors(payload), key=lambda item: _format_error_path(item.path)
+    ):
         location = _format_error_path(error.path)
         failures.append(f"{path} schema violation at {location}: {error.message}")
     return failures
@@ -214,7 +221,6 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
                 if key in stage_section:
                     output[key] = bool(stage_section.get(key))
     return output
-
 
 
 def _iteration_dir(state: dict[str, Any]) -> Path:
@@ -281,13 +287,24 @@ def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
         return [f"{path} {exc}"]
 
     failures = _schema_validate(payload, schema_key="design", path=path)
-    if str(payload.get("iteration_id", "")).strip() and str(payload.get("iteration_id")).strip() != iteration_id:
+    if (
+        str(payload.get("iteration_id", "")).strip()
+        and str(payload.get("iteration_id")).strip() != iteration_id
+    ):
         failures.append(f"{path} iteration_id mismatch with state")
     return failures
 
 
-def _validate_review_result(state: dict[str, Any], policy: dict[str, Any], *, stage: str) -> list[str]:
-    if stage not in {"implementation_review", "launch", "extract_results", "update_docs", "decide_repeat"}:
+def _validate_review_result(
+    state: dict[str, Any], policy: dict[str, Any], *, stage: str
+) -> list[str]:
+    if stage not in {
+        "implementation_review",
+        "launch",
+        "extract_results",
+        "update_docs",
+        "decide_repeat",
+    }:
         return []
 
     path = _iteration_dir(state) / "review_result.json"
@@ -345,9 +362,15 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
     failures = _schema_validate(payload, schema_key="run_manifest", path=path)
     iteration_id = str(state.get("iteration_id", "")).strip()
     run_id = str(state.get("last_run_id", "")).strip()
-    if str(payload.get("iteration_id", "")).strip() and str(payload.get("iteration_id", "")).strip() != iteration_id:
+    if (
+        str(payload.get("iteration_id", "")).strip()
+        and str(payload.get("iteration_id", "")).strip() != iteration_id
+    ):
         failures.append(f"{path} iteration_id mismatch")
-    if str(payload.get("run_id", "")).strip() and str(payload.get("run_id", "")).strip() != run_id:
+    if (
+        str(payload.get("run_id", "")).strip()
+        and str(payload.get("run_id", "")).strip() != run_id
+    ):
         failures.append(f"{path} run_id mismatch")
 
     if stage == "launch":
@@ -367,9 +390,17 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
         except Exception as exc:
             failures.append(f"{design_path} {exc}")
             design_payload = {}
-        design_compute = design_payload.get("compute") if isinstance(design_payload, dict) else {}
-        design_location = str((design_compute or {}).get("location", "")).strip().lower()
-        host_mode = str(payload.get("host_mode", payload.get("launch_mode", ""))).strip().lower()
+        design_compute = (
+            design_payload.get("compute") if isinstance(design_payload, dict) else {}
+        )
+        design_location = (
+            str((design_compute or {}).get("location", "")).strip().lower()
+        )
+        host_mode = (
+            str(payload.get("host_mode", payload.get("launch_mode", "")))
+            .strip()
+            .lower()
+        )
         if design_location and host_mode and design_location != host_mode:
             failures.append(
                 f"{path} host mode '{host_mode}' does not match design.compute.location '{design_location}'"
@@ -406,9 +437,15 @@ def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
     failures = _schema_validate(payload, schema_key="metrics", path=path)
     iteration_id = str(state.get("iteration_id", "")).strip()
     run_id = str(state.get("last_run_id", "")).strip()
-    if str(payload.get("iteration_id", "")).strip() and str(payload.get("iteration_id", "")).strip() != iteration_id:
+    if (
+        str(payload.get("iteration_id", "")).strip()
+        and str(payload.get("iteration_id", "")).strip() != iteration_id
+    ):
         failures.append(f"{path} iteration_id mismatch")
-    if str(payload.get("run_id", "")).strip() and str(payload.get("run_id", "")).strip() != run_id:
+    if (
+        str(payload.get("run_id", "")).strip()
+        and str(payload.get("run_id", "")).strip() != run_id
+    ):
         failures.append(f"{path} run_id mismatch")
 
     primary_metric = payload.get("primary_metric")
@@ -510,8 +547,15 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", default=None, help="Override stage from .autolab/state.json")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--stage", default=None, help="Override stage from .autolab/state.json"
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -520,7 +564,13 @@ def main() -> int:
         state = load_state()
     except Exception as exc:
         if args.json:
-            envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": [str(exc)]}
+            envelope = {
+                "status": "fail",
+                "verifier": "schema_checks",
+                "stage": "",
+                "checks": [],
+                "errors": [str(exc)],
+            }
             print(json.dumps(envelope))
         else:
             print(f"schema_checks: ERROR {exc}")
@@ -528,7 +578,13 @@ def main() -> int:
     stage = _resolve_stage(state, args.stage)
     if not stage:
         if args.json:
-            envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": ["state stage is missing"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "schema_checks",
+                "stage": "",
+                "checks": [],
+                "errors": ["state stage is missing"],
+            }
             print(json.dumps(envelope))
         else:
             print("schema_checks: ERROR state stage is missing")
@@ -554,7 +610,13 @@ def main() -> int:
     if args.json:
         checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
         if passed:
-            checks = [{"name": "schema_checks", "status": "pass", "detail": "all schema checks passed"}]
+            checks = [
+                {
+                    "name": "schema_checks",
+                    "status": "pass",
+                    "detail": "all schema checks passed",
+                }
+            ]
         envelope = {
             "status": "pass" if passed else "fail",
             "verifier": "schema_checks",
@@ -587,7 +649,9 @@ def main() -> int:
                             hint = f" Hint: {schema_hint}"
                             break
                     print(f"  {i}. {failure_text}{hint}")
-                print(f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`")
+                print(
+                    f"\nNext steps: fix the above issues and rerun `autolab verify --stage {stage}`"
+                )
         else:
             print("schema_checks: PASS")
 

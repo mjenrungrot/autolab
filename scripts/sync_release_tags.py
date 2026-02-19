@@ -62,7 +62,9 @@ def _semver_key(tag: str) -> tuple[int, int, int]:
 def _list_remote_semver_tags(remote: str) -> list[str]:
     result = _run_git(["ls-remote", "--tags", "--refs", remote], check=False)
     if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout).strip() or "ls-remote failed")
+        raise RuntimeError(
+            (result.stderr or result.stdout).strip() or "ls-remote failed"
+        )
 
     tags: list[str] = []
     for line in result.stdout.splitlines():
@@ -84,7 +86,12 @@ def _default_pyproject_path() -> Path:
 
 
 def _tag_exists_local(tag: str) -> bool:
-    return _run_git(["rev-parse", "-q", "--verify", f"refs/tags/{tag}"], check=False).returncode == 0
+    return (
+        _run_git(
+            ["rev-parse", "-q", "--verify", f"refs/tags/{tag}"], check=False
+        ).returncode
+        == 0
+    )
 
 
 def _remote_exists(remote: str) -> bool:
@@ -150,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not _remote_exists(args.remote):
-        print(f"sync-release-tags: remote '{args.remote}' not found; skipped remote sync")
+        print(
+            f"sync-release-tags: remote '{args.remote}' not found; skipped remote sync"
+        )
         return 0
 
     if args.dry_run:
@@ -185,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    prune_tags = remote_tags[:-args.keep] if len(remote_tags) > args.keep else []
+    prune_tags = remote_tags[: -args.keep] if len(remote_tags) > args.keep else []
     if not prune_tags:
         print(
             f"sync-release-tags: remote has {len(remote_tags)} semantic tags; "
@@ -193,10 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    print(
-        "sync-release-tags: pruning oldest tags on remote: "
-        + ", ".join(prune_tags)
-    )
+    print("sync-release-tags: pruning oldest tags on remote: " + ", ".join(prune_tags))
     for tag in prune_tags:
         if args.dry_run:
             print(f"sync-release-tags: would delete remote tag {tag}")
