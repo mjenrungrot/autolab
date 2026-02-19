@@ -155,6 +155,18 @@ def _compute_next_stage_attempt(
     return (0, None, None)
 
 
+def _augment_agent_runner_failure_detail(detail: str) -> str:
+    normalized = str(detail).strip()
+    if "modified protected file(s)" not in normalized:
+        return normalized
+    if "Remediation:" in normalized:
+        return normalized
+    return (
+        f"{normalized}. Remediation: restore protected files and rerun with --no-run-agent "
+        "or narrow agent_runner.stages/edit_scope for this stage."
+    )
+
+
 def _handle_stage_failure(
     repo_root: Path,
     *,
@@ -925,13 +937,14 @@ def _run_once_standard(
                     auto_mode=auto_mode,
                 )
             except StageCheckError as exc:
+                detail = _augment_agent_runner_failure_detail(str(exc))
                 return _handle_stage_failure(
                     repo_root,
                     state_path=state_path,
                     state=state,
                     stage_before=stage_before,
                     pre_sync_changed=pre_sync_changed,
-                    detail=f"agent runner error: {exc}",
+                    detail=f"agent runner error: {detail}",
                 )
 
     if auto_mode or verify_before_evaluate:

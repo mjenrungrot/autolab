@@ -4,3 +4,4 @@
 - `src/` contains reusable implementation code; `scripts/` contains utilities; `{{iteration_path}}/implementation/` is for experiment-local artifacts.
 - Non-allowlisted directories are **out-of-scope**. Do not create, modify, or delete files there unless a human explicitly broadens scope.
 - If you discover a necessary edit is out-of-scope, note it in your output as a follow-up action instead of making the edit.
+- Treat policy/orchestration files as read-only unless the stage explicitly lists them as writable outputs; include proposed policy edits in notes rather than modifying protected files.

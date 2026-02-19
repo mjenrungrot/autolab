@@ -216,3 +216,62 @@ def test_scope_error_still_writes_terminal_report(
     assert payload["exit_code"] == 0
     assert payload.get("finalized_at")
     assert "out_of_scope" in payload.get("error", "")
+
+
+def test_protected_file_violation_includes_remediation_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    state_path = _configure_runner_environment(
+        monkeypatch,
+        repo_root,
+        process_factory=_ExitZeroProcess,
+        delta_paths=[".autolab/verifier_policy.yaml"],
+    )
+
+    runner_config = AgentRunnerConfig(
+        runner="codex",
+        enabled=True,
+        command="fake-runner",
+        stages=("implementation",),
+        edit_scope=AgentRunnerEditScopeConfig(
+            mode="iteration_plus_core",
+            core_dirs=(".autolab",),
+            ensure_iteration_dir=False,
+        ),
+        timeout_seconds=60.0,
+        codex_dangerously_bypass_approvals_and_sandbox=False,
+    )
+    monkeypatch.setattr(runners, "_load_agent_runner_config", lambda _root: runner_config)
+    monkeypatch.setattr(
+        runners,
+        "_build_core_add_dir_flags",
+        lambda _repo_root, **_kwargs: (
+            "--add-dir fake",
+            (repo_root / ".autolab",),
+        ),
+    )
+    monkeypatch.setattr(
+        runners,
+        "_load_protected_files",
+        lambda _policy, auto_mode=False: [".autolab/verifier_policy.yaml"],
+    )
+
+    with pytest.raises(StageCheckError, match="modified protected file\\(s\\)"):
+        runners._invoke_agent_runner(
+            repo_root,
+            state_path=state_path,
+            stage="implementation",
+            iteration_id="iter1",
+            run_agent_mode="policy",
+        )
+
+    report_path = repo_root / ".autolab" / "runner_execution_report.json"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["termination_reason"] == "post_run_validation"
+    assert payload["exit_code"] == 0
+    assert payload.get("finalized_at")
+    assert "modified protected file(s)" in payload.get("error", "")
+    assert "Remediation:" in payload.get("error", "")

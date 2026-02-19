@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 import autolab.commands as commands_module
+from autolab.validators import _build_verification_command_specs
 
 
 def _copy_scaffold(repo: Path) -> None:
@@ -188,3 +189,59 @@ def test_run_blocks_on_stage_readiness_when_run_id_missing(tmp_path: Path) -> No
     next_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert next_state["stage"] == "extract_results"
     assert next_state["stage_attempt"] == 1
+
+
+def test_verification_specs_skip_result_sanity_for_implementation_review(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "implementation_review",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+
+    _stage, _requirements, command_specs = _build_verification_command_specs(
+        repo,
+        state,
+        stage_override="implementation_review",
+    )
+    command_names = [name for name, _command in command_specs]
+    assert "run_health" in command_names
+    assert "result_sanity" not in command_names
+
+
+def test_verification_specs_include_result_sanity_for_extract_results(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "extract_results",
+        "stage_attempt": 0,
+        "last_run_id": "run_001",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+
+    _stage, _requirements, command_specs = _build_verification_command_specs(
+        repo,
+        state,
+        stage_override="extract_results",
+    )
+    command_names = [name for name, _command in command_specs]
+    assert "run_health" in command_names
+    assert "result_sanity" in command_names

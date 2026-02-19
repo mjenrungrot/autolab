@@ -49,6 +49,13 @@ def _compact_log_text(text: str, limit: int = 240) -> str:
     return f"{compact[:limit]}..."
 
 
+def _protected_files_remediation_hint() -> str:
+    return (
+        "Restore protected files to their pre-run contents, then rerun with a stage-appropriate "
+        "runner scope or use --no-run-agent for this stage."
+    )
+
+
 SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*([^\s]+)"),
     re.compile(r"(?i)\b(authorization:\s*bearer)\s+([^\s]+)"),
@@ -844,16 +851,19 @@ def _invoke_agent_runner(
                 )
                 if violated:
                     sample = ", ".join(violated[:8])
+                    remediation = _protected_files_remediation_hint()
                     _append_log(
                         repo_root,
                         (
                             f"agent runner modified protected file(s): {sample}. "
-                            f"Protected files: {protected_files}"
+                            f"Protected files: {protected_files}. "
+                            f"Remediation: {remediation}"
                         ),
                     )
                     raise StageCheckError(
                         f"agent runner modified protected file(s): {sample}. "
-                        f"Protected files: {protected_files}"
+                        f"Protected files: {protected_files}. "
+                        f"Remediation: {remediation}"
                     )
     except StageCheckError as exc:
         scope_error = exc

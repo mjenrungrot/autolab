@@ -64,7 +64,8 @@ template_fill_by_stage:
 #   schema           – run schema_checks.py
 #   prompt_lint      – run prompt_lint.py
 #   consistency      – run consistency_checks.py
-#   env_smoke        – run run_health.py + result_sanity.py
+#   env_smoke        – run run_health.py (all env_smoke stages) and
+#                      result_sanity.py only for extract_results
 #   docs_target_update – run docs_targets.py
 requirements_by_stage:
   hypothesis:  # Early stage: only validate structure and prompts
