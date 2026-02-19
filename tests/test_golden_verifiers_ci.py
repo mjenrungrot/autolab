@@ -71,15 +71,14 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
     policy_path = target / "verifier_policy.yaml"
     policy_text = policy_path.read_text(encoding="utf-8")
-    # Point python_bin at the running interpreter so subprocess verifiers work.
-    policy_text = policy_text.replace(
-        'python_bin: "python3"', f'python_bin: "{sys.executable}"', 1
-    )
     # Replace the entire dry_run_command line with a passing command.
     # The default stub intentionally exits non-zero to force configuration.
     lines = policy_text.splitlines(keepends=True)
     for i, line in enumerate(lines):
         stripped = line.strip()
+        if stripped.startswith("python_bin:"):
+            lines[i] = f'python_bin: "{sys.executable}"\n'
+            continue
         if stripped.startswith("dry_run_command:") and "AUTOLAB DRY-RUN STUB" in line:
             lines[i] = 'dry_run_command: "echo golden-iteration-dry-run-OK"\n'
     policy_text = "".join(lines)

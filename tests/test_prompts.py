@@ -517,6 +517,32 @@ def test_target_comparison_minimize_not_met() -> None:
     assert "design" in suggestion
 
 
+def test_target_comparison_invalid_maximize_sign_returns_unavailable() -> None:
+    payload = {"primary_metric": {"name": "accuracy", "delta_vs_baseline": 3.0}}
+    comparison, suggestion = _target_comparison_text(
+        metrics_payload=payload,
+        hypothesis_target_delta=-1.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="maximize",
+    )
+    assert "invalid target_delta semantics" in comparison
+    assert "human_review" in suggestion
+
+
+def test_target_comparison_invalid_minimize_sign_returns_unavailable() -> None:
+    payload = {"primary_metric": {"name": "loss", "delta_vs_baseline": -0.5}}
+    comparison, suggestion = _target_comparison_text(
+        metrics_payload=payload,
+        hypothesis_target_delta=1.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="minimize",
+    )
+    assert "invalid target_delta semantics" in comparison
+    assert "human_review" in suggestion
+
+
 def test_suggest_decision_from_metrics_minimize_mode(tmp_path: Path) -> None:
     repo, state = _setup_metrics_repo(
         tmp_path,

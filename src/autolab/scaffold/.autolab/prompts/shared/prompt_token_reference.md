@@ -12,7 +12,7 @@
 - **design**: `{{iteration_id}}`, `{{iteration_path}}`, `{{hypothesis_id}}`
 - **implementation**: `{{iteration_id}}`, `{{iteration_path}}`
 - **implementation_review**: `{{iteration_id}}`, `{{iteration_path}}`
-- **launch**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{launch_mode}}`, `{{run_group}}`, `{{replicate_count}}`
+- **launch**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{launch_mode}}`, `{{launch_execute}}`, `{{run_group}}`, `{{replicate_count}}`
 - **slurm_monitor**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`
 - **extract_results**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{run_group}}`, `{{replicate_count}}`
 - **update_docs**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{paper_targets}}`
@@ -35,6 +35,7 @@
 - `{{run_group}}` -- JSON list of replicate run IDs (empty for single runs)
 - `{{replicate_count}}` -- Number of replicates from design.yaml (1 for single runs)
 - `{{task_context}}` -- Task context for assistant mode (task_id, title, acceptance criteria)
+- `{{launch_execute}}` -- Launch execution policy toggle (`true`/`false`)
 
 ### Shared includes
 

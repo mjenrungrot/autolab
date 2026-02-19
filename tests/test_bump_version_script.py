@@ -75,3 +75,51 @@ version = "0.0.9"
     assert old_tag_version == "0.0.9"
     assert pyproject_path.read_text(encoding="utf-8") == original_pyproject
     assert readme_path.read_text(encoding="utf-8") == original_readme
+
+
+def test_bump_version_uses_tomli_fallback_when_tomllib_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_bump_module()
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        """[project]
+name = "autolab"
+version = "3.2.1"
+""",
+        encoding="utf-8",
+    )
+
+    class _TomliFallback:
+        @staticmethod
+        def loads(text: str) -> dict:
+            assert "3.2.1" in text
+            return {"project": {"version": "3.2.1"}}
+
+    monkeypatch.setattr(module, "tomllib", None)
+    monkeypatch.setattr(module, "tomli", _TomliFallback())
+
+    assert module._load_project_version(pyproject_path) == "3.2.1"
+
+
+def test_bump_version_errors_when_no_toml_parser_available(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_bump_module()
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        """[project]
+name = "autolab"
+version = "1.0.0"
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "tomllib", None)
+    monkeypatch.setattr(module, "tomli", None)
+
+    try:
+        module._load_project_version(pyproject_path)
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "tomllib/tomli is unavailable" in str(exc)

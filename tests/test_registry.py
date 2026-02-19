@@ -154,6 +154,20 @@ def test_launch_requires_run_id_token(tmp_path: Path) -> None:
     assert "run_id" in decide_repeat.required_tokens
 
 
+def test_registry_optional_tokens_are_loaded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    registry = load_registry(repo)
+
+    launch = registry.get("launch")
+    implementation_review = registry.get("implementation_review")
+    assert launch is not None
+    assert implementation_review is not None
+    assert "launch_execute" in launch.optional_tokens
+    assert "verifier_outputs" in implementation_review.optional_tokens
+
+
 def test_registry_run_scoped_required_outputs_use_run_id_pattern(
     tmp_path: Path,
 ) -> None:

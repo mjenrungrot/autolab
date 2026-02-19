@@ -9,6 +9,7 @@ Produce the requested code/documentation changes for the focused task without vi
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:assistant_guardrails.md}}
 {{shared:skill_playbook.md}}
 
 ## OUTPUTS (STRICT)

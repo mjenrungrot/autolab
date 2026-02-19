@@ -21,6 +21,7 @@ Token records:
 - `token`: `{{verifier_outputs}}`; `meaning`: Compacted verifier output summary context; `typical_stages`: review, decide_repeat.
 - `token`: `{{dry_run_output}}`; `meaning`: Output from configured dry-run command; `typical_stages`: implementation, review.
 - `token`: `{{launch_mode}}`; `meaning`: Resolved launch host mode (`local` or `slurm`); `typical_stages`: launch.
+- `token`: `{{launch_execute}}`; `meaning`: Launch execution policy toggle (`true`/`false`) controlling execute-vs-artifact-only launch behavior; `typical_stages`: launch.
 - `token`: `{{metrics_summary}}`; `meaning`: Compacted metrics summary for decision/docs stages; `typical_stages`: update_docs, decide_repeat.
 - `token`: `{{target_comparison}}`; `meaning`: Computed target-vs-observed comparison text; `typical_stages`: update_docs, decide_repeat.
 - `token`: `{{decision_suggestion}}`; `meaning`: Autolab suggested next-stage decision; `typical_stages`: decide_repeat.

@@ -6,7 +6,9 @@ import yaml
 
 from autolab.config import (
     _load_guardrail_config,
+    _load_launch_execute_policy,
     _load_protected_files,
+    _load_slurm_lifecycle_strict_policy,
     _load_strict_mode_config,
 )
 
@@ -115,3 +117,35 @@ def test_load_strict_mode_config_auto_mode_respects_explicit_override(
     strict = _load_strict_mode_config(repo, auto_mode=True)
 
     assert strict.require_human_review_for_stop is False
+
+
+def test_load_launch_execute_policy_defaults_true(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert _load_launch_execute_policy(repo) is True
+
+
+def test_load_launch_execute_policy_reads_false(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text("launch:\n  execute: false\n", encoding="utf-8")
+
+    assert _load_launch_execute_policy(repo) is False
+
+
+def test_load_slurm_lifecycle_strict_policy_defaults_true(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert _load_slurm_lifecycle_strict_policy(repo) is True
+
+
+def test_load_slurm_lifecycle_strict_policy_reads_false(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text("slurm:\n  lifecycle_strict: false\n", encoding="utf-8")
+
+    assert _load_slurm_lifecycle_strict_policy(repo) is False

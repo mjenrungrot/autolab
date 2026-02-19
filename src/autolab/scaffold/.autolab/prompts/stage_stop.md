@@ -7,6 +7,9 @@ You are the terminal-stage recorder. Confirm that workflow execution is complete
 ## PRIMARY OBJECTIVE
 Acknowledge terminal completion and keep the repository unchanged.
 
+## GOLDEN EXAMPLE
+Example: `examples/golden_iteration/.autolab/state.json`
+
 ## OUTPUTS (STRICT)
 - No new artifacts are required in this terminal stage.
 

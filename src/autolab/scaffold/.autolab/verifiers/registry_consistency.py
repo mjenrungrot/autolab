@@ -60,6 +60,58 @@ def _check_subset_constraints(
     return failures
 
 
+def _check_output_contract_placeholders(workflow: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    stages = workflow.get("stages", {})
+    if not isinstance(stages, dict):
+        return failures
+
+    def _check_output_path(stage: str, path: str) -> None:
+        output_path = str(path).strip()
+        if not output_path:
+            return
+        if "{{" in output_path or "}}" in output_path:
+            failures.append(
+                (
+                    f"workflow.yaml stages.{stage} output path '{output_path}' uses prompt-style mustache tokens; "
+                    "use pattern tokens like <RUN_ID> for registry/policy path contracts"
+                )
+            )
+
+    for raw_stage, raw_spec in stages.items():
+        stage = str(raw_stage).strip()
+        if not stage or not isinstance(raw_spec, dict):
+            continue
+
+        required_outputs = raw_spec.get("required_outputs", [])
+        if isinstance(required_outputs, list):
+            for output in required_outputs:
+                _check_output_path(stage, str(output))
+
+        required_outputs_any_of = raw_spec.get("required_outputs_any_of", [])
+        if isinstance(required_outputs_any_of, list):
+            for group in required_outputs_any_of:
+                if not isinstance(group, list):
+                    continue
+                for output in group:
+                    _check_output_path(stage, str(output))
+
+        required_outputs_if = raw_spec.get("required_outputs_if", [])
+        if isinstance(required_outputs_if, dict):
+            required_outputs_if = [required_outputs_if]
+        if isinstance(required_outputs_if, list):
+            for rule in required_outputs_if:
+                if not isinstance(rule, dict):
+                    continue
+                outputs = rule.get("outputs", [])
+                if not isinstance(outputs, list):
+                    continue
+                for output in outputs:
+                    _check_output_path(stage, str(output))
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -83,6 +135,7 @@ def main() -> int:
         return 1
 
     failures = _check_subset_constraints(workflow, policy)
+    failures.extend(_check_output_contract_placeholders(workflow))
     passed = not failures
 
     checks = [{"name": issue, "status": "fail", "detail": issue} for issue in failures]

@@ -29,6 +29,7 @@ stages:
   hypothesis:
     prompt_file: stage_hypothesis.md
     required_tokens: [iteration_id, iteration_path, hypothesis_id]
+    optional_tokens: []
     required_outputs: [hypothesis.md]
     next_stage: design
     verifier_categories:
@@ -47,6 +48,7 @@ stages:
   design:
     prompt_file: stage_design.md
     required_tokens: [iteration_id, iteration_path, hypothesis_id]
+    optional_tokens: [available_memory_gb, experiment_id, recommended_memory_estimate]
     required_outputs: [design.yaml]
     next_stage: implementation
     verifier_categories:
@@ -65,6 +67,7 @@ stages:
   implementation:
     prompt_file: stage_implementation.md
     required_tokens: [iteration_id, iteration_path]
+    optional_tokens: [review_feedback, verifier_errors]
     required_outputs: [implementation_plan.md]
     next_stage: implementation_review
     verifier_categories:
@@ -83,6 +86,7 @@ stages:
   implementation_review:
     prompt_file: stage_implementation_review.md
     required_tokens: [iteration_id, iteration_path]
+    optional_tokens: [diff_summary, dry_run_output, verifier_outputs]
     required_outputs: [implementation_review.md, review_result.json]
     next_stage: launch
     verifier_categories:
@@ -101,6 +105,7 @@ stages:
   launch:
     prompt_file: stage_launch.md
     required_tokens: [iteration_id, iteration_path, run_id]
+    optional_tokens: [launch_mode, recommended_memory_estimate, run_group, replicate_count, launch_execute]
     required_outputs: [runs/<RUN_ID>/run_manifest.json]
     required_outputs_any_of:
       - [launch/run_local.sh, launch/run_slurm.sbatch]
@@ -124,6 +129,7 @@ stages:
   slurm_monitor:
     prompt_file: stage_slurm_monitor.md
     required_tokens: [iteration_id, iteration_path, run_id]
+    optional_tokens: []
     required_outputs: [runs/<RUN_ID>/run_manifest.json]
     required_outputs_if:
       - host_mode: slurm
@@ -145,6 +151,7 @@ stages:
   extract_results:
     prompt_file: stage_extract_results.md
     required_tokens: [iteration_id, iteration_path, run_id]
+    optional_tokens: [run_group, replicate_count]
     required_outputs: [runs/<RUN_ID>/metrics.json, analysis/summary.md]
     next_stage: update_docs
     verifier_categories:
@@ -163,6 +170,7 @@ stages:
   update_docs:
     prompt_file: stage_update_docs.md
     required_tokens: [iteration_id, iteration_path, run_id]
+    optional_tokens: [paper_targets, metrics_summary, target_comparison]
     required_outputs: [docs_update.md]
     next_stage: decide_repeat
     verifier_categories:
@@ -181,6 +189,7 @@ stages:
   decide_repeat:
     prompt_file: stage_decide_repeat.md
     required_tokens: [iteration_id, iteration_path, run_id]
+    optional_tokens: [metrics_summary, target_comparison, decision_suggestion, auto_metrics_evidence]
     required_outputs: [decision_result.json]
     next_stage: ''
     decision_map:
@@ -204,6 +213,7 @@ stages:
   human_review:
     prompt_file: stage_human_review.md
     required_tokens: []
+    optional_tokens: []
     required_outputs: []
     next_stage: ''
     verifier_categories:
@@ -222,6 +232,7 @@ stages:
   stop:
     prompt_file: stage_stop.md
     required_tokens: []
+    optional_tokens: []
     required_outputs: []
     next_stage: ''
     verifier_categories:

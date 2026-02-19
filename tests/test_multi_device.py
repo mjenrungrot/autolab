@@ -185,6 +185,7 @@ def _seed_hypothesis(iteration_dir: Path) -> None:
             "## Primary Metric\n"
             "PrimaryMetric: accuracy; Unit: %; Success: baseline +2.0\n\n"
             "- metric: accuracy\n"
+            "- metric_mode: maximize\n"
             "- target_delta: 2.0\n"
             "- criteria: improve top-1 accuracy by at least 2.0 points\n"
         ),
@@ -348,6 +349,17 @@ def _seed_slurm_launch(
     )
     run_dir = iteration_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    normalized_sync = str(sync_status).strip().lower()
+    if normalized_sync in {"ok", "completed", "success", "passed"}:
+        manifest_status = "synced"
+        manifest_sync = "ok"
+    elif normalized_sync in {"failed", "error"}:
+        manifest_status = "failed"
+        manifest_sync = "failed"
+    else:
+        manifest_status = "submitted"
+        manifest_sync = normalized_sync or "pending"
+
     manifest: dict[str, Any] = {
         "run_id": run_id,
         "iteration_id": iteration_id,
@@ -357,9 +369,9 @@ def _seed_slurm_launch(
         "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
         "completed_at": "2026-01-01T00:05:00Z",
-        "status": "completed",
+        "status": manifest_status,
         "slurm": {"job_id": job_id},
-        "artifact_sync_to_local": {"status": sync_status},
+        "artifact_sync_to_local": {"status": manifest_sync},
         "timestamps": {
             "started_at": "2026-01-01T00:00:00Z",
             "completed_at": "2026-01-01T00:05:00Z",
@@ -388,9 +400,9 @@ def _seed_slurm_extract(
         "resource_request": {"partition": "debug"},
         "started_at": "2026-01-01T00:00:00Z",
         "completed_at": "2026-01-01T00:05:00Z",
-        "status": "completed",
+        "status": "synced",
         "slurm": {"job_id": job_id},
-        "artifact_sync_to_local": {"status": "completed"},
+        "artifact_sync_to_local": {"status": "ok"},
         "timestamps": {
             "started_at": "2026-01-01T00:00:00Z",
             "completed_at": "2026-01-01T00:05:00Z",

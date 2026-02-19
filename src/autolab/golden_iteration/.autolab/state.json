@@ -1,0 +1,25 @@
+{
+  "iteration_id": "iter_golden",
+  "experiment_id": "e_golden",
+  "stage": "decide_repeat",
+  "stage_attempt": 0,
+  "last_run_id": "20260201T120000Z_demo",
+  "sync_status": "completed",
+  "max_stage_attempts": 3,
+  "max_total_iterations": 20,
+  "assistant_mode": "off",
+  "current_task_id": "",
+  "task_cycle_stage": "done",
+  "paper_targets": [
+    "paper/results.md"
+  ],
+  "repeat_guard": {
+    "last_decision": "stop",
+    "same_decision_streak": 1,
+    "last_open_task_count": 0,
+    "no_progress_decisions": 0,
+    "update_docs_cycle_count": 1,
+    "last_verification_passed": true
+  },
+  "task_change_baseline": {}
+}

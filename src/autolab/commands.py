@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import importlib.resources as importlib_resources
 import json
 import shutil
@@ -91,6 +92,11 @@ from autolab.slurm_job_list import (
 )
 
 POLICY_PRESET_NAMES = ("local_dev", "ci_strict", "slurm")
+SUPPORTED_SKILL_PROVIDERS = ("codex", "claude")
+SKILL_INSTALL_ROOT_BY_PROVIDER = {
+    "codex": ".codex",
+    "claude": ".claude",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -98,13 +104,30 @@ POLICY_PRESET_NAMES = ("local_dev", "ci_strict", "slurm")
 # ---------------------------------------------------------------------------
 
 
-def _list_bundled_skills(provider: str) -> list[str]:
+def _normalize_skill_provider(provider: str) -> str:
     normalized_provider = str(provider).strip().lower()
-    if normalized_provider != "codex":
-        raise RuntimeError(f"unsupported skill provider '{provider}'")
+    if normalized_provider not in SUPPORTED_SKILL_PROVIDERS:
+        raise RuntimeError(
+            f"unsupported skill provider '{provider}' (expected one of: {', '.join(SUPPORTED_SKILL_PROVIDERS)})"
+        )
+    return normalized_provider
+
+
+def _skill_install_root(project_root: Path, provider: str) -> Path:
+    normalized_provider = _normalize_skill_provider(provider)
+    provider_root = SKILL_INSTALL_ROOT_BY_PROVIDER[normalized_provider]
+    return project_root / provider_root / "skills"
+
+
+def _list_bundled_skills(provider: str) -> list[str]:
+    normalized_provider = _normalize_skill_provider(provider)
     skills_root = importlib_resources.files("autolab").joinpath(
         "skills", normalized_provider
     )
+    if not skills_root.is_dir():
+        raise RuntimeError(
+            f"bundled skills directory is unavailable at package://autolab/skills/{normalized_provider}"
+        )
     found: list[str] = []
     for child in skills_root.iterdir():
         if child.joinpath("SKILL.md").is_file():
@@ -113,9 +136,7 @@ def _list_bundled_skills(provider: str) -> list[str]:
 
 
 def _load_packaged_skill_template_text(provider: str, skill_name: str) -> str:
-    normalized_provider = str(provider).strip().lower()
-    if normalized_provider != "codex":
-        raise RuntimeError(f"unsupported skill provider '{provider}'")
+    normalized_provider = _normalize_skill_provider(provider)
 
     resource = importlib_resources.files("autolab").joinpath(
         "skills",
@@ -617,7 +638,7 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
 
 
 def _cmd_install_skill(args: argparse.Namespace) -> int:
-    provider = str(getattr(args, "provider", "")).strip().lower()
+    provider = _normalize_skill_provider(str(getattr(args, "provider", "")).strip())
     project_root = Path(getattr(args, "project_root", ".")).expanduser().resolve()
     single_skill = getattr(args, "skill", None)
 
@@ -632,10 +653,13 @@ def _cmd_install_skill(args: argparse.Namespace) -> int:
 
     print("autolab install-skill")
     print(f"provider: {provider}")
+    print(f"install_root: {_skill_install_root(project_root, provider)}")
 
     installed = 0
     for skill_name in skill_names:
-        destination = project_root / ".codex" / "skills" / skill_name / "SKILL.md"
+        destination = (
+            _skill_install_root(project_root, provider) / skill_name / "SKILL.md"
+        )
         try:
             template_text = _load_packaged_skill_template_text(provider, skill_name)
         except Exception as exc:
@@ -1564,95 +1588,107 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
     active stage plus ``decide_repeat``.  Reports pass/fail for each stage
     and returns 0 if all pass, 1 if any fail.
     """
-    # Locate golden iteration examples relative to the autolab package source.
-    package_dir = Path(__file__).resolve().parent
-    golden_root = package_dir.parent.parent / "examples" / "golden_iteration"
-    scaffold_source = package_dir / "scaffold" / ".autolab"
-
-    if not golden_root.exists():
-        print(
-            f"autolab verify-golden: ERROR golden iteration fixtures not found at {golden_root}",
-            file=sys.stderr,
-        )
-        return 1
-    if not scaffold_source.exists():
-        print(
-            f"autolab verify-golden: ERROR scaffold not found at {scaffold_source}",
-            file=sys.stderr,
-        )
-        return 1
-
     stages = list(ACTIVE_STAGES)
     if "decide_repeat" not in stages:
         stages.append("decide_repeat")
     results: list[tuple[str, bool]] = []
-
-    with tempfile.TemporaryDirectory(prefix="autolab_verify_golden_") as tmp:
-        repo = Path(tmp) / "repo"
-        repo.mkdir()
-
-        # 1. Copy scaffold to .autolab/
-        target_autolab = repo / ".autolab"
-        shutil.copytree(scaffold_source, target_autolab, dirs_exist_ok=True)
-
-        # 2. Patch verifier_policy.yaml: replace python_bin with actual binary
-        #    and replace the dry-run stub so it passes.
-        policy_path = target_autolab / "verifier_policy.yaml"
-        policy_text = policy_path.read_text(encoding="utf-8")
-        policy_text = policy_text.replace(
-            'python_bin: "python3"', f'python_bin: "{sys.executable}"', 1
+    with ExitStack() as resource_stack:
+        golden_resource = importlib_resources.files("autolab").joinpath(
+            "golden_iteration"
         )
-        policy_lines = policy_text.splitlines()
-        for idx, line in enumerate(policy_lines):
-            if line.strip().startswith("dry_run_command:"):
-                policy_lines[idx] = (
-                    'dry_run_command: "{{python_bin}} -c \\"print(\'golden iteration dry-run: OK\')\\""'
-                )
-                break
-        policy_text = "\n".join(policy_lines) + (
-            "\n" if policy_text.endswith("\n") else ""
+        scaffold_resource = importlib_resources.files("autolab").joinpath(
+            "scaffold", ".autolab"
         )
-        policy_path.write_text(policy_text, encoding="utf-8")
-
-        # 3. Copy golden iteration experiments/ and paper/
-        shutil.copytree(
-            golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
-        )
-        shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
-
-        # 4. Copy golden iteration state.json and backlog.yaml
-        shutil.copy2(
-            golden_root / ".autolab" / "state.json",
-            target_autolab / "state.json",
-        )
-        shutil.copy2(
-            golden_root / ".autolab" / "backlog.yaml",
-            target_autolab / "backlog.yaml",
-        )
-
-        # 5. Write minimal agent_result.json
-        agent_result = {
-            "status": "complete",
-            "summary": "golden fixture",
-            "changed_files": [],
-            "completion_token_seen": True,
-        }
-        (target_autolab / "agent_result.json").write_text(
-            json.dumps(agent_result, indent=2), encoding="utf-8"
-        )
-
-        state_path = target_autolab / "state.json"
-
-        # 6. Run verify for each stage
-        print("autolab verify-golden")
-        for stage in stages:
-            exit_code = main(
-                ["verify", "--state-file", str(state_path), "--stage", stage]
+        if not golden_resource.is_dir():
+            print(
+                "autolab verify-golden: ERROR packaged golden iteration fixtures are unavailable "
+                "(expected package://autolab/golden_iteration)",
+                file=sys.stderr,
             )
-            passed = exit_code == 0
-            results.append((stage, passed))
-            status_label = "PASS" if passed else "FAIL"
-            print(f"  {stage}: {status_label}")
+            return 1
+        if not scaffold_resource.is_dir():
+            print(
+                "autolab verify-golden: ERROR packaged scaffold is unavailable "
+                "(expected package://autolab/scaffold/.autolab)",
+                file=sys.stderr,
+            )
+            return 1
+
+        golden_root = resource_stack.enter_context(
+            importlib_resources.as_file(golden_resource)
+        )
+        scaffold_source = resource_stack.enter_context(
+            importlib_resources.as_file(scaffold_resource)
+        )
+
+        with tempfile.TemporaryDirectory(prefix="autolab_verify_golden_") as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+
+            # 1. Copy scaffold to .autolab/
+            target_autolab = repo / ".autolab"
+            shutil.copytree(scaffold_source, target_autolab, dirs_exist_ok=True)
+
+            # 2. Patch verifier_policy.yaml: replace python_bin with actual binary
+            #    and replace the dry-run stub so it passes.
+            policy_path = target_autolab / "verifier_policy.yaml"
+            policy_text = policy_path.read_text(encoding="utf-8")
+            had_trailing_newline = policy_text.endswith("\n")
+            policy_lines = policy_text.splitlines()
+            for idx, line in enumerate(policy_lines):
+                if line.strip().startswith("python_bin:"):
+                    policy_lines[idx] = f'python_bin: "{sys.executable}"'
+                    break
+            for idx, line in enumerate(policy_lines):
+                if line.strip().startswith("dry_run_command:"):
+                    policy_lines[idx] = (
+                        'dry_run_command: "{{python_bin}} -c \\"print(\'golden iteration dry-run: OK\')\\""'
+                    )
+                    break
+            updated_policy_text = "\n".join(policy_lines)
+            if had_trailing_newline:
+                updated_policy_text += "\n"
+            policy_path.write_text(updated_policy_text, encoding="utf-8")
+
+            # 3. Copy golden iteration experiments/ and paper/
+            shutil.copytree(
+                golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
+            )
+            shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
+
+            # 4. Copy golden iteration state.json and backlog.yaml
+            shutil.copy2(
+                golden_root / ".autolab" / "state.json",
+                target_autolab / "state.json",
+            )
+            shutil.copy2(
+                golden_root / ".autolab" / "backlog.yaml",
+                target_autolab / "backlog.yaml",
+            )
+
+            # 5. Write minimal agent_result.json
+            agent_result = {
+                "status": "complete",
+                "summary": "golden fixture",
+                "changed_files": [],
+                "completion_token_seen": True,
+            }
+            (target_autolab / "agent_result.json").write_text(
+                json.dumps(agent_result, indent=2), encoding="utf-8"
+            )
+
+            state_path = target_autolab / "state.json"
+
+            # 6. Run verify for each stage
+            print("autolab verify-golden")
+            for stage in stages:
+                exit_code = main(
+                    ["verify", "--state-file", str(state_path), "--stage", stage]
+                )
+                passed = exit_code == 0
+                results.append((stage, passed))
+                status_label = "PASS" if passed else "FAIL"
+                print(f"  {stage}: {status_label}")
 
     # 7. Print summary
     total = len(results)
@@ -1776,6 +1812,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
             "prompt_file": spec.prompt_file,
             "resolved_prompt_path": resolved_prompt_path,
             "required_tokens": sorted(spec.required_tokens),
+            "optional_tokens": sorted(spec.optional_tokens),
             "required_outputs": output_notes,
             "next_stage": spec.next_stage or None,
             "decision_map": spec.decision_map or None,
@@ -1796,6 +1833,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         print(f"prompt_file: {spec.prompt_file}")
         print(f"resolved_prompt_path: {resolved_prompt_path}")
         print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
+        print(f"optional_tokens: {', '.join(sorted(spec.optional_tokens)) or '(none)'}")
         required_outputs_text = (
             ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
         )
@@ -2310,12 +2348,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install_skill = subparsers.add_parser(
         "install-skill",
-        help="Install bundled skill templates into the project-local .codex directory.",
+        help="Install bundled skill templates into provider-specific project skill directories.",
     )
     install_skill.add_argument(
         "provider",
-        choices=("codex",),
-        help="Skill provider to install (currently only: codex).",
+        choices=SUPPORTED_SKILL_PROVIDERS,
+        help="Skill provider to install (supported: codex, claude).",
     )
     install_skill.add_argument(
         "--skill",
@@ -2325,7 +2363,7 @@ def _build_parser() -> argparse.ArgumentParser:
     install_skill.add_argument(
         "--project-root",
         default=".",
-        help="Project root where .codex/skills will be created (default: current directory).",
+        help="Project root where provider skill directories will be created (default: current directory).",
     )
     install_skill.set_defaults(handler=_cmd_install_skill)
 

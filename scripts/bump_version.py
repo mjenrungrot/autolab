@@ -12,6 +12,10 @@ try:
     import tomllib
 except Exception:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
+try:
+    import tomli
+except Exception:  # pragma: no cover
+    tomli = None  # type: ignore[assignment]
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 README_TAG_RE = re.compile(
@@ -20,6 +24,16 @@ README_TAG_RE = re.compile(
     r"(?P<version>(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))"
     r"(?P<suffix>\s*)$"
 )
+
+
+def _toml_loads(text: str) -> dict:
+    if tomllib is not None:
+        return tomllib.loads(text)
+    if tomli is not None:
+        return tomli.loads(text)
+    raise RuntimeError(
+        "python tomllib/tomli is unavailable; use Python 3.11+ or install tomli"
+    )
 
 
 def _bump_patch(version: str) -> str:
@@ -33,9 +47,7 @@ def _bump_patch(version: str) -> str:
 
 
 def _load_project_version(pyproject_path: Path) -> str:
-    if tomllib is None:
-        raise RuntimeError("python tomllib is unavailable; use Python 3.11+")
-    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    payload = _toml_loads(pyproject_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("pyproject.toml must contain a top-level mapping")
     project = payload.get("project")

@@ -21,6 +21,9 @@ You are the **Hypothesis Designer** -- the planner for an Autolab iteration. You
 ## PRIMARY OBJECTIVE
 Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothesis for this iteration.
 
+## GOLDEN EXAMPLE
+Example: `examples/golden_iteration/experiments/plan/iter_golden/hypothesis.md`
+
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
@@ -55,9 +58,12 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 
 ## SCHEMA GOTCHAS
 - The `PrimaryMetric:` line must match **exactly** this format (semicolons, spacing):
-  `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`
+  `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +/-delta or +/-relative%`
 - Verifiers check for exactly **one** `PrimaryMetric:` line -- zero or multiple will fail.
-- The `+` prefix on the delta is required (e.g. `+2.5` or `+5%`), even for "higher is better" metrics.
+- Signed target semantics are required:
+  - `metric_mode: maximize` -> `target_delta` must be positive (for example `+2.5`).
+  - `metric_mode: minimize` -> `target_delta` must be negative (for example `-0.8`).
+- Keep `Success` wording and structured metadata consistent with `metric_mode`.
 
 ## VERIFIER MAPPING
 {{shared:verifier_common.md}}
@@ -84,10 +90,10 @@ Why this hypothesis matters now.
 - Out-of-scope item 1
 
 ## Primary Metric
-PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%
+PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta (maximize) or -abs_delta (minimize)
 
 ## Expected Delta
-- target_delta: +2.5
+- target_delta: +2.5  # maximize example; use negative value for minimize
 
 ## Operational Success Criteria
 - Condition 1 that can be verified from run artifacts.
@@ -99,7 +105,7 @@ PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +re
 - Constraint 1
 
 ## Structured Metadata (machine-parsed)
-- target_delta: +2.5
+- target_delta: +2.5  # maximize example; use negative value for minimize
 - metric_name: accuracy
 - metric_mode: maximize
 ```

@@ -7,6 +7,7 @@ This guide describes how to author scaffold stage prompts under `src/autolab/sca
 - Stage files use `stage_<name>.md` (for example `stage_design.md`).
 - Stage metadata is canonical in `.autolab/workflow.yaml` (prompt file mapping, required tokens, verifier capabilities).
 - `required_outputs` entries in `.autolab/workflow.yaml` should be concrete relative paths; use `<RUN_ID>` token for run-scoped artifacts (for example `runs/<RUN_ID>/run_manifest.json`).
+- Registry/policy output paths must use angle-bracket pattern tokens (for example `<RUN_ID>`). Prompt-style mustache tokens (for example `{{run_id}}`) are reserved for prompt rendering only.
 - Shared includes live under `prompts/shared/` and are referenced with:
   - `{{shared:guardrails.md}}`
   - `{{shared:repo_scope.md}}`
@@ -34,6 +35,7 @@ Common tokens available in prompts:
 - `{{verifier_outputs}}`
 - `{{dry_run_output}}`
 - `{{launch_mode}}`
+- `{{launch_execute}}`
 - `{{metrics_summary}}`
 - `{{target_comparison}}`
 - `{{decision_suggestion}}`
@@ -90,6 +92,7 @@ When a stage output is run-scoped, use `<RUN_ID>` in `workflow.yaml` output path
 - `runs/<RUN_ID>/metrics.json`
 
 This keeps registry contracts explicit and avoids stage-specific implicit path assumptions.
+Do not use `{{run_id}}` in workflow output contracts.
 
 ## Token changes end-to-end
 
@@ -97,5 +100,5 @@ When adding a new prompt token:
 
 1. Add token resolution logic in `src/autolab/prompts.py`.
 1. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
-1. Add/adjust stage required tokens in `.autolab/workflow.yaml` when the token is mandatory for a stage.
+1. Add/adjust stage required/optional token metadata in `.autolab/workflow.yaml` (`required_tokens`, `optional_tokens`).
 1. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).

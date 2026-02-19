@@ -175,6 +175,19 @@ prompt_lint:
     update_docs: true
     decide_repeat: true
 # ---------------------------------------------------------------------------
+# Launch / SLURM lifecycle controls
+# ---------------------------------------------------------------------------
+launch:
+  # When false, launch stage should generate/validate artifacts without executing
+  # local commands or submitting jobs.
+  execute: true
+
+slurm:
+  # When true, enforce strict lifecycle:
+  # slurm_monitor -> status=synced after successful sync
+  # extract_results -> finalize run_manifest.status=completed when metrics extraction succeeds
+  lifecycle_strict: true
+# ---------------------------------------------------------------------------
 # Per-stage retry policy
 # ---------------------------------------------------------------------------
 # Controls how many retries each stage gets before escalating to human_review.
@@ -266,11 +279,12 @@ autorun:
 # check will fail immediately.
 safe_automation_protected_files: false
 protected_file_profiles:
-  default: [.autolab/state.json, .autolab/verifier_policy.yaml]
+  default: [.autolab/state.json, .autolab/workflow.yaml, .autolab/verifier_policy.yaml]
   safe_automation:
     - .autolab/state.json
+    - .autolab/workflow.yaml
     - .autolab/verifier_policy.yaml
     - .autolab/prompts/**
     - .autolab/schemas/**
     - .autolab/verifiers/**
-protected_files: [.autolab/state.json, .autolab/verifier_policy.yaml]
+protected_files: [.autolab/state.json, .autolab/workflow.yaml, .autolab/verifier_policy.yaml]

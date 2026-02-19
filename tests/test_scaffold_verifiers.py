@@ -144,12 +144,14 @@ def _run_schema_checks(
 
 
 def _run_prompt_lint(
-    repo: Path, *, stage: str | None = None
+    repo: Path, *, stage: str | None = None, assistant: bool = False
 ) -> subprocess.CompletedProcess[str]:
     verifier = repo / ".autolab" / "verifiers" / "prompt_lint.py"
     command = [sys.executable, str(verifier)]
     if stage:
         command.extend(["--stage", stage])
+    if assistant:
+        command.append("--assistant")
     return subprocess.run(
         command,
         cwd=repo,
@@ -305,6 +307,29 @@ def test_registry_consistency_fails_when_policy_requires_unsupported_capability(
     assert "not supported by workflow.yaml verifier_categories" in result.stdout
 
 
+def test_registry_consistency_rejects_mustache_tokens_in_output_contract_paths(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow_payload = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    assert isinstance(workflow_payload, dict)
+    stages = workflow_payload.get("stages", {})
+    assert isinstance(stages, dict)
+    launch_stage = stages.get("launch", {})
+    assert isinstance(launch_stage, dict)
+    launch_stage["required_outputs"] = ["runs/{{run_id}}/run_manifest.json"]
+    workflow_path.write_text(
+        yaml.safe_dump(workflow_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_registry_consistency(repo, stage="launch")
+
+    assert result.returncode == 1
+    assert "uses prompt-" in result.stdout
+
+
 def test_consistency_checks_fail_on_metric_name_mismatch(tmp_path: Path) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=True)
@@ -344,6 +369,80 @@ def test_consistency_checks_fail_on_metric_name_mismatch(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert "does not match design.metrics.primary.name" in result.stdout
+
+
+def test_consistency_checks_strict_slurm_monitor_requires_synced_status(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_state(repo, stage="slurm_monitor", last_run_id="run_001")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    run_dir = iteration_dir / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "slurm",
+        "status": "completed",
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+
+    result = _run_consistency_checks(repo, stage="slurm_monitor")
+
+    assert result.returncode == 1
+    assert "strict SLURM lifecycle violation" in result.stdout
+
+
+def test_consistency_checks_strict_update_docs_requires_completed_manifest_after_metrics(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_state(repo, stage="update_docs", last_run_id="run_001")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    run_dir = iteration_dir / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "slurm",
+        "status": "synced",
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    metrics = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        "run_id": "run_001",
+        "status": "completed",
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 0.7,
+            "delta_vs_baseline": 0.02,
+        },
+        "baseline_results": [],
+        "variant_results": [],
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    (run_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
+
+    result = _run_consistency_checks(repo, stage="update_docs")
+
+    assert result.returncode == 1
+    assert "strict SLURM lifecycle violation" in result.stdout
 
 
 def test_schema_checks_design_stage_override_skips_review_artifacts(
@@ -414,6 +513,7 @@ def test_prompt_lint_fails_when_prompt_uses_nonrequired_token_without_optional_c
     decide_repeat = stages.get("decide_repeat", {})
     if isinstance(decide_repeat, dict):
         decide_repeat["required_tokens"] = ["iteration_id", "iteration_path"]
+        decide_repeat["optional_tokens"] = []
     workflow_path.write_text(
         yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
     )
@@ -422,6 +522,37 @@ def test_prompt_lint_fails_when_prompt_uses_nonrequired_token_without_optional_c
 
     assert result.returncode == 1
     assert "not declared as required or optional" in result.stdout
+
+
+def test_prompt_lint_assistant_prompts_pass(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+
+    result = _run_prompt_lint(repo, assistant=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_assistant_requires_strict_contract_sections(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "assistant_select.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    text = text.replace("## RESPONSE FORMAT\n", "")
+    text = text.replace("{{shared:assistant_output_contract.md}}\n", "")
+    prompt_path.write_text(text, encoding="utf-8")
+
+    result = _run_prompt_lint(repo, assistant=True)
+
+    assert result.returncode == 1
+    assert (
+        "missing required shared include: {{shared:assistant_output_contract.md}}"
+        in result.stdout
+    )
+    assert "missing required section heading: ## RESPONSE FORMAT" in result.stdout
 
 
 def test_schema_checks_fail_for_invalid_todo_state_schema(tmp_path: Path) -> None:
@@ -792,6 +923,48 @@ def test_run_health_slurm_launch_fails_when_ledger_entry_missing(
 
     assert result.returncode == 1
     assert "missing run_id=run_001 entry" in result.stdout
+
+
+def test_run_health_launch_execute_false_allows_missing_logs_dir(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_payload = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy_payload, dict)
+    policy_payload.setdefault("launch", {})
+    assert isinstance(policy_payload["launch"], dict)
+    policy_payload["launch"]["execute"] = False
+    policy_path.write_text(
+        yaml.safe_dump(policy_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "local",
+        "status": "submitted",
+        "command": "python -m pkg.train --config design.yaml",
+        "resource_request": {"cpus": 2, "memory": "8GB", "gpu_count": 0},
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+
+    result = _run_run_health(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "run_health: PASS" in result.stdout
 
 
 # ---------------------------------------------------------------------------
