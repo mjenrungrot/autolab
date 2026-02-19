@@ -69,6 +69,7 @@ from autolab.state import (
     _ensure_iteration_skeleton,
 )
 from autolab.todo_sync import list_open_tasks, mark_task_completed, mark_task_removed
+from autolab.update import run_update
 from autolab.utils import (
     _append_log,
     _collect_change_snapshot,
@@ -1415,6 +1416,29 @@ def _cmd_sync_scaffold(args: argparse.Namespace) -> int:
     print(f"skipped_files: {skipped}")
     if not args.force and skipped and copied == 0:
         print("No files copied. Add --force to overwrite existing files.")
+    return 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    del args
+    try:
+        result = run_update(Path.cwd())
+    except Exception as exc:
+        print(f"autolab update: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab update")
+    print(f"current_version: {result.current_version}")
+    print(f"latest_tag: {result.latest_tag}")
+    if not result.upgraded:
+        print("action: already up to date")
+        return 0
+
+    print("action: upgrading")
+    if result.synced_scaffold:
+        print("action: syncing scaffold")
+    elif result.sync_skipped_reason:
+        print(f"action: sync skipped ({result.sync_skipped_reason})")
     return 0
 
 
@@ -3245,6 +3269,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Overwrite existing scaffold files.",
     )
     sync_scaffold.set_defaults(handler=_cmd_sync_scaffold)
+
+    update = subparsers.add_parser(
+        "update",
+        help="Upgrade autolab to the latest stable release",
+    )
+    update.set_defaults(handler=_cmd_update)
 
     install_skill = subparsers.add_parser(
         "install-skill",

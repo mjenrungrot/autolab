@@ -195,6 +195,7 @@ _EXPORTS_BY_MODULE: dict[str, tuple[str, ...]] = {
         "_cmd_reset",
         "_cmd_run",
         "_cmd_todo",
+        "_cmd_update",
         "_cmd_verify",
         "_cmd_slurm_job_list",
         "_cmd_status",

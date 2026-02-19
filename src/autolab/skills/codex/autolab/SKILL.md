@@ -15,6 +15,8 @@ Use this skill when the user wants to operate or troubleshoot an Autolab workflo
 2. `autolab verify --stage <stage>`
 3. `autolab run`
 
+For package/scaffold upgrades, run: `autolab update`.
+
 ## Decision Tree
 
 - If verification fails: fix artifacts/verifier contracts first, then rerun `autolab verify --stage <stage>`.
@@ -104,6 +106,13 @@ At `decide_repeat`:
 - auto: `autolab run --auto-decision`
 
 ## Common Tasks
+
+### Upgrade autolab
+
+1. Run `autolab update`.
+2. Confirm output shows `latest_tag` and either:
+   - `action: already up to date`, or
+   - `action: upgrading` plus scaffold sync status.
 
 ### Stuck stage
 

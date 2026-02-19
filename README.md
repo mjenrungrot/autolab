@@ -15,9 +15,21 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.32
 ```
 
-After upgrading from GitHub, refresh local workflow defaults:
+Upgrade to the latest stable GitHub tag in one step:
 
 ```bash
+autolab update
+```
+
+`autolab update` compares your installed version with the latest `vX.Y.Z` release
+tag, upgrades via pip when needed, and then runs `autolab sync-scaffold --force`
+automatically when you are inside an Autolab repo. If run outside an Autolab repo,
+it upgrades the package and skips scaffold sync with an explicit message.
+
+Manual fallback (equivalent upgrade + scaffold refresh):
+
+```bash
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@vX.Y.Z
 autolab sync-scaffold --force
 ```
 
@@ -164,7 +176,13 @@ autolab install-skill codex --project-root /path/to/project
 
 ## Scaffold management
 
-Sync scaffold assets into a repo (also useful after upgrading):
+Preferred upgrade path:
+
+```bash
+autolab update
+```
+
+Manual scaffold sync into a repo:
 
 ```bash
 autolab sync-scaffold --force

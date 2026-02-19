@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import autolab.commands as commands_module
+from autolab.update import UpdateResult
 
 
 def _load_toml(path: Path) -> dict:
@@ -41,6 +42,42 @@ def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
         )
         == 0
     )
+
+
+def test_update_command_routes_to_handler(
+    monkeypatch,
+) -> None:
+    captured: dict[str, Path] = {}
+
+    def _fake_run_update(cwd: Path) -> UpdateResult:
+        captured["cwd"] = cwd
+        return UpdateResult(
+            current_version="1.1.0",
+            latest_tag="v1.1.1",
+            upgraded=True,
+            synced_scaffold=False,
+            sync_skipped_reason="outside repo",
+        )
+
+    monkeypatch.setattr(commands_module, "run_update", _fake_run_update)
+
+    exit_code = commands_module.main(["update"])
+
+    assert exit_code == 0
+    assert captured["cwd"] == Path.cwd()
+
+
+def test_update_command_propagates_failure_exit_code(
+    monkeypatch,
+) -> None:
+    def _raise_error(_cwd: Path) -> UpdateResult:
+        raise RuntimeError("simulated update failure")
+
+    monkeypatch.setattr(commands_module, "run_update", _raise_error)
+
+    exit_code = commands_module.main(["update"])
+
+    assert exit_code == 1
 
 
 def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
