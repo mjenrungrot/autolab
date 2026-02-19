@@ -182,6 +182,10 @@ launch:
   # When false, launch stage should generate/validate artifacts without executing
   # local commands or submitting jobs.
   execute: true
+  # Default local timeout tuned for quick small-example testing.
+  local_timeout_seconds: 900
+  # Keep SLURM submit probing short; long-running execution is monitored in slurm_monitor.
+  slurm_submit_timeout_seconds: 30
 
 slurm:
   # When true, enforce strict lifecycle:
@@ -238,6 +242,8 @@ autorun:
     max_no_progress_decisions: 2
     max_update_docs_cycles: 3
     max_generated_todo_tasks: 5
+    # Escalate when implementation-review blockers remain unchanged for too long.
+    max_stalled_blocker_cycles: 3
     on_breach: human_review
 
   # Strict-mode toggles for unattended loops.
@@ -255,11 +261,18 @@ autorun:
     require_git_for_progress: true
     on_non_git_behavior: warn_and_continue
     require_verification: true
+    # In implementation/review cycles, require progress beyond review-only artifact churn.
+    require_non_review_progress_in_implementation_cycle: true
     exclude_paths:
       - .autolab/**
       - docs/todo.md
       - docs/wiki/**
       - experiments/*/*/docs_update.md
+    implementation_cycle_exclude_paths:
+      - .autolab/**
+      - docs/todo.md
+      - '**/implementation_review.md'
+      - '**/review_result.json'
   todo_fallback:
     local:
       stage: implementation

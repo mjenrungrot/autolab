@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -18,6 +19,7 @@ from autolab.state import (
     _load_state,
     _mark_backlog_experiment_completed,
     _normalize_state,
+    _resolve_iteration_directory,
     _resolve_repo_root,
 )
 from autolab.utils import (
@@ -100,6 +102,74 @@ def _assistant_target_stage(task: dict[str, Any]) -> str:
     if task_class == "experiment":
         return "design"
     return "implementation"
+
+
+def _normalize_blocker_finding(value: Any) -> str:
+    if isinstance(value, str):
+        return " ".join(value.strip().split())
+    if isinstance(value, dict):
+        fields = (
+            "id",
+            "title",
+            "summary",
+            "finding",
+            "message",
+            "detail",
+            "reason",
+            "file",
+            "path",
+            "artifact_path",
+        )
+        chunks: list[str] = []
+        for field in fields:
+            raw = str(value.get(field, "")).strip()
+            if raw:
+                chunks.append(f"{field}={raw}")
+        if chunks:
+            return " | ".join(chunks)
+        return json.dumps(value, sort_keys=True)
+    return str(value).strip()
+
+
+def _review_blocker_fingerprint(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> tuple[str, list[str]]:
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    if not iteration_id:
+        return ("", [])
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    review_result_path = iteration_dir / "review_result.json"
+    if not review_result_path.exists():
+        return ("", [])
+    try:
+        payload = json.loads(review_result_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ("", [])
+    if not isinstance(payload, dict):
+        return ("", [])
+    status = str(payload.get("status", "")).strip().lower()
+    if status == "pass":
+        return ("", [])
+    findings = payload.get("blocking_findings")
+    if not isinstance(findings, list):
+        return ("", [])
+    normalized: list[str] = []
+    for item in findings:
+        text = _normalize_blocker_finding(item)
+        if not text:
+            continue
+        normalized.append(text)
+    if not normalized:
+        return ("", [])
+    normalized = sorted(set(normalized))
+    digest = hashlib.sha1("\n".join(normalized).encode("utf-8")).hexdigest()
+    return (digest, normalized)
 
 
 def _run_once_assistant(
@@ -347,8 +417,14 @@ def _run_once_assistant(
         state["task_cycle_stage"] = "implement"
         state["task_change_baseline"] = _collect_change_snapshot(repo_root)
         target_stage = _assistant_target_stage(task)
+        prior_stage_attempt = int(state.get("stage_attempt", 0) or 0)
+        preserve_stage_attempt = (
+            prior_stage_attempt > 0
+            and stage_before in {"implementation", "implementation_review"}
+            and target_stage in {"implementation", "implementation_review"}
+        )
         state["stage"] = target_stage
-        state["stage_attempt"] = 0
+        state["stage_attempt"] = prior_stage_attempt if preserve_stage_attempt else 0
         _write_json(state_path, state)
         return _persist_simple(
             status="complete",
@@ -387,15 +463,87 @@ def _run_once_assistant(
         )
 
     if cycle_stage == "review":
+        repeat_guard = dict(state.get("repeat_guard", {}))
+        guardrails = _load_guardrail_config(repo_root)
+
+        blocker_fingerprint, blocker_findings = _review_blocker_fingerprint(
+            repo_root, state
+        )
+        if blocker_fingerprint:
+            previous_fingerprint = str(
+                repeat_guard.get("last_blocker_fingerprint", "")
+            ).strip()
+            previous_stale_cycles = int(
+                repeat_guard.get("stalled_blocker_cycles", 0) or 0
+            )
+            stale_cycles = (
+                previous_stale_cycles + 1
+                if previous_fingerprint == blocker_fingerprint
+                else 1
+            )
+            repeat_guard["last_blocker_fingerprint"] = blocker_fingerprint
+            repeat_guard["stalled_blocker_cycles"] = stale_cycles
+        else:
+            stale_cycles = 0
+            repeat_guard["last_blocker_fingerprint"] = ""
+            repeat_guard["stalled_blocker_cycles"] = 0
+        state["repeat_guard"] = repeat_guard
+
+        if blocker_fingerprint and stale_cycles >= int(
+            guardrails.max_stalled_blocker_cycles
+        ):
+            state["task_cycle_stage"] = "done"
+            state["current_task_id"] = ""
+            state["task_change_baseline"] = {}
+            state["stage"] = guardrails.on_breach
+            _write_json(state_path, state)
+            _write_guardrail_breach(
+                repo_root,
+                rule="stalled_blockers",
+                counters={
+                    "stalled_blocker_cycles": int(stale_cycles),
+                    "max_stalled_blocker_cycles": int(
+                        guardrails.max_stalled_blocker_cycles
+                    ),
+                },
+                stage=stage_before,
+                remediation=(
+                    f"Escalated to '{guardrails.on_breach}'. "
+                    "Implementation-review blocking_findings fingerprint remained "
+                    "unchanged across assistant review cycles."
+                ),
+            )
+            blocker_preview = blocker_findings[0] if blocker_findings else "unavailable"
+            return _persist_simple(
+                status="failed",
+                message=(
+                    "assistant stalled blockers guardrail breach: "
+                    f"blocking findings unchanged for {stale_cycles} cycle(s); "
+                    f"sample={blocker_preview}"
+                ),
+                changed_files=[state_path],
+                transitioned=stage_before != guardrails.on_breach,
+                stage_after=guardrails.on_breach,
+                exit_code=1,
+                commit_allowed=False,
+                commit_cycle_stage="review",
+                verification_passed=bool(
+                    repeat_guard.get("last_verification_passed", False)
+                ),
+                verification_message="review blocker staleness guardrail",
+                commit_reason="stalled blockers",
+                ledger_event="review",
+            )
+
         meaningful_config = _load_meaningful_change_config(repo_root)
         meaningful, changed_paths, meaningful_paths, _current_snapshot = (
             _evaluate_meaningful_change(
                 repo_root,
                 meaningful_config,
                 baseline_snapshot=baseline_snapshot,
+                stage=str(state.get("stage", "")).strip(),
             )
         )
-        repeat_guard = dict(state.get("repeat_guard", {}))
         verification_passed = bool(repeat_guard.get("last_verification_passed", False))
         passes_gate = meaningful and (
             not meaningful_config.require_verification or verification_passed
@@ -473,7 +621,6 @@ def _run_once_assistant(
             int(repeat_guard.get("no_progress_decisions", 0)) + 1
         )
         state["repeat_guard"] = repeat_guard
-        guardrails = _load_guardrail_config(repo_root)
         if auto_mode and int(repeat_guard["no_progress_decisions"]) >= int(
             guardrails.max_no_progress_decisions
         ):

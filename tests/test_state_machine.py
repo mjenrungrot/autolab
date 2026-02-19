@@ -116,6 +116,11 @@ def _write_policy(repo: Path, *, guardrails: dict[str, Any] | None = None) -> No
         "require_dry_run": False,
         "require_env_smoke": False,
         "require_docs_target_update": False,
+        "launch": {
+            "execute": True,
+            "local_timeout_seconds": 900,
+            "slurm_submit_timeout_seconds": 30,
+        },
         "template_fill": {"enabled": False},
         "agent_runner": {"enabled": False, "stages": []},
         "autorun": {
@@ -351,7 +356,8 @@ def _run(state_path: Path, **kwargs: Any) -> RunOutcome:
     """Run one cycle with agent runner disabled."""
     kwargs.setdefault("run_agent_mode", "force_off")
     kwargs.setdefault("strict_implementation_progress", False)
-    return _run_once(state_path, kwargs.pop("decision", None), **kwargs)
+    with mock.patch("autolab.run_standard._generate_run_id", return_value="run_001"):
+        return _run_once(state_path, kwargs.pop("decision", None), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -1248,24 +1254,25 @@ class TestSlurmLaunchHappyPath:
 
 
 class TestSlurmIncompleteSync:
-    """SLURM jobs with incomplete artifact synchronization should block progression."""
+    """SLURM jobs with incomplete artifact sync should transition to monitor."""
 
     def test_slurm_launch_pending_sync_blocks_transition(self, tmp_path: Path) -> None:
-        """When artifact_sync_to_local is 'pending', launch → extract should fail."""
+        """When artifact_sync_to_local is 'pending', launch should hand off to monitor."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
         outcome = _run(state_path)
 
-        assert outcome.exit_code == 1
-        assert not outcome.transitioned or outcome.stage_after == "human_review"
+        assert outcome.exit_code == 0
+        assert outcome.transitioned
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        # Either stays at launch (retry) or escalates to human_review
-        assert persisted["stage"] in {"launch", "human_review"}
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["sync_status"] == "pending"
 
     def test_slurm_launch_failed_sync_blocks_transition(self, tmp_path: Path) -> None:
-        """When artifact_sync_to_local is 'failed', launch should not proceed."""
+        """When launch manifest is failed, launch should fail for retry."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="failed")
         _write_slurm_ledger(repo, "run_001")
@@ -1279,33 +1286,29 @@ class TestSlurmIncompleteSync:
     def test_slurm_incomplete_sync_increments_stage_attempt(
         self, tmp_path: Path
     ) -> None:
-        """Incomplete sync should trigger _handle_stage_failure and increment attempt."""
+        """Incomplete sync should hand off to slurm_monitor without launch retry."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path, stage="launch", stage_attempt=0
         )
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
-        outcome = _run(state_path)
-
+        _run(state_path)
         persisted = _read_state(repo)
-        if persisted["stage"] == "launch":
-            assert persisted["stage_attempt"] == 1
-        else:
-            # Escalated to human_review
-            assert persisted["stage"] == "human_review"
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
     def test_slurm_sync_exhaustion_escalates_to_human_review(
         self, tmp_path: Path
     ) -> None:
-        """Repeated SLURM sync failures exhaust retry budget → human_review."""
+        """Repeated launch failures (manifest status failed) exhaust retry budget."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
             stage_attempt=2,
             max_stage_attempts=3,
         )
-        _seed_slurm_launch(it_dir, sync_status="pending")
+        _seed_slurm_launch(it_dir, sync_status="failed")
         _write_slurm_ledger(repo, "run_001")
 
         outcome = _run(state_path)
@@ -1319,20 +1322,26 @@ class TestSlurmIncompleteSync:
 class TestSlurmLedgerValidation:
     """SLURM ledger (docs/slurm_job_list.md) must contain the run entry."""
 
-    def test_slurm_launch_missing_ledger_fails(self, tmp_path: Path) -> None:
-        """SLURM launch without ledger file should fail stage check."""
+    def test_slurm_launch_missing_ledger_is_backfilled(self, tmp_path: Path) -> None:
+        """SLURM launch should backfill missing ledger and continue."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="completed")
         # Deliberately do NOT write the ledger
 
         outcome = _run(state_path)
 
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] in {"launch", "human_review"}
+        assert persisted["stage"] == "slurm_monitor"
+        ledger = repo / "docs" / "slurm_job_list.md"
+        assert ledger.exists()
+        assert "run_id=run_001" in ledger.read_text(encoding="utf-8")
 
-    def test_slurm_launch_ledger_missing_run_id_fails(self, tmp_path: Path) -> None:
-        """SLURM ledger exists but lacks this specific run_id → fail."""
+    def test_slurm_launch_ledger_missing_run_id_is_backfilled(
+        self, tmp_path: Path
+    ) -> None:
+        """SLURM launch should append missing run_id entry and continue."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="completed")
         # Write ledger with different run_id
@@ -1340,9 +1349,12 @@ class TestSlurmLedgerValidation:
 
         outcome = _run(state_path)
 
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] in {"launch", "human_review"}
+        assert persisted["stage"] == "slurm_monitor"
+        ledger = repo / "docs" / "slurm_job_list.md"
+        assert "run_id=run_001" in ledger.read_text(encoding="utf-8")
 
     def test_slurm_update_docs_missing_ledger_fails(self, tmp_path: Path) -> None:
         """At update_docs stage, SLURM manifest without ledger entry blocks transition."""
@@ -1593,28 +1605,34 @@ class TestSlurmFullCycle:
         assert persisted["stage"] == "stop"
 
     def test_slurm_sync_retry_then_success(self, tmp_path: Path) -> None:
-        """Simulate SLURM job whose sync is initially pending, then completes."""
+        """Pending SLURM launch hands off to monitor, then completes when synced."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path, stage="launch", stage_attempt=0
         )
 
-        # First attempt: sync pending → failure
+        # Launch: pending sync -> handoff to monitor
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
         outcome = _run(state_path)
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # Second attempt: sync completed → success
+        # Monitor while pending: stay in monitor
+        outcome = _run(state_path)
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "slurm_monitor"
+
+        # Sync completes -> monitor advances
         _seed_slurm_launch(it_dir, sync_status="completed")
         outcome = _run(state_path)
         assert outcome.transitioned
-        assert outcome.stage_after == "slurm_monitor"
+        assert outcome.stage_after == "extract_results"
         persisted = _read_state(repo)
         assert persisted["sync_status"] == "completed"
-        assert persisted["stage_attempt"] == 0  # reset on forward transition
+        assert persisted["stage_attempt"] == 0
 
 
 class TestSlurmSyncStatusValues:
@@ -1643,23 +1661,24 @@ class TestSlurmSyncStatusValues:
         assert outcome.stage_after == "slurm_monitor"
 
     def test_sync_status_running_blocks(self, tmp_path: Path) -> None:
-        """'running' (long-running in-progress sync) should block."""
+        """'running' keeps workflow in monitor instead of failing launch."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="running")
         _write_slurm_ledger(repo, "run_001")
 
         outcome = _run(state_path)
 
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] in {"launch", "human_review"}
+        assert persisted["stage"] == "slurm_monitor"
 
 
 class TestLongRunningRetryBudget:
-    """Long-running SLURM jobs that repeatedly fail sync exhaust the retry budget."""
+    """Long-running SLURM jobs remain in monitor without launch retry exhaustion."""
 
     def test_repeated_sync_failures_exhaust_budget(self, tmp_path: Path) -> None:
-        """3 consecutive SLURM sync failures (max_stage_attempts=3) → human_review."""
+        """Repeated pending sync should keep stage at slurm_monitor without retries."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -1669,25 +1688,25 @@ class TestLongRunningRetryBudget:
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
 
-        # Attempt 1
+        # Attempt 1: launch -> monitor
         outcome = _run(state_path)
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # Attempt 2
+        # Attempt 2: still waiting
         outcome = _run(state_path)
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 2
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # Attempt 3 → exhaustion → human_review
+        # Attempt 3: still waiting, no exhaustion
         outcome = _run(state_path)
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "human_review"
+        assert persisted["stage"] == "slurm_monitor"
 
     def test_update_docs_cycle_limit_with_slurm(self, tmp_path: Path) -> None:
         """extract → update_docs cycle count guardrail works with SLURM runs."""
@@ -1943,26 +1962,28 @@ class TestMultiIterationEndToEnd:
         outcome = _run(state_path)
         assert outcome.stage_after == "launch"
 
-        # 15. launch (SLURM sync pending) → launch (retry)
+        # 15. launch (SLURM sync pending) → slurm_monitor (handoff)
         _seed_slurm_launch(it_dir, sync_status="pending")
         _write_slurm_ledger(repo, "run_001")
         outcome = _run(state_path)
-        assert outcome.exit_code == 1
+        assert outcome.exit_code == 0
         persisted = _read_state(repo)
-        assert persisted["stage"] == "launch"
-        assert persisted["stage_attempt"] == 1
+        assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 0
 
-        # 16. launch (SLURM sync completed) → slurm_monitor
-        _seed_slurm_launch(it_dir, sync_status="completed")
+        # 16. slurm_monitor with pending sync stays waiting
         outcome = _run(state_path)
         assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["sync_status"] == "completed"
-        assert persisted["stage_attempt"] == 0
+        assert persisted["stage"] == "slurm_monitor"
 
-        # 16b. slurm_monitor → extract_results (auto-skip for completed sync)
+        # 16b. sync completes -> slurm_monitor advances to extract_results
+        _seed_slurm_launch(it_dir, sync_status="completed")
         outcome = _run(state_path)
         assert outcome.stage_after == "extract_results"
+        persisted = _read_state(repo)
+        assert persisted["sync_status"] == "completed"
+        assert persisted["stage_attempt"] == 0  # reset on forward transition
 
         # 17. extract_results → update_docs
         _seed_slurm_extract(it_dir, "run_001")

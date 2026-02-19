@@ -2,6 +2,11 @@
 
 This document covers agent runner configuration, command substitution, environment variables, edit scope modes, and timeout settings.
 
+Launch-stage note: launch command execution/submission is orchestrator-backed. When
+runner-generated launch artifacts already contain execution evidence for the current
+`run_id`, the orchestrator skips duplicate execution and only backfills invariants
+such as logs/ledger entries.
+
 ## Runner Presets
 
 Configure in `.autolab/verifier_policy.yaml` under `agent_runner`:

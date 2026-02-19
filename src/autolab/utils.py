@@ -608,11 +608,29 @@ def _path_matches_any(path: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
+def _resolve_meaningful_exclude_paths(
+    config: MeaningfulChangeConfig,
+    *,
+    stage: str | None,
+) -> tuple[str, ...]:
+    patterns = list(config.exclude_paths)
+    normalized_stage = str(stage or "").strip().lower()
+    if (
+        config.require_non_review_progress_in_implementation_cycle
+        and normalized_stage in {"implementation", "implementation_review"}
+    ):
+        for pattern in config.implementation_cycle_exclude_paths:
+            if pattern not in patterns:
+                patterns.append(pattern)
+    return tuple(patterns)
+
+
 def _evaluate_meaningful_change(
     repo_root: Path,
     config: MeaningfulChangeConfig,
     *,
     baseline_snapshot: dict[str, str] | None = None,
+    stage: str | None = None,
 ) -> tuple[bool, list[str], list[str], dict[str, str]]:
     current_snapshot = _collect_change_snapshot(repo_root)
     changed_paths = sorted(current_snapshot.keys())
@@ -620,10 +638,9 @@ def _evaluate_meaningful_change(
         delta_paths = changed_paths
     else:
         delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
+    exclude_patterns = _resolve_meaningful_exclude_paths(config, stage=stage)
     meaningful_paths = [
-        path
-        for path in delta_paths
-        if not _path_matches_any(path, config.exclude_paths)
+        path for path in delta_paths if not _path_matches_any(path, exclude_patterns)
     ]
     return (bool(meaningful_paths), delta_paths, meaningful_paths, current_snapshot)
 
@@ -691,6 +708,7 @@ def _prepare_standard_commit_outcome(
             repo_root,
             meaningful_config,
             baseline_snapshot=baseline_snapshot,
+            stage=outcome.stage_before,
         )
     )
 

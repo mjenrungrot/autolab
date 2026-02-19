@@ -37,6 +37,7 @@ DECISION_TO_DESIGN_STAGES = {
 }
 FALLBACK_SCOPE_LOCAL = "policy:no_task_fallback:local"
 FALLBACK_SCOPE_SLURM = "policy:no_task_fallback:slurm"
+REVIEW_BLOCKER_SCOPE_PREFIX = "review:blocker:"
 _DEFAULT_FALLBACK_TASK_TEXT_LOCAL = (
     "No remaining actionable tasks were detected on local execution context. "
     "Propose and implement a concrete codebase improvement in src/, scripts/, or experiments/ "
@@ -761,6 +762,136 @@ def _extract_pending_lines(path: Path) -> list[str]:
     return deduped
 
 
+def _is_blocker_scope(scope: str) -> bool:
+    return _normalize_space(scope).startswith(REVIEW_BLOCKER_SCOPE_PREFIX)
+
+
+def _looks_like_blocker_task_text(text: str) -> bool:
+    lowered = _normalize_space(text).lower()
+    blocker_tokens = (
+        "blocker",
+        "blocking finding",
+        "review_result",
+        "implementation review",
+        "needs_retry",
+    )
+    return any(token in lowered for token in blocker_tokens)
+
+
+def _normalize_blocking_finding_text(value: Any) -> tuple[str, str]:
+    stage_hint = ""
+    if isinstance(value, str):
+        return (_normalize_space(value), stage_hint)
+    if isinstance(value, dict):
+        raw_stage = str(value.get("stage", "")).strip().lower()
+        if raw_stage:
+            stage_hint = raw_stage
+        prioritized_fields = (
+            "id",
+            "title",
+            "summary",
+            "finding",
+            "message",
+            "detail",
+            "reason",
+            "file",
+            "path",
+            "artifact_path",
+        )
+        parts: list[str] = []
+        for field in prioritized_fields:
+            raw = str(value.get(field, "")).strip()
+            if raw:
+                parts.append(f"{field}={raw}")
+        if parts:
+            return (" | ".join(parts), stage_hint)
+        return (json.dumps(value, sort_keys=True), stage_hint)
+    return (_normalize_space(str(value)), stage_hint)
+
+
+def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
+    normalized_hint = _normalize_space(stage_hint).lower()
+    if normalized_hint in {"implementation", "implementation_review"}:
+        return "implementation"
+    if normalized_hint in {"launch", "slurm_monitor"}:
+        return "launch"
+    if normalized_hint == "extract_results":
+        return "extract_results"
+
+    lowered = _normalize_space(text).lower()
+    launch_tokens = (
+        "launch",
+        "slurm",
+        "sbatch",
+        "squeue",
+        "sync",
+        "artifact_sync",
+        "job_id",
+        "run_manifest",
+    )
+    extract_tokens = (
+        "extract",
+        "metrics",
+        "analysis",
+        "summary",
+        "aggregate",
+        "result",
+    )
+    if any(token in lowered for token in launch_tokens):
+        return "launch"
+    if any(token in lowered for token in extract_tokens):
+        return "extract_results"
+    return "implementation"
+
+
+def _extract_review_blocker_candidates(
+    *,
+    iteration_dir: Path,
+    iteration_id: str,
+) -> list[_GeneratedCandidate]:
+    review_result_path = iteration_dir / "review_result.json"
+    if not review_result_path.exists():
+        return []
+    payload = _load_json_dict(review_result_path, {})
+    status = _normalize_space(str(payload.get("status", ""))).lower()
+    if status == "pass":
+        return []
+    findings = payload.get("blocking_findings")
+    if not isinstance(findings, list):
+        return []
+
+    candidates: list[_GeneratedCandidate] = []
+    for finding in findings:
+        finding_text, stage_hint = _normalize_blocking_finding_text(finding)
+        if not finding_text:
+            continue
+        stage = _map_blocking_finding_stage(text=finding_text, stage_hint=stage_hint)
+        text_key = _normalize_text_key(finding_text)
+        if not text_key:
+            continue
+        scope_digest = hashlib.sha1(text_key.encode("utf-8")).hexdigest()[:12]
+        candidates.append(
+            _GeneratedCandidate(
+                stage=stage,
+                scope=f"{REVIEW_BLOCKER_SCOPE_PREFIX}{scope_digest}",
+                text=(
+                    "Resolve implementation review blocker for iteration "
+                    f"{iteration_id}: {finding_text}"
+                ),
+            )
+        )
+
+    deduped: list[_GeneratedCandidate] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in candidates:
+        key = (item.scope, item.stage, _normalize_text_key(item.text))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def _collect_generated_candidates(
     repo_root: Path, state: dict[str, Any] | None
 ) -> list[_GeneratedCandidate]:
@@ -912,6 +1043,13 @@ def _collect_generated_candidates(
                     text=f"Address pending documentation item for iteration {iteration_id}: {pending_line}",
                 )
             )
+
+        candidates.extend(
+            _extract_review_blocker_candidates(
+                iteration_dir=iteration_dir,
+                iteration_id=iteration_id,
+            )
+        )
 
     deduped: list[_GeneratedCandidate] = []
     seen: set[tuple[str, str, str]] = set()
@@ -1141,14 +1279,29 @@ def _sync_internal(
         current_stage=current_stage,
     )
     generated_candidates = _collect_generated_candidates(repo_root, state)
+    has_open_generated_blocker_tasks = any(
+        task.get("source") == "generated"
+        and task.get("status") == "open"
+        and _is_blocker_scope(str(task.get("scope", "")))
+        for task in tasks.values()
+    )
     if current_stage != "decide_repeat":
         generated_candidates = [
-            item for item in generated_candidates if item.stage == current_stage
+            item
+            for item in generated_candidates
+            if item.stage == current_stage or _is_blocker_scope(item.scope)
         ]
+    has_generated_blocker_candidates = any(
+        _is_blocker_scope(item.scope) for item in generated_candidates
+    )
+    has_unresolved_blockers = (
+        has_open_generated_blocker_tasks or has_generated_blocker_candidates
+    )
     if (
         current_stage == "decide_repeat"
         and not manual_has_actionable_decision
         and not _has_actionable_decision_candidates(generated_candidates)
+        and not has_unresolved_blockers
     ):
         generated_candidates.extend(
             _fallback_candidates_for_host_with_policy(
@@ -1226,6 +1379,10 @@ def _sync_internal(
             and task.get("status") == "open"
             and task_id not in seen_manual_ids
         ):
+            if has_unresolved_blockers and _looks_like_blocker_task_text(
+                str(task.get("text", ""))
+            ):
+                continue
             task["status"] = "removed"
             task["last_evidence_at"] = now
 
@@ -1260,7 +1417,12 @@ def _sync_internal(
                     removed_count += 1
 
     open_tasks = _open_tasks_sorted(todo_state)
-    if not open_tasks and assistant_mode and current_stage not in TERMINAL_STAGES:
+    if (
+        not open_tasks
+        and assistant_mode
+        and current_stage not in TERMINAL_STAGES
+        and not has_unresolved_blockers
+    ):
         for candidate in _fallback_candidates_for_host_with_policy(
             repo_root,
             resolved_host_mode,

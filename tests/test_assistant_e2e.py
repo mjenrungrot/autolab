@@ -545,6 +545,56 @@ class TestAssistantCycleStages:
         assert state["task_cycle_stage"] == "implement"
         assert state["current_task_id"] == task_id
 
+    def test_select_preserves_stage_attempt_in_retry_cycle(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_select_retry_01"
+        state = _make_state(
+            stage="implementation",
+            stage_attempt=2,
+            task_cycle_stage="select",
+            current_task_id="",
+        )
+        state_path = _write_state(repo, state)
+
+        fake_task = {
+            "task_id": task_id,
+            "source": "manual",
+            "stage": "implementation",
+            "task_class": "feature",
+            "text": "Address blocker",
+        }
+
+        with (
+            mock.patch(
+                "autolab.run_assistant.select_open_task", return_value=fake_task
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch("autolab.run_assistant._persist_agent_result"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._collect_change_snapshot", return_value={}
+            ),
+        ):
+            _run_once_assistant(state_path)
+
+        state = _read_state(repo)
+        assert state["stage"] == "implementation"
+        assert state["stage_attempt"] == 2
+        assert state["task_cycle_stage"] == "implement"
+
     def test_implement_runs_standard_then_sets_verify(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
         task_id = "task_impl_01"
@@ -881,6 +931,28 @@ class TestMeaningfulChangeEvaluation:
         assert meaningful is True
         assert set(meaningful_files) == {"src/a.py", "src/b.py"}
 
+    def test_review_artifacts_not_meaningful_in_implementation_stage(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        config = _default_meaningful_config()
+        current = {
+            "experiments/plan/iter1/implementation_review.md": "M:h1",
+            "experiments/plan/iter1/review_result.json": "M:h2",
+        }
+        with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot={},
+                    stage="implementation",
+                )
+            )
+        assert meaningful is False
+        assert len(changed) == 2
+        assert meaningful_files == []
+
 
 # ===========================================================================
 # 6. Assistant target stage resolution
@@ -1065,6 +1137,91 @@ class TestGuardrailBreach:
 
         assert outcome.exit_code == 1
         assert "guardrail" in outcome.message.lower()
+        state = _read_state(repo)
+        assert state["stage"] == "human_review"
+        assert state["task_cycle_stage"] == "done"
+        assert state["current_task_id"] == ""
+
+    def test_stalled_blockers_breach_escalates_to_human_review(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_stalled_blocker_01"
+        state = _make_state(
+            stage="implementation_review",
+            task_cycle_stage="review",
+            current_task_id=task_id,
+            repeat_guard={
+                "last_decision": "",
+                "same_decision_streak": 0,
+                "last_open_task_count": -1,
+                "no_progress_decisions": 0,
+                "update_docs_cycle_count": 0,
+                "last_verification_passed": True,
+            },
+        )
+        state_path = _write_state(repo, state)
+        review_result_path = (
+            repo / "experiments" / "plan" / "iter_test_001" / "review_result.json"
+        )
+        _write_json(
+            review_result_path,
+            {
+                "status": "needs_retry",
+                "blocking_findings": ["Fix scripts/method_b.py before launch"],
+                "required_checks": {
+                    "tests": "fail",
+                    "dry_run": "skip",
+                    "schema": "pass",
+                    "env_smoke": "skip",
+                    "docs_target_update": "skip",
+                },
+                "reviewed_at": "2026-02-19T00:00:00Z",
+            },
+        )
+
+        mock_config = _default_meaningful_config()
+        guardrail = GuardrailConfig(
+            max_same_decision_streak=3,
+            max_no_progress_decisions=2,
+            max_generated_todo_tasks=5,
+            max_update_docs_cycles=3,
+            on_breach="human_review",
+            max_stalled_blocker_cycles=1,
+        )
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(True, ["src/feature.py"], ["src/feature.py"], {}),
+            ),
+            mock.patch(
+                "autolab.run_assistant._load_guardrail_config", return_value=guardrail
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch("autolab.run_assistant._persist_agent_result"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch("autolab.run_assistant._write_guardrail_breach"),
+        ):
+            outcome = _run_once_assistant(state_path, auto_mode=True)
+
+        assert outcome.exit_code == 1
+        assert "stalled blockers" in outcome.message.lower()
         state = _read_state(repo)
         assert state["stage"] == "human_review"
         assert state["task_cycle_stage"] == "done"

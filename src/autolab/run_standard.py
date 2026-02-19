@@ -20,6 +20,7 @@ from autolab.config import (
 )
 from autolab.evaluate import _evaluate_stage
 from autolab.runners import _invoke_agent_runner
+from autolab.launch_runtime import _execute_launch_runtime
 from autolab.state import (
     _append_state_history,
     _infer_unique_experiment_id_from_backlog,
@@ -700,6 +701,7 @@ def _run_once_standard(
                     repo_root,
                     meaningful_config,
                     baseline_snapshot=last_change_baseline,
+                    stage=stage_before,
                 )
             )
             if meaningful_changed:
@@ -947,6 +949,21 @@ def _run_once_standard(
                     detail=f"agent runner error: {detail}",
                 )
 
+    if stage_before == "launch":
+        try:
+            launch_result = _execute_launch_runtime(repo_root, state=state)
+            pre_sync_changed.extend(launch_result.changed_files)
+        except StageCheckError as exc:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=f"launch execution failed: {exc}",
+                verification=verification_summary,
+            )
+
     if auto_mode or verify_before_evaluate:
         verified, verify_message = _run_verification_step(
             repo_root, state, auto_mode=auto_mode
@@ -1046,6 +1063,7 @@ def _run_once_standard(
                     repo_root,
                     meaningful_config,
                     baseline_snapshot=standard_baseline_snapshot,
+                    stage=stage_before,
                 )
                 if not implementation_progress:
                     detail = (

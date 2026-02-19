@@ -30,6 +30,8 @@ Key policy knobs for SLURM:
 
 - `requirements_by_stage.launch.env_smoke: true` -- validates run health after submission
 - `requirements_by_stage.slurm_monitor.env_smoke: true` -- validates monitor-stage run health while polling/syncing
+- `launch.slurm_submit_timeout_seconds: 30` -- submit-time timeout for `sbatch` probing in launch
+- `launch.local_timeout_seconds: 900` -- local launch timeout used for small-example testing
 - `agent_runner.edit_scope.mode: "iteration_plus_core"` -- allows runner to update SLURM scripts
 - `autorun.todo_fallback.slurm.stage: "hypothesis"` -- fallback behavior when no tasks remain
 
@@ -50,7 +52,7 @@ submitted -> running -> synced -> completed
 - `completed`: Run finished, artifacts available. `completed_at` required.
 - `failed`: Run terminated with error. `completed_at` required.
 
-The launch stage sets the initial status (typically `submitted` for SLURM) and does not block waiting for completion. The `slurm_monitor` stage owns async polling/sync pickup.
+The launch stage executes submission (`sbatch`) and sets the initial status (typically `submitted` for SLURM); it does not block waiting for completion. The `slurm_monitor` stage owns async polling/sync pickup.
 
 ## SLURM Job Ledger
 
