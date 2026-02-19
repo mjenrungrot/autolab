@@ -781,7 +781,20 @@ def _looks_like_blocker_task_text(text: str) -> bool:
 def _normalize_blocking_finding_text(value: Any) -> tuple[str, str]:
     stage_hint = ""
     if isinstance(value, str):
-        return (_normalize_space(value), stage_hint)
+        raw_text = _normalize_space(value)
+        stage_match = re.search(
+            r"\bstage\s*[:=]\s*([a-z_]+)\b", raw_text, flags=re.IGNORECASE
+        )
+        if stage_match:
+            stage_hint = stage_match.group(1).strip().lower()
+            raw_text = re.sub(
+                r"\bstage\s*[:=]\s*[a-z_]+\s*;?\s*",
+                "",
+                raw_text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return (_normalize_space(raw_text), stage_hint)
     if isinstance(value, dict):
         raw_stage = str(value.get("stage", "")).strip().lower()
         if raw_stage:
@@ -809,6 +822,21 @@ def _normalize_blocking_finding_text(value: Any) -> tuple[str, str]:
     return (_normalize_space(str(value)), stage_hint)
 
 
+def _is_actionable_blocking_finding(text: str) -> bool:
+    lowered = _normalize_space(text).lower()
+    if not lowered:
+        return False
+    if lowered in {"none", "n/a", "na", "no blockers", "no blocker"}:
+        return False
+    if re.search(r"\b(?:verifier_)?failing_checks\s*[:=]\s*none\b", lowered):
+        return False
+    if re.search(r"\bblocking_findings\s*[:=]\s*none\b", lowered):
+        return False
+    if re.search(r"\bblockers?\s*[:=]\s*none\b", lowered):
+        return False
+    return True
+
+
 def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
     normalized_hint = _normalize_space(stage_hint).lower()
     if normalized_hint in {"implementation", "implementation_review"}:
@@ -819,6 +847,14 @@ def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
         return "extract_results"
 
     lowered = _normalize_space(text).lower()
+    if re.search(
+        r"(?:file|path|artifact_path)\s*=\s*[^|;\n]*?(?:/|\\)(?:scripts|data|src)(?:/|\\)",
+        lowered,
+    ):
+        return "implementation"
+    if re.search(r"(^|[\s|;,:])(?:scripts|data|src)/", lowered):
+        return "implementation"
+
     launch_tokens = (
         "launch",
         "slurm",
@@ -864,6 +900,8 @@ def _extract_review_blocker_candidates(
     for finding in findings:
         finding_text, stage_hint = _normalize_blocking_finding_text(finding)
         if not finding_text:
+            continue
+        if not _is_actionable_blocking_finding(finding_text):
             continue
         stage = _map_blocking_finding_stage(text=finding_text, stage_hint=stage_hint)
         text_key = _normalize_text_key(finding_text)
