@@ -33,6 +33,7 @@ Update run tracking artifacts for the current run:
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/schemas/run_manifest.schema.json`
+- Resolved context: `iteration_id={{iteration_id}}`
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - `docs/slurm_job_list.md` (for SLURM tracking)
 - Scheduler probes when available (`squeue`, `sacct`, `sinfo`)

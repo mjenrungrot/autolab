@@ -1,6 +1,6 @@
 ## ASSISTANT OUTPUT CONTRACT
 
-Use this reporting format for assistant phases:
+You MUST use this reporting format for every assistant phase response:
 - `files_changed`: list concrete repo-relative paths changed in this phase (or `[]`).
 - `commands_run`: list concrete commands executed for validation/evidence (or `[]`).
 - `evidence`: list concise pointers in the form `<path>: <what it proves>`.

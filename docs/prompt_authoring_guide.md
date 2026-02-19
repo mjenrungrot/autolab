@@ -38,6 +38,9 @@ Common tokens available in prompts:
 - `{{target_comparison}}`
 - `{{decision_suggestion}}`
 - `{{auto_metrics_evidence}}`
+- `{{run_group}}`
+- `{{replicate_count}}`
+- `{{task_context}}`
 
 Do not leave unresolved placeholders in required outputs.
 For per-token descriptions and stage guidance, see `docs/prompt_token_reference.md`.
