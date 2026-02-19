@@ -239,6 +239,50 @@ def test_todo_sync_parses_stage_hint_from_blocker_string(tmp_path: Path) -> None
     assert all(str(task.get("stage", "")) == "implementation" for task in blocker_tasks)
 
 
+def test_todo_sync_maps_launch_input_not_runnable_to_implementation_with_data_hints(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write(
+        repo / "docs" / "todo.md",
+        ("# TODO\n\n## Tasks\n<!-- empty -->\n\n## Notes\nnotes\n"),
+    )
+    data_file = repo / "data" / "curated_yt_drummers" / "sample.mp4"
+    data_file.parent.mkdir(parents=True, exist_ok=True)
+    data_file.write_bytes(b"video")
+    _seed_review_result(
+        repo,
+        status="needs_retry",
+        blocking_findings=[
+            "manual_check=launch_input_not_runnable | run_manifest pending",
+        ],
+    )
+
+    state = {
+        "iteration_id": "iter1",
+        "stage": "implementation_review",
+        "assistant_mode": "off",
+    }
+    sync_todo_pre_run(repo, state, host_mode="local")
+
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    blocker_tasks = [
+        task
+        for task in todo_state["tasks"].values()
+        if task.get("status") == "open"
+        and str(task.get("scope", "")).startswith("review:blocker:")
+    ]
+    assert blocker_tasks
+    assert all(str(task.get("stage", "")) == "implementation" for task in blocker_tasks)
+    assert any(
+        str((repo / "data").resolve()) in str(task.get("text", ""))
+        for task in blocker_tasks
+    )
+
+
 def test_todo_sync_filters_non_actionable_blocker_meta_lines(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

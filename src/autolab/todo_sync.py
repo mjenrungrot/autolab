@@ -13,6 +13,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     yaml = None
 
+from autolab.dataset_discovery import discover_media_inputs, summarize_root_counts
+
 
 ACTIVE_STAGES = (
     "hypothesis",
@@ -854,6 +856,17 @@ def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
         return "implementation"
     if re.search(r"(^|[\s|;,:])(?:scripts|data|src)/", lowered):
         return "implementation"
+    if any(
+        token in lowered
+        for token in (
+            "launch_input_not_runnable",
+            "segment_list",
+            ".mp4",
+            "media input",
+            "manual_check=launch_input_not_runnable",
+        )
+    ):
+        return "implementation"
 
     launch_tokens = (
         "launch",
@@ -880,8 +893,24 @@ def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
     return "implementation"
 
 
+def _blocker_data_root_hint(repo_root: Path, *, iteration_dir: Path, text: str) -> str:
+    lowered = _normalize_space(text).lower()
+    if not any(
+        token in lowered
+        for token in ("launch_input_not_runnable", "segment_list", ".mp4", "media")
+    ):
+        return ""
+    discovery = discover_media_inputs(repo_root, iteration_dir=iteration_dir)
+    roots = ", ".join(str(path) for path in discovery.project_roots)
+    if not roots:
+        roots = "none"
+    counts = summarize_root_counts(discovery.project_root_counts)
+    return f"Use project-local media roots first: {roots}. mp4 counts: {counts}."
+
+
 def _extract_review_blocker_candidates(
     *,
+    repo_root: Path,
     iteration_dir: Path,
     iteration_id: str,
 ) -> list[_GeneratedCandidate]:
@@ -907,15 +936,21 @@ def _extract_review_blocker_candidates(
         text_key = _normalize_text_key(finding_text)
         if not text_key:
             continue
+        data_root_hint = _blocker_data_root_hint(
+            repo_root, iteration_dir=iteration_dir, text=finding_text
+        )
+        blocker_text = (
+            "Resolve implementation review blocker for iteration "
+            f"{iteration_id}: {finding_text}"
+        )
+        if data_root_hint:
+            blocker_text = f"{blocker_text} {data_root_hint}"
         scope_digest = hashlib.sha1(text_key.encode("utf-8")).hexdigest()[:12]
         candidates.append(
             _GeneratedCandidate(
                 stage=stage,
                 scope=f"{REVIEW_BLOCKER_SCOPE_PREFIX}{scope_digest}",
-                text=(
-                    "Resolve implementation review blocker for iteration "
-                    f"{iteration_id}: {finding_text}"
-                ),
+                text=blocker_text,
             )
         )
 
@@ -1084,6 +1119,7 @@ def _collect_generated_candidates(
 
         candidates.extend(
             _extract_review_blocker_candidates(
+                repo_root=repo_root,
                 iteration_dir=iteration_dir,
                 iteration_id=iteration_id,
             )

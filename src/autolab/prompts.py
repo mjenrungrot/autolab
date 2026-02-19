@@ -24,6 +24,7 @@ from autolab.config import (
     _load_verifier_policy,
     _resolve_policy_python_bin,
 )
+from autolab.dataset_discovery import discover_media_inputs, summarize_root_counts
 from autolab.models import RenderedPromptBundle, StageCheckError
 from autolab.registry import (
     StageSpec,
@@ -688,6 +689,15 @@ def _build_prompt_context(
     replicate_count = len(run_group) if run_group else 1
 
     scope_payload = runner_scope if isinstance(runner_scope, dict) else {}
+    media_discovery = discover_media_inputs(
+        repo_root,
+        iteration_dir=iteration_dir if iteration_id else None,
+    )
+    project_data_roots = [str(path) for path in media_discovery.project_roots]
+    project_data_media_counts = {
+        str(path): int(count)
+        for path, count in media_discovery.project_root_counts.items()
+    }
     return {
         "generated_at": _utc_now(),
         "stage": stage,
@@ -720,6 +730,11 @@ def _build_prompt_context(
         "task_context": task_context_text,
         "run_group": run_group,
         "replicate_count": replicate_count,
+        "project_data_roots": project_data_roots,
+        "project_data_media_counts": project_data_media_counts,
+        "project_data_media_count_summary": summarize_root_counts(
+            media_discovery.project_root_counts
+        ),
     }
 
 
@@ -773,6 +788,12 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "task_context": context.get("task_context", ""),
         "run_group": _to_text(context.get("run_group"), "run_group"),
         "replicate_count": str(context.get("replicate_count", 1)),
+        "project_data_roots": _to_text(
+            context.get("project_data_roots"), "project_data_roots"
+        ),
+        "project_data_media_counts": _to_text(
+            context.get("project_data_media_counts"), "project_data_media_counts"
+        ),
     }
 
 
@@ -831,6 +852,23 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         if allowed_dirs_text != "(iteration workspace only)"
         else "all paths outside the iteration workspace"
     )
+    project_data_roots_raw = context_payload.get("project_data_roots")
+    project_data_roots = (
+        [str(item).strip() for item in project_data_roots_raw if str(item).strip()]
+        if isinstance(project_data_roots_raw, list)
+        else []
+    )
+    project_data_roots_text = (
+        ", ".join(project_data_roots) if project_data_roots else "none"
+    )
+    project_data_counts_raw = context_payload.get("project_data_media_counts")
+    project_data_counts_text = "none"
+    if isinstance(project_data_counts_raw, dict):
+        count_parts: list[str] = []
+        for root, count in project_data_counts_raw.items():
+            count_parts.append(f"{root}={count}")
+        if count_parts:
+            project_data_counts_text = ", ".join(count_parts)
 
     return (
         "## Runtime Stage Context\n"
@@ -848,6 +886,8 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- workspace_dir: {scope_workspace}\n"
         f"- allowed_edit_dirs: {allowed_dirs_text}\n"
         f"- disallowed_edit_dirs: {disallowed_text}\n"
+        f"- project_data_roots: {project_data_roots_text}\n"
+        f"- project_data_media_counts: {project_data_counts_text}\n"
     )
 
 

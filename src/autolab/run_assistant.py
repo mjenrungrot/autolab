@@ -12,6 +12,12 @@ from autolab.config import (
     _load_guardrail_config,
     _load_meaningful_change_config,
 )
+from autolab.dataset_discovery import (
+    discover_media_inputs,
+    parse_runnable_media_entries,
+    populate_segment_list_from_media,
+    summarize_root_counts,
+)
 from autolab.run_standard import _run_once_standard
 from autolab.state import (
     _append_state_history,
@@ -172,6 +178,89 @@ def _review_blocker_fingerprint(
     return (digest, normalized)
 
 
+def _needs_segment_list_preflight(iteration_dir: Path, stage: str) -> bool:
+    stage_name = str(stage).strip().lower()
+    if stage_name not in {"implementation", "implementation_review", "launch"}:
+        return False
+    segment_list_path = iteration_dir / "data" / "segment_list.txt"
+    if segment_list_path.exists():
+        return True
+
+    review_result_path = iteration_dir / "review_result.json"
+    if not review_result_path.exists():
+        return False
+    try:
+        payload = json.loads(review_result_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    findings = payload.get("blocking_findings")
+    if not isinstance(findings, list):
+        return False
+    for finding in findings:
+        text = _normalize_blocker_finding(finding).lower()
+        if not text:
+            continue
+        if "launch_input_not_runnable" in text or "segment_list" in text:
+            return True
+    return False
+
+
+def _assistant_seed_segment_list_if_needed(
+    repo_root: Path, state: dict[str, Any]
+) -> list[Path]:
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    if not iteration_id:
+        return []
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    current_stage = str(state.get("stage", "")).strip()
+    if not _needs_segment_list_preflight(iteration_dir, current_stage):
+        return []
+
+    segment_list_path = iteration_dir / "data" / "segment_list.txt"
+    existing_runnable = parse_runnable_media_entries(segment_list_path)
+    if existing_runnable:
+        return []
+
+    discovery = discover_media_inputs(repo_root, iteration_dir=iteration_dir)
+    media_files = discovery.media_files
+    if not media_files:
+        _append_log(
+            repo_root,
+            (
+                "assistant preflight segment_list: no media discovered in project roots; "
+                f"roots={','.join(str(path) for path in discovery.project_roots) or 'none'}; "
+                f"counts={summarize_root_counts(discovery.project_root_counts)}"
+            ),
+        )
+        return []
+
+    selected_paths, changed = populate_segment_list_from_media(
+        segment_list_path,
+        media_files,
+        max_entries=8,
+    )
+    if not changed:
+        return []
+
+    source = "fallback" if discovery.used_fallback else "project"
+    _append_log(
+        repo_root,
+        (
+            "assistant preflight segment_list populated: "
+            f"count={len(selected_paths)} source={source} path={segment_list_path}; "
+            f"project_counts={summarize_root_counts(discovery.project_root_counts)}"
+        ),
+    )
+    return [segment_list_path]
+
+
 def _run_once_assistant(
     state_path: Path,
     *,
@@ -180,6 +269,7 @@ def _run_once_assistant(
 ) -> RunOutcome:
     repo_root = _resolve_repo_root(state_path)
     pre_sync_changed: list[Path] = []
+    preflight_changed: list[Path] = []
     detected_host_mode = _detect_priority_host_mode()
     try:
         state = _normalize_state(_load_state(state_path))
@@ -265,6 +355,7 @@ def _run_once_assistant(
             commit_cycle_stage="done",
         )
 
+    preflight_changed = _assistant_seed_segment_list_if_needed(repo_root, state)
     pre_sync_changed, _ = _safe_todo_pre_sync(
         repo_root, state, host_mode=detected_host_mode
     )
@@ -320,6 +411,7 @@ def _run_once_assistant(
             summary=summary,
             changed_files=[
                 state_path,
+                *preflight_changed,
                 *changed_files,
                 *pre_sync_changed,
                 *post_sync_changed,

@@ -884,6 +884,8 @@ def test_run_health_fails_completion_like_status_missing_completed_at(
 
     assert result.returncode == 1
     assert "timestamps.completed_at is required" in result.stdout
+    assert "project_data_roots=" in result.stdout
+    assert "project_data_media_counts=" in result.stdout
 
 
 def test_run_health_slurm_submitted_allows_pending_sync(tmp_path: Path) -> None:
