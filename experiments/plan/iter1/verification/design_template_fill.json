@@ -1,9 +1,0 @@
-{
-  "status": "fail",
-  "verifier": "template_fill",
-  "stage": "design",
-  "checks": [],
-  "errors": [
-    "iteration workspace missing at /private/var/folders/9s/1zt9rbmj6h32l3m2v7ttv0zm0000gn/T/pytest-of-tjenrung/pytest-369/test_run_with_verify_blocks_st0/repo/experiments/plan/iter1"
-  ]
-}
