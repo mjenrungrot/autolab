@@ -9,6 +9,14 @@
 # this file to avoid hard-coded stage-specific logic scattered across the
 # codebase.  Runtime overrides (e.g. verifier_policy.yaml) take precedence
 # where applicable.
+#
+# Pattern Path Convention:
+#   Paths containing <RUN_ID>, <ITERATION_ID>, or similar angle-bracket
+#   tokens are *pattern paths* -- templates resolved at runtime. They are
+#   NOT literal filesystem paths.
+#   Example: required_outputs: [runs/<RUN_ID>/run_manifest.json]
+#   At runtime <RUN_ID> is replaced with the actual run ID from state,
+#   e.g. runs/20260218T160045Z/run_manifest.json
 # ---------------------------------------------------------------------------
 
 schema_version: "1.0"
@@ -94,13 +102,32 @@ stages:
     prompt_file: stage_launch.md
     required_tokens: [iteration_id, iteration_path, run_id]
     required_outputs: [runs/<RUN_ID>/run_manifest.json]
-    next_stage: extract_results
+    next_stage: slurm_monitor
     verifier_categories:
       tests: false
       dry_run: false
       schema: true
       prompt_lint: true
       consistency: true
+      env_smoke: true
+      docs_target_update: false
+    classifications:
+      active: true
+      terminal: false
+      decision: false
+      runner_eligible: true
+
+  slurm_monitor:
+    prompt_file: stage_slurm_monitor.md
+    required_tokens: [iteration_id, iteration_path, run_id]
+    required_outputs: []
+    next_stage: extract_results
+    verifier_categories:
+      tests: false
+      dry_run: false
+      schema: false
+      prompt_lint: false
+      consistency: false
       env_smoke: true
       docs_target_update: false
     classifications:

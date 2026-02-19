@@ -27,6 +27,7 @@ _FALLBACK_ACTIVE_STAGES = (
     "implementation",
     "implementation_review",
     "launch",
+    "slurm_monitor",
     "extract_results",
     "update_docs",
     "decide_repeat",
@@ -44,6 +45,7 @@ _FALLBACK_STAGE_PROMPT_FILES = {
     "implementation": "stage_implementation.md",
     "implementation_review": "stage_implementation_review.md",
     "launch": "stage_launch.md",
+    "slurm_monitor": "stage_slurm_monitor.md",
     "extract_results": "stage_extract_results.md",
     "update_docs": "stage_update_docs.md",
     "decide_repeat": "stage_decide_repeat.md",
@@ -56,6 +58,7 @@ _FALLBACK_PROMPT_REQUIRED_TOKENS_BY_STAGE = {
     "implementation": {"iteration_id", "iteration_path"},
     "implementation_review": {"iteration_id", "iteration_path"},
     "launch": {"iteration_id", "iteration_path", "run_id"},
+    "slurm_monitor": {"iteration_id", "iteration_path", "run_id"},
     "extract_results": {"iteration_id", "iteration_path", "run_id"},
     "update_docs": {"iteration_id", "iteration_path", "run_id"},
     "decide_repeat": {"iteration_id", "iteration_path"},
@@ -148,6 +151,17 @@ ASSISTANT_CONTROL_COMMIT_PATHS = (
     ".autolab/todo_state.json",
     "docs/todo.md",
 )
+# ---------------------------------------------------------------------------
+# Canonical status vocabularies (mirrored from verifier_lib for package-side use)
+# ---------------------------------------------------------------------------
+
+SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset({"ok", "completed", "success", "passed"})
+COMPLETION_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "failed"})
+IN_PROGRESS_STATUSES: frozenset[str] = frozenset({"pending", "submitted", "running", "synced"})
+RUN_MANIFEST_STATUSES: frozenset[str] = frozenset({
+    "pending", "submitted", "running", "synced", "completed", "failed", "partial",
+})
+
 BACKLOG_COMPLETED_STATUSES = {"done", "completed", "closed", "resolved"}
 EXPERIMENT_TYPES = ("plan", "in_progress", "done")
 EXPERIMENT_LOCKED_TYPES = {"done"}

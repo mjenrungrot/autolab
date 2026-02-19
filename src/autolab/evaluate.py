@@ -10,7 +10,7 @@ try:
 except Exception:  # pragma: no cover — optional dependency
     yaml = None  # type: ignore[assignment]
 
-from autolab.constants import ACTIVE_STAGES
+from autolab.constants import ACTIVE_STAGES, COMPLETION_LIKE_STATUSES, SYNC_SUCCESS_STATUSES
 from autolab.models import EvalResult, StageCheckError
 from autolab.config import _load_verifier_policy, _resolve_stage_requirements
 from autolab.state import _resolve_iteration_directory
@@ -176,7 +176,48 @@ def _eval_launch(
         )
 
     state["sync_status"] = sync_status
-    return EvalResult("extract_results", "complete", "'launch' checks passed")
+    return EvalResult("slurm_monitor", "complete", "'launch' checks passed")
+
+
+def _eval_slurm_monitor(
+    repo_root: Path,
+    state: dict[str, Any],
+    iteration_dir: Path,
+    iteration_id: str,
+) -> EvalResult:
+    """Evaluate slurm_monitor stage -- auto-skip for local runs."""
+    run_id = (
+        str(state.get("pending_run_id", "")).strip()
+        or str(state.get("last_run_id", "")).strip()
+    )
+    if not run_id:
+        return EvalResult("extract_results", "complete", "slurm_monitor skipped (no run_id)")
+
+    manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
+    manifest = _load_dict_json(manifest_path, "run_manifest.json") if manifest_path.exists() else {}
+
+    host_mode = str(
+        manifest.get("host_mode")
+        or manifest.get("launch_mode")
+        or _detect_priority_host_mode()
+    ).strip().lower()
+
+    if host_mode != "slurm":
+        return EvalResult("extract_results", "complete", "slurm_monitor skipped (local run)")
+
+    run_status = str(manifest.get("status", "")).strip().lower()
+    sync_block = manifest.get("artifact_sync_to_local")
+    sync_status = ""
+    if isinstance(sync_block, dict):
+        sync_status = str(sync_block.get("status", "")).strip().lower()
+
+    if sync_status in SYNC_SUCCESS_STATUSES or run_status in COMPLETION_LIKE_STATUSES:
+        return EvalResult("extract_results", "complete", "slurm_monitor: artifacts ready")
+
+    # For in-progress SLURM jobs the agent runner should have updated the
+    # manifest during its turn.  Advance to extraction regardless so the
+    # pipeline doesn't stall; extraction will handle async pickup.
+    return EvalResult("extract_results", "complete", "slurm_monitor: advancing to extraction")
 
 
 def _eval_extract_results(
@@ -185,6 +226,21 @@ def _eval_extract_results(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
+    run_group = state.get("run_group", [])
+    if isinstance(run_group, list) and run_group:
+        # Multi-run: validate aggregated metrics at the base run_id
+        _validate_extract(iteration_dir, state["last_run_id"])
+        # Also verify per-replicate metrics exist
+        missing_replicates = []
+        for rid in run_group:
+            replicate_metrics = iteration_dir / "runs" / rid / "metrics.json"
+            if not replicate_metrics.exists():
+                missing_replicates.append(rid)
+        if missing_replicates:
+            raise StageCheckError(
+                f"multi-run extract missing replicate metrics for: {', '.join(missing_replicates)}"
+            )
+        return EvalResult("update_docs", "complete", "'extract_results' multi-run checks passed")
     _validate_extract(iteration_dir, state["last_run_id"])
     return EvalResult("update_docs", "complete", "'extract_results' checks passed")
 
@@ -211,6 +267,7 @@ _STAGE_EVALUATORS = {
     "implementation": _eval_implementation,
     "implementation_review": _eval_implementation_review,
     "launch": _eval_launch,
+    "slurm_monitor": _eval_slurm_monitor,
     "extract_results": _eval_extract_results,
     "update_docs": _eval_update_docs,
 }

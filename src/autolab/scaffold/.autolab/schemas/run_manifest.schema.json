@@ -106,6 +106,21 @@
           }
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"enum": ["completed", "failed"]}
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "timestamps": {
+            "required": ["started_at", "completed_at"]
+          }
+        }
+      }
     }
   ],
   "additionalProperties": true
