@@ -274,6 +274,43 @@ def test_schema_checks_pass_for_valid_review_payload(tmp_path: Path) -> None:
     assert "schema_checks: PASS" in result.stdout
 
 
+def test_schema_checks_pass_with_runtime_state_history_keys(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+
+    state_path = repo / ".autolab" / "state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["history"] = [
+        {
+            "timestamp_utc": "2026-02-19T10:58:06Z",
+            "stage_before": "hypothesis",
+            "stage_after": "hypothesis",
+            "status": "complete",
+            "summary": "assistant selected task task_1 -> hypothesis",
+            "stage_attempt": 0,
+        },
+        {
+            "timestamp_utc": "2026-02-19T10:59:41Z",
+            "stage_before": "hypothesis",
+            "stage_after": "hypothesis",
+            "status": "failed",
+            "summary": "verification failed; retrying stage hypothesis (1/3)",
+            "stage_attempt": 1,
+            "verification": {
+                "passed": False,
+                "message": "verification failed",
+                "mode": "auto",
+            },
+        },
+    ]
+    state_path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
 def test_schema_checks_fail_when_required_check_key_missing(tmp_path: Path) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=False)

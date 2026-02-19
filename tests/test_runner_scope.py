@@ -16,6 +16,7 @@ from autolab.runners import (
     _collect_filesystem_snapshot,
     _filesystem_snapshot_delta_paths,
     _is_within_scope,
+    _looks_like_codex_sandbox_permission_failure,
 )
 
 
@@ -90,3 +91,17 @@ def test_scope_violation_detected_via_snapshot(tmp_path: Path) -> None:
 
     assert "secrets.env" in out_of_scope
     assert all(not _is_within_scope(p, allowed_roots) for p in out_of_scope)
+
+
+def test_detects_codex_sandbox_permission_failure_signature() -> None:
+    stdout = "failed to queue rollout items: channel closed"
+    stderr = "sandbox-exec: sandbox_apply: Operation not permitted"
+
+    assert _looks_like_codex_sandbox_permission_failure(stdout, stderr) is True
+
+
+def test_does_not_flag_unrelated_runner_failure_as_sandbox_issue() -> None:
+    stdout = "runner exited with code 1"
+    stderr = "network timeout while waiting for response"
+
+    assert _looks_like_codex_sandbox_permission_failure(stdout, stderr) is False

@@ -13,6 +13,7 @@ _EXPORTS_BY_MODULE: dict[str, tuple[str, ...]] = {
     "autolab.constants": (
         "ACTIVE_STAGES",
         "AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET",
+        "AGENT_RUNNER_CODEX_DANGEROUS_PRESET",
         "AGENT_RUNNER_EDIT_SCOPE_MODES",
         "AGENT_RUNNER_PRESETS",
         "ALL_STAGES",
