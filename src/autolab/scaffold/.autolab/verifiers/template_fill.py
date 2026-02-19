@@ -30,6 +30,13 @@ Responsibility boundary
 
 from __future__ import annotations
 
+import pathlib
+import sys
+
+_VERIFIER_DIR = pathlib.Path(__file__).resolve().parent
+if str(_VERIFIER_DIR) not in sys.path:
+    sys.path.insert(0, str(_VERIFIER_DIR))
+
 import argparse
 import json
 import re
