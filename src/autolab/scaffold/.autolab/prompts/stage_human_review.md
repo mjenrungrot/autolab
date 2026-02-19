@@ -22,9 +22,9 @@ Summarize the experiment state and present the available actions to the human re
 ## AVAILABLE ACTIONS
 The human reviewer can resolve this stage by running:
 
-- `autolab review --status=pass` -- Continue to the next stage (implementation for retry, or forward progress)
-- `autolab review --status=retry` -- Send back to implementation for fixes
-- `autolab review --status=stop` -- End the experiment
+- `autolab review --status=pass` -- Advance to the next stage in the workflow (the stage that was pending before human_review was triggered)
+- `autolab review --status=retry` -- Return to implementation stage for fixes, resetting stage_attempt counter
+- `autolab review --status=stop` -- End the experiment; no further stages will execute
 
 ## OUTPUTS (OPTIONAL HELPER)
 - No mandatory machine-emitted artifact is required for this stage.

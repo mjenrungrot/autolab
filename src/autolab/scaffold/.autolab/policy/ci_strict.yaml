@@ -1,3 +1,4 @@
+# CI-strict research mode: enable all verification categories where capable.
 requirements_by_stage:
   hypothesis:
     tests: true

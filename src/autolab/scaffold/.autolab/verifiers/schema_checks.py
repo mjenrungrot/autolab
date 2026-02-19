@@ -68,12 +68,18 @@ except Exception:  # pragma: no cover
     )
     REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}  # type: ignore[misc]
 
+from verifier_lib import (
+    REPO_ROOT,
+    STATE_FILE,
+    EXPERIMENT_TYPES,
+    DEFAULT_EXPERIMENT_TYPE,
+    load_json,
+    load_yaml,
+    load_state,
+    resolve_iteration_dir,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
 SCHEMA_DIR = REPO_ROOT / ".autolab" / "schemas"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
 SCHEMAS: dict[str, str] = {
     "state": "state.schema.json",
     "backlog": "backlog.schema.json",
@@ -91,25 +97,6 @@ SCHEMAS: dict[str, str] = {
 SYNC_SUCCESS_STATUSES = {"ok", "completed", "success", "passed"}
 
 
-def _load_json(path: Path) -> dict:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a JSON object")
-    return payload
-
-
-def _load_yaml(path: Path) -> dict:
-    if yaml is None:
-        raise RuntimeError("PyYAML is not available")
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a YAML mapping")
-    return payload
-
-
-def _load_state() -> dict:
-    return _load_json(STATE_FILE)
-
 
 def _load_policy() -> dict:
     policy_path = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
@@ -126,7 +113,7 @@ def _load_policy() -> dict:
 
 def _load_schema(schema_key: str) -> dict:
     path = SCHEMA_DIR / SCHEMAS[schema_key]
-    return _load_json(path)
+    return load_json(path)
 
 
 def _format_error_path(error_path: Iterable[Any]) -> str:
@@ -229,19 +216,10 @@ def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
     return output
 
 
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized_iteration = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
-
 
 def _iteration_dir(state: dict[str, Any]) -> Path:
     iteration_id = str(state.get("iteration_id", "")).strip()
-    return _resolve_iteration_dir(iteration_id)
+    return resolve_iteration_dir(iteration_id)
 
 
 def _latest_run_dir(state: dict[str, Any]) -> Path | None:
@@ -249,12 +227,12 @@ def _latest_run_dir(state: dict[str, Any]) -> Path | None:
     run_id = str(state.get("last_run_id", "")).strip()
     if not iteration_id or not run_id:
         return None
-    return _resolve_iteration_dir(iteration_id) / "runs" / run_id
+    return resolve_iteration_dir(iteration_id) / "runs" / run_id
 
 
 def _validate_state_schema() -> list[str]:
     try:
-        payload = _load_json(STATE_FILE)
+        payload = load_json(STATE_FILE)
     except Exception as exc:
         return [f"{STATE_FILE} {exc}"]
     return _schema_validate(payload, schema_key="state", path=STATE_FILE)
@@ -263,7 +241,7 @@ def _validate_state_schema() -> list[str]:
 def _validate_backlog_schema() -> list[str]:
     path = REPO_ROOT / ".autolab" / "backlog.yaml"
     try:
-        payload = _load_yaml(path)
+        payload = load_yaml(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     return _schema_validate(payload, schema_key="backlog", path=path)
@@ -272,7 +250,7 @@ def _validate_backlog_schema() -> list[str]:
 def _validate_agent_result() -> list[str]:
     path = REPO_ROOT / ".autolab" / "agent_result.json"
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     failures = _schema_validate(payload, schema_key="agent_result", path=path)
@@ -298,7 +276,7 @@ def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
     iteration_id = str(state.get("iteration_id", "")).strip()
     path = _iteration_dir(state) / "design.yaml"
     try:
-        payload = _load_yaml(path)
+        payload = load_yaml(path)
     except Exception as exc:
         return [f"{path} {exc}"]
 
@@ -314,7 +292,7 @@ def _validate_review_result(state: dict[str, Any], policy: dict[str, Any], *, st
 
     path = _iteration_dir(state) / "review_result.json"
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
 
@@ -360,7 +338,7 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
 
     path = run_dir / "run_manifest.json"
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
 
@@ -375,7 +353,7 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage == "launch":
         review_path = _iteration_dir(state) / "review_result.json"
         try:
-            review_payload = _load_json(review_path)
+            review_payload = load_json(review_path)
         except Exception as exc:
             failures.append(f"{review_path} {exc}")
             review_payload = {}
@@ -385,7 +363,7 @@ def _validate_run_manifest(state: dict[str, Any], *, stage: str) -> list[str]:
 
         design_path = _iteration_dir(state) / "design.yaml"
         try:
-            design_payload = _load_yaml(design_path)
+            design_payload = load_yaml(design_path)
         except Exception as exc:
             failures.append(f"{design_path} {exc}")
             design_payload = {}
@@ -421,7 +399,7 @@ def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
 
     path = run_dir / "metrics.json"
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
 
@@ -440,7 +418,7 @@ def _validate_metrics(state: dict[str, Any], *, stage: str) -> list[str]:
     if primary_metric_name:
         design_path = _iteration_dir(state) / "design.yaml"
         try:
-            design_payload = _load_yaml(design_path)
+            design_payload = load_yaml(design_path)
         except Exception:
             design_payload = {}
         if isinstance(design_payload, dict):
@@ -462,7 +440,7 @@ def _validate_decision_result(state: dict[str, Any], *, stage: str) -> list[str]
 
     path = _iteration_dir(state) / "decision_result.json"
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
 
@@ -484,7 +462,7 @@ def _validate_todo_state(state: dict[str, Any]) -> list[str]:
             return [f"{path} is required when assistant_mode=on"]
         return []
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     return _schema_validate(payload, schema_key="todo_state", path=path)
@@ -498,7 +476,7 @@ def _validate_todo_focus(state: dict[str, Any]) -> list[str]:
             return [f"{path} is required when assistant_mode=on"]
         return []
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     return _schema_validate(payload, schema_key="todo_focus", path=path)
@@ -511,7 +489,7 @@ def _validate_plan_metadata(state: dict[str, Any]) -> list[str]:
     if not path.exists():
         return []
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     return _schema_validate(payload, schema_key="plan_metadata", path=path)
@@ -524,7 +502,7 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
     if not path.exists():
         return []
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
     return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
@@ -539,21 +517,19 @@ def main() -> int:
     failures: list[str] = []
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"schema_checks: ERROR {exc}")
         return 1
     stage = _resolve_stage(state, args.stage)
     if not stage:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "schema_checks", "stage": "", "checks": [], "errors": ["state stage is missing"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print("schema_checks: ERROR state stage is missing")
         return 1
@@ -576,7 +552,6 @@ def main() -> int:
     passed = not failures
 
     if args.json:
-        import json as _json
         checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
         if passed:
             checks = [{"name": "schema_checks", "status": "pass", "detail": "all schema checks passed"}]
@@ -587,7 +562,7 @@ def main() -> int:
             "checks": checks,
             "errors": failures,
         }
-        print(_json.dumps(envelope))
+        print(json.dumps(envelope))
     else:
         if failures:
             print("schema_checks: FAIL")

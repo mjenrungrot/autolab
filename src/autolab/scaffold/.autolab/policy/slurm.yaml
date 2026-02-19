@@ -45,6 +45,9 @@ prompt_lint:
 
 safe_automation_protected_files: true
 
+# Example SLURM-specific dry_run_command (uncomment and customize):
+# dry_run_command: "sbatch --test-only scripts/run.sbatch"
+
 autorun:
   todo_fallback:
     slurm:

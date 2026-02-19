@@ -59,7 +59,7 @@ stages:
     next_stage: implementation_review
     verifier_categories:
       tests: false
-      dry_run: true
+      dry_run: true   # Capability flag. Actual requirement controlled by verifier_policy.yaml
       schema: true
       prompt_lint: true
       consistency: false
@@ -152,6 +152,11 @@ stages:
     required_tokens: [iteration_id, iteration_path]
     required_outputs: [decision_result.json]
     next_stage: ""
+    decision_map:
+      design: design
+      hypothesis: hypothesis
+      stop: stop
+      human_review: human_review
     verifier_categories:
       tests: false
       dry_run: false
@@ -161,9 +166,9 @@ stages:
       env_smoke: false
       docs_target_update: false
     classifications:
-      active: false
+      active: true
       terminal: false
-      decision: false
+      decision: true
       runner_eligible: true
 
   human_review:

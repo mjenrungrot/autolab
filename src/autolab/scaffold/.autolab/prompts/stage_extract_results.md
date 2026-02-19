@@ -27,6 +27,8 @@ Convert run artifacts into structured outputs:
 {{shared:runtime_context.md}}
 {{shared:run_artifacts.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/runs/{{run_id}}/metrics.json`
 - `{{iteration_path}}/analysis/summary.md`
@@ -46,7 +48,7 @@ Convert run artifacts into structured outputs:
 - If `metrics.schema.json` is missing, stop and request scaffold/schema restoration.
 
 ## REQUIRED PRECHECK
-- If `run_manifest.json.artifact_sync_to_local.status` is success-like (`ok|completed|success|passed`), proceed with metric extraction.
+- If `run_manifest.json.artifact_sync_to_local.status` is success-like (see guardrails), proceed with metric extraction.
 - If run is SLURM and status is in-progress (`submitted|queued|pending|running|in_progress`), first query tracking state:
   - read `docs/slurm_job_list.md` entry for `run_id`
   - query scheduler (`squeue` and `sinfo`) when available
@@ -84,6 +86,9 @@ Convert run artifacts into structured outputs:
 4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
 
 {{shared:verification_ritual.md}}
+
+## STAGE-SPECIFIC VERIFICATION
+Verify `artifact_sync_to_local.status` is success-like (see guardrails) before extracting. Run: `cat runs/<run_id>/run_manifest.json | python3 -m json.tool` to inspect sync status.
 
 ## METRICS TEMPLATE (schema-aligned)
 ```json

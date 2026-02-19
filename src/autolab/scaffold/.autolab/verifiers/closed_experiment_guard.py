@@ -12,11 +12,10 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
+from verifier_lib import EXPERIMENT_TYPES, REPO_ROOT, make_result, print_result
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKLOG_FILE = REPO_ROOT / ".autolab" / "backlog.yaml"
 CLOSED_STATUSES = {"done", "completed", "closed", "resolved"}
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
 
 
 def _load_closed_iteration_ids() -> set[str]:
@@ -83,22 +82,14 @@ def main() -> int:
 
     closed_iterations = _load_closed_iteration_ids()
     if not closed_iterations:
-        if args.json:
-            import json as _json
-            envelope = {"status": "pass", "verifier": "closed_experiment_guard", "stage": "", "checks": [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iterations"}], "errors": []}
-            print(_json.dumps(envelope))
-        else:
-            print("closed_experiment_guard: PASS")
+        result = make_result("closed_experiment_guard", "", [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iterations"}], [])
+        print_result(result, as_json=args.json)
         return 0
 
     changed_paths = _git_changed_paths()
     if not changed_paths:
-        if args.json:
-            import json as _json
-            envelope = {"status": "pass", "verifier": "closed_experiment_guard", "stage": "", "checks": [{"name": "closed_experiment_guard", "status": "pass", "detail": "no changed paths"}], "errors": []}
-            print(_json.dumps(envelope))
-        else:
-            print("closed_experiment_guard: PASS")
+        result = make_result("closed_experiment_guard", "", [{"name": "closed_experiment_guard", "status": "pass", "detail": "no changed paths"}], [])
+        print_result(result, as_json=args.json)
         return 0
 
     violations: list[tuple[str, str]] = []
@@ -110,26 +101,12 @@ def main() -> int:
 
     passed = not violations
 
-    if args.json:
-        import json as _json
-        checks = [{"name": f"{iteration_id}:{changed}", "status": "fail", "detail": f"closed iteration '{iteration_id}' has modified path: {changed}"} for iteration_id, changed in violations]
-        if passed:
-            checks = [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iteration violations"}]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "closed_experiment_guard",
-            "stage": "",
-            "checks": checks,
-            "errors": [f"closed iteration '{iteration_id}' has modified path: {changed}" for iteration_id, changed in violations],
-        }
-        print(_json.dumps(envelope))
-    else:
-        if violations:
-            print("closed_experiment_guard: FAIL")
-            for iteration_id, changed in violations:
-                print(f"closed iteration '{iteration_id}' has modified path: {changed}")
-        else:
-            print("closed_experiment_guard: PASS")
+    checks = [{"name": f"{iteration_id}:{changed}", "status": "fail", "detail": f"closed iteration '{iteration_id}' has modified path: {changed}"} for iteration_id, changed in violations]
+    if passed:
+        checks = [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iteration violations"}]
+    errors = [f"closed iteration '{iteration_id}' has modified path: {changed}" for iteration_id, changed in violations]
+    result = make_result("closed_experiment_guard", "", checks, errors)
+    print_result(result, as_json=args.json)
 
     return 0 if passed else 1
 

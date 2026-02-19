@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from verifier_lib import REPO_ROOT
 PROMPTS_DIR = REPO_ROOT / ".autolab" / "prompts"
 TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 LEGACY_LITERAL_TOKENS = ("<ITERATION_ID>", "<ITERATION_PATH>", "<RUN_ID>")
@@ -26,7 +26,7 @@ REQUIRED_SHARED_INCLUDES = (
     "{{shared:runtime_context.md}}",
 )
 TERMINAL_STAGES = {"human_review", "stop"}
-ALLOWED_TOKENS = {
+_FALLBACK_ALLOWED_TOKENS = {
     "iteration_id",
     "iteration_path",
     "experiment_id",
@@ -49,6 +49,36 @@ ALLOWED_TOKENS = {
     "auto_metrics_evidence",
     "diff_summary",
 }
+
+# Shared tokens always allowed (not stage-specific).
+_SHARED_TOKENS = {"python_bin", "stage", "stage_context"}
+
+
+def _resolve_allowed_tokens() -> set[str]:
+    """Build ALLOWED_TOKENS dynamically from workflow.yaml required_tokens."""
+    try:
+        from autolab.registry import load_registry
+        registry = load_registry(REPO_ROOT)
+        if registry:
+            tokens: set[str] = set(_SHARED_TOKENS)
+            for spec in registry.values():
+                tokens.update(spec.required_tokens)
+            # Also include known runtime-injected tokens not in registry.
+            tokens.update({
+                "review_feedback", "verifier_errors", "verifier_outputs",
+                "dry_run_output", "metrics_summary", "target_comparison",
+                "decision_suggestion", "auto_metrics_evidence", "diff_summary",
+                "experiment_id", "paper_targets", "launch_mode",
+                "recommended_memory_estimate", "available_memory_gb",
+                "hypothesis_id",
+            })
+            return tokens
+    except Exception:
+        pass
+    return set(_FALLBACK_ALLOWED_TOKENS)
+
+
+ALLOWED_TOKENS = _resolve_allowed_tokens()
 DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {
     "hypothesis": {"iteration_id", "iteration_path", "hypothesis_id"},
     "design": {"iteration_id", "iteration_path", "hypothesis_id"},
@@ -177,9 +207,8 @@ def main() -> int:
         requested = str(args.stage).strip()
         if requested not in stage_prompt_files:
             if args.json:
-                import json as _json
                 envelope = {"status": "fail", "verifier": "prompt_lint", "stage": requested, "checks": [], "errors": [f"unsupported stage '{requested}'"]}
-                print(_json.dumps(envelope))
+                print(json.dumps(envelope))
             else:
                 print(f"prompt_lint: ERROR unsupported stage '{requested}'")
             return 1
@@ -201,7 +230,6 @@ def main() -> int:
     passed = not failures
 
     if args.json:
-        import json as _json
         checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
         if passed:
             checks = [{"name": "prompt_lint", "status": "pass", "detail": "all prompt checks passed"}]
@@ -212,7 +240,7 @@ def main() -> int:
             "checks": checks,
             "errors": failures,
         }
-        print(_json.dumps(envelope))
+        print(json.dumps(envelope))
     else:
         if failures:
             print("prompt_lint: FAIL")

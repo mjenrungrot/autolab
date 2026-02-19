@@ -40,6 +40,10 @@
       },
       "additionalProperties": true
     },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "submitted", "running", "synced", "completed", "failed", "partial"]
+    },
     "artifact_sync_to_local": {
       "type": "object",
       "properties": {

@@ -4,49 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
-
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        raise RuntimeError("Missing .autolab/state.json")
-    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RuntimeError("state.json must contain an object")
-    return state
-
-
-def _load_json(path: Path) -> dict:
-    if not path.exists():
-        raise RuntimeError(f"{path} is missing")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a JSON object")
-    return payload
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized_iteration = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
+from verifier_lib import REPO_ROOT, load_json, load_state, make_result, print_result, resolve_iteration_dir
 
 
 def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     failures: list[str] = []
-    run_dir = _resolve_iteration_dir(iteration_id) / "runs" / run_id
+    run_dir = resolve_iteration_dir(iteration_id) / "runs" / run_id
     manifest_path = run_dir / "run_manifest.json"
-    manifest = _load_json(manifest_path)
+    manifest = load_json(manifest_path)
     manifest_status = str(manifest.get("status", "")).strip().lower()
     completion_like_statuses = {"completed", "complete", "success", "succeeded", "ok", "passed"}
     in_progress_statuses = {"submitted", "queued", "pending", "running", "in_progress"}
@@ -150,14 +117,10 @@ def main() -> int:
     failures: list[str] = []
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "run_health", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
-        else:
-            print(f"run_health: ERROR {exc}")
+        result = make_result("run_health", "", [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     stage = str(state.get("stage", "")).strip()
@@ -165,56 +128,29 @@ def main() -> int:
     run_id = str(state.get("last_run_id", "")).strip()
 
     if stage != "launch":
-        if args.json:
-            import json as _json
-            envelope = {"status": "pass", "verifier": "run_health", "stage": stage, "checks": [{"name": "run_health", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
-            print(_json.dumps(envelope))
-        else:
-            print("run_health: PASS")
+        result = make_result("run_health", stage, [{"name": "run_health", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        print_result(result, as_json=args.json)
         return 0
 
     if not iteration_id or not run_id or run_id.startswith("<"):
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "run_health", "stage": stage, "checks": [], "errors": ["missing iteration_id/last_run_id"]}
-            print(_json.dumps(envelope))
-        else:
-            print("run_health: ERROR missing iteration_id/last_run_id")
+        result = make_result("run_health", stage, [], ["missing iteration_id/last_run_id"])
+        print_result(result, as_json=args.json)
         return 1
 
     try:
         failures.extend(_check_launch_artifacts(iteration_id, run_id))
     except Exception as exc:
-        if args.json:
-            import json as _json
-            envelope = {"status": "fail", "verifier": "run_health", "stage": stage, "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
-        else:
-            print(f"run_health: ERROR {exc}")
+        result = make_result("run_health", stage, [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     passed = not failures
 
-    if args.json:
-        import json as _json
-        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
-        if passed:
-            checks = [{"name": "run_health", "status": "pass", "detail": "all run health checks passed"}]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "run_health",
-            "stage": stage,
-            "checks": checks,
-            "errors": failures,
-        }
-        print(_json.dumps(envelope))
-    else:
-        if failures:
-            print("run_health: FAIL")
-            for reason in failures:
-                print(reason)
-        else:
-            print("run_health: PASS")
+    checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+    if passed:
+        checks = [{"name": "run_health", "status": "pass", "detail": "all run health checks passed"}]
+    result = make_result("run_health", stage, checks, failures)
+    print_result(result, as_json=args.json)
 
     return 0 if passed else 1
 

@@ -22,9 +22,10 @@ ACTIVE_STAGES = (
     "launch",
     "extract_results",
     "update_docs",
+    "decide_repeat",
 )
 TERMINAL_STAGES = ("human_review", "stop")
-ALL_STAGES = set(ACTIVE_STAGES + ("decide_repeat",) + TERMINAL_STAGES)
+ALL_STAGES = set(ACTIVE_STAGES + TERMINAL_STAGES)
 IMPLEMENTATION_PRIORITY_STAGES = ("implementation", "implementation_review")
 DECISION_TO_DESIGN_STAGES = {
     "design",

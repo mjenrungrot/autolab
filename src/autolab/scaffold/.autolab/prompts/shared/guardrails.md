@@ -9,3 +9,7 @@
   - `TODO`, `TODO:`, `TBD`, `FIXME` --deferred-work markers
   - Empty JSON string values (`""`) for required fields
   - Ellipsis stand-ins (`...`, `<...>`) used as content substitutes
+
+**Success-like statuses**: `ok`, `completed`, `success`, `passed`. Use this set when checking artifact sync, run completion, or verifier outcomes.
+
+**Canonical run status values**: `pending`, `submitted`, `running`, `synced`, `completed`, `failed`, `partial`. These are the valid values for `run_manifest.json`'s `status` field (see `run_manifest.schema.json`).

@@ -4,33 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except Exception:  # pragma: no cover
-    yaml = None
+from verifier_lib import REPO_ROOT, load_yaml, make_result, print_result
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".autolab" / "workflow.yaml"
 POLICY_PATH = REPO_ROOT / ".autolab" / "verifier_policy.yaml"
-
-
-def _load_yaml_mapping(path: Path) -> dict[str, Any]:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required for registry consistency checks")
-    if not path.exists():
-        raise RuntimeError(f"missing file: {path}")
-    try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"could not parse {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a mapping")
-    return payload
 
 
 def _check_subset_constraints(
@@ -90,50 +70,27 @@ def main() -> int:
     stage = str(args.stage or "").strip()
 
     try:
-        workflow = _load_yaml_mapping(WORKFLOW_PATH)
-        policy = _load_yaml_mapping(POLICY_PATH)
+        workflow = load_yaml(WORKFLOW_PATH)
+        policy = load_yaml(POLICY_PATH)
     except Exception as exc:
-        if args.json:
-            envelope = {
-                "status": "fail",
-                "verifier": "registry_consistency",
-                "stage": stage,
-                "checks": [],
-                "errors": [str(exc)],
-            }
-            print(json.dumps(envelope))
-        else:
-            print(f"registry_consistency: ERROR {exc}")
+        result = make_result("registry_consistency", stage, [], [str(exc)])
+        print_result(result, as_json=args.json)
         return 1
 
     failures = _check_subset_constraints(workflow, policy)
     passed = not failures
 
-    if args.json:
-        checks = [{"name": issue, "status": "fail", "detail": issue} for issue in failures]
-        if passed:
-            checks = [
-                {
-                    "name": "registry_consistency",
-                    "status": "pass",
-                    "detail": "policy requirements are a subset of registry capabilities",
-                }
-            ]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "registry_consistency",
-            "stage": stage,
-            "checks": checks,
-            "errors": failures,
-        }
-        print(json.dumps(envelope))
-    else:
-        if passed:
-            print("registry_consistency: PASS")
-        else:
-            print("registry_consistency: FAIL")
-            for issue in failures:
-                print(issue)
+    checks = [{"name": issue, "status": "fail", "detail": issue} for issue in failures]
+    if passed:
+        checks = [
+            {
+                "name": "registry_consistency",
+                "status": "pass",
+                "detail": "policy requirements are a subset of registry capabilities",
+            }
+        ]
+    result = make_result("registry_consistency", stage, checks, failures)
+    print_result(result, as_json=args.json)
     return 0 if passed else 1
 
 

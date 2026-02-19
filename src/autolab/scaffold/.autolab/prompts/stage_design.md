@@ -24,6 +24,8 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/design.yaml`
 

@@ -10,15 +10,19 @@ def _load_allowed_tokens_from_prompt_lint(repo_root: Path) -> set[str]:
     source = prompt_lint_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
+    # Look for _FALLBACK_ALLOWED_TOKENS (static fallback set) or ALLOWED_TOKENS (legacy literal)
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "ALLOWED_TOKENS":
-                value = ast.literal_eval(node.value)
+            if isinstance(target, ast.Name) and target.id in ("_FALLBACK_ALLOWED_TOKENS", "ALLOWED_TOKENS"):
+                try:
+                    value = ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    continue
                 if isinstance(value, set):
                     return {str(token) for token in value}
-    raise AssertionError("ALLOWED_TOKENS not found in prompt_lint.py")
+    raise AssertionError("_FALLBACK_ALLOWED_TOKENS / ALLOWED_TOKENS not found in prompt_lint.py")
 
 
 def _extract_tokens_from_markdown(path: Path) -> set[str]:

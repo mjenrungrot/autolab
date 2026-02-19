@@ -27,6 +27,8 @@ Gate launch readiness and produce:
 {{shared:runtime_context.md}}
 {{shared:run_artifacts.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/implementation_review.md`
 - `{{iteration_path}}/review_result.json`
@@ -77,6 +79,16 @@ rather than added to `review_result.required_checks`.
 4. Write `review_result.json` matching schema and policy-required checks.
 
 {{shared:verification_ritual.md}}
+
+## STAGE-SPECIFIC VERIFICATION
+Obtain `diff_summary`, `dry_run_output`, and `verifier_outputs` before completing. Run: `autolab verify --stage implementation_review` and include failing check names in `review_result.json`.
+
+## EVIDENCE INPUT FORMAT
+When `{{diff_summary}}`, `{{verifier_outputs}}`, or `{{dry_run_output}}` are provided, they follow this structure:
+- diff_summary: git diff --stat output or file-level change list
+- verifier_outputs: JSON array from `autolab verify --stage implementation_review --json`
+- dry_run_output: stdout/stderr from dry_run_command (may be empty if dry_run not required)
+If any input is empty, note it as "not available" in your review -- do not fabricate content.
 
 ## OUTPUT TEMPLATE
 ```json

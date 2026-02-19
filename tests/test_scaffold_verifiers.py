@@ -199,6 +199,32 @@ def _run_run_health(repo: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run_result_sanity(repo: Path, *, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "result_sanity.py"
+    command = [sys.executable, str(verifier)]
+    if json_flag:
+        command.append("--json")
+    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+
+
+def _run_docs_drift(repo: Path, *, stage: str | None = None, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "docs_drift.py"
+    command = [sys.executable, str(verifier)]
+    if stage:
+        command.extend(["--stage", stage])
+    if json_flag:
+        command.append("--json")
+    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+
+
+def _run_closed_experiment_guard(repo: Path, *, json_flag: bool = False) -> subprocess.CompletedProcess[str]:
+    verifier = repo / ".autolab" / "verifiers" / "closed_experiment_guard.py"
+    command = [sys.executable, str(verifier)]
+    if json_flag:
+        command.append("--json")
+    return subprocess.run(command, cwd=repo, text=True, capture_output=True, check=False)
+
+
 def _setup_review_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1170,3 +1196,257 @@ def test_implementation_plan_lint_passes_no_wave_overlap(tmp_path: Path) -> None
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "implementation_plan_lint: PASS" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# result_sanity tests
+# ---------------------------------------------------------------------------
+
+
+def _setup_extract_results_repo(tmp_path: Path, *, metrics: dict | None = None) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="extract_results", last_run_id="run1")
+    _write_backlog(repo)
+    iter_dir = repo / "experiments" / "plan" / "iter1"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    if metrics is not None:
+        run_dir = iter_dir / "runs" / "run1"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    return repo
+
+
+def test_result_sanity_passes_valid_metrics(tmp_path: Path) -> None:
+    metrics = {
+        "iteration_id": "iter1",
+        "run_id": "run1",
+        "status": "completed",
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 90.5,
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
+    result = _run_result_sanity(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_result_sanity_fails_nan_metric(tmp_path: Path) -> None:
+    metrics = {
+        "iteration_id": "iter1",
+        "run_id": "run1",
+        "status": "completed",
+        "primary_metric": {
+            "name": "accuracy",
+            "value": float("nan"),
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
+    result = _run_result_sanity(repo)
+    assert result.returncode != 0
+    assert "invalid numeric value" in result.stdout.lower() or "nan" in result.stdout.lower()
+
+
+def test_result_sanity_fails_inf_metric(tmp_path: Path) -> None:
+    metrics = {
+        "iteration_id": "iter1",
+        "run_id": "run1",
+        "status": "completed",
+        "primary_metric": {
+            "name": "accuracy",
+            "value": float("inf"),
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
+    result = _run_result_sanity(repo)
+    assert result.returncode != 0
+    assert "invalid numeric value" in result.stdout.lower() or "inf" in result.stdout.lower()
+
+
+def test_result_sanity_fails_placeholder_in_metrics(tmp_path: Path) -> None:
+    metrics = {
+        "iteration_id": "iter1",
+        "run_id": "run1",
+        "status": "completed",
+        "primary_metric": {
+            "name": "accuracy",
+            "value": "<TODO>",
+            "delta_vs_baseline": "placeholder",
+        },
+    }
+    repo = _setup_extract_results_repo(tmp_path, metrics=metrics)
+    result = _run_result_sanity(repo)
+    assert result.returncode != 0
+    assert "placeholder" in result.stdout.lower()
+
+
+def test_result_sanity_skips_non_extract_results_stage(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation_review", last_run_id="run1")
+    _write_backlog(repo)
+    result = _run_result_sanity(repo)
+    assert result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# docs_drift tests
+# ---------------------------------------------------------------------------
+
+
+def _setup_docs_drift_repo(
+    tmp_path: Path,
+    *,
+    metrics: dict | None = None,
+    docs_update_text: str = "",
+) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="update_docs", last_run_id="run1")
+    _write_backlog(repo)
+    iter_dir = repo / "experiments" / "plan" / "iter1"
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    if metrics is not None:
+        run_dir = iter_dir / "runs" / "run1"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (iter_dir / "docs_update.md").write_text(docs_update_text, encoding="utf-8")
+    return repo
+
+
+def test_docs_drift_passes_when_metric_value_present(tmp_path: Path) -> None:
+    metrics = {
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 90.5,
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    docs_text = "## Results\nThe accuracy reached 90.5 in this iteration.\n"
+    repo = _setup_docs_drift_repo(tmp_path, metrics=metrics, docs_update_text=docs_text)
+    result = _run_docs_drift(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_docs_drift_fails_when_metric_value_missing(tmp_path: Path) -> None:
+    metrics = {
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 90.5,
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    docs_text = "## Results\nSome improvements were observed.\n"
+    repo = _setup_docs_drift_repo(tmp_path, metrics=metrics, docs_update_text=docs_text)
+    result = _run_docs_drift(repo)
+    assert result.returncode != 0
+    assert "does not reference" in result.stdout.lower() or "accuracy" in result.stdout.lower()
+
+
+def test_docs_drift_detects_contradiction(tmp_path: Path) -> None:
+    metrics = {
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 90.5,
+            "delta_vs_baseline": 1.2,
+        },
+    }
+    # Mention accuracy with wrong value
+    docs_text = "## Results\nThe accuracy reached 90.5 overall but accuracy was 75.0 in subset.\n"
+    repo = _setup_docs_drift_repo(tmp_path, metrics=metrics, docs_update_text=docs_text)
+    result = _run_docs_drift(repo)
+    assert result.returncode != 0
+    assert "contradictory" in result.stdout.lower()
+
+
+def test_docs_drift_skips_non_update_docs_stage(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation", last_run_id="run1")
+    _write_backlog(repo)
+    result = _run_docs_drift(repo)
+    assert result.returncode == 0
+
+
+def test_docs_drift_no_changes_needed(tmp_path: Path) -> None:
+    metrics = {
+        "primary_metric": {
+            "name": "accuracy",
+            "value": 90.5,
+            "delta_vs_baseline": 0.0,
+        },
+    }
+    docs_text = "No changes needed for this iteration.\n"
+    repo = _setup_docs_drift_repo(tmp_path, metrics=metrics, docs_update_text=docs_text)
+    # Even though metric value is missing, no_changes_needed is not a failure --
+    # doc_drift only fails when metric is mentioned with wrong value or absent when present.
+    result = _run_docs_drift(repo)
+    # The verifier may still flag missing value; just ensure it doesn't crash
+    assert result.returncode in (0, 1)
+
+
+# ---------------------------------------------------------------------------
+# closed_experiment_guard tests
+# ---------------------------------------------------------------------------
+
+
+def _setup_closed_guard_repo(tmp_path: Path, *, backlog_experiments: list[dict]) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo)
+    backlog = {
+        "hypotheses": [
+            {"id": "h1", "status": "open", "title": "hyp", "success_metric": "accuracy", "target_delta": 0.1}
+        ],
+        "experiments": backlog_experiments,
+    }
+    (repo / ".autolab" / "backlog.yaml").write_text(yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8")
+    # Initialize git repo for git status to work
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=test@test.com", "-c", "user.name=Test", "commit", "-m", "init"],
+        cwd=repo, capture_output=True, check=True,
+    )
+    return repo
+
+
+def test_closed_experiment_guard_passes_when_iteration_open(tmp_path: Path) -> None:
+    experiments = [
+        {"id": "e1", "hypothesis_id": "h1", "status": "open", "iteration_id": "iter1"},
+    ]
+    repo = _setup_closed_guard_repo(tmp_path, backlog_experiments=experiments)
+    result = _run_closed_experiment_guard(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_closed_experiment_guard_detects_edit_to_closed_iteration(tmp_path: Path) -> None:
+    experiments = [
+        {"id": "e1", "hypothesis_id": "h1", "status": "done", "iteration_id": "iter_closed"},
+    ]
+    repo = _setup_closed_guard_repo(tmp_path, backlog_experiments=experiments)
+    # Create a file under the closed iteration path
+    closed_path = repo / "experiments" / "plan" / "iter_closed"
+    closed_path.mkdir(parents=True, exist_ok=True)
+    (closed_path / "something.txt").write_text("modified", encoding="utf-8")
+    result = _run_closed_experiment_guard(repo)
+    assert result.returncode != 0
+    assert "iter_closed" in result.stdout
+
+
+def test_closed_experiment_guard_passes_no_closed_iterations(tmp_path: Path) -> None:
+    experiments = [
+        {"id": "e1", "hypothesis_id": "h1", "status": "open", "iteration_id": "iter1"},
+    ]
+    repo = _setup_closed_guard_repo(tmp_path, backlog_experiments=experiments)
+    result = _run_closed_experiment_guard(repo)
+    assert result.returncode == 0

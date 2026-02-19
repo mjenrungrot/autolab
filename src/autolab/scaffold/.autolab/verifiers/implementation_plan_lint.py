@@ -15,10 +15,14 @@ try:
 except ImportError:
     yaml = None  # type: ignore[assignment]
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
+from verifier_lib import (
+    REPO_ROOT,
+    STATE_FILE,
+    EXPERIMENT_TYPES,
+    DEFAULT_EXPERIMENT_TYPE,
+    load_state,
+    resolve_iteration_dir,
+)
 
 TASK_HEADING_PATTERN = re.compile(r"^###\s+(T\d+):\s*(.*)$", re.MULTILINE)
 DEPENDS_ON_PATTERN = re.compile(
@@ -94,24 +98,6 @@ def _coerce_bool(value: object, *, default: bool = False) -> bool:
 def _auto_mode_enabled() -> bool:
     return _coerce_bool(os.environ.get("AUTOLAB_AUTO_MODE"), default=False)
 
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        raise RuntimeError(f"state.json missing at {STATE_FILE}")
-    data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RuntimeError("state.json must contain a JSON object")
-    return data
-
-
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    for experiment_type in EXPERIMENT_TYPES:
-        candidate = experiments_root / experiment_type / normalized
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized
 
 
 def _split_task_sections(text: str) -> dict[str, str]:
@@ -364,12 +350,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: ERROR {exc}")
         return 1
@@ -379,9 +364,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     # Only run for implementation stage
     if stage != "implementation":
         if args.json:
-            import json as _json
             envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "stage_skip", "status": "pass", "detail": f"skipped for stage={stage}"}], "errors": []}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: SKIP stage={stage}")
         return 0
@@ -389,21 +373,19 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     iteration_id = str(state.get("iteration_id", "")).strip()
     if not iteration_id or iteration_id.startswith("<"):
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [], "errors": ["iteration_id is missing or placeholder"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print("implementation_plan_lint: ERROR iteration_id is missing or placeholder")
         return 1
 
-    iteration_dir = _resolve_iteration_dir(iteration_id)
+    iteration_dir = resolve_iteration_dir(iteration_id)
     plan_path = iteration_dir / "implementation_plan.md"
 
     if not plan_path.exists():
         if args.json:
-            import json as _json
             envelope = {"status": "pass", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": "plan_file", "status": "pass", "detail": f"plan file not found at {plan_path}, skipped"}], "errors": []}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"implementation_plan_lint: SKIP plan file not found at {plan_path}")
         return 0
@@ -411,9 +393,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     plan_text = plan_path.read_text(encoding="utf-8")
     if not plan_text.strip():
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "implementation_plan_lint", "stage": stage, "checks": [{"name": str(plan_path), "status": "fail", "detail": "content is empty"}], "errors": [f"{plan_path}\tcontent is empty"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print("implementation_plan_lint: FAIL issues=1")
             print(f"{plan_path}\tcontent is empty")
@@ -450,7 +431,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     passed = not all_failures
 
     if args.json:
-        import json as _json
         checks = [{"name": f, "status": "fail", "detail": f} for f in all_failures]
         if passed:
             checks = [{"name": "implementation_plan_lint", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
@@ -461,7 +441,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "checks": checks,
             "errors": all_failures,
         }
-        print(_json.dumps(envelope))
+        print(json.dumps(envelope))
     else:
         if issues:
             print(f"implementation_plan_lint: FAIL issues={len(issues)}")

@@ -54,11 +54,16 @@ except Exception:  # pragma: no cover
     )
     REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}  # type: ignore[misc]
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = REPO_ROOT / ".autolab" / "state.json"
-EXPERIMENT_TYPES = ("plan", "in_progress", "done")
-DEFAULT_EXPERIMENT_TYPE = "plan"
+from verifier_lib import (
+    REPO_ROOT,
+    STATE_FILE,
+    EXPERIMENT_TYPES,
+    DEFAULT_EXPERIMENT_TYPE,
+    load_json,
+    load_yaml,
+    load_state,
+    resolve_iteration_dir,
+)
 TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
@@ -158,15 +163,6 @@ class LineLimitPolicy:
     run_manifest_dynamic: RunManifestDynamicLimit
 
 
-def _resolve_iteration_dir(iteration_id: str) -> Path:
-    normalized_iteration = iteration_id.strip()
-    experiments_root = REPO_ROOT / "experiments"
-    candidates = [experiments_root / experiment_type / normalized_iteration for experiment_type in EXPERIMENT_TYPES]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return experiments_root / DEFAULT_EXPERIMENT_TYPE / normalized_iteration
-
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -192,30 +188,6 @@ def _coerce_positive_int(value: object, *, field_name: str, allow_zero: bool = F
         raise RuntimeError(f"{field_name} must be > 0")
     return parsed
 
-
-def _load_state() -> dict:
-    if not STATE_FILE.exists():
-        raise RuntimeError(f"state.json missing at {STATE_FILE}")
-    data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RuntimeError("state.json must contain a JSON object")
-    return data
-
-
-def _load_yaml(path: Path) -> dict:
-    if yaml is None:
-        raise RuntimeError("PyYAML is not available; cannot parse YAML artifacts")
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise RuntimeError(f"{path} must contain a mapping")
-    return loaded
-
-
-def _load_json(path: Path) -> dict:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{path} must contain a JSON object")
-    return payload
 
 
 def _load_limit_mapping(line_limits: dict, key: str, *, positive_only: bool) -> dict[str, int]:
@@ -477,7 +449,7 @@ def _check_run_manifest_limits(path: Path, policy: LineLimitPolicy) -> list[Fail
         return [Failure(str(path), "required file is missing")]
 
     try:
-        payload = _load_json(path)
+        payload = load_json(path)
     except Exception as exc:
         return [Failure(str(path), f"could not evaluate dynamic cap: {exc}")]
 
@@ -567,7 +539,7 @@ def _check_review_result(path: Path) -> list[Failure]:
     if reason:
         return [Failure(str(path), reason)]
 
-    data = _load_json(path)
+    data = load_json(path)
     required = {"status", "blocking_findings", "required_checks", "reviewed_at"}
     missing = required - data.keys()
     if missing:
@@ -613,7 +585,7 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
     if reason:
         return [Failure(str(path), reason)]
 
-    data = _load_yaml(path)
+    data = load_yaml(path)
     required = {"schema_version", "id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
     missing = required - data.keys()
     if missing:
@@ -651,7 +623,7 @@ def _check_decision_result(path: Path) -> list[Failure]:
     if reason:
         return [Failure(str(path), reason)]
 
-    data = _load_json(path)
+    data = load_json(path)
     if str(data.get("schema_version", "")).strip() != "1.0":
         return [Failure(str(path), "schema_version must be '1.0'")]
 
@@ -690,7 +662,7 @@ def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Fail
     if reason:
         return [Failure(str(path), reason)]
 
-    data = _load_json(path)
+    data = load_json(path)
     if str(data.get("schema_version", "")).strip() != "1.0":
         return [Failure(str(path), "schema_version must be '1.0'")]
     if data.get("iteration_id") and data.get("iteration_id") != iteration_id:
@@ -711,7 +683,7 @@ def _check_metrics(path: Path) -> list[Failure]:
     if reason:
         return [Failure(str(path), reason)]
 
-    data = _load_json(path)
+    data = load_json(path)
     if str(data.get("schema_version", "")).strip() != "1.0":
         return [Failure(str(path), "schema_version must be '1.0'")]
     if not data:
@@ -823,12 +795,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
-        state = _load_state()
+        state = load_state()
     except Exception as exc:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"template_fill: ERROR {exc}")
         return 1
@@ -837,38 +808,34 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         line_limit_policy = _load_line_limits_policy()
     except Exception as exc:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"template_fill: ERROR {exc}")
         return 1
 
     stage = args.stage or str(state.get("stage", "")).strip()
     iteration_id = str(state.get("iteration_id", "")).strip()
-    iteration_dir = _resolve_iteration_dir(iteration_id)
+    iteration_dir = resolve_iteration_dir(iteration_id)
 
     if not iteration_id or iteration_id.startswith("<"):
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["iteration_id in state is missing or placeholder"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print("template_fill: ERROR iteration_id in state is missing or placeholder")
         return 1
     if not iteration_dir.exists():
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "template_fill", "stage": stage, "checks": [], "errors": [f"iteration workspace missing at {iteration_dir}"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print(f"template_fill: ERROR iteration workspace missing at {iteration_dir}")
         return 1
     if not stage:
         if args.json:
-            import json as _json
             envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["state stage is missing"]}
-            print(_json.dumps(envelope))
+            print(json.dumps(envelope))
         else:
             print("template_fill: ERROR state stage is missing")
         return 1
@@ -878,7 +845,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     passed = not failures
 
     if args.json:
-        import json as _json
         checks = [{"name": f.path, "status": "fail", "detail": f.reason} for f in failures]
         if passed:
             checks = [{"name": "template_fill", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
@@ -889,7 +855,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "checks": checks,
             "errors": [f"{f.path}\t{f.reason}" for f in failures],
         }
-        print(_json.dumps(envelope))
+        print(json.dumps(envelope))
     else:
         if failures:
             print(f"template_fill: FAIL stage={stage} issues={len(failures)}")

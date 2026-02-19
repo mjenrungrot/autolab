@@ -27,6 +27,8 @@ Submit the approved run and write launch artifacts:
 {{shared:runtime_context.md}}
 {{shared:run_artifacts.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - One launch script (`run_local.sh` or `run_slurm.sbatch`)
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
@@ -83,6 +85,12 @@ Submit the approved run and write launch artifacts:
 7. Do not require `metrics.json` at launch; metrics are produced during `extract_results`.
 
 {{shared:verification_ritual.md}}
+
+## STAGE-SPECIFIC VERIFICATION
+For SLURM: check `squeue -u $USER` output and verify job_id in `docs/slurm_job_list.md`. For local: confirm process completed and output files exist.
+
+## HOST MODE NORMALIZATION
+`{{launch_mode}}` provides the execution context; the output `host_mode` field in `run_manifest.json` must match `design.yaml.compute.location`. Use `host_mode` as the canonical term in all output artifacts.
 
 ## RUN MANIFEST TEMPLATE (schema-aligned)
 ```json

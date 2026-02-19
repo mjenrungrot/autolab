@@ -4,12 +4,12 @@
   "stage": "decide_repeat",
   "checks": [
     {
-      "name": "/private/var/folders/9s/1zt9rbmj6h32l3m2v7ttv0zm0000gn/T/pytest-of-tjenrung/pytest-333/test_negative_invalid_decision0/repo/experiments/plan/iter_golden/decision_result.json",
+      "name": "/private/var/folders/9s/1zt9rbmj6h32l3m2v7ttv0zm0000gn/T/pytest-of-tjenrung/pytest-369/test_negative_invalid_decision0/repo/experiments/plan/iter_golden/decision_result.json",
       "status": "fail",
       "detail": "decision must be one of ['design', 'human_review', 'hypothesis', 'stop']"
     }
   ],
   "errors": [
-    "/private/var/folders/9s/1zt9rbmj6h32l3m2v7ttv0zm0000gn/T/pytest-of-tjenrung/pytest-333/test_negative_invalid_decision0/repo/experiments/plan/iter_golden/decision_result.json\tdecision must be one of ['design', 'human_review', 'hypothesis', 'stop']"
+    "/private/var/folders/9s/1zt9rbmj6h32l3m2v7ttv0zm0000gn/T/pytest-of-tjenrung/pytest-369/test_negative_invalid_decision0/repo/experiments/plan/iter_golden/decision_result.json\tdecision must be one of ['design', 'human_review', 'hypothesis', 'stop']"
   ]
 }

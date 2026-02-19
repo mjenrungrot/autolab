@@ -28,6 +28,8 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 {{shared:runtime_context.md}}
 {{shared:run_artifacts.md}}
 
+> **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.
+
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/decision_result.json`
 - A concise decision note in agent output containing: selected decision and key rationale.
