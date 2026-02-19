@@ -13,6 +13,11 @@ if str(_VERIFIER_DIR) not in sys.path:
 import argparse
 from pathlib import Path
 
+try:
+    from autolab.dataset_discovery import discover_media_inputs, summarize_root_counts
+except Exception:  # pragma: no cover
+    discover_media_inputs = None
+
 from verifier_lib import (
     COMPLETION_LIKE_STATUSES,
     IN_PROGRESS_STATUSES,
@@ -164,6 +169,21 @@ def _check_launch_artifacts(
     return failures
 
 
+def _project_data_media_hint(iteration_id: str) -> str:
+    if discover_media_inputs is None:
+        return (
+            "project_data_roots unavailable (autolab.dataset_discovery import failed)"
+        )
+    try:
+        iteration_dir = resolve_iteration_dir(iteration_id)
+        discovery = discover_media_inputs(REPO_ROOT, iteration_dir=iteration_dir)
+    except Exception as exc:
+        return f"project_data_roots unavailable ({exc})"
+    roots = ", ".join(str(path) for path in discovery.project_roots) or "none"
+    counts = summarize_root_counts(discovery.project_root_counts)
+    return f"project_data_roots={roots}; project_data_media_counts={counts}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -222,6 +242,10 @@ def main() -> int:
         result = make_result("run_health", stage, [], [str(exc)])
         print_result(result, as_json=args.json)
         return 1
+
+    project_media_hint = _project_data_media_hint(iteration_id)
+    if failures:
+        failures.append(f"hint: {project_media_hint}")
 
     passed = not failures
 

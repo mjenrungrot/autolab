@@ -1229,7 +1229,84 @@ class TestGuardrailBreach:
 
 
 # ===========================================================================
-# 9. mark_task_completed in todo_sync
+# 9. Segment list preflight
+# ===========================================================================
+
+
+class TestSegmentListPreflight:
+    """Assistant preflight seeds segment_list.txt from project-local media."""
+
+    def test_assistant_preflight_populates_segment_list_from_project_data(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        state = _make_state(
+            stage="implementation",
+            task_cycle_stage="implement",
+            current_task_id="task_media_01",
+        )
+        state_path = _write_state(repo, state)
+
+        segment_list = (
+            repo
+            / "experiments"
+            / "plan"
+            / "iter_test_001"
+            / "data"
+            / "segment_list.txt"
+        )
+        segment_list.parent.mkdir(parents=True, exist_ok=True)
+        segment_list.write_text("", encoding="utf-8")
+
+        media_root = repo / "data" / "curated_yt_drummers"
+        first_media = media_root / "a.mp4"
+        second_media = media_root / "b.mp4"
+        media_root.mkdir(parents=True, exist_ok=True)
+        first_media.write_bytes(b"video")
+        second_media.write_bytes(b"video")
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._run_once_standard",
+                return_value=RunOutcome(
+                    exit_code=0,
+                    transitioned=False,
+                    stage_before="implementation",
+                    stage_after="implementation",
+                    message="implementation pass",
+                ),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch("autolab.run_assistant._persist_agent_result"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            _run_once_assistant(state_path)
+
+        lines = [
+            line.strip()
+            for line in segment_list.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert lines
+        assert (
+            str(first_media.resolve()) in lines or str(second_media.resolve()) in lines
+        )
+        assert all(line.startswith(str(repo.resolve())) for line in lines)
+
+
+# ===========================================================================
+# 10. mark_task_completed in todo_sync
 # ===========================================================================
 
 
@@ -1295,7 +1372,7 @@ class TestMarkTaskCompleted:
 
 
 # ===========================================================================
-# 10. Completed experiment blocks further editing
+# 11. Completed experiment blocks further editing
 # ===========================================================================
 
 

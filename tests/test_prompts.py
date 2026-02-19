@@ -265,6 +265,35 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(
     assert "## Runtime Stage Context" in bundle.prompt_text
 
 
+def test_render_implementation_prompt_includes_project_data_root_hints(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    media_path = repo / "data" / "curated_yt_drummers" / "clip.mp4"
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(b"video")
+
+    template_path = repo / ".autolab" / "prompts" / "stage_implementation.md"
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={},
+    )
+
+    data_root = str((repo / "data").resolve())
+    curated_root = str((repo / "data" / "curated_yt_drummers").resolve())
+    assert data_root in bundle.prompt_text
+    assert curated_root in bundle.prompt_text
+    assert "project_data_media_counts" in bundle.prompt_text
+
+
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
 _PIPE_TABLE_SEPARATOR_RE = re.compile(
     r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
