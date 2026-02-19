@@ -8,9 +8,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from invariant_checks import (
+    check_design_manifest_host_mode,
+    check_manifest_sync_status,
+    check_metric_name_match,
+    check_state_run_scoped_fields,
+)
 from verifier_lib import (
     RUN_MANIFEST_STATUSES,
-    SYNC_SUCCESS_STATUSES,
     load_json,
     load_yaml,
     load_state,
@@ -59,106 +64,36 @@ def _check_design_manifest_consistency(
     design_payload: dict[str, Any] | None,
     manifest_payload: dict[str, Any] | None,
 ) -> list[str]:
-    if not isinstance(design_payload, dict) or not isinstance(manifest_payload, dict):
-        return []
-    failures: list[str] = []
-    design_location = (
-        str((design_payload.get("compute") or {}).get("location", "")).strip().lower()
-        if isinstance(design_payload.get("compute"), dict)
-        else ""
-    )
-    manifest_host_mode = (
-        str(
-            manifest_payload.get("host_mode")
-            or manifest_payload.get("launch_mode")
-            or (manifest_payload.get("launch") or {}).get("mode")
-        )
-        .strip()
-        .lower()
-    )
-    if design_location and manifest_host_mode and design_location != manifest_host_mode:
-        failures.append(
-            f"design.compute.location='{design_location}' does not match run_manifest host/launch mode '{manifest_host_mode}'"
-        )
-    return failures
+    return check_design_manifest_host_mode(design_payload, manifest_payload)
 
 
 def _check_metric_name_consistency(
     design_payload: dict[str, Any] | None,
     metrics_payload: dict[str, Any] | None,
 ) -> list[str]:
-    if not isinstance(design_payload, dict) or not isinstance(metrics_payload, dict):
-        return []
-    failures: list[str] = []
-    design_metric_name = ""
-    design_metrics = design_payload.get("metrics")
-    if isinstance(design_metrics, dict):
-        primary = design_metrics.get("primary")
-        if isinstance(primary, dict):
-            design_metric_name = str(primary.get("name", "")).strip()
-    metrics_metric_name = ""
-    primary_metric = metrics_payload.get("primary_metric")
-    if isinstance(primary_metric, dict):
-        metrics_metric_name = str(primary_metric.get("name", "")).strip()
-    if (
-        design_metric_name
-        and metrics_metric_name
-        and design_metric_name != metrics_metric_name
-    ):
-        failures.append(
-            f"metrics.primary_metric.name='{metrics_metric_name}' does not match design.metrics.primary.name='{design_metric_name}'"
-        )
-    return failures
+    return check_metric_name_match(design_payload, metrics_payload)
 
 
 def _check_run_scoped_fields(
     *,
+    stage: str,
     state: dict[str, Any],
     manifest_payload: dict[str, Any] | None,
     metrics_payload: dict[str, Any] | None,
 ) -> list[str]:
-    failures: list[str] = []
-    state_iteration_id = str(state.get("iteration_id", "")).strip()
-    state_run_id = str(state.get("last_run_id", "")).strip()
-
-    if isinstance(manifest_payload, dict):
-        manifest_iteration_id = str(manifest_payload.get("iteration_id", "")).strip()
-        if (
-            state_iteration_id
-            and manifest_iteration_id
-            and state_iteration_id != manifest_iteration_id
-        ):
-            failures.append(
-                f"run_manifest iteration_id '{manifest_iteration_id}' does not match state.iteration_id '{state_iteration_id}'"
-            )
-        manifest_run_id = str(manifest_payload.get("run_id", "")).strip()
-        if state_run_id and manifest_run_id and state_run_id != manifest_run_id:
-            failures.append(
-                f"run_manifest run_id '{manifest_run_id}' does not match state.last_run_id '{state_run_id}'"
-            )
-        sync = manifest_payload.get("artifact_sync_to_local", {})
-        if isinstance(sync, dict):
-            sync_status = str(sync.get("status", "")).strip().lower()
-            if sync_status and sync_status not in SYNC_SUCCESS_STATUSES:
-                failures.append(
-                    f"run_manifest artifact_sync_to_local.status='{sync_status}' is not success-like"
-                )
-
-    if isinstance(metrics_payload, dict):
-        metrics_iteration_id = str(metrics_payload.get("iteration_id", "")).strip()
-        if (
-            state_iteration_id
-            and metrics_iteration_id
-            and state_iteration_id != metrics_iteration_id
-        ):
-            failures.append(
-                f"metrics iteration_id '{metrics_iteration_id}' does not match state.iteration_id '{state_iteration_id}'"
-            )
-        metrics_run_id = str(metrics_payload.get("run_id", "")).strip()
-        if state_run_id and metrics_run_id and state_run_id != metrics_run_id:
-            failures.append(
-                f"metrics run_id '{metrics_run_id}' does not match state.last_run_id '{state_run_id}'"
-            )
+    failures = check_state_run_scoped_fields(
+        state=state,
+        manifest_payload=manifest_payload,
+        metrics_payload=metrics_payload,
+    )
+    require_sync_success = stage in {"extract_results", "update_docs", "decide_repeat"}
+    failures.extend(
+        check_manifest_sync_status(
+            manifest_payload,
+            require_success=require_sync_success,
+            context=stage,
+        )
+    )
     return failures
 
 
@@ -245,6 +180,109 @@ def _check_iteration_id_chain(iteration_dir: Path, run_id: str) -> list[str]:
     return failures
 
 
+def _normalized_run_group(state: dict[str, Any]) -> list[str]:
+    raw_group = state.get("run_group", [])
+    if not isinstance(raw_group, list):
+        return []
+    normalized: list[str] = []
+    for raw_run_id in raw_group:
+        run_id = str(raw_run_id).strip()
+        if run_id and run_id not in normalized:
+            normalized.append(run_id)
+    return normalized
+
+
+def _check_replicate_manifests(iteration_dir: Path, state: dict[str, Any]) -> list[str]:
+    run_group = _normalized_run_group(state)
+    if len(run_group) <= 1:
+        return []
+
+    failures: list[str] = []
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    for run_id in run_group:
+        manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
+        payload = _read_optional_json(manifest_path)
+        if not isinstance(payload, dict):
+            failures.append(
+                f"{manifest_path} is required for multi-run replicate manifests"
+            )
+            continue
+        manifest_run_id = str(payload.get("run_id", "")).strip()
+        if manifest_run_id and manifest_run_id != run_id:
+            failures.append(
+                f"{manifest_path} run_id='{manifest_run_id}' must match replicate id '{run_id}'"
+            )
+        manifest_iteration_id = str(payload.get("iteration_id", "")).strip()
+        if (
+            iteration_id
+            and manifest_iteration_id
+            and manifest_iteration_id != iteration_id
+        ):
+            failures.append(
+                f"{manifest_path} iteration_id='{manifest_iteration_id}' does not match state.iteration_id '{iteration_id}'"
+            )
+    return failures
+
+
+def _check_replicate_metrics_contract(
+    iteration_dir: Path, state: dict[str, Any], *, stage: str
+) -> list[str]:
+    if stage not in {"extract_results", "update_docs", "decide_repeat"}:
+        return []
+
+    run_group = _normalized_run_group(state)
+    if len(run_group) <= 1:
+        return []
+
+    failures: list[str] = []
+    for run_id in run_group:
+        metrics_path = iteration_dir / "runs" / run_id / "metrics.json"
+        payload = _read_optional_json(metrics_path)
+        if not isinstance(payload, dict):
+            failures.append(
+                f"{metrics_path} is required for each replicate in multi-run mode"
+            )
+
+    base_run_id = str(state.get("last_run_id", "")).strip()
+    if not base_run_id:
+        failures.append(
+            "state.last_run_id is required to validate aggregated multi-run metrics"
+        )
+        return failures
+
+    aggregate_metrics_path = iteration_dir / "runs" / base_run_id / "metrics.json"
+    aggregate_payload = _read_optional_json(aggregate_metrics_path)
+    if not isinstance(aggregate_payload, dict):
+        failures.append(
+            f"{aggregate_metrics_path} is required as aggregate metrics artifact for multi-run mode"
+        )
+        return failures
+
+    per_run_metrics = aggregate_payload.get("per_run_metrics")
+    if not isinstance(per_run_metrics, list):
+        failures.append(
+            f"{aggregate_metrics_path} must include per_run_metrics array for multi-run mode"
+        )
+    else:
+        seen_ids = {
+            str(entry.get("run_id", "")).strip()
+            for entry in per_run_metrics
+            if isinstance(entry, dict)
+        }
+        missing = [run_id for run_id in run_group if run_id not in seen_ids]
+        if missing:
+            failures.append(
+                f"{aggregate_metrics_path} per_run_metrics is missing replicate run_id(s): {', '.join(missing)}"
+            )
+
+    aggregation_method = str(aggregate_payload.get("aggregation_method", "")).strip()
+    if not aggregation_method:
+        failures.append(
+            f"{aggregate_metrics_path} must include aggregation_method for multi-run mode"
+        )
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -291,6 +329,7 @@ def main() -> int:
     failures.extend(_check_metric_name_consistency(design_payload, metrics_payload))
     failures.extend(
         _check_run_scoped_fields(
+            stage=stage,
             state=state,
             manifest_payload=manifest_payload,
             metrics_payload=metrics_payload,
@@ -299,6 +338,10 @@ def main() -> int:
     failures.extend(_check_manifest_status_canonical(manifest_payload))
     failures.extend(_check_decision_evidence_pointers(iteration_dir))
     failures.extend(_check_iteration_id_chain(iteration_dir, run_id))
+    failures.extend(_check_replicate_manifests(iteration_dir, state))
+    failures.extend(
+        _check_replicate_metrics_contract(iteration_dir, state, stage=stage)
+    )
 
     checks = [{"name": issue, "status": "fail", "detail": issue} for issue in failures]
     if not failures:

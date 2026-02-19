@@ -8,6 +8,7 @@ state loading, file loaders, and JSON envelope construction).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,22 @@ DEFAULT_EXPERIMENT_TYPE: str = "plan"
 SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset(
     {"ok", "completed", "success", "passed"}
 )
+SYNC_STATUS_CANONICAL: frozenset[str] = frozenset(
+    {"pending", "syncing", "ok", "failed"}
+)
+SYNC_STATUS_SYNONYMS: dict[str, str] = {
+    "queued": "pending",
+    "submitted": "pending",
+    "not_started": "pending",
+    "na": "pending",
+    "running": "syncing",
+    "in_progress": "syncing",
+    "completed": "ok",
+    "success": "ok",
+    "passed": "ok",
+    "error": "failed",
+    "fail": "failed",
+}
 COMPLETION_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "failed"})
 IN_PROGRESS_STATUSES: frozenset[str] = frozenset(
     {"pending", "submitted", "running", "synced"}
@@ -47,6 +64,20 @@ RUN_MANIFEST_STATUSES: frozenset[str] = frozenset(
         "partial",
     }
 )
+
+
+def normalize_sync_status(value: object) -> str:
+    """Normalize artifact_sync_to_local.status into canonical vocabulary.
+
+    Canonical values are ``pending``, ``syncing``, ``ok``, and ``failed``.
+    Returns an empty string for missing/unknown values.
+    """
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    if raw in SYNC_STATUS_CANONICAL:
+        return raw
+    return SYNC_STATUS_SYNONYMS.get(raw, "")
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +160,92 @@ def make_result(
     }
 
 
+_HINT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (
+        re.compile(r"unsupported token|missing required token|prompt", re.IGNORECASE),
+        "Align prompt token usage with stage required/optional token contracts in workflow and prompt files.",
+        "python .autolab/verifiers/prompt_lint.py --stage {stage} --json",
+    ),
+    (
+        re.compile(
+            r"schema violation|schema_version|required_checks|must contain|missing required|required key",
+            re.IGNORECASE,
+        ),
+        "Fix artifact fields/types to satisfy schema and stage contract requirements.",
+        "python .autolab/verifiers/schema_checks.py --stage {stage} --json",
+    ),
+    (
+        re.compile(
+            r"artifact_sync_to_local|run_manifest|host_mode|slurm|job_list|ledger",
+            re.IGNORECASE,
+        ),
+        "Reconcile manifest host/sync status and SLURM ledger entries before advancing stages.",
+        "python .autolab/verifiers/run_health.py --json",
+    ),
+    (
+        re.compile(
+            r"docs_update|paper target|paper_targets|primary metric|metrics artifact|manifest artifact",
+            re.IGNORECASE,
+        ),
+        "Ensure docs_update includes primary metric triplet and exact run artifact paths.",
+        "python .autolab/verifiers/docs_targets.py --json",
+    ),
+    (
+        re.compile(
+            r"implementation_plan|depends_on|touches|scope_ok|change summary|outside allowed scope",
+            re.IGNORECASE,
+        ),
+        "Repair implementation plan task-block fields and scope evidence.",
+        "python .autolab/verifiers/implementation_plan_lint.py --stage implementation --json",
+    ),
+    (
+        re.compile(r"placeholder|todo|tbd|fixme|ellipsis|template", re.IGNORECASE),
+        "Replace placeholders/template boilerplate with concrete stage artifacts.",
+        "python .autolab/verifiers/template_fill.py --stage {stage} --json",
+    ),
+    (
+        re.compile(r"consistency|evidence pointer|run_id mismatch", re.IGNORECASE),
+        "Resolve cross-artifact IDs/metric names/evidence pointers.",
+        "python .autolab/verifiers/consistency_checks.py --stage {stage} --json",
+    ),
+)
+
+
+def suggest_fix_hints(
+    errors: list[str],
+    *,
+    stage: str = "",
+    verifier: str = "",
+) -> list[str]:
+    """Map verifier error text to actionable fix hints."""
+    if not errors:
+        return []
+
+    resolved_stage = stage or "design"
+    hints: list[str] = []
+    for pattern, hint, command in _HINT_RULES:
+        if not any(pattern.search(str(error)) for error in errors):
+            continue
+        command_text = command.format(stage=resolved_stage)
+        rendered = f"{hint} Next: `{command_text}`"
+        if rendered not in hints:
+            hints.append(rendered)
+
+    if hints:
+        return hints
+    fallback_command = (
+        f"autolab verify --stage {resolved_stage}"
+        if resolved_stage
+        else "autolab verify"
+    )
+    return [
+        (
+            "Re-run stage verification and inspect the first failing verifier output in detail. "
+            f"Next: `{fallback_command}`"
+        )
+    ]
+
+
 def print_result(result: dict[str, Any], *, as_json: bool) -> None:
     """Print *result* in JSON or human-friendly format."""
     verifier = result.get("verifier", "verifier")
@@ -140,5 +257,15 @@ def print_result(result: dict[str, Any], *, as_json: bool) -> None:
             print(f"{verifier}: FAIL")
             for err in errors:
                 print(err)
+            stage = str(result.get("stage", "")).strip()
+            hints = suggest_fix_hints(
+                [str(error) for error in errors],
+                stage=stage,
+                verifier=verifier,
+            )
+            if hints:
+                print("\nMost likely fixes:")
+                for hint in hints:
+                    print(f"- {hint}")
         else:
             print(f"{verifier}: PASS")

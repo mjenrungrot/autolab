@@ -11,10 +11,10 @@ from verifier_lib import (
     IN_PROGRESS_STATUSES,
     REPO_ROOT,
     RUN_MANIFEST_STATUSES,
-    SYNC_SUCCESS_STATUSES,
     load_json,
     load_state,
     make_result,
+    normalize_sync_status,
     print_result,
     resolve_iteration_dir,
 )
@@ -28,7 +28,6 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     manifest_status = str(manifest.get("status", "")).strip().lower()
     completion_like_statuses = COMPLETION_LIKE_STATUSES
     in_progress_statuses = IN_PROGRESS_STATUSES
-    sync_success_like = SYNC_SUCCESS_STATUSES
 
     run_id_in_manifest = str(manifest.get("run_id", "")).strip()
     if run_id_in_manifest and run_id_in_manifest != run_id:
@@ -56,31 +55,30 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
         if not isinstance(sync_to_local, dict):
             failures.append(f"{manifest_path} artifact_sync_to_local must be a mapping")
         else:
-            sync_status = str(sync_to_local.get("status", "")).lower()
+            raw_sync_status = str(sync_to_local.get("status", "")).strip().lower()
+            sync_status = normalize_sync_status(raw_sync_status)
+            if not raw_sync_status:
+                failures.append(
+                    f"{manifest_path} artifact_sync_to_local.status is required for slurm runs"
+                )
+            elif not sync_status:
+                failures.append(
+                    f"{manifest_path} unsupported artifact_sync_to_local.status '{raw_sync_status}' "
+                    "(expected canonical pending|syncing|ok|failed or known synonym)"
+                )
+                sync_status = ""
             if manifest_status in completion_like_statuses:
-                if sync_status not in sync_success_like:
+                if sync_status and sync_status != "ok":
                     failures.append(
-                        f"{manifest_path} requires slurm artifact sync status 'ok'/'completed'/'success', "
-                        f"found '{sync_status or '<missing>'}'"
+                        f"{manifest_path} requires canonical artifact sync status 'ok' when run is completion-like, "
+                        f"found '{raw_sync_status}'"
                     )
             else:
-                in_progress_sync_statuses = sync_success_like | {
-                    "submitted",
-                    "queued",
-                    "pending",
-                    "running",
-                    "in_progress",
-                    "na",
-                    "not_started",
-                }
-                if not sync_status:
+                in_progress_sync_statuses = {"pending", "syncing", "ok"}
+                if sync_status and sync_status not in in_progress_sync_statuses:
                     failures.append(
-                        f"{manifest_path} artifact_sync_to_local.status is required for slurm runs"
-                    )
-                elif sync_status not in in_progress_sync_statuses:
-                    failures.append(
-                        f"{manifest_path} has unsupported slurm artifact sync status '{sync_status}' "
-                        "for non-completed launch state"
+                        f"{manifest_path} has invalid canonical artifact sync status '{sync_status}' "
+                        "for non-completion launch state (expected pending|syncing|ok)"
                     )
         slurm_ledger_path = REPO_ROOT / "docs" / "slurm_job_list.md"
         if not slurm_ledger_path.exists():

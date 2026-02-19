@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -77,33 +78,104 @@ def _load_metrics(iteration_dir: Path, run_id: str) -> dict:
         return {}
 
 
-def _has_concrete_metric_value(text: str, metrics: dict) -> bool:
-    """Check that docs_update.md contains at least one concrete metric value from metrics.json."""
-    if not metrics:
-        return True  # No metrics to validate against
-    for key, value in metrics.items():
-        if isinstance(value, (int, float)) and str(value) in text:
-            return True
-        if isinstance(value, str) and value.strip() and value.strip() in text:
+def _coerce_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if math.isnan(parsed) or math.isinf(parsed):
+        return None
+    return parsed
+
+
+def _contains_numeric_match(
+    text: str,
+    expected: float,
+    *,
+    rel_tol: float = 0.005,
+    abs_tol: float = 0.001,
+) -> bool:
+    candidates = re.findall(r"[-+]?\d+(?:\.\d+)?", text)
+    for raw in candidates:
+        parsed = _coerce_float(raw)
+        if parsed is None:
+            continue
+        if math.isclose(parsed, expected, rel_tol=rel_tol, abs_tol=abs_tol):
             return True
     return False
 
 
-RUN_EVIDENCE_PATTERNS = (
-    re.compile(r"run[_ ]evidence", re.IGNORECASE),
-    re.compile(r"runs/[A-Za-z0-9_-]+/", re.IGNORECASE),
-    re.compile(r"metrics\.json", re.IGNORECASE),
-)
+def _extract_primary_metric(metrics: dict) -> tuple[str, float | None, float | None]:
+    primary_metric = metrics.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        return ("", None, None)
+    metric_name = str(primary_metric.get("name", "")).strip()
+    metric_value = _coerce_float(primary_metric.get("value"))
+    metric_delta = _coerce_float(primary_metric.get("delta_vs_baseline"))
+    return (metric_name, metric_value, metric_delta)
 
 
-def _has_run_evidence_block(text: str) -> bool:
-    """Check that docs_update.md contains a Run Evidence block with file paths."""
-    return any(pattern.search(text) for pattern in RUN_EVIDENCE_PATTERNS)
+def _validate_primary_metric_mentions(
+    *,
+    docs_text: str,
+    docs_path: Path,
+    metrics: dict,
+) -> list[str]:
+    if not metrics:
+        return []
+    metric_name, metric_value, metric_delta = _extract_primary_metric(metrics)
+    if not metric_name:
+        return []
+
+    failures: list[str] = []
+    lowered = docs_text.lower()
+    if metric_name.lower() not in lowered:
+        failures.append(
+            f"{docs_path} must mention primary metric name '{metric_name}' from metrics.json"
+        )
+    if metric_value is not None and not _contains_numeric_match(
+        docs_text, metric_value
+    ):
+        failures.append(
+            f"{docs_path} must include primary metric value {metric_value} (rounding tolerance allowed)"
+        )
+    if metric_delta is not None and not _contains_numeric_match(
+        docs_text, metric_delta
+    ):
+        failures.append(
+            f"{docs_path} must include primary metric delta_vs_baseline {metric_delta} (rounding tolerance allowed)"
+        )
+    return failures
+
+
+def _require_run_artifact_references(
+    text: str, *, iteration_dir: Path, run_id: str
+) -> list[str]:
+    if not run_id:
+        return []
+    try:
+        iteration_rel = iteration_dir.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        iteration_rel = iteration_dir.as_posix()
+
+    metrics_rel = f"{iteration_rel}/runs/{run_id}/metrics.json"
+    manifest_rel = f"{iteration_rel}/runs/{run_id}/run_manifest.json"
+    failures: list[str] = []
+    if metrics_rel not in text:
+        failures.append(
+            f"docs_update.md must reference exact metrics artifact path '{metrics_rel}'"
+        )
+    if manifest_rel not in text:
+        failures.append(
+            f"docs_update.md must reference exact manifest artifact path '{manifest_rel}'"
+        )
+    return failures
 
 
 def _validate_docs_update(
     docs_update_path: Path,
     *,
+    iteration_dir: Path,
     iteration_id: str,
     run_id: str,
     targets: list[Path],
@@ -135,17 +207,20 @@ def _validate_docs_update(
             "paper targets do not contain this iteration or run reference and no no-change rationale is provided"
         )
 
-    # Check for concrete metric values from metrics.json
-    if metrics and not _has_concrete_metric_value(text, metrics):
-        failures.append(
-            f"{docs_update_path} does not contain any concrete metric values from metrics.json"
+    failures.extend(
+        _validate_primary_metric_mentions(
+            docs_text=text,
+            docs_path=docs_update_path,
+            metrics=metrics,
         )
-
-    # Check for Run Evidence block with file paths
-    if run_id and not _has_run_evidence_block(text):
-        failures.append(
-            f"{docs_update_path} should contain a Run Evidence block referencing run artifact file paths"
+    )
+    failures.extend(
+        _require_run_artifact_references(
+            text,
+            iteration_dir=iteration_dir,
+            run_id=run_id,
         )
+    )
 
     return failures
 
@@ -200,6 +275,7 @@ def main() -> int:
     if not failures:
         failures = _validate_docs_update(
             docs_update_path,
+            iteration_dir=iteration_dir,
             iteration_id=iteration_id,
             run_id=run_id,
             targets=targets,

@@ -403,6 +403,27 @@ def test_prompt_lint_fails_on_unsupported_token(tmp_path: Path) -> None:
     assert "unsupported token" in result.stdout
 
 
+def test_prompt_lint_fails_when_prompt_uses_nonrequired_token_without_optional_contract(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    stages = workflow.get("stages", {})
+    decide_repeat = stages.get("decide_repeat", {})
+    if isinstance(decide_repeat, dict):
+        decide_repeat["required_tokens"] = ["iteration_id", "iteration_path"]
+    workflow_path.write_text(
+        yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
+    )
+
+    result = _run_prompt_lint(repo, stage="decide_repeat")
+
+    assert result.returncode == 1
+    assert "not declared as required or optional" in result.stdout
+
+
 def test_schema_checks_fail_for_invalid_todo_state_schema(tmp_path: Path) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=True)
@@ -517,6 +538,122 @@ def test_docs_targets_fails_placeholder_patterns(
 
     assert result.returncode == 1
     assert "placeholder text" in result.stdout
+
+
+def test_docs_targets_passes_with_primary_metric_triplet_and_exact_run_paths(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(
+        repo,
+        stage="update_docs",
+        last_run_id="run_001",
+        paper_targets=["paper/main.md"],
+    )
+
+    target_path = repo / "paper" / "main.md"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("iter1\nrun_001\n", encoding="utf-8")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "run_id": "run_001",
+                "status": "completed",
+                "primary_metric": {
+                    "name": "accuracy",
+                    "value": 0.8123,
+                    "delta_vs_baseline": 0.0123,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "run_id": "run_001",
+                "host_mode": "local",
+                "command": "python -m train",
+                "resource_request": {"cpus": 1, "memory": "8GB", "gpu_count": 0},
+                "artifact_sync_to_local": {"status": "ok"},
+                "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    docs_update = repo / "experiments" / "plan" / "iter1" / "docs_update.md"
+    docs_update.parent.mkdir(parents=True, exist_ok=True)
+    docs_update.write_text(
+        (
+            "## Run Evidence\n"
+            "- primary metric accuracy: 0.812 (delta 0.012)\n"
+            "- metrics artifact: `experiments/plan/iter1/runs/run_001/metrics.json`\n"
+            "- manifest artifact: `experiments/plan/iter1/runs/run_001/run_manifest.json`\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_docs_targets(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "docs_targets: PASS" in result.stdout
+
+
+def test_docs_targets_fails_without_exact_run_artifact_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(
+        repo,
+        stage="update_docs",
+        last_run_id="run_001",
+        paper_targets=["paper/main.md"],
+    )
+
+    target_path = repo / "paper" / "main.md"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("iter1\nrun_001\n", encoding="utf-8")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "run_id": "run_001",
+                "status": "completed",
+                "primary_metric": {
+                    "name": "accuracy",
+                    "value": 0.8123,
+                    "delta_vs_baseline": 0.0123,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    docs_update = repo / "experiments" / "plan" / "iter1" / "docs_update.md"
+    docs_update.parent.mkdir(parents=True, exist_ok=True)
+    docs_update.write_text(
+        "accuracy improved to 0.8123 with delta 0.0123. metrics.json referenced without full path.",
+        encoding="utf-8",
+    )
+
+    result = _run_docs_targets(repo)
+
+    assert result.returncode == 1
+    assert "exact metrics artifact path" in result.stdout.lower()
 
 
 def test_run_health_launch_passes_without_metrics_json(tmp_path: Path) -> None:

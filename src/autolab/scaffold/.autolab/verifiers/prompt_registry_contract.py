@@ -26,7 +26,20 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
         return [f"{prompt_path} is missing"]
 
     required_outputs = spec.get("required_outputs", [])
-    if not required_outputs:
+    if not isinstance(required_outputs, list):
+        required_outputs = []
+
+    required_outputs_any_of = spec.get("required_outputs_any_of", [])
+    if not isinstance(required_outputs_any_of, list):
+        required_outputs_any_of = []
+
+    required_outputs_if = spec.get("required_outputs_if", [])
+    if isinstance(required_outputs_if, dict):
+        required_outputs_if = [required_outputs_if]
+    if not isinstance(required_outputs_if, list):
+        required_outputs_if = []
+
+    if not required_outputs and not required_outputs_any_of and not required_outputs_if:
         return []
 
     text = prompt_path.read_text(encoding="utf-8")
@@ -36,20 +49,46 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
         return []
 
     outputs_text = match.group(1)
+
+    def _mentions_output(raw_output: str) -> bool:
+        normalized = str(raw_output).replace("<RUN_ID>", "").replace("{{run_id}}", "")
+        filename = Path(normalized).name
+        return bool(
+            filename and (filename in outputs_text or str(raw_output) in outputs_text)
+        )
+
     failures: list[str] = []
     for output in required_outputs:
-        # Normalize pattern placeholders for matching
-        normalized = str(output).replace("<RUN_ID>", "").replace("{{run_id}}", "")
-        # Extract the filename portion
-        filename = Path(normalized).name
-        if (
-            filename
-            and filename not in outputs_text
-            and str(output) not in outputs_text
-        ):
+        if not _mentions_output(str(output)):
             failures.append(
                 f"{prompt_path} OUTPUTS section does not mention required output '{output}' from workflow.yaml"
             )
+
+    for group in required_outputs_any_of:
+        if not isinstance(group, list) or not group:
+            continue
+        normalized_group = [str(item).strip() for item in group if str(item).strip()]
+        if not normalized_group:
+            continue
+        if not any(_mentions_output(item) for item in normalized_group):
+            failures.append(
+                f"{prompt_path} OUTPUTS section does not mention any required one-of outputs: {normalized_group}"
+            )
+
+    for rule in required_outputs_if:
+        if not isinstance(rule, dict):
+            continue
+        outputs = rule.get("outputs", [])
+        if not isinstance(outputs, list):
+            continue
+        for output in outputs:
+            output_text = str(output).strip()
+            if not output_text:
+                continue
+            if not _mentions_output(output_text):
+                failures.append(
+                    f"{prompt_path} OUTPUTS section does not mention conditional required output '{output_text}' from workflow.yaml"
+                )
     return failures
 
 

@@ -55,6 +55,25 @@ _FALLBACK_ALLOWED_TOKENS = {
 
 # Shared tokens always allowed (not stage-specific).
 _SHARED_TOKENS = {"python_bin", "stage", "stage_context"}
+OPTIONAL_TOKENS_BY_STAGE: dict[str, set[str]] = {
+    "design": {"available_memory_gb", "experiment_id", "recommended_memory_estimate"},
+    "implementation": {"review_feedback", "verifier_errors"},
+    "implementation_review": {"diff_summary", "dry_run_output", "verifier_outputs"},
+    "launch": {
+        "launch_mode",
+        "recommended_memory_estimate",
+        "run_group",
+        "replicate_count",
+    },
+    "extract_results": {"run_group", "replicate_count"},
+    "update_docs": {"paper_targets", "metrics_summary", "target_comparison"},
+    "decide_repeat": {
+        "metrics_summary",
+        "target_comparison",
+        "decision_suggestion",
+        "auto_metrics_evidence",
+    },
+}
 
 
 def _resolve_allowed_tokens() -> set[str]:
@@ -105,7 +124,7 @@ DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {
     "slurm_monitor": {"iteration_id", "iteration_path", "run_id"},
     "extract_results": {"iteration_id", "iteration_path", "run_id"},
     "update_docs": {"iteration_id", "iteration_path", "run_id"},
-    "decide_repeat": {"iteration_id", "iteration_path"},
+    "decide_repeat": {"iteration_id", "iteration_path", "run_id"},
 }
 
 
@@ -232,6 +251,24 @@ def _lint_stage_prompt(
     if missing_required_tokens:
         failures.append(
             f"{prompt_path} missing required token(s) for stage '{stage}': {', '.join(missing_required_tokens)}"
+        )
+
+    stage_optional_tokens = OPTIONAL_TOKENS_BY_STAGE.get(stage, set())
+    optional_tokens_used = sorted(
+        token
+        for token in tokens_in_prompt
+        if token not in required_tokens and token not in _SHARED_TOKENS
+    )
+    undocumented_optional_tokens = [
+        token for token in optional_tokens_used if token not in stage_optional_tokens
+    ]
+    if undocumented_optional_tokens:
+        failures.append(
+            f"{prompt_path} uses token(s) not declared as required or optional for stage '{stage}': {', '.join(undocumented_optional_tokens)}"
+        )
+    if optional_tokens_used and "## missing-input fallbacks" not in lowered:
+        failures.append(
+            f"{prompt_path} uses optional token(s) but is missing '## MISSING-INPUT FALLBACKS' safe-fallback section"
         )
     return failures
 

@@ -250,7 +250,7 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(
     state = _write_state(repo, stage=stage)
     if stage == "launch":
         state["pending_run_id"] = "20260101T000000Z_ab12cd"
-    if stage in {"extract_results", "update_docs"}:
+    if stage in {"extract_results", "update_docs", "decide_repeat"}:
         state["last_run_id"] = "run_001"
     _write_backlog(repo)
 

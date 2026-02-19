@@ -15,11 +15,17 @@ Use when checking artifact sync, run completion, or verifier outcomes:
 `completed`, `ok`, `success`, `passed`
 
 ### Artifact Sync Status (run_manifest.json)
-Recommended canonical values for `artifact_sync_to_local.status`:
+Canonical values for `artifact_sync_to_local.status`:
 - `pending` -- sync has not started
 - `syncing` -- sync in progress
 - `ok` -- sync completed and local artifacts are ready
 - `failed` -- sync attempt failed
+
+Accepted legacy synonyms (normalized by verifiers):
+- `queued`, `submitted`, `not_started`, `na` -> `pending`
+- `running`, `in_progress` -> `syncing`
+- `completed`, `success`, `passed` -> `ok`
+- `error`, `fail` -> `failed`
 
 ### Completion-Like Statuses (triggers `completed_at` requirement)
 When `run_manifest.status` is one of these, `timestamps.completed_at` is required:

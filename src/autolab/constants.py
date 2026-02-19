@@ -59,7 +59,7 @@ _FALLBACK_PROMPT_REQUIRED_TOKENS_BY_STAGE = {
     "slurm_monitor": {"iteration_id", "iteration_path", "run_id"},
     "extract_results": {"iteration_id", "iteration_path", "run_id"},
     "update_docs": {"iteration_id", "iteration_path", "run_id"},
-    "decide_repeat": {"iteration_id", "iteration_path"},
+    "decide_repeat": {"iteration_id", "iteration_path", "run_id"},
 }
 
 
