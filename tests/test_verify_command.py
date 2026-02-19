@@ -105,6 +105,19 @@ def _write_design(repo: Path) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def _seed_verification_summaries(repo: Path, *, count: int) -> list[str]:
+    logs_dir = repo / ".autolab" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    names: list[str] = []
+    for idx in range(count):
+        name = f"verification_00000000000000{idx:03d}_design.json"
+        (logs_dir / name).write_text(
+            json.dumps({"seed_index": idx}, indent=2) + "\n", encoding="utf-8"
+        )
+        names.append(name)
+    return names
+
+
 def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -127,6 +140,78 @@ def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     )
     assert canonical["passed"] is True
     assert canonical["stage_effective"] == "design"
+
+
+def test_verify_command_prunes_old_summary_artifacts(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    seeded_names = _seed_verification_summaries(repo, count=205)
+
+    exit_code = commands_module.main(["verify", "--state-file", str(state_path)])
+
+    assert exit_code == 0
+    summaries = sorted((repo / ".autolab" / "logs").glob("verification_*.json"))
+    assert len(summaries) == 200
+    remaining_names = {path.name for path in summaries}
+    assert all(name not in remaining_names for name in seeded_names[:6])
+    assert all(name in remaining_names for name in seeded_names[6:])
+    generated_names = [name for name in remaining_names if name not in seeded_names]
+    assert len(generated_names) == 1
+
+
+def test_verify_command_keeps_all_when_within_limit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    seeded_names = _seed_verification_summaries(repo, count=199)
+
+    exit_code = commands_module.main(["verify", "--state-file", str(state_path)])
+
+    assert exit_code == 0
+    summaries = sorted((repo / ".autolab" / "logs").glob("verification_*.json"))
+    assert len(summaries) == 200
+    remaining_names = {path.name for path in summaries}
+    assert all(name in remaining_names for name in seeded_names)
+    generated_names = [name for name in remaining_names if name not in seeded_names]
+    assert len(generated_names) == 1
+
+
+def test_verify_command_continues_when_summary_prune_delete_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    seeded_names = _seed_verification_summaries(repo, count=205)
+    blocked_name = seeded_names[0]
+    original_unlink = Path.unlink
+
+    def _patched_unlink(path: Path, *args, **kwargs) -> None:
+        if path.name == blocked_name:
+            raise OSError("simulated unlink failure")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", _patched_unlink)
+
+    exit_code = commands_module.main(["verify", "--state-file", str(state_path)])
+
+    assert exit_code == 0
+    summaries = sorted((repo / ".autolab" / "logs").glob("verification_*.json"))
+    assert len(summaries) == 201
+    assert (repo / ".autolab" / "logs" / blocked_name).exists()
 
 
 def test_run_with_verify_blocks_stage_transition_on_verification_failure(
