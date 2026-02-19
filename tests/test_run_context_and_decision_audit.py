@@ -5,7 +5,7 @@ import re
 import shutil
 from pathlib import Path
 
-from autolab.run_standard import _run_once_standard
+from autolab.run_standard import _prepare_launch_run_context, _run_once_standard
 from autolab.utils import _generate_run_id
 
 
@@ -89,3 +89,151 @@ def test_decide_repeat_writes_auto_decision_artifact(tmp_path: Path) -> None:
     outputs = payload.get("outputs", {})
     assert isinstance(outputs, dict)
     assert outputs.get("selected_decision") in {"hypothesis", "design", "stop", "human_review"}
+
+
+def test_prepare_launch_run_context_populates_replicate_group(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "design.yaml").write_text(
+        (
+            'schema_version: "1.0"\n'
+            'id: "e1"\n'
+            'iteration_id: "iter1"\n'
+            'hypothesis_id: "h1"\n'
+            "entrypoint:\n"
+            '  module: "pkg.train"\n'
+            "compute:\n"
+            '  location: "local"\n'
+            "metrics:\n"
+            "  primary:\n"
+            '    name: "accuracy"\n'
+            '    unit: "%"\n'
+            '    mode: "maximize"\n'
+            '  success_delta: "+1.0"\n'
+            '  aggregation: "mean"\n'
+            '  baseline_comparison: "baseline"\n'
+            "baselines:\n"
+            '  - name: "b1"\n'
+            '    description: "baseline"\n'
+            "replicates:\n"
+            "  count: 3\n"
+        ),
+        encoding="utf-8",
+    )
+
+    state_path = repo / ".autolab" / "state.json"
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "launch",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+        "assistant_mode": "off",
+        "current_task_id": "",
+        "task_cycle_stage": "select",
+        "repeat_guard": {
+            "last_decision": "",
+            "same_decision_streak": 0,
+            "last_open_task_count": -1,
+            "no_progress_decisions": 0,
+            "update_docs_cycle_count": 0,
+            "last_verification_passed": False,
+        },
+        "task_change_baseline": {},
+        "history": [],
+    }
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    context_path = _prepare_launch_run_context(repo, state=state, state_path=state_path)
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    run_id = str(context.get("run_id", "")).strip()
+    run_ids = context.get("run_ids")
+    assert run_id
+    assert context.get("replicate_count") == 3
+    assert isinstance(run_ids, list)
+    assert run_ids == [f"{run_id}_r1", f"{run_id}_r2", f"{run_id}_r3"]
+    assert persisted_state.get("pending_run_id") == run_id
+    assert persisted_state.get("run_group") == run_ids
+
+
+def test_prepare_launch_run_context_single_run_default(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "design.yaml").write_text(
+        (
+            'schema_version: "1.0"\n'
+            'id: "e1"\n'
+            'iteration_id: "iter1"\n'
+            'hypothesis_id: "h1"\n'
+            "entrypoint:\n"
+            '  module: "pkg.train"\n'
+            "compute:\n"
+            '  location: "local"\n'
+            "metrics:\n"
+            "  primary:\n"
+            '    name: "accuracy"\n'
+            '    unit: "%"\n'
+            '    mode: "maximize"\n'
+            '  success_delta: "+1.0"\n'
+            '  aggregation: "mean"\n'
+            '  baseline_comparison: "baseline"\n'
+            "baselines:\n"
+            '  - name: "b1"\n'
+            '    description: "baseline"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    state_path = repo / ".autolab" / "state.json"
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "launch",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+        "assistant_mode": "off",
+        "current_task_id": "",
+        "task_cycle_stage": "select",
+        "repeat_guard": {
+            "last_decision": "",
+            "same_decision_streak": 0,
+            "last_open_task_count": -1,
+            "no_progress_decisions": 0,
+            "update_docs_cycle_count": 0,
+            "last_verification_passed": False,
+        },
+        "task_change_baseline": {},
+        "history": [],
+    }
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    context_path = _prepare_launch_run_context(repo, state=state, state_path=state_path)
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    run_id = str(context.get("run_id", "")).strip()
+    assert run_id
+    assert "run_ids" not in context
+    assert "replicate_count" not in context
+    assert persisted_state.get("pending_run_id") == run_id
+    assert "run_group" not in persisted_state or persisted_state.get("run_group") == []

@@ -79,6 +79,15 @@ Convert run artifacts into structured outputs:
 - `verifier`: consistency_checks; `checks`: Cross-artifact checks on design/run_manifest/metrics alignment; `common_failure_fix`: Align metric names, run IDs, and iteration IDs across artifacts.
 {{shared:verifier_common.md}}
 
+## MULTI-RUN AGGREGATION
+If multiple runs exist in `{{run_group}}` (replicate_count = `{{replicate_count}}`):
+- Produce per-run metrics in each `runs/<rid>/metrics.json` following the standard metrics schema.
+- Produce aggregated metrics at `runs/<base_run_id>/metrics.json` with:
+  - `per_run_metrics`: array of `{run_id, primary_metric}` objects for each replicate.
+  - `aggregation_method`: the method used (e.g., `"mean"`, `"median"`).
+  - `primary_metric`: the aggregated values across all replicates.
+- Use the aggregation method specified in `design.yaml` `metrics.aggregation` field (default: `"mean"`).
+
 ## STEPS
 1. Parse run outputs and compute primary/secondary outcomes.
 2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
@@ -131,6 +140,4 @@ Verify `artifact_sync_to_local.status` is success-like (see guardrails) before e
   what_it_proves: interpretation context and missing-evidence accounting
   verifier_output_pointer: `.autolab/verification_result.json`
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, fix extraction outputs and rerun from the verification ritual.
-- Autolab owns stage transitions/retries; do not edit `state.json` manually.
+{{shared:failure_retry.md}}

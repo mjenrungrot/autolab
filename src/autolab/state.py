@@ -132,6 +132,11 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
             baseline_snapshot[path] = signature
     normalized["task_change_baseline"] = baseline_snapshot
 
+    run_group_raw = normalized.get("run_group", [])
+    if not isinstance(run_group_raw, list):
+        run_group_raw = []
+    normalized["run_group"] = [str(rid).strip() for rid in run_group_raw if str(rid).strip()]
+
     history_raw = normalized.get("history", [])
     history: list[dict[str, Any]] = []
     if isinstance(history_raw, list):
