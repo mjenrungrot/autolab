@@ -105,6 +105,7 @@ SKILL_INSTALL_ROOT_BY_PROVIDER = {
     "codex": ".codex",
     "claude": ".claude",
 }
+VERIFICATION_SUMMARY_RETENTION_LIMIT = 200
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +282,41 @@ def _write_overnight_summary(
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return summary_path
+
+
+def _prune_verification_summary_logs(
+    repo_root: Path, *, keep_latest: int = VERIFICATION_SUMMARY_RETENTION_LIMIT
+) -> tuple[int, int, int]:
+    """Prune old verification summary artifacts under .autolab/logs."""
+    logs_dir = repo_root / ".autolab" / "logs"
+    if keep_latest < 0:
+        keep_latest = 0
+
+    summary_paths = sorted(logs_dir.glob("verification_*.json"), key=lambda p: p.name)
+    before = len(summary_paths)
+    if before <= keep_latest:
+        return (before, 0, before)
+
+    deleted = 0
+    prune_count = before - keep_latest
+    for summary_path in summary_paths[:prune_count]:
+        try:
+            summary_path.unlink()
+            deleted += 1
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            try:
+                relative_path = summary_path.relative_to(repo_root).as_posix()
+            except ValueError:
+                relative_path = summary_path.as_posix()
+            _append_log(
+                repo_root,
+                f"verify log-retention warning path={relative_path} detail={exc}",
+            )
+
+    after = len(sorted(logs_dir.glob("verification_*.json"), key=lambda p: p.name))
+    return (before, deleted, after)
 
 
 # ---------------------------------------------------------------------------
@@ -1849,11 +1885,23 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         "details": details,
     }
     _write_json(summary_path, summary_payload)
+    retained_before, retained_deleted, retained_after = _prune_verification_summary_logs(
+        repo_root,
+        keep_latest=VERIFICATION_SUMMARY_RETENTION_LIMIT,
+    )
     _append_log(
         repo_root,
         (
             f"verify stage={effective_stage} passed={passed} "
             f"summary={summary_path} message={message}"
+        ),
+    )
+    _append_log(
+        repo_root,
+        (
+            "verify log-retention "
+            f"keep_latest={VERIFICATION_SUMMARY_RETENTION_LIMIT} "
+            f"before={retained_before} deleted={retained_deleted} after={retained_after}"
         ),
     )
 

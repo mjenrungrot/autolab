@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.31
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.32
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -143,6 +143,8 @@ Workflow bootstrap expects `hypotheses` and `experiments` lists with `id`, `stat
 - `run_health.py` / `result_sanity.py` -- env-smoke checks; `run_health.py` runs for env-smoke stages, while `result_sanity.py` is stage-gated to `extract_results`.
 - Canonical command: `autolab verify --stage <stage>`.
 - Latest result persisted to `.autolab/verification_result.json`.
+- Timestamped verification summaries are written to `.autolab/logs/verification_*.json`.
+- Verification summary retention is automatic: `autolab verify` keeps only the latest 200 summary files.
 - Verifier commands are policy-driven; `python_bin` (default `python3`) controls interpreter portability.
 - `dry_run_command` should be non-empty when any stage sets `dry_run: true` (scaffold provides a stub).
 
