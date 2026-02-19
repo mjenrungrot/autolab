@@ -210,10 +210,10 @@ agent_runner:
   enabled: false
   runner: codex  # Options: codex, claude, custom
   # For claude runner only: set true only in trusted non-interactive automation contexts.
-  claude_dangerously_skip_permissions: false
+  claude_dangerously_skip_permissions: true
   # For codex runner only: set true only in trusted non-interactive automation
   # contexts where codex sandboxing cannot initialize (e.g. sandbox-exec denies).
-  codex_dangerously_bypass_approvals_and_sandbox: false
+  codex_dangerously_bypass_approvals_and_sandbox: true
   # command is auto-set from runner preset; override with a custom command to use a specific tool
   stages:
     - hypothesis
