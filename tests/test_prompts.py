@@ -106,6 +106,83 @@ def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> 
     assert "python3 .autolab/verifiers/template_fill.py --stage design" in bundle.prompt_text
 
 
+def test_render_prompt_auto_injects_registry_boilerplate_when_missing(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / "custom_design_minimal.md"
+    template_path.write_text(
+        (
+            "# Custom Design Prompt\n\n"
+            "## ROLE\n"
+            "Design owner.\n\n"
+            "## PRIMARY OBJECTIVE\n"
+            "Create design artifacts.\n\n"
+            "## STEPS\n"
+            "1. Produce `design.yaml`.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = _render_stage_prompt(repo, stage="design", state=state, template_path=template_path, runner_scope={})
+
+    assert "## OUTPUTS (STRICT)" in bundle.prompt_text
+    assert "- experiments/plan/iter1/design.yaml" in bundle.prompt_text
+    assert "## REQUIRED INPUTS" in bundle.prompt_text
+    assert "- `iter1`" in bundle.prompt_text
+    assert "- `experiments/plan/iter1`" in bundle.prompt_text
+    assert "- `h1`" in bundle.prompt_text
+    assert "## FILE CHECKLIST" in bundle.prompt_text
+    assert "## VERIFIER MAPPING" in bundle.prompt_text
+    assert bundle.prompt_text.index("## VERIFIER MAPPING") < bundle.prompt_text.index("## STEPS")
+
+
+def test_render_prompt_manual_boilerplate_sections_override_auto_injection(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / "custom_design_manual.md"
+    template_path.write_text(
+        (
+            "# Custom Design Prompt\n\n"
+            "## ROLE\n"
+            "Design owner.\n\n"
+            "## PRIMARY OBJECTIVE\n"
+            "Create design artifacts.\n\n"
+            "## OUTPUTS (MANUAL)\n"
+            "- manual outputs sentinel\n\n"
+            "## REQUIRED INPUTS\n"
+            "- manual inputs sentinel\n\n"
+            "## FILE CHECKLIST (MACHINE-AUDITABLE)\n"
+            "- manual checklist sentinel\n\n"
+            "## VERIFIER MAPPING\n"
+            "- manual verifier sentinel\n\n"
+            "## STEPS\n"
+            "1. Produce `design.yaml`.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = _render_stage_prompt(repo, stage="design", state=state, template_path=template_path, runner_scope={})
+
+    assert "manual outputs sentinel" in bundle.prompt_text
+    assert "manual inputs sentinel" in bundle.prompt_text
+    assert "manual checklist sentinel" in bundle.prompt_text
+    assert "manual verifier sentinel" in bundle.prompt_text
+    assert "{{iteration_path}}/design.yaml" not in bundle.prompt_text
+
+    assert len(re.findall(r"(?mi)^##\s*outputs\b", bundle.prompt_text)) == 1
+    assert len(re.findall(r"(?mi)^##\s*required inputs\b", bundle.prompt_text)) == 1
+    assert len(re.findall(r"(?mi)^##\s*file checklist\b", bundle.prompt_text)) == 1
+    assert len(re.findall(r"(?mi)^##\s*verifier mapping\b", bundle.prompt_text)) == 1
+
+
 def test_render_prompt_rejects_legacy_literal_placeholder_tokens(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
