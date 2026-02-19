@@ -1,0 +1,12 @@
+{
+  "status": "pass",
+  "blocking_findings": [],
+  "required_checks": {
+    "tests": "pass",
+    "dry_run": "pass",
+    "schema": "pass",
+    "env_smoke": "pass",
+    "docs_target_update": "pass"
+  },
+  "reviewed_at": "2026-02-01T11:55:00Z"
+}

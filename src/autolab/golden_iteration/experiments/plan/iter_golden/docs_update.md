@@ -1,0 +1,22 @@
+## What Changed
+
+- Added results summary and metric delta notes for iteration `iter_golden`.
+
+## Run Evidence
+
+- iteration_id: iter_golden
+- run_id: 20260201T120000Z_demo
+- host mode: local
+- sync status: completed
+- metrics artifact: `experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`
+- manifest artifact: `experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
+
+## Recommendation
+
+- Proceed with replication runs before marking hypothesis complete.
+
+## No-Change Rationale (when applicable)
+
+- primary metric value: 83.6.
+- metrics delta summary: +1.2 absolute improvement over baseline.
+- why configured paper targets do not require updates: target write-up deferred until replication confirms stability.

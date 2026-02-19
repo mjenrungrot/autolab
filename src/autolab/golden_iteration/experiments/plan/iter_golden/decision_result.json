@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "decision": "stop",
+  "rationale": "Primary metric exceeded target and no unresolved blocking risks remain.",
+  "evidence": [
+    {
+      "source": "metrics",
+      "pointer": "runs/20260201T120000Z_demo/metrics.json",
+      "summary": "delta_vs_baseline=+1.2 exceeded success_delta target (+1.0%)."
+    },
+    {
+      "source": "docs_update",
+      "pointer": "docs_update.md",
+      "summary": "Documentation and paper targets were updated for this run."
+    }
+  ],
+  "risks": [
+    "Generalization risk remains for unseen data shifts."
+  ]
+}
