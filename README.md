@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.29
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.30
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -71,6 +71,12 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 ## Configuration
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
+
+**Manual steering commands.**
+
+- `autolab focus --iteration-id <id>` or `autolab focus --experiment-id <id>` retargets state focus with legal checks and a clean handoff reset.
+- `autolab todo list|add|done|remove|sync` manages `docs/todo.md` and `.autolab/todo_state.json` for cross-session steering.
+- `autolab experiment move --to planned|plan|in_progress|done` updates backlog lifecycle type/status, moves iteration folders across `experiments/<type>/`, and rewrites scoped path references.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 
@@ -134,6 +140,7 @@ Workflow bootstrap expects `hypotheses` and `experiments` lists with `id`, `stat
 - `schema_checks.py` -- JSON Schema validation for stage artifacts, `state.json`, and `backlog.yaml`.
 - `registry_consistency.py` -- ensures policy requirements are supported by workflow registry capabilities.
 - `consistency_checks.py` -- validates cross-artifact consistency (design/manifest/metrics/review).
+- `run_health.py` / `result_sanity.py` -- env-smoke checks; `run_health.py` runs for env-smoke stages, while `result_sanity.py` is stage-gated to `extract_results`.
 - Canonical command: `autolab verify --stage <stage>`.
 - Latest result persisted to `.autolab/verification_result.json`.
 - Verifier commands are policy-driven; `python_bin` (default `python3`) controls interpreter portability.

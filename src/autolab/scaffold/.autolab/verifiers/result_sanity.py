@@ -111,15 +111,7 @@ def main() -> int:
         print_result(result, as_json=args.json)
         return 1
 
-    iteration_id = str(state.get("iteration_id", "")).strip()
-    run_id = str(state.get("last_run_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
-    if not iteration_id or not run_id:
-        result = make_result(
-            "result_sanity", stage, [], ["missing iteration_id/last_run_id in state"]
-        )
-        print_result(result, as_json=args.json)
-        return 1
 
     if stage != "extract_results":
         result = make_result(
@@ -136,6 +128,22 @@ def main() -> int:
         )
         print_result(result, as_json=args.json)
         return 0
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    run_id = str(state.get("last_run_id", "")).strip()
+    missing_fields: list[str] = []
+    if not iteration_id or iteration_id.startswith("<"):
+        missing_fields.append("iteration_id")
+    if not run_id or run_id.startswith("<"):
+        missing_fields.append("last_run_id")
+    if missing_fields:
+        if len(missing_fields) == 1:
+            error = f"missing {missing_fields[0]} for extract_results"
+        else:
+            error = "missing iteration_id and last_run_id for extract_results"
+        result = make_result("result_sanity", stage, [], [error])
+        print_result(result, as_json=args.json)
+        return 1
 
     metrics_path = (
         resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"

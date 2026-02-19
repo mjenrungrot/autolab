@@ -1399,9 +1399,31 @@ def select_open_task(
     }
 
 
-def mark_task_completed(repo_root: Path, task_id: str) -> bool:
+def list_open_tasks(repo_root: Path) -> list[dict[str, Any]]:
+    state_path = repo_root / ".autolab" / "todo_state.json"
+    todo_state = _load_todo_state(state_path)
+    open_tasks = _open_tasks_sorted(todo_state)
+    return [
+        {
+            "task_id": str(task.get("task_id", "")),
+            "source": str(task.get("source", "")),
+            "stage": _normalize_stage(str(task.get("stage", "")), "design"),
+            "task_class": str(task.get("task_class", "unknown")),
+            "text": str(task.get("text", "")),
+            "priority": str(task.get("priority", "")),
+            "owner": str(task.get("owner", "")),
+            "labels": list(task.get("labels", []))
+            if isinstance(task.get("labels"), list)
+            else [],
+        }
+        for task in open_tasks
+    ]
+
+
+def _set_task_status(repo_root: Path, task_id: str, *, status: str) -> bool:
     normalized_id = _normalize_space(task_id)
-    if not normalized_id:
+    normalized_status = _normalize_space(status).lower()
+    if not normalized_id or normalized_status not in {"completed", "removed"}:
         return False
     todo_state_path = repo_root / ".autolab" / "todo_state.json"
     todo_path = repo_root / "docs" / "todo.md"
@@ -1413,9 +1435,16 @@ def mark_task_completed(repo_root: Path, task_id: str) -> bool:
     if not isinstance(task, dict):
         return False
     now = _utc_now()
-    changed = _mark_completed(task, now)
-    if not changed:
+    current_status = _normalize_space(str(task.get("status", ""))).lower()
+    if current_status != "open":
         return False
+    if normalized_status == "completed":
+        changed = _mark_completed(task, now)
+        if not changed:
+            return False
+    else:
+        task["status"] = normalized_status
+        task["last_evidence_at"] = now
     _prune_non_open_tasks(todo_state)
     _write_json_if_changed(todo_state_path, todo_state)
     todo_text = (
@@ -1428,6 +1457,14 @@ def mark_task_completed(repo_root: Path, task_id: str) -> bool:
     rendered = _render_todo(open_tasks, notes_lines)
     _write_text_if_changed(todo_path, rendered)
     return True
+
+
+def mark_task_completed(repo_root: Path, task_id: str) -> bool:
+    return _set_task_status(repo_root, task_id, status="completed")
+
+
+def mark_task_removed(repo_root: Path, task_id: str) -> bool:
+    return _set_task_status(repo_root, task_id, status="removed")
 
 
 def build_focus_tasks(

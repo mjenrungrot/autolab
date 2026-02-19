@@ -861,12 +861,13 @@ def _build_verification_command_specs(
         command_specs.append(
             ("run_health", f"{python_bin} .autolab/verifiers/run_health.py --json")
         )
-        command_specs.append(
-            (
-                "result_sanity",
-                f"{python_bin} .autolab/verifiers/result_sanity.py --json",
+        if stage == "extract_results":
+            command_specs.append(
+                (
+                    "result_sanity",
+                    f"{python_bin} .autolab/verifiers/result_sanity.py --json",
+                )
             )
-        )
     if stage_requirements["docs_target_update"] and stage in {
         "update_docs",
         "implementation_review",

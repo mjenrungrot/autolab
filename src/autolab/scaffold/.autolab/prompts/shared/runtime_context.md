@@ -11,3 +11,4 @@ If any required token remains unresolved, this stage must fail before work start
 
 `state.json` is owned by Autolab orchestration; do not edit it manually unless a human explicitly asks.
 The runtime stage context block includes resolved edit scope allowlists (workspace + allowed dirs). Use those as the hard edit boundary.
+If protected-file patterns are listed in runtime context/policy, treat them as hard denylist paths even when they appear under an allowed edit directory.

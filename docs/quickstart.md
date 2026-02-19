@@ -99,6 +99,9 @@ autolab lint --stage hypothesis
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review**: `autolab review --status=pass`
+- **Retarget state focus**: `autolab focus --experiment-id e1`
+- **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
+- **Move lifecycle type**: `autolab experiment move --experiment-id e1 --to in_progress`
 
 ## File structure reference
 

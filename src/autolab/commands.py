@@ -23,8 +23,10 @@ from autolab.constants import (
     DECISION_STAGES,
     DEFAULT_BACKLOG_TEMPLATE,
     DEFAULT_EXPERIMENT_TYPE,
+    EXPERIMENT_TYPES,
     DEFAULT_MAX_HOURS,
     DEFAULT_VERIFIER_POLICY,
+    ITERATION_ID_SAFE_PATTERN,
     LOCK_STALE_SECONDS,
     STAGE_PROMPT_FILES,
     TERMINAL_STAGES,
@@ -58,18 +60,24 @@ from autolab.state import (
     _read_lock_payload,
     _release_lock,
     _resolve_autolab_dir,
+    _resolve_iteration_directory,
     _resolve_repo_root,
     _resolve_scaffold_source,
     _sync_scaffold_bundle,
     _resolve_experiment_type_from_backlog,
+    _write_backlog_yaml,
     _ensure_iteration_skeleton,
 )
+from autolab.todo_sync import list_open_tasks, mark_task_completed, mark_task_removed
 from autolab.utils import (
     _append_log,
     _collect_change_snapshot,
     _ensure_json_file,
     _ensure_text_file,
+    _is_backlog_status_completed,
     _load_json_if_exists,
+    _normalize_experiment_type,
+    _normalize_space,
     _outcome_payload,
     _persist_agent_result,
     _prepare_standard_commit_outcome,
@@ -276,6 +284,302 @@ def _write_overnight_summary(
 
 
 # ---------------------------------------------------------------------------
+# Manual control helpers (focus / todo / experiment move)
+# ---------------------------------------------------------------------------
+
+
+def _default_repeat_guard_payload() -> dict[str, Any]:
+    return {
+        "last_decision": "",
+        "same_decision_streak": 0,
+        "last_open_task_count": -1,
+        "no_progress_decisions": 0,
+        "update_docs_cycle_count": 0,
+        "last_verification_passed": False,
+    }
+
+
+def _reset_state_for_manual_handoff(state: dict[str, Any], *, stage: str) -> None:
+    state["stage"] = stage
+    state["stage_attempt"] = 0
+    state["last_run_id"] = ""
+    state["pending_run_id"] = ""
+    state["run_group"] = []
+    state["sync_status"] = "na"
+    state["assistant_mode"] = "off"
+    state["current_task_id"] = ""
+    state["task_cycle_stage"] = "select"
+    state["task_change_baseline"] = {}
+    state["repeat_guard"] = _default_repeat_guard_payload()
+
+
+def _ensure_no_active_lock(lock_path: Path) -> str:
+    info = _inspect_lock(lock_path)
+    if info is None:
+        return ""
+    age_raw = info.get("age_seconds")
+    if isinstance(age_raw, (int, float)) and age_raw > LOCK_STALE_SECONDS:
+        return ""
+    age_text = f"{age_raw:.0f}s" if isinstance(age_raw, (int, float)) else "unknown"
+    return (
+        f"active lock exists at {lock_path} "
+        f"(pid={info.get('pid', '<unknown>')}, host={info.get('host', '<unknown>')}, age={age_text})"
+    )
+
+
+def _validate_target_identifiers(iteration_id: str, experiment_id: str) -> str:
+    normalized_iteration_id = _normalize_space(iteration_id)
+    normalized_experiment_id = _normalize_space(experiment_id)
+    if not normalized_iteration_id or normalized_iteration_id.startswith("<"):
+        return "iteration_id must be a real identifier"
+    if not ITERATION_ID_SAFE_PATTERN.fullmatch(normalized_iteration_id):
+        return (
+            "iteration_id must match [A-Za-z0-9._-] so it can map to experiments/<type>/<iteration_id>"
+        )
+    if not normalized_experiment_id or normalized_experiment_id.startswith("<"):
+        return "experiment_id must be a real identifier"
+    return ""
+
+
+def _resolve_backlog_target_entry(
+    repo_root: Path,
+    *,
+    iteration_id: str,
+    experiment_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    payload, load_error = _load_backlog_yaml(backlog_path)
+    if payload is None:
+        return (None, None, load_error)
+
+    experiments = payload.get("experiments")
+    if not isinstance(experiments, list):
+        return (None, None, "backlog experiments list is missing")
+
+    normalized_iteration_id = _normalize_space(iteration_id)
+    normalized_experiment_id = _normalize_space(experiment_id)
+    if not normalized_iteration_id and not normalized_experiment_id:
+        return (
+            None,
+            None,
+            "target experiment is ambiguous; set --iteration-id and/or --experiment-id",
+        )
+
+    if normalized_experiment_id:
+        matches = [
+            entry
+            for entry in experiments
+            if isinstance(entry, dict)
+            and _normalize_space(str(entry.get("id", ""))) == normalized_experiment_id
+        ]
+        if not matches:
+            return (
+                None,
+                None,
+                f"backlog experiment '{normalized_experiment_id}' was not found",
+            )
+        if len(matches) > 1:
+            return (
+                None,
+                None,
+                f"backlog experiment id '{normalized_experiment_id}' is duplicated",
+            )
+        entry = matches[0]
+        if normalized_iteration_id:
+            entry_iteration_id = _normalize_space(str(entry.get("iteration_id", "")))
+            if entry_iteration_id != normalized_iteration_id:
+                return (
+                    None,
+                    None,
+                    (
+                        f"experiment '{normalized_experiment_id}' is mapped to iteration_id "
+                        f"'{entry_iteration_id}', not '{normalized_iteration_id}'"
+                    ),
+                )
+        return (payload, entry, "")
+
+    matches = [
+        entry
+        for entry in experiments
+        if isinstance(entry, dict)
+        and _normalize_space(str(entry.get("iteration_id", ""))) == normalized_iteration_id
+    ]
+    if not matches:
+        return (
+            None,
+            None,
+            f"no backlog experiment matches iteration_id '{normalized_iteration_id}'",
+        )
+    if len(matches) > 1:
+        duplicate_ids = [
+            _normalize_space(str(entry.get("id", ""))) or "<unidentified>"
+            for entry in matches
+        ]
+        return (
+            None,
+            None,
+            (
+                f"multiple backlog experiments match iteration_id '{normalized_iteration_id}': "
+                f"{', '.join(duplicate_ids)}"
+            ),
+        )
+    return (payload, matches[0], "")
+
+
+def _is_entry_completed(entry: dict[str, Any]) -> bool:
+    experiment_type = _normalize_experiment_type(entry.get("type"))
+    if experiment_type == "done":
+        return True
+    return _is_backlog_status_completed(entry.get("status"))
+
+
+def _normalize_experiment_stage(value: str) -> tuple[str, str]:
+    normalized = _normalize_space(value).lower()
+    if normalized == "planned":
+        normalized = "plan"
+    if normalized not in EXPERIMENT_TYPES:
+        return (
+            "",
+            f"unsupported --to value '{value}' (expected one of: planned, plan, in_progress, done)",
+        )
+    return (normalized, "")
+
+
+def _mapped_backlog_status_for_type(experiment_type: str) -> str:
+    if experiment_type == "done":
+        return "completed"
+    if experiment_type == "in_progress":
+        return "in_progress"
+    return "open"
+
+
+def _rewrite_iteration_prefix_scoped(
+    repo_root: Path,
+    *,
+    iteration_dir: Path,
+    old_prefix: str,
+    new_prefix: str,
+) -> tuple[list[Path], str]:
+    if old_prefix == new_prefix:
+        return ([], "")
+
+    changed: list[Path] = []
+    original_texts: dict[Path, str] = {}
+    candidates: list[Path] = []
+
+    for path in sorted(iteration_dir.rglob("*")):
+        if path.is_file():
+            candidates.append(path)
+
+    autolab_dir = repo_root / ".autolab"
+    for path in sorted(autolab_dir.glob("*.json")):
+        if path.is_file():
+            candidates.append(path)
+
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        except Exception:
+            continue
+        if old_prefix not in text:
+            continue
+        updated = text.replace(old_prefix, new_prefix)
+        if updated == text:
+            continue
+        original_texts[path] = text
+        try:
+            path.write_text(updated, encoding="utf-8")
+        except Exception as exc:
+            rollback_errors: list[str] = []
+            for rollback_path, original_text in reversed(list(original_texts.items())):
+                try:
+                    rollback_path.write_text(original_text, encoding="utf-8")
+                except Exception as rollback_exc:
+                    rollback_errors.append(f"{rollback_path}: {rollback_exc}")
+            rollback_suffix = (
+                f"; rollback failures: {' | '.join(rollback_errors)}"
+                if rollback_errors
+                else ""
+            )
+            return ([], f"failed rewriting '{path}': {exc}{rollback_suffix}")
+        changed.append(path)
+    return (changed, "")
+
+
+def _insert_todo_task_line(todo_path: Path, *, line: str) -> None:
+    if todo_path.exists():
+        lines = todo_path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = [
+            "# TODO",
+            "",
+            "## Tasks",
+            "<!-- Add one bullet per task. Optional stage tag: [stage:design]. -->",
+            "",
+            "## Notes",
+            "Write non-task notes here. Bullets in this section are ignored by autolab steering.",
+        ]
+
+    tasks_idx = -1
+    notes_idx = -1
+    for idx, raw_line in enumerate(lines):
+        lowered = raw_line.strip().lower()
+        if lowered == "## tasks" and tasks_idx < 0:
+            tasks_idx = idx
+        if lowered == "## notes" and notes_idx < 0:
+            notes_idx = idx
+
+    if tasks_idx < 0:
+        lines.extend(["", "## Tasks"])
+        tasks_idx = len(lines) - 1
+    if notes_idx < 0:
+        lines.extend(["", "## Notes"])
+        notes_idx = len(lines) - 1
+
+    insert_at = notes_idx
+    while insert_at > tasks_idx + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines.insert(insert_at, line)
+
+    # Keep one blank line before notes section for readability.
+    notes_idx = next(
+        (idx for idx, raw_line in enumerate(lines) if raw_line.strip().lower() == "## notes"),
+        -1,
+    )
+    if notes_idx > 0 and lines[notes_idx - 1].strip():
+        lines.insert(notes_idx, "")
+
+    todo_path.parent.mkdir(parents=True, exist_ok=True)
+    todo_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _resolve_todo_selector(open_tasks: list[dict[str, Any]], selector: str) -> tuple[str, str]:
+    normalized = _normalize_space(selector)
+    if not normalized:
+        return ("", "task selector is empty")
+
+    for task in open_tasks:
+        task_id = _normalize_space(str(task.get("task_id", "")))
+        if task_id == normalized:
+            return (task_id, "")
+
+    if normalized.isdigit():
+        index = int(normalized)
+        if 1 <= index <= len(open_tasks):
+            task_id = _normalize_space(str(open_tasks[index - 1].get("task_id", "")))
+            if task_id:
+                return (task_id, "")
+        return (
+            "",
+            f"task index {index} is out of range (open tasks: {len(open_tasks)})",
+        )
+
+    return ("", f"task selector '{normalized}' did not match any open task")
+
+
+# ---------------------------------------------------------------------------
 # CLI command handlers
 # ---------------------------------------------------------------------------
 
@@ -413,6 +717,444 @@ def _cmd_status(args: argparse.Namespace) -> int:
         )
         print(f"  update_docs_cycles: {docs_cyc}/{max_docs} (breach -> {on_breach})")
 
+    return 0
+
+
+def _cmd_focus(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab focus: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    lock_error = _ensure_no_active_lock(autolab_dir / "lock")
+    if lock_error:
+        print(f"autolab focus: ERROR {lock_error}", file=sys.stderr)
+        return 1
+
+    requested_iteration_id = _normalize_space(getattr(args, "iteration_id", ""))
+    requested_experiment_id = _normalize_space(getattr(args, "experiment_id", ""))
+    if not requested_iteration_id and not requested_experiment_id:
+        print(
+            "autolab focus: ERROR set --iteration-id and/or --experiment-id",
+            file=sys.stderr,
+        )
+        return 2
+
+    _payload, entry, resolve_error = _resolve_backlog_target_entry(
+        repo_root,
+        iteration_id=requested_iteration_id,
+        experiment_id=requested_experiment_id,
+    )
+    if entry is None:
+        print(f"autolab focus: ERROR {resolve_error}", file=sys.stderr)
+        return 1
+
+    target_iteration_id = _normalize_space(str(entry.get("iteration_id", "")))
+    target_experiment_id = _normalize_space(str(entry.get("id", "")))
+    id_error = _validate_target_identifiers(target_iteration_id, target_experiment_id)
+    if id_error:
+        print(f"autolab focus: ERROR {id_error}", file=sys.stderr)
+        return 1
+
+    try:
+        iteration_dir, iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=target_iteration_id,
+            experiment_id=target_experiment_id,
+            require_exists=True,
+        )
+    except Exception as exc:
+        print(f"autolab focus: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    stage_before = _normalize_space(str(state.get("stage", "")))
+    target_stage = "stop" if _is_entry_completed(entry) else "hypothesis"
+    state["iteration_id"] = target_iteration_id
+    state["experiment_id"] = target_experiment_id
+    _reset_state_for_manual_handoff(state, stage=target_stage)
+
+    summary = (
+        f"manual focus updated to iteration_id='{target_iteration_id}' "
+        f"experiment_id='{target_experiment_id}' (stage={target_stage})"
+    )
+    _append_state_history(
+        state,
+        stage_before=stage_before,
+        stage_after=target_stage,
+        status="manual_focus",
+        summary=summary,
+    )
+    _write_json(state_path, state)
+    todo_changed, todo_message = _safe_todo_pre_sync(repo_root, state)
+    changed_files = [state_path, *todo_changed]
+    result_summary = summary if not todo_message else f"{summary}; {todo_message}"
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=result_summary,
+        changed_files=changed_files,
+    )
+    _append_log(
+        repo_root,
+        (
+            f"focus: {stage_before} -> {target_stage} "
+            f"iteration={target_iteration_id} experiment={target_experiment_id}"
+        ),
+    )
+
+    print("autolab focus")
+    print(f"state_file: {state_path}")
+    print(f"iteration_id: {target_iteration_id}")
+    print(f"experiment_id: {target_experiment_id}")
+    print(f"stage: {target_stage}")
+    print(f"iteration_dir: {iteration_dir}")
+    print(f"iteration_type: {iteration_type}")
+    print(f"changed_files: {len(changed_files)}")
+    return 0
+
+
+def _cmd_todo(args: argparse.Namespace) -> int:
+    action = _normalize_space(str(getattr(args, "todo_action", ""))).lower()
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab todo: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    changed_pre, pre_message = _safe_todo_pre_sync(repo_root, state)
+    changed_files: list[Path] = [*changed_pre]
+
+    if action == "sync":
+        open_tasks = list_open_tasks(repo_root)
+        print("autolab todo sync")
+        print(f"state_file: {state_path}")
+        print(f"open_tasks: {len(open_tasks)}")
+        print(f"changed_files: {len(changed_files)}")
+        for path in changed_files:
+            print(f"- {path}")
+        if pre_message:
+            print(f"summary: {pre_message}")
+        return 0
+
+    if action == "list":
+        open_tasks = list_open_tasks(repo_root)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps({"open_count": len(open_tasks), "tasks": open_tasks}, indent=2))
+            return 0
+        print("autolab todo list")
+        print(f"open_tasks: {len(open_tasks)}")
+        for index, task in enumerate(open_tasks, start=1):
+            print(
+                f"{index}. {task.get('task_id', '')} "
+                f"[stage:{task.get('stage', '')}] "
+                f"[source:{task.get('source', '')}] "
+                f"{task.get('text', '')}"
+            )
+        return 0
+
+    if action == "add":
+        raw_text = _normalize_space(str(getattr(args, "text", "")))
+        if not raw_text:
+            print("autolab todo add: ERROR task text is empty", file=sys.stderr)
+            return 2
+        default_stage = _normalize_space(str(state.get("stage", "implementation"))).lower()
+        stage = _normalize_space(str(getattr(args, "stage", ""))).lower() or default_stage
+        if stage not in ALL_STAGES:
+            if default_stage in ALL_STAGES:
+                stage = default_stage
+            else:
+                stage = "implementation"
+        if stage not in ALL_STAGES:
+            print(
+                f"autolab todo add: ERROR invalid stage '{stage}'",
+                file=sys.stderr,
+            )
+            return 2
+
+        tags: list[str] = []
+        priority = _normalize_space(str(getattr(args, "priority", ""))).lower()
+        owner = _normalize_space(str(getattr(args, "owner", "")))
+        labels_raw = getattr(args, "label", []) or []
+        labels = [_normalize_space(str(item)).lower() for item in labels_raw if _normalize_space(str(item))]
+        if priority:
+            tags.append(f"[priority:{priority}]")
+        if owner:
+            tags.append(f"[owner:{owner}]")
+        for label in labels:
+            tags.append(f"[label:{label}]")
+        suffix = f" {' '.join(tags)}" if tags else ""
+        todo_path = repo_root / "docs" / "todo.md"
+        _insert_todo_task_line(
+            todo_path,
+            line=f"- [stage:{stage}] {raw_text}{suffix}",
+        )
+        changed_files.append(todo_path)
+
+        changed_post, post_message = _safe_todo_pre_sync(repo_root, state)
+        changed_files.extend(changed_post)
+        open_tasks = list_open_tasks(repo_root)
+        resolved_task = None
+        for task in reversed(open_tasks):
+            if (
+                str(task.get("source", "")) == "manual"
+                and str(task.get("stage", "")) == stage
+                and _normalize_space(str(task.get("text", ""))) == raw_text
+            ):
+                resolved_task = task
+                break
+        if resolved_task is None and open_tasks:
+            resolved_task = open_tasks[-1]
+
+        print("autolab todo add")
+        print(f"state_file: {state_path}")
+        if resolved_task is not None:
+            print(f"task_id: {resolved_task.get('task_id', '')}")
+            print(f"stage: {resolved_task.get('stage', '')}")
+            print(f"text: {resolved_task.get('text', '')}")
+        print(f"open_tasks: {len(open_tasks)}")
+        print(f"changed_files: {len({str(path) for path in changed_files})}")
+        if post_message:
+            print(f"summary: {post_message}")
+        return 0
+
+    if action in {"done", "remove"}:
+        selector = _normalize_space(str(getattr(args, "selector", "")))
+        open_tasks = list_open_tasks(repo_root)
+        task_id, selector_error = _resolve_todo_selector(open_tasks, selector)
+        if selector_error:
+            print(f"autolab todo {action}: ERROR {selector_error}", file=sys.stderr)
+            return 1
+
+        if action == "done":
+            updated = mark_task_completed(repo_root, task_id)
+        else:
+            updated = mark_task_removed(repo_root, task_id)
+        if not updated:
+            print(
+                f"autolab todo {action}: ERROR task '{task_id}' is not open",
+                file=sys.stderr,
+            )
+            return 1
+
+        changed_post, post_message = _safe_todo_pre_sync(repo_root, state)
+        changed_files.extend(changed_post)
+        open_after = list_open_tasks(repo_root)
+        print(f"autolab todo {action}")
+        print(f"task_id: {task_id}")
+        print(f"open_tasks: {len(open_after)}")
+        print(f"changed_files: {len({str(path) for path in changed_files})}")
+        if post_message:
+            print(f"summary: {post_message}")
+        return 0
+
+    print(f"autolab todo: ERROR unknown action '{action}'", file=sys.stderr)
+    return 2
+
+
+def _cmd_experiment_move(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab experiment move: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    lock_error = _ensure_no_active_lock(autolab_dir / "lock")
+    if lock_error:
+        print(f"autolab experiment move: ERROR {lock_error}", file=sys.stderr)
+        return 1
+
+    target_type, type_error = _normalize_experiment_stage(str(getattr(args, "to", "")))
+    if type_error:
+        print(f"autolab experiment move: ERROR {type_error}", file=sys.stderr)
+        return 2
+
+    requested_iteration_id = _normalize_space(str(getattr(args, "iteration_id", "")))
+    requested_experiment_id = _normalize_space(str(getattr(args, "experiment_id", "")))
+    if not requested_iteration_id and not requested_experiment_id:
+        requested_iteration_id = _normalize_space(str(state.get("iteration_id", "")))
+        requested_experiment_id = _normalize_space(str(state.get("experiment_id", "")))
+
+    backlog_payload, entry, resolve_error = _resolve_backlog_target_entry(
+        repo_root,
+        iteration_id=requested_iteration_id,
+        experiment_id=requested_experiment_id,
+    )
+    if entry is None or backlog_payload is None:
+        print(f"autolab experiment move: ERROR {resolve_error}", file=sys.stderr)
+        return 1
+
+    iteration_id = _normalize_space(str(entry.get("iteration_id", "")))
+    experiment_id = _normalize_space(str(entry.get("id", "")))
+    id_error = _validate_target_identifiers(iteration_id, experiment_id)
+    if id_error:
+        print(f"autolab experiment move: ERROR {id_error}", file=sys.stderr)
+        return 1
+
+    try:
+        source_dir, source_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=True,
+        )
+    except Exception as exc:
+        print(f"autolab experiment move: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    destination_dir = repo_root / "experiments" / target_type / iteration_id
+    source_type_from_path = source_dir.parent.name
+    if source_type_from_path in EXPERIMENT_TYPES:
+        source_type = source_type_from_path
+    if source_dir.resolve() != destination_dir.resolve() and destination_dir.exists():
+        print(
+            (
+                f"autolab experiment move: ERROR destination already exists: {destination_dir}"
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    original_entry_type = str(entry.get("type", ""))
+    original_entry_status = str(entry.get("status", ""))
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    moved = False
+    backlog_changed = False
+    rewritten_paths: list[Path] = []
+    try:
+        if source_dir.resolve() != destination_dir.resolve():
+            destination_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source_dir), str(destination_dir))
+            moved = True
+
+        entry["type"] = target_type
+        entry["status"] = _mapped_backlog_status_for_type(target_type)
+        backlog_changed, backlog_write_error = _write_backlog_yaml(
+            backlog_path,
+            backlog_payload,
+        )
+        if backlog_write_error:
+            raise RuntimeError(backlog_write_error)
+
+        old_prefix = f"experiments/{source_type}/{iteration_id}"
+        new_prefix = f"experiments/{target_type}/{iteration_id}"
+        rewritten_paths, rewrite_error = _rewrite_iteration_prefix_scoped(
+            repo_root,
+            iteration_dir=destination_dir if moved else source_dir,
+            old_prefix=old_prefix,
+            new_prefix=new_prefix,
+        )
+        if rewrite_error:
+            raise RuntimeError(rewrite_error)
+    except Exception as exc:
+        rollback_notes: list[str] = []
+
+        # Revert backlog payload + file.
+        entry["type"] = original_entry_type
+        entry["status"] = original_entry_status
+        _rollback_changed, rollback_backlog_error = _write_backlog_yaml(
+            backlog_path,
+            backlog_payload,
+        )
+        if rollback_backlog_error:
+            rollback_notes.append(
+                f"backlog rollback failed: {rollback_backlog_error}"
+            )
+
+        # Revert directory move if needed.
+        if moved:
+            try:
+                if source_dir.exists():
+                    rollback_notes.append(
+                        f"source path already exists during rollback: {source_dir}"
+                    )
+                elif destination_dir.exists():
+                    source_dir.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(destination_dir), str(source_dir))
+                else:
+                    rollback_notes.append(
+                        f"destination path missing during rollback: {destination_dir}"
+                    )
+            except Exception as rollback_exc:
+                rollback_notes.append(f"directory rollback failed: {rollback_exc}")
+
+        detail = str(exc)
+        if rollback_notes:
+            detail = f"{detail}; {' | '.join(rollback_notes)}"
+        print(f"autolab experiment move: ERROR {detail}", file=sys.stderr)
+        return 1
+
+    stage_before = _normalize_space(str(state.get("stage", "")))
+    state_iteration_id = _normalize_space(str(state.get("iteration_id", "")))
+    state_experiment_id = _normalize_space(str(state.get("experiment_id", "")))
+    focused_match = (
+        bool(state_experiment_id)
+        and state_iteration_id == iteration_id
+        and state_experiment_id == experiment_id
+    )
+    if focused_match:
+        state["iteration_id"] = iteration_id
+        state["experiment_id"] = experiment_id
+        target_stage = "stop" if target_type == "done" else "hypothesis"
+        _reset_state_for_manual_handoff(state, stage=target_stage)
+    else:
+        target_stage = stage_before
+
+    summary = (
+        f"manual experiment move: experiment_id='{experiment_id}' "
+        f"{source_type} -> {target_type} (iteration_id='{iteration_id}')"
+    )
+    _append_state_history(
+        state,
+        stage_before=stage_before,
+        stage_after=target_stage,
+        status="manual_experiment_move",
+        summary=summary,
+    )
+    _write_json(state_path, state)
+    todo_changed, todo_message = _safe_todo_pre_sync(repo_root, state)
+
+    changed_files: list[Path] = [state_path, *todo_changed, *rewritten_paths]
+    if backlog_changed:
+        changed_files.append(repo_root / ".autolab" / "backlog.yaml")
+    if moved:
+        changed_files.append(destination_dir)
+    result_summary = summary if not todo_message else f"{summary}; {todo_message}"
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=result_summary,
+        changed_files=changed_files,
+    )
+    _append_log(
+        repo_root,
+        (
+            f"experiment move: {experiment_id} {source_type}->{target_type} "
+            f"iteration={iteration_id} moved={moved} rewrites={len(rewritten_paths)}"
+        ),
+    )
+
+    print("autolab experiment move")
+    print(f"state_file: {state_path}")
+    print(f"experiment_id: {experiment_id}")
+    print(f"iteration_id: {iteration_id}")
+    print(f"from_type: {source_type}")
+    print(f"to_type: {target_type}")
+    print(f"moved_directory: {moved}")
+    print(f"source_dir: {source_dir}")
+    print(f"destination_dir: {destination_dir}")
+    print(f"rewritten_paths: {len(rewritten_paths)}")
+    print(f"backlog_changed: {backlog_changed}")
+    print(f"state_stage: {target_stage}")
     return 0
 
 
@@ -2328,6 +3070,110 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_cmd_status)
 
+    focus = subparsers.add_parser(
+        "focus",
+        help="Manually retarget workflow focus to a backlog experiment/iteration",
+    )
+    focus.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    focus.add_argument(
+        "--iteration-id",
+        default="",
+        help="Target iteration_id to focus (optional when --experiment-id is provided).",
+    )
+    focus.add_argument(
+        "--experiment-id",
+        default="",
+        help="Target experiment_id to focus (optional when --iteration-id is provided).",
+    )
+    focus.set_defaults(handler=_cmd_focus)
+
+    todo = subparsers.add_parser(
+        "todo",
+        help="Manage docs/todo.md and .autolab/todo_state.json for engineer steering",
+    )
+    todo_subparsers = todo.add_subparsers(dest="todo_command")
+
+    todo_sync = todo_subparsers.add_parser(
+        "sync",
+        help="Reconcile docs/todo.md with generated and manual tasks",
+    )
+    todo_sync.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    todo_sync.set_defaults(handler=_cmd_todo, todo_action="sync")
+
+    todo_list = todo_subparsers.add_parser("list", help="List open todo tasks")
+    todo_list.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    todo_list.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON",
+    )
+    todo_list.set_defaults(handler=_cmd_todo, todo_action="list")
+
+    todo_add = todo_subparsers.add_parser("add", help="Add a manual todo task")
+    todo_add.add_argument("text", help="Task text")
+    todo_add.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    todo_add.add_argument(
+        "--stage",
+        default="",
+        help="Optional stage tag for the task (defaults to state.stage).",
+    )
+    todo_add.add_argument(
+        "--priority",
+        choices=("critical", "high", "medium", "low"),
+        default="",
+        help="Optional priority tag.",
+    )
+    todo_add.add_argument("--owner", default="", help="Optional owner tag.")
+    todo_add.add_argument(
+        "--label",
+        action="append",
+        default=[],
+        help="Optional label tag (repeatable).",
+    )
+    todo_add.set_defaults(handler=_cmd_todo, todo_action="add")
+
+    todo_done = todo_subparsers.add_parser(
+        "done", help="Mark an open todo task as completed"
+    )
+    todo_done.add_argument("selector", help="Task selector (task_id or 1-based index).")
+    todo_done.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    todo_done.set_defaults(handler=_cmd_todo, todo_action="done")
+
+    todo_remove = todo_subparsers.add_parser(
+        "remove", help="Remove an open todo task without marking completion"
+    )
+    todo_remove.add_argument(
+        "selector",
+        help="Task selector (task_id or 1-based index).",
+    )
+    todo_remove.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    todo_remove.set_defaults(handler=_cmd_todo, todo_action="remove")
+
     guardrails_parser = subparsers.add_parser(
         "guardrails", help="Show guardrail counters and thresholds"
     )
@@ -2410,6 +3256,37 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Review decision: pass (continue), retry (back to implementation), stop (end experiment)",
     )
     review.set_defaults(handler=_cmd_review)
+
+    experiment = subparsers.add_parser(
+        "experiment", help="Experiment lifecycle management commands"
+    )
+    experiment_subparsers = experiment.add_subparsers(dest="experiment_command")
+
+    experiment_move = experiment_subparsers.add_parser(
+        "move",
+        help="Move an experiment between plan/in_progress/done lifecycle types",
+    )
+    experiment_move.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    experiment_move.add_argument(
+        "--iteration-id",
+        default="",
+        help="Target iteration_id (optional when --experiment-id is provided).",
+    )
+    experiment_move.add_argument(
+        "--experiment-id",
+        default="",
+        help="Target experiment_id (optional when --iteration-id is provided).",
+    )
+    experiment_move.add_argument(
+        "--to",
+        required=True,
+        help="Target lifecycle type: planned|plan|in_progress|done",
+    )
+    experiment_move.set_defaults(handler=_cmd_experiment_move)
 
     # Lock management
     lock = subparsers.add_parser("lock", help="Inspect or break the autolab run lock")

@@ -1788,10 +1788,30 @@ def test_result_sanity_skips_non_extract_results_stage(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
-    _write_state(repo, stage="implementation_review", last_run_id="run1")
+    _write_state(repo, stage="implementation_review", last_run_id="")
+    _write_backlog(repo)
+    result = _run_result_sanity(repo, json_flag=True)
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "pass"
+    assert payload["verifier"] == "result_sanity"
+    assert payload["stage"] == "implementation_review"
+    checks = payload.get("checks", [])
+    assert isinstance(checks, list) and checks
+    assert "skipped for stage=implementation_review" in str(checks[0].get("detail", ""))
+
+
+def test_result_sanity_fails_when_last_run_id_missing_for_extract_results(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="extract_results", last_run_id="")
     _write_backlog(repo)
     result = _run_result_sanity(repo)
-    assert result.returncode == 0
+    assert result.returncode != 0
+    assert "missing last_run_id for extract_results" in result.stdout
 
 
 # ---------------------------------------------------------------------------
