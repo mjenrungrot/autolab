@@ -1363,6 +1363,34 @@ class TestSlurmManifestVariants:
 class TestSlurmFullCycle:
     """End-to-end SLURM workflow from launch through decide_repeat."""
 
+    def test_slurm_monitor_waits_when_sync_not_ready(self, tmp_path: Path) -> None:
+        """slurm_monitor remains active while SLURM artifacts are still unsynced."""
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="slurm_monitor")
+        run_dir = it_dir / "runs" / "run_001"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "run_id": "run_001",
+            "iteration_id": "iter_test_001",
+            "host_mode": "slurm",
+            "command": "sbatch launch/run_slurm.sbatch",
+            "resource_request": {"partition": "debug"},
+            "status": "running",
+            "slurm": {"job_id": "12345"},
+            "artifact_sync_to_local": {"status": "pending"},
+            "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+        }
+        (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        state = _read_state(repo)
+        state["last_run_id"] = "run_001"
+        _write_state(repo, state)
+
+        outcome = _run(state_path)
+        assert outcome.exit_code == 0
+        assert not outcome.transitioned
+        assert outcome.stage_after == "slurm_monitor"
+        assert "waiting" in outcome.message
+
     def test_slurm_full_cycle_launch_to_stop(self, tmp_path: Path) -> None:
         """Walk through launch → slurm_monitor → extract → update_docs → decide_repeat → stop for SLURM."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")

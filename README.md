@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.17
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.18
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -37,11 +37,22 @@ After install, invoke with `autolab --help` or `python -m autolab --help`.
 
 ## What it does
 
-Autolab drives a repeatable experiment lifecycle through an eight-stage pipeline:
+Autolab drives a repeatable experiment lifecycle through a nine-stage pipeline:
 
-`hypothesis -> design -> implementation -> implementation_review -> launch -> extract_results -> update_docs -> decide_repeat`
+`hypothesis -> design -> implementation -> implementation_review -> launch -> slurm_monitor -> extract_results -> update_docs -> decide_repeat`
 
 Two terminal stages (`human_review`, `stop`) handle escalation and completion.
+
+### Local vs SLURM stage graph
+
+- Local host mode:
+  - `launch -> slurm_monitor (auto-skip/no-op) -> extract_results`
+- SLURM host mode:
+  - `launch`: submit job, write initial manifest, append ledger entry
+  - `slurm_monitor`: poll scheduler, sync artifacts, update manifest/ledger statuses
+  - `extract_results`: consume local artifacts, emit `completed|partial|failed` metrics
+- Why `slurm_monitor` exists:
+  - It keeps async scheduler polling/sync responsibilities out of extraction logic while preserving a single canonical stage graph.
 
 **Operating modes**
 
@@ -78,8 +89,9 @@ Each stage produces specific artifacts and has defined exit behavior:
 - **design** -- `design.yaml`; advances when required keys are present.
 - **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`).
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
-- **launch** -- `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`; advances to extract_results.
-- **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; advances to update_docs.
+- **launch** -- `launch/run_local.sh` or `run_slurm.sbatch`, `runs/<run_id>/run_manifest.json`; advances to slurm_monitor.
+- **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.
+- **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting.
 - **update_docs** -- `docs_update.md`; advances when run evidence references are present.
 - **decide_repeat** -- `decision_result.json`; decides next iteration or terminal action.
 - assistant audit trail: `.autolab/task_history.jsonl`
@@ -164,8 +176,10 @@ autolab reset --state-file .autolab/state.json
 ## Further reading
 
 - `docs/workflow_modes.md` -- manual, agent-runner, and assistant mode contracts
+- `docs/workflow_registry_policy.md` -- workflow capability vs policy requirement model
 - `docs/runner_reference.md` -- agent runner YAML reference and runner presets
 - `docs/artifact_contracts.md` -- full artifact schemas, backlog format, and state contract
+- `docs/skills/README.md` -- skill source/distribution layout and redirect rationale
 - `docs/prompt_authoring_guide.md` -- scaffold prompt conventions and stage-prompt wiring
 - `docs/quickstart.md` -- getting started walkthrough
 - `examples/golden_iteration/` -- complete stage-by-stage artifact example

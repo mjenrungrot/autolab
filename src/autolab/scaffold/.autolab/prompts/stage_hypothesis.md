@@ -29,6 +29,12 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 ## OUTPUTS (STRICT)
 - `{{iteration_path}}/hypothesis.md`
 
+## MVP OUTPUT CHECKLIST
+- Exactly one `PrimaryMetric:` line in the required strict format.
+- Explicit `Scope In` and `Scope Out` bullets.
+- `Operational Success Criteria` that can be validated from run artifacts.
+- `Structured Metadata` lines for `target_delta`, `metric_name`, and `metric_mode`.
+
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`

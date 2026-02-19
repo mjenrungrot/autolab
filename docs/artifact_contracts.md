@@ -67,8 +67,18 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 - **Schema**: `.autolab/schemas/run_manifest.schema.json`
 - **Required fields**: `schema_version`, `run_id`, `iteration_id`, `host_mode`, `command`, `resource_request`, `timestamps`, `artifact_sync_to_local`
 - **Dynamic line limit**: Scales with `count_paths` in `experiment_file_line_limits.yaml`
-- **Producing stage**: launch
-- **Consuming stages**: extract_results, update_docs
+- **Producing stages**: launch (create), slurm_monitor (status/sync updates)
+- **Consuming stages**: slurm_monitor, extract_results, update_docs
+
+## docs/slurm_job_list.md
+
+- **Path**: `docs/slurm_job_list.md`
+- **Format**: Markdown
+- **Content**: durable run/job ledger entries for SLURM launches (`run_id`, `job_id`, status notes)
+- **Producing stages**:
+  - `launch`: append initial entry at submission
+  - `slurm_monitor`: update current scheduler/sync status
+- **Consuming stages**: slurm_monitor (primary), extract_results (read-only context)
 
 ## metrics.json
 

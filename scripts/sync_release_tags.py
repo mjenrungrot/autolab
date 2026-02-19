@@ -9,9 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION_LINE_RE = re.compile(
-    r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>"\s*(?:#.*)?)$'
-)
+try:
+    import tomllib
+except Exception:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+
 TAG_RE = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 
 
@@ -32,19 +34,18 @@ def _run_git(
 
 
 def _current_project_version(pyproject_path: Path) -> str:
-    lines = pyproject_path.read_text(encoding="utf-8").splitlines()
-    in_project_section = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_project_section = stripped == "[project]"
-            continue
-        if not in_project_section:
-            continue
-        match = VERSION_LINE_RE.match(line)
-        if match is not None:
-            return match.group("version").strip()
-    raise RuntimeError("missing [project].version in pyproject.toml")
+    if tomllib is None:
+        raise RuntimeError("python tomllib is unavailable; use Python 3.11+")
+    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid pyproject.toml content")
+    project = payload.get("project")
+    if not isinstance(project, dict):
+        raise RuntimeError("missing [project] in pyproject.toml")
+    version = str(project.get("version", "")).strip()
+    if not version:
+        raise RuntimeError("missing [project].version in pyproject.toml")
+    return version
 
 
 def _semver_key(tag: str) -> tuple[int, int, int]:

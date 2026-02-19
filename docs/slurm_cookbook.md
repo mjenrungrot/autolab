@@ -27,6 +27,7 @@ dry_run_command: "{{python_bin}} -m myproject.dry_run --config path/to/config.ya
 
 Key policy knobs for SLURM:
 - `requirements_by_stage.launch.env_smoke: true` -- validates run health after submission
+- `requirements_by_stage.slurm_monitor.env_smoke: true` -- validates monitor-stage run health while polling/syncing
 - `agent_runner.edit_scope.mode: "iteration_plus_core"` -- allows runner to update SLURM scripts
 - `autorun.todo_fallback.slurm.stage: "hypothesis"` -- fallback behavior when no tasks remain
 
@@ -47,7 +48,7 @@ submitted -> running -> synced -> completed
 - `completed`: Run finished, artifacts available. `completed_at` required.
 - `failed`: Run terminated with error. `completed_at` required.
 
-The launch stage sets the initial status (typically `submitted` for SLURM) and does not block waiting for completion. The `extract_results` stage handles async pickup.
+The launch stage sets the initial status (typically `submitted` for SLURM) and does not block waiting for completion. The `slurm_monitor` stage owns async polling/sync pickup.
 
 ## SLURM Job Ledger
 
@@ -67,17 +68,17 @@ autolab slurm-job-list verify \
 
 The ledger contains one entry per run with `run_id`, `job_id`, and status.
 
-## Async Extraction Contract
+## Async Monitor Contract
 
-When `extract_results` encounters an in-progress SLURM manifest:
+When `slurm_monitor` is active for an in-progress SLURM manifest:
 
 1. Read `docs/slurm_job_list.md` entry for the run
-2. Query scheduler state (`squeue -u $USER`, `sinfo`)
-3. If job completed and artifacts synced -> proceed with extraction
-4. If job still running -> produce `status: partial` with explicit waiting note
-5. If sync never reaches success-like state -> produce `status: failed`
+2. Query scheduler state (`squeue -u $USER`, `sacct`)
+3. If job completed and artifacts synced -> advance to extraction
+4. If job still running -> remain in `slurm_monitor` and update manifest/ledger
+5. If job failed/cancelled/timed out -> mark manifest `status: failed` and advance so extraction can emit failed/partial metrics with evidence
 
-The `artifact_sync_to_local.status` field must be success-like (`ok`, `completed`, `success`, `passed`) before full metric extraction.
+`extract_results` should only compute metrics when `artifact_sync_to_local.status` is success-like (`ok`, `completed`, `success`, `passed`), otherwise emit `partial|failed` with explicit missing evidence.
 
 ## Common Failure Recovery
 
@@ -119,12 +120,13 @@ autolab verify --stage launch
 # - Ensure artifact_sync_to_local.status is set
 ```
 
-### Stuck at extract_results waiting for SLURM
+### Stuck at slurm_monitor waiting for SLURM
 ```bash
 # Check job status
 squeue -j <job_id>
 
 # If completed, ensure local artifacts exist and sync status is updated
-# If failed, update manifest status to "failed" and re-run extract
+# If failed, update manifest status to "failed"
+# Then re-run monitor/extract stages
 autolab run
 ```

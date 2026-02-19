@@ -5,7 +5,11 @@ Standard run artifact paths and their expected contents:
 - **Run manifest**
   - `path`: `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
   - `key_fields`: `run_id`, `iteration_id`, `host_mode`, `command`, `resource_request`, `timestamps`, `artifact_sync_to_local`
-  - `producing_stage`: `launch`
+  - `producing_stage`: `launch` (create) + `slurm_monitor` (status/sync updates)
+- **SLURM ledger**
+  - `path`: `docs/slurm_job_list.md`
+  - `key_fields`: one entry per `run_id` with scheduler job linkage (`job_id`) and current state
+  - `producing_stage`: `launch` (append initial entry) + `slurm_monitor` (status updates)
 - **Metrics**
   - `path`: `{{iteration_path}}/runs/{{run_id}}/metrics.json`
   - `key_fields`: `iteration_id`, `run_id`, `status`, `primary_metric.{name,value,delta_vs_baseline}`
@@ -23,13 +27,19 @@ Standard run artifact paths and their expected contents:
   - `key_fields`: `decision`, `rationale`, `evidence[]`, `risks[]`
   - `producing_stage`: `decide_repeat`
 
-## SLURM ASYNC NOTE
+## SLURM STAGE GRAPH
 
-- In SLURM mode, `launch` may represent either:
-  - **submitted/in-progress**: job submitted and tracking metadata captured
-  - **completed**: job finished and artifact sync completed
-- `launch` should always update `docs/slurm_job_list.md` so downstream stages have a durable run/job ledger.
-- `extract_results` should use `docs/slurm_job_list.md` plus scheduler probes (`squeue`, `sinfo`) to decide whether to wait or extract.
-- `extract_results` should only compute metrics from artifacts that are already synced locally.
+- Local runs:
+  - `launch -> slurm_monitor (auto-skip) -> extract_results`
+- SLURM runs:
+  - `launch` submits and records initial tracking artifacts
+  - `slurm_monitor` polls scheduler, syncs artifacts, updates manifest + ledger
+  - `extract_results` consumes local artifacts; if required evidence is missing, it emits `partial` or `failed` with explicit missing-evidence accounting
+
+## SLURM LEDGER OWNERSHIP CONTRACT
+
+- `launch`: create/append `docs/slurm_job_list.md` entry at submission time.
+- `slurm_monitor`: update ledger status and manifest sync markers over time.
+- `extract_results`: read-only consumer of ledger/manifest state (no polling ownership).
 
 When referencing run artifacts, always use the concrete `run_id` from state -- never use literal `{{run_id}}` or `<run_id>` in output files.

@@ -14,7 +14,7 @@ Token records:
 - `token`: `{{available_memory_gb}}`; `meaning`: Detected host memory (GB) for planning context; `typical_stages`: design, launch.
 - `token`: `{{stage}}`; `meaning`: Current stage name; `typical_stages`: all stages.
 - `token`: `{{stage_context}}`; `meaning`: Rendered runtime context block (scope, host mode, snapshots); `typical_stages`: all stages.
-- `token`: `{{run_id}}`; `meaning`: Resolved run identifier for run-scoped stages; `typical_stages`: launch, extract_results, update_docs.
+- `token`: `{{run_id}}`; `meaning`: Resolved run identifier for run-scoped stages; `typical_stages`: launch, slurm_monitor, extract_results, update_docs.
 - `token`: `{{hypothesis_id}}`; `meaning`: Resolved hypothesis ID mapped from backlog/state; `typical_stages`: hypothesis, design.
 - `token`: `{{review_feedback}}`; `meaning`: Review feedback text context for retries/remediation; `typical_stages`: implementation.
 - `token`: `{{verifier_errors}}`; `meaning`: Aggregated verifier error text from prior runs; `typical_stages`: implementation, review.

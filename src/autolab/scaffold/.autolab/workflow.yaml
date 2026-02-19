@@ -17,6 +17,11 @@
 #   Example: required_outputs: [runs/<RUN_ID>/run_manifest.json]
 #   At runtime <RUN_ID> is replaced with the actual run ID from state,
 #   e.g. runs/20260218T160045Z/run_manifest.json
+#
+# Classification note:
+#   classifications.decision means "this stage is selectable as a decision
+#   target (e.g., decide_repeat.decision_map)", not "this stage itself makes
+#   a branching decision".
 # ---------------------------------------------------------------------------
 
 schema_version: "1.0"
@@ -120,7 +125,7 @@ stages:
   slurm_monitor:
     prompt_file: stage_slurm_monitor.md
     required_tokens: [iteration_id, iteration_path, run_id]
-    required_outputs: []
+    required_outputs: [runs/<RUN_ID>/run_manifest.json]
     next_stage: extract_results
     verifier_categories:
       tests: false

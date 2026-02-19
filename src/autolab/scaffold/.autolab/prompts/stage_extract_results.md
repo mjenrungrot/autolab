@@ -49,18 +49,12 @@ Convert run artifacts into structured outputs:
 
 ## REQUIRED PRECHECK
 - If `run_manifest.json.artifact_sync_to_local.status` is success-like (see guardrails), proceed with metric extraction.
-- If run is SLURM and status is in-progress (`submitted|queued|pending|running|in_progress`), first query tracking state:
-  - read `docs/slurm_job_list.md` entry for `run_id`
-  - query scheduler (`squeue` and `sinfo`) when available
-  - update run tracking metadata (manifest/ledger) to reflect latest observed scheduler state
+- If run is SLURM and sync status is not success-like, do not perform scheduler polling here. Treat this as missing local evidence and emit `partial` or `failed` with explicit missing-evidence accounting. `slurm_monitor` owns async polling/sync progression.
 
-## SLURM ASYNC EXTRACTION CONTRACT
-- If launch produced an in-progress SLURM manifest (`status` in `submitted|queued|pending|running|in_progress`), extraction is the async pickup stage.
-- Use `docs/slurm_job_list.md` + scheduler probes (`squeue`, `sinfo`) to decide whether to:
-  - continue waiting (job still queued/running), or
-  - proceed once sync is success-like and local artifacts are present.
-- If bounded waiting is unavailable or sync never reaches a success-like state, produce `status: partial|failed` with explicit missing-evidence accounting.
-- Do not fabricate metrics from unsynced remote logs.
+## SLURM EXTRACTION INPUT CONTRACT
+- `slurm_monitor` is the async pickup stage.
+- `extract_results` assumes artifacts are local-ready, or it reports `partial|failed` with explicit missing evidence.
+- Do not mutate scheduler state or fabricate metrics from unsynced remote logs.
 
 ## STATUS SEMANTICS
 - Use `status: completed` when required metrics and evidence are fully present.
@@ -89,10 +83,11 @@ If multiple runs exist in `{{run_group}}` (replicate_count = `{{replicate_count}
 - Use the aggregation method specified in `design.yaml` `metrics.aggregation` field (default: `"mean"`).
 
 ## STEPS
-1. Parse run outputs and compute primary/secondary outcomes.
-2. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
-3. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
-4. For `partial|failed`, record reasons and missing artifact accounting explicitly.
+1. Validate local evidence readiness from `run_manifest.json` and local run artifact files.
+2. If evidence is incomplete, emit `partial|failed` with explicit missing artifact accounting.
+3. Otherwise parse run outputs and compute primary/secondary outcomes.
+4. Write `metrics.json` matching `.autolab/schemas/metrics.schema.json`.
+5. Write `analysis/summary.md` with context, interpretation, and any unsupported analysis marked as `not available`.
 
 {{shared:verification_ritual.md}}
 
@@ -127,6 +122,7 @@ Verify `artifact_sync_to_local.status` is success-like (see guardrails) before e
 - [ ] `metrics.json` includes non-placeholder `iteration_id` and `run_id`.
 - [ ] `analysis/summary.md` includes run context and interpretation.
 - [ ] Missing tables/figures are explicitly marked `not available` with rationale.
+- [ ] When sync/local evidence is missing, output uses `partial` or `failed` with explicit missing-evidence accounting (no async polling ownership in this stage).
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}
