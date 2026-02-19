@@ -100,7 +100,10 @@ def _decision_from_artifact(
         for field in ("source", "pointer", "summary"):
             val = item.get(field)
             if not isinstance(val, str) or not val.strip():
-                return (None, f"{decision_path} evidence[{idx}] must have a non-empty string '{field}'")
+                return (
+                    None,
+                    f"{decision_path} evidence[{idx}] must have a non-empty string '{field}'",
+                )
     return (decision, "")
 
 
@@ -122,7 +125,9 @@ def _compute_next_stage_attempt(
     *max_stage_attempts* for the exhaustion check, enabling per-stage retry
     budgets while keeping backward compatibility with the global fallback.
     """
-    effective_max = stage_max_retries if stage_max_retries is not None else max_stage_attempts
+    effective_max = (
+        stage_max_retries if stage_max_retries is not None else max_stage_attempts
+    )
 
     retry_cycle_increment = (
         stage_before == "implementation_review"
@@ -163,7 +168,9 @@ def _handle_stage_failure(
     # Resolve per-stage retry budget from policy, falling back to the global max.
     policy = _load_verifier_policy(repo_root)
     global_max = int(state["max_stage_attempts"])
-    effective_max = _resolve_stage_max_retries(policy, stage_before, fallback=global_max)
+    effective_max = _resolve_stage_max_retries(
+        policy, stage_before, fallback=global_max
+    )
 
     state["stage_attempt"] = int(state["stage_attempt"]) + 1
     exhausted = state["stage_attempt"] >= effective_max
@@ -192,7 +199,9 @@ def _handle_stage_failure(
             "history": recent_history,
         }
         try:
-            _write_json(repo_root / ".autolab" / "escalation_packet.json", escalation_packet)
+            _write_json(
+                repo_root / ".autolab" / "escalation_packet.json", escalation_packet
+            )
         except Exception:
             pass
     else:
@@ -334,7 +343,10 @@ def _prepare_launch_run_context(
                 "replicate_count": replicate_count,
             },
         )
-        _append_log(repo_root, f"launch multi-run prepared by orchestrator: {run_id} ({replicate_count} replicates)")
+        _append_log(
+            repo_root,
+            f"launch multi-run prepared by orchestrator: {run_id} ({replicate_count} replicates)",
+        )
         return context_path
 
     state["pending_run_id"] = run_id
@@ -379,7 +391,9 @@ def _run_once_standard(
     except StateError as exc:
         message = f"invalid state: {exc}"
         pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, None)
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(repo_root, None, run_outcome=None)
+        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+            repo_root, None, run_outcome=None
+        )
         summary = _append_todo_message(message, post_sync_message)
         _append_log(repo_root, f"run error: {message}")
         try:
@@ -408,7 +422,10 @@ def _run_once_standard(
             state["experiment_id"] = inferred_experiment_id
             _write_json(state_path, state)
             state_bootstrap_changed.append(state_path)
-            _append_log(repo_root, f"state.experiment_id auto-filled from backlog: {inferred_experiment_id}")
+            _append_log(
+                repo_root,
+                f"state.experiment_id auto-filled from backlog: {inferred_experiment_id}",
+            )
         else:
             experiment_id_autofill_reason = infer_reason
 
@@ -433,7 +450,9 @@ def _run_once_standard(
         )
         _write_json(state_path, state)
         state_bootstrap_changed.append(state_path)
-        pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
+        pre_sync_changed, _ = _safe_todo_pre_sync(
+            repo_root, state, host_mode=detected_host_mode
+        )
         if state_bootstrap_changed:
             pre_sync_changed = [*state_bootstrap_changed, *pre_sync_changed]
         message = f"blocked completed experiment edits: {completion_summary}; re-open experiment in backlog to resume"
@@ -462,7 +481,9 @@ def _run_once_standard(
             summary=summary,
             changed_files=[*pre_sync_changed, *post_sync_changed],
         )
-        _append_log(repo_root, f"run blocked completed experiment at stage {original_stage}")
+        _append_log(
+            repo_root, f"run blocked completed experiment at stage {original_stage}"
+        )
         return RunOutcome(
             exit_code=outcome.exit_code,
             transitioned=outcome.transitioned,
@@ -471,7 +492,9 @@ def _run_once_standard(
             message=summary,
         )
 
-    pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, state, host_mode=detected_host_mode)
+    pre_sync_changed, _ = _safe_todo_pre_sync(
+        repo_root, state, host_mode=detected_host_mode
+    )
     if state_bootstrap_changed:
         pre_sync_changed = [*state_bootstrap_changed, *pre_sync_changed]
     standard_baseline_snapshot = _collect_change_snapshot(repo_root)
@@ -522,7 +545,9 @@ def _run_once_standard(
         artifact_decision_error = ""
         metrics_evidence: dict[str, Any] = {}
         if selected_decision is None:
-            artifact_decision, artifact_decision_error = _decision_from_artifact(repo_root, state)
+            artifact_decision, artifact_decision_error = _decision_from_artifact(
+                repo_root, state
+            )
             if artifact_decision is not None:
                 selected_decision = artifact_decision
                 decision_source = "artifact"
@@ -534,17 +559,26 @@ def _run_once_standard(
             if selected_decision is not None:
                 decision_source = "auto_todo"
         if selected_decision is None and auto_decision:
-            metrics_suggestion, _metrics_evidence = _suggest_decision_from_metrics(repo_root, state)
+            metrics_suggestion, _metrics_evidence = _suggest_decision_from_metrics(
+                repo_root, state
+            )
             if isinstance(_metrics_evidence, dict):
                 metrics_evidence = _metrics_evidence
             if metrics_suggestion is not None:
                 selected_decision = metrics_suggestion
                 decision_source = "auto_metrics"
-                _append_log(repo_root, f"decide_repeat auto_metrics suggestion: {metrics_suggestion}")
+                _append_log(
+                    repo_root,
+                    f"decide_repeat auto_metrics suggestion: {metrics_suggestion}",
+                )
         if selected_decision is None and auto_decision and auto_mode:
             selected_decision = "stop"
             decision_source = "auto_default"
-        auto_selected = decision is None and decision_source in {"auto_todo", "auto_metrics", "auto_default"}
+        auto_selected = decision is None and decision_source in {
+            "auto_todo",
+            "auto_metrics",
+            "auto_default",
+        }
 
         # Item 6: strict mode overrides for unattended loops
         if auto_mode and selected_decision is not None:
@@ -552,11 +586,20 @@ def _run_once_standard(
             if selected_decision == "stop" and strict_config.forbid_auto_stop:
                 selected_decision = "human_review"
                 decision_source = "strict_override"
-                _append_log(repo_root, "strict_mode.forbid_auto_stop overrode 'stop' to 'human_review'")
-            elif selected_decision == "stop" and strict_config.require_human_review_for_stop:
+                _append_log(
+                    repo_root,
+                    "strict_mode.forbid_auto_stop overrode 'stop' to 'human_review'",
+                )
+            elif (
+                selected_decision == "stop"
+                and strict_config.require_human_review_for_stop
+            ):
                 selected_decision = "human_review"
                 decision_source = "strict_override"
-                _append_log(repo_root, "strict_mode.require_human_review_for_stop overrode 'stop' to 'human_review'")
+                _append_log(
+                    repo_root,
+                    "strict_mode.require_human_review_for_stop overrode 'stop' to 'human_review'",
+                )
 
         if selected_decision is None:
             message = (
@@ -565,7 +608,9 @@ def _run_once_standard(
                 "Rerun with --decision=<hypothesis|design|stop|human_review> or enable --auto-decision."
             )
             if artifact_decision_error:
-                message = f"{message} Invalid decision artifact: {artifact_decision_error}"
+                message = (
+                    f"{message} Invalid decision artifact: {artifact_decision_error}"
+                )
             _append_state_history(
                 state,
                 stage_before=stage_before,
@@ -638,10 +683,12 @@ def _run_once_standard(
             if not isinstance(last_change_baseline, dict):
                 last_change_baseline = standard_baseline_snapshot
             meaningful_config = _load_meaningful_change_config(repo_root)
-            meaningful_changed, _delta, _meaningful, current_snapshot = _evaluate_meaningful_change(
-                repo_root,
-                meaningful_config,
-                baseline_snapshot=last_change_baseline,
+            meaningful_changed, _delta, _meaningful, current_snapshot = (
+                _evaluate_meaningful_change(
+                    repo_root,
+                    meaningful_config,
+                    baseline_snapshot=last_change_baseline,
+                )
             )
             if meaningful_changed:
                 no_progress_decisions = 0
@@ -656,7 +703,9 @@ def _run_once_standard(
                 no_progress_decisions = 0
                 _write_guardrail_breach(
                     repo_root,
-                    rule="same_decision_streak" if same_decision_streak > guardrails.max_same_decision_streak else "no_progress",
+                    rule="same_decision_streak"
+                    if same_decision_streak > guardrails.max_same_decision_streak
+                    else "no_progress",
                     counters={
                         "same_decision_streak": same_decision_streak,
                         "max_same_decision_streak": guardrails.max_same_decision_streak,
@@ -731,7 +780,9 @@ def _run_once_standard(
                         "evidence": [
                             {
                                 "source": decision_source,
-                                "pointer": str(repo_root / ".autolab" / "decision_trace.json"),
+                                "pointer": str(
+                                    repo_root / ".autolab" / "decision_trace.json"
+                                ),
                                 "summary": f"Decision '{selected_decision}' auto-selected by {decision_source} policy",
                             }
                         ],
@@ -747,7 +798,9 @@ def _run_once_standard(
                 "auto_metrics": "(auto-selected from metrics comparison)",
                 "auto_default": "(auto-selected: default stop)",
             }
-            message = f"{message} {_source_labels.get(decision_source, '(auto-selected)')}"
+            message = (
+                f"{message} {_source_labels.get(decision_source, '(auto-selected)')}"
+            )
         elif decision_source == "strict_override":
             message = f"{message} (overridden by strict_mode policy)"
         elif decision_source == "artifact":
@@ -756,9 +809,11 @@ def _run_once_standard(
             message = f"{message} (note: reusing current iteration directory; prior hypothesis.md will be overwritten)"
         changed = [state_path]
         if selected_decision == "stop":
-            completed, backlog_path, completion_summary = _mark_backlog_experiment_completed(
-                repo_root,
-                str(state.get("experiment_id", "")).strip(),
+            completed, backlog_path, completion_summary = (
+                _mark_backlog_experiment_completed(
+                    repo_root,
+                    str(state.get("experiment_id", "")).strip(),
+                )
             )
             if completed and backlog_path is not None:
                 changed.append(backlog_path)
@@ -768,9 +823,7 @@ def _run_once_standard(
                     not str(state.get("experiment_id", "")).strip()
                     and experiment_id_autofill_reason
                 ):
-                    completion_summary = (
-                        f"state.experiment_id is unset ({experiment_id_autofill_reason})"
-                    )
+                    completion_summary = f"state.experiment_id is unset ({experiment_id_autofill_reason})"
                 completion_summary = f"backlog completion skipped: {completion_summary}"
                 _append_log(repo_root, completion_summary)
             message = f"{message}; {completion_summary}"
@@ -825,7 +878,9 @@ def _run_once_standard(
             )
 
     try:
-        ready, readiness_message, readiness_details = _validate_stage_readiness(repo_root, state)
+        ready, readiness_message, readiness_details = _validate_stage_readiness(
+            repo_root, state
+        )
     except StageCheckError as exc:
         return _handle_stage_failure(
             repo_root,
@@ -852,8 +907,13 @@ def _run_once_standard(
 
     if _resolve_run_agent_mode(run_agent_mode) != "force_off":
         open_todo_count = _todo_open_count(repo_root)
-        if open_todo_count > 0 and not _has_open_stage_todo_task(repo_root, stage_before):
-            _append_log(repo_root, f"agent runner skipped stage={stage_before} (no stage-focused todo tasks)")
+        if open_todo_count > 0 and not _has_open_stage_todo_task(
+            repo_root, stage_before
+        ):
+            _append_log(
+                repo_root,
+                f"agent runner skipped stage={stage_before} (no stage-focused todo tasks)",
+            )
         else:
             try:
                 _invoke_agent_runner(
@@ -875,7 +935,9 @@ def _run_once_standard(
                 )
 
     if auto_mode or verify_before_evaluate:
-        verified, verify_message = _run_verification_step(repo_root, state, auto_mode=auto_mode)
+        verified, verify_message = _run_verification_step(
+            repo_root, state, auto_mode=auto_mode
+        )
         verification_summary = {
             "passed": bool(verified),
             "message": verify_message,
@@ -897,9 +959,15 @@ def _run_once_standard(
                 verification=verification_summary,
             )
         if auto_mode:
-            _append_log(repo_root, f"auto verification passed stage={stage_before}: {verify_message}")
+            _append_log(
+                repo_root,
+                f"auto verification passed stage={stage_before}: {verify_message}",
+            )
         else:
-            _append_log(repo_root, f"pre-evaluate verification passed stage={stage_before}: {verify_message}")
+            _append_log(
+                repo_root,
+                f"pre-evaluate verification passed stage={stage_before}: {verify_message}",
+            )
 
     try:
         eval_result = _evaluate_stage(repo_root, state)
@@ -929,7 +997,8 @@ def _run_once_standard(
             )
         else:
             non_git_required = bool(
-                meaningful_config.require_git_for_progress and not _is_git_worktree(repo_root)
+                meaningful_config.require_git_for_progress
+                and not _is_git_worktree(repo_root)
             )
             if non_git_required:
                 if meaningful_config.on_non_git_behavior == "fail":
@@ -955,7 +1024,12 @@ def _run_once_standard(
                 _append_log(repo_root, skip_message)
                 summary = f"{summary}; {skip_message}"
             else:
-                implementation_progress, delta_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
+                (
+                    implementation_progress,
+                    delta_paths,
+                    meaningful_paths,
+                    _current_snapshot,
+                ) = _evaluate_meaningful_change(
                     repo_root,
                     meaningful_config,
                     baseline_snapshot=standard_baseline_snapshot,
@@ -965,7 +1039,9 @@ def _run_once_standard(
                         "implementation produced no meaningful target changes beyond excluded paths "
                         f"({_meaningful_progress_detail(changed_paths=delta_paths, meaningful_paths=meaningful_paths)})"
                     )
-                    _append_log(repo_root, f"implementation progress check failed: {detail}")
+                    _append_log(
+                        repo_root, f"implementation progress check failed: {detail}"
+                    )
                     return _handle_stage_failure(
                         repo_root,
                         state_path=state_path,
@@ -981,14 +1057,18 @@ def _run_once_standard(
         repeat_guard = state.get("repeat_guard", {})
         if not isinstance(repeat_guard, dict):
             repeat_guard = {}
-        update_docs_cycle_count = int(repeat_guard.get("update_docs_cycle_count", 0)) + 1
+        update_docs_cycle_count = (
+            int(repeat_guard.get("update_docs_cycle_count", 0)) + 1
+        )
         repeat_guard["update_docs_cycle_count"] = update_docs_cycle_count
         state["repeat_guard"] = repeat_guard
         if update_docs_cycle_count > int(guardrails.max_update_docs_cycles):
             guardrail_stage_override = True
             state["stage"] = guardrails.on_breach
             state["stage_attempt"] = 0
-            agent_status = "failed" if guardrails.on_breach == "human_review" else "complete"
+            agent_status = (
+                "failed" if guardrails.on_breach == "human_review" else "complete"
+            )
             summary = (
                 f"update_docs cycle limit exceeded ({update_docs_cycle_count}/{guardrails.max_update_docs_cycles}) "
                 f"— escalating to '{guardrails.on_breach}'."
@@ -1061,7 +1141,9 @@ def _run_once_standard(
         summary=summary_with_todo,
         changed_files=[*changed, *pre_sync_changed, *post_sync_changed],
     )
-    _append_log(repo_root, f"run transition {stage_before} -> {stage_after} ({agent_status})")
+    _append_log(
+        repo_root, f"run transition {stage_before} -> {stage_after} ({agent_status})"
+    )
 
     return RunOutcome(
         exit_code=outcome.exit_code,

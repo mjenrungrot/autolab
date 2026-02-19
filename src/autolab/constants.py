@@ -36,9 +36,7 @@ PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 _FALLBACK_TERMINAL_STAGES = ("human_review", "stop")
 _FALLBACK_DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
 _FALLBACK_RUNNER_ELIGIBLE_STAGES = _FALLBACK_ACTIVE_STAGES
-_FALLBACK_ALL_STAGES = set(
-    _FALLBACK_ACTIVE_STAGES + _FALLBACK_TERMINAL_STAGES
-)
+_FALLBACK_ALL_STAGES = set(_FALLBACK_ACTIVE_STAGES + _FALLBACK_TERMINAL_STAGES)
 _FALLBACK_STAGE_PROMPT_FILES = {
     "hypothesis": "stage_hypothesis.md",
     "design": "stage_design.md",
@@ -115,7 +113,9 @@ experiments:
     iteration_id: "{iteration_id}"
 """
 
-DEFAULT_VERIFIER_POLICY = (PACKAGE_SCAFFOLD_DIR / "verifier_policy.yaml").read_text(encoding="utf-8")
+DEFAULT_VERIFIER_POLICY = (PACKAGE_SCAFFOLD_DIR / "verifier_policy.yaml").read_text(
+    encoding="utf-8"
+)
 
 LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_MAX_HOURS = 8.0
@@ -123,18 +123,21 @@ AGENT_RUNNER_PRESETS: dict[str, str] = {
     "codex": "codex exec -s workspace-write -a never -C {workspace_dir} {core_add_dirs} -",
     "claude": "env -u CLAUDECODE claude -p --output-format text --verbose -",
 }
-AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = (
-    "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
-)
+AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
 DEFAULT_AGENT_RUNNER_NAME = "codex"
-DEFAULT_AGENT_RUNNER_COMMAND = (
-    AGENT_RUNNER_PRESETS[DEFAULT_AGENT_RUNNER_NAME]
-)
+DEFAULT_AGENT_RUNNER_COMMAND = AGENT_RUNNER_PRESETS[DEFAULT_AGENT_RUNNER_NAME]
 DEFAULT_AGENT_RUNNER_STAGES = tuple(ACTIVE_STAGES)
 DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS = 3600.0
 DEFAULT_AGENT_RUNNER_EDIT_SCOPE_MODE = "iteration_plus_core"
 AGENT_RUNNER_EDIT_SCOPE_MODES = ("iteration_only", "iteration_plus_core")
-DEFAULT_AGENT_RUNNER_CORE_DIRS = ("src", "scripts", ".autolab", "docs", "paper", "tests")
+DEFAULT_AGENT_RUNNER_CORE_DIRS = (
+    "src",
+    "scripts",
+    ".autolab",
+    "docs",
+    "paper",
+    "tests",
+)
 DEFAULT_AGENT_RUNNER_ENSURE_ITERATION_DIR = True
 DEFAULT_AUTO_COMMIT_MODE = "meaningful_only"
 AUTO_COMMIT_MODES = ("meaningful_only", "always", "disabled")
@@ -155,12 +158,24 @@ ASSISTANT_CONTROL_COMMIT_PATHS = (
 # Canonical status vocabularies (mirrored from verifier_lib for package-side use)
 # ---------------------------------------------------------------------------
 
-SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset({"ok", "completed", "success", "passed"})
+SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset(
+    {"ok", "completed", "success", "passed"}
+)
 COMPLETION_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "failed"})
-IN_PROGRESS_STATUSES: frozenset[str] = frozenset({"pending", "submitted", "running", "synced"})
-RUN_MANIFEST_STATUSES: frozenset[str] = frozenset({
-    "pending", "submitted", "running", "synced", "completed", "failed", "partial",
-})
+IN_PROGRESS_STATUSES: frozenset[str] = frozenset(
+    {"pending", "submitted", "running", "synced"}
+)
+RUN_MANIFEST_STATUSES: frozenset[str] = frozenset(
+    {
+        "pending",
+        "submitted",
+        "running",
+        "synced",
+        "completed",
+        "failed",
+        "partial",
+    }
+)
 
 BACKLOG_COMPLETED_STATUSES = {"done", "completed", "closed", "resolved"}
 EXPERIMENT_TYPES = ("plan", "in_progress", "done")

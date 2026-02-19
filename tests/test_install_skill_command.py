@@ -44,11 +44,15 @@ def test_install_skill_rejects_unknown_provider() -> None:
     assert int(exc_info.value.code) == 2
 
 
-def test_install_skill_reports_missing_packaged_asset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_skill_reports_missing_packaged_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def _raise_missing(_provider: str, _skill: str) -> str:
         raise RuntimeError("bundled skill template is unavailable")
 
-    monkeypatch.setattr(commands_module, "_load_packaged_skill_template_text", _raise_missing)
+    monkeypatch.setattr(
+        commands_module, "_load_packaged_skill_template_text", _raise_missing
+    )
     exit_code = main(["install-skill", "codex", "--project-root", str(tmp_path)])
     assert exit_code == 1
 
@@ -67,7 +71,16 @@ def test_install_skill_codex_installs_all_skills(tmp_path: Path) -> None:
 
 
 def test_install_skill_codex_selective_install(tmp_path: Path) -> None:
-    exit_code = main(["install-skill", "codex", "--skill", "swarm-planner", "--project-root", str(tmp_path)])
+    exit_code = main(
+        [
+            "install-skill",
+            "codex",
+            "--skill",
+            "swarm-planner",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
     assert exit_code == 0
 
     dest = tmp_path / ".codex" / "skills" / "swarm-planner" / "SKILL.md"
@@ -81,5 +94,14 @@ def test_install_skill_codex_selective_install(tmp_path: Path) -> None:
 
 
 def test_install_skill_codex_selective_unknown_fails(tmp_path: Path) -> None:
-    exit_code = main(["install-skill", "codex", "--skill", "nonexistent-skill", "--project-root", str(tmp_path)])
+    exit_code = main(
+        [
+            "install-skill",
+            "codex",
+            "--skill",
+            "nonexistent-skill",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
     assert exit_code == 1

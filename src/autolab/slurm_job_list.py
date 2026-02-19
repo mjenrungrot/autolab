@@ -39,7 +39,9 @@ def is_slurm_manifest(manifest: Mapping[str, Any]) -> bool:
         manifest.get("slurm"),
         _read_nested(manifest, "resource_request", "slurm"),
     )
-    return any(isinstance(section, Mapping) and bool(section) for section in slurm_sections)
+    return any(
+        isinstance(section, Mapping) and bool(section) for section in slurm_sections
+    )
 
 
 def required_slurm_job_id(manifest: Mapping[str, Any]) -> str:
@@ -144,7 +146,9 @@ def ledger_contains_entry(ledger_text: str, entry: str) -> bool:
     return any(line.strip() == target for line in ledger_text.splitlines())
 
 
-def append_entry_idempotent(ledger_text: str, entry: str, run_id: str) -> tuple[str, bool]:
+def append_entry_idempotent(
+    ledger_text: str, entry: str, run_id: str
+) -> tuple[str, bool]:
     """Append canonical entry only when run_id is not already present."""
     if ledger_contains_run_id(ledger_text, run_id):
         return ledger_text, False

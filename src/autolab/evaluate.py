@@ -68,7 +68,9 @@ def _eval_implementation(
         iteration_dir / "implementation_plan.md",
         require_dry_run=bool(policy_requirements.get("dry_run", False)),
     )
-    return EvalResult("implementation_review", "complete", "'implementation' checks passed")
+    return EvalResult(
+        "implementation_review", "complete", "'implementation' checks passed"
+    )
 
 
 def _eval_implementation_review(
@@ -77,7 +79,9 @@ def _eval_implementation_review(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
-    _require_non_empty(iteration_dir / "implementation_review.md", "implementation_review.md")
+    _require_non_empty(
+        iteration_dir / "implementation_review.md", "implementation_review.md"
+    )
     policy_requirements = _resolve_stage_requirements(
         _load_verifier_policy(repo_root), "implementation_review"
     )
@@ -152,11 +156,15 @@ def _eval_launch(
         manifest_payload = _load_dict_json(
             manifest_path, "runs/<run_id>/run_manifest.json"
         )
-        manifest_mode = str(
-            manifest_payload.get("host_mode")
-            or manifest_payload.get("launch_mode")
-            or manifest_payload.get("detected_host_mode")
-        ).strip().lower()
+        manifest_mode = (
+            str(
+                manifest_payload.get("host_mode")
+                or manifest_payload.get("launch_mode")
+                or manifest_payload.get("detected_host_mode")
+            )
+            .strip()
+            .lower()
+        )
         resolved_launch_mode = manifest_mode or _detect_priority_host_mode()
         if (
             design_location
@@ -191,19 +199,31 @@ def _eval_slurm_monitor(
         or str(state.get("last_run_id", "")).strip()
     )
     if not run_id:
-        return EvalResult("extract_results", "complete", "slurm_monitor skipped (no run_id)")
+        return EvalResult(
+            "extract_results", "complete", "slurm_monitor skipped (no run_id)"
+        )
 
     manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
-    manifest = _load_dict_json(manifest_path, "run_manifest.json") if manifest_path.exists() else {}
+    manifest = (
+        _load_dict_json(manifest_path, "run_manifest.json")
+        if manifest_path.exists()
+        else {}
+    )
 
-    host_mode = str(
-        manifest.get("host_mode")
-        or manifest.get("launch_mode")
-        or _detect_priority_host_mode()
-    ).strip().lower()
+    host_mode = (
+        str(
+            manifest.get("host_mode")
+            or manifest.get("launch_mode")
+            or _detect_priority_host_mode()
+        )
+        .strip()
+        .lower()
+    )
 
     if host_mode != "slurm":
-        return EvalResult("extract_results", "complete", "slurm_monitor skipped (local run)")
+        return EvalResult(
+            "extract_results", "complete", "slurm_monitor skipped (local run)"
+        )
 
     run_status = str(manifest.get("status", "")).strip().lower()
     sync_block = manifest.get("artifact_sync_to_local")
@@ -214,11 +234,21 @@ def _eval_slurm_monitor(
     # Extraction can proceed once artifacts are local-ready or terminal failure
     # is recorded. Keep pending/running/unsynced runs in slurm_monitor.
     if sync_status in SYNC_SUCCESS_STATUSES:
-        return EvalResult("extract_results", "complete", "slurm_monitor: artifacts synced")
+        return EvalResult(
+            "extract_results", "complete", "slurm_monitor: artifacts synced"
+        )
     if run_status in {"synced", "failed", "partial"}:
-        return EvalResult("extract_results", "complete", f"slurm_monitor: terminal status '{run_status}'")
+        return EvalResult(
+            "extract_results",
+            "complete",
+            f"slurm_monitor: terminal status '{run_status}'",
+        )
 
-    return EvalResult("slurm_monitor", "complete", "slurm_monitor: waiting for scheduler/sync readiness")
+    return EvalResult(
+        "slurm_monitor",
+        "complete",
+        "slurm_monitor: waiting for scheduler/sync readiness",
+    )
 
 
 def _eval_extract_results(
@@ -241,7 +271,9 @@ def _eval_extract_results(
             raise StageCheckError(
                 f"multi-run extract missing replicate metrics for: {', '.join(missing_replicates)}"
             )
-        return EvalResult("update_docs", "complete", "'extract_results' multi-run checks passed")
+        return EvalResult(
+            "update_docs", "complete", "'extract_results' multi-run checks passed"
+        )
     _validate_extract(iteration_dir, state["last_run_id"])
     return EvalResult("update_docs", "complete", "'extract_results' checks passed")
 
@@ -252,9 +284,7 @@ def _eval_update_docs(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
-    _validate_update_docs(
-        repo_root, iteration_dir, str(state.get("last_run_id", ""))
-    )
+    _validate_update_docs(repo_root, iteration_dir, str(state.get("last_run_id", "")))
     return EvalResult("decide_repeat", "complete", "'update_docs' checks passed")
 
 

@@ -40,10 +40,16 @@ def test_todo_sync_parses_nested_and_wrapped_markdown_tasks(tmp_path: Path) -> N
     result = sync_todo_pre_run(repo, state, host_mode="local")
     assert result.open_count == 2
 
-    todo_state = json.loads((repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8"))
-    tasks = [task for task in todo_state["tasks"].values() if task.get("status") == "open"]
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    tasks = [
+        task for task in todo_state["tasks"].values() if task.get("status") == "open"
+    ]
     assert len(tasks) == 2
-    implementation_task = next(task for task in tasks if task["stage"] == "implementation")
+    implementation_task = next(
+        task for task in tasks if task["stage"] == "implementation"
+    )
     design_task = next(task for task in tasks if task["stage"] == "design")
     assert "nested bullets as context" in implementation_task["text"]
     assert "wrapped line for extra context" in implementation_task["text"]
@@ -55,13 +61,7 @@ def test_todo_sync_uses_policy_fallback_task_configuration(tmp_path: Path) -> No
     repo.mkdir()
     _write(
         repo / "docs" / "todo.md",
-        (
-            "# TODO\n\n"
-            "## Tasks\n"
-            "<!-- empty -->\n\n"
-            "## Notes\n"
-            "notes\n"
-        ),
+        ("# TODO\n\n## Tasks\n<!-- empty -->\n\n## Notes\nnotes\n"),
     )
     policy = {
         "autorun": {
@@ -74,7 +74,10 @@ def test_todo_sync_uses_policy_fallback_task_configuration(tmp_path: Path) -> No
             }
         }
     }
-    _write(repo / ".autolab" / "verifier_policy.yaml", yaml.safe_dump(policy, sort_keys=False))
+    _write(
+        repo / ".autolab" / "verifier_policy.yaml",
+        yaml.safe_dump(policy, sort_keys=False),
+    )
 
     state = {
         "iteration_id": "iter1",
@@ -83,8 +86,12 @@ def test_todo_sync_uses_policy_fallback_task_configuration(tmp_path: Path) -> No
     }
     sync_todo_pre_run(repo, state, host_mode="local")
 
-    todo_state = json.loads((repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8"))
-    tasks = [task for task in todo_state["tasks"].values() if task.get("status") == "open"]
+    todo_state = json.loads(
+        (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+    )
+    tasks = [
+        task for task in todo_state["tasks"].values() if task.get("status") == "open"
+    ]
     assert any(
         task.get("scope") == "policy:custom:local"
         and task.get("stage") == "update_docs"

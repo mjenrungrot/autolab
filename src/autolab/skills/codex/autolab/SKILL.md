@@ -1,9 +1,6 @@
----
-name: autolab
-description: Plan, run, and troubleshoot Autolab stage workflows with the right runtime mode, policy settings, and guardrails.
-metadata:
-  short-description: Autolab Workflow Operator
----
+______________________________________________________________________
+
+## name: autolab description: Plan, run, and troubleshoot Autolab stage workflows with the right runtime mode, policy settings, and guardrails. metadata: short-description: Autolab Workflow Operator
 
 # /autolab - Autolab Workflow Operator
 
@@ -12,6 +9,7 @@ Use this skill when the user wants to operate or troubleshoot an Autolab workflo
 ## Goal
 
 Help the user execute Autolab safely and efficiently by:
+
 - choosing the right runtime mode (`standard` vs `assistant`)
 - selecting correct run cadence (`run` vs `loop --auto`)
 - applying policy knobs in `.autolab/verifier_policy.yaml`
@@ -24,8 +22,8 @@ See also: `docs/workflow_modes.md` for mode responsibility boundaries.
 Use this sequence first when debugging:
 
 1. `autolab status`
-2. `autolab verify --stage <stage>`
-3. `autolab run`
+1. `autolab verify --stage <stage>`
+1. `autolab run`
 
 ## Quickstart
 
@@ -41,8 +39,10 @@ Key commands:
 
 Stage flow at a glance:
 
-    hypothesis -> design -> implementation -> implementation_review ->
-    launch -> slurm_monitor -> extract_results -> update_docs -> decide_repeat
+```
+hypothesis -> design -> implementation -> implementation_review ->
+launch -> slurm_monitor -> extract_results -> update_docs -> decide_repeat
+```
 
 ## Stage/Artifact/Verifier cheat sheet
 
@@ -64,23 +64,25 @@ Verifier categories below show **registry capabilities**. Actual requirements de
    - `autolab status`
    - `autolab verify --stage <stage>` (example: `autolab verify --stage implementation_review`)
    - `autolab run`
-2. Agent-runner unattended mode:
+1. Agent-runner unattended mode:
    - `autolab loop --auto --max-hours <hours> --max-iterations <iterations>`
    - example: `autolab loop --auto --max-hours 2 --max-iterations 12`
-3. Assistant unattended mode:
+1. Assistant unattended mode:
    - `autolab loop --auto --assistant --max-hours <hours> --max-iterations <iterations>`
    - example: `autolab loop --auto --assistant --max-hours 1 --max-iterations 8`
 
 ## Command resolution
 
 Use this command order:
+
 1. `autolab ...` if CLI is installed on `PATH`
-2. `python -m autolab ...`
-3. `PYTHONPATH=src python -m autolab ...` (source checkout fallback)
+1. `python -m autolab ...`
+1. `PYTHONPATH=src python -m autolab ...` (source checkout fallback)
 
 ## Read-first context checklist
 
 Before making recommendations or changes, inspect:
+
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`
 - `.autolab/verifier_policy.yaml`
@@ -94,23 +96,27 @@ Prefer `autolab status` (or module equivalent) first when debugging.
 ### Standard mode (default; no `--assistant`)
 
 Use for:
+
 - deterministic stage-machine control
 - manual checkpoints
 - verifier debugging and schema/prompt iteration
 - explicit `decide_repeat` decisions
 
 Behavior summary:
+
 - runs one stage transition at a time
 - at `decide_repeat`, typically requires `--decision` or `--auto-decision`
 
 ### Assistant mode (`--assistant`)
 
 Use for:
+
 - task-driven feature delivery from todo/backlog
 - autonomous cycles in unattended loops
 - workflows where completion should stop automatically when no tasks remain
 
 Behavior summary:
+
 - task cycle is `select -> implement -> verify -> review -> done`
 - no actionable tasks lead to `stop`
 - review gate expects meaningful changes and (by policy) verification
@@ -127,11 +133,13 @@ Use `--auto-decision` when you want automatic stage choice at `decide_repeat`.
 ## Agent runner controls
 
 Policy is in `.autolab/verifier_policy.yaml`:
+
 - `agent_runner.enabled`: policy on/off
 - `agent_runner.runner`: `codex`, `claude`, or `custom`
 - `agent_runner.edit_scope.mode`: `iteration_plus_core` (default) or `iteration_only`
 
 CLI overrides:
+
 - `--run-agent`: force runner on for this command
 - `--no-run-agent`: force runner off for this command
 
@@ -140,17 +148,20 @@ Use `iteration_only` when isolation is required; use `iteration_plus_core` for n
 ## Commit and quality-gate knobs
 
 In `.autolab/verifier_policy.yaml`:
+
 - `autorun.auto_commit.mode`: `meaningful_only` (default), `always`, `disabled`
 - `autorun.meaningful_change.require_implementation_progress`: strict progress gate
 - `autorun.meaningful_change.require_verification`: require verification before assistant task completion
 - `autorun.meaningful_change.require_git_for_progress`: require git-based progress checks
 
 CLI override:
+
 - `--no-strict-implementation-progress`: temporarily relax strict implementation progress checks
 
 ## Guardrail tuning (for unattended loops)
 
 Use:
+
 - `autorun.guardrails.max_same_decision_streak`
 - `autorun.guardrails.max_no_progress_decisions`
 - `autorun.guardrails.max_update_docs_cycles`
@@ -162,21 +173,22 @@ Tune conservatively; prefer explicit escalation over silent infinite loops.
 ## Troubleshooting playbook
 
 1. Verify CLI availability and choose command resolution fallback.
-2. Run status and inspect `stage`, `stage_attempt`, `assistant_mode`, `task_cycle_stage`.
-3. If stuck at `decide_repeat`, use `--decision` or `--auto-decision`.
-4. If assistant mode loops, check:
+1. Run status and inspect `stage`, `stage_attempt`, `assistant_mode`, `task_cycle_stage`.
+1. If stuck at `decide_repeat`, use `--decision` or `--auto-decision`.
+1. If assistant mode loops, check:
    - meaningful-change config
    - verification requirements
    - todo/backlog task quality
-5. If escalation occurs (`human_review`), inspect:
+1. If escalation occurs (`human_review`), inspect:
    - `.autolab/agent_result.json`
    - stage verifier outputs/artifacts
    - guardrail counters in `repeat_guard`
-6. Apply the smallest policy change needed, rerun, and re-check status.
+1. Apply the smallest policy change needed, rerun, and re-check status.
 
 ## Response style for this skill
 
 When answering users:
+
 - lead with recommended mode + command
 - include exact command(s) ready to run
 - mention assumptions and policy knobs changed
@@ -226,6 +238,7 @@ Files written during agent runner execution (under `.autolab/`):
 ## Policy Setup Snippets
 
 ### Claude runner with iteration+core scope
+
 ```yaml
 agent_runner:
   enabled: true
@@ -247,6 +260,7 @@ agent_runner:
 ```
 
 ### Strict verification for all stages
+
 ```yaml
 requirements_by_stage:
   implementation:
@@ -262,11 +276,13 @@ requirements_by_stage:
 ```
 
 ### SLURM dry-run command
+
 ```yaml
 dry_run_command: "{{python_bin}} -m myproject.dry_run --config experiments/plan/iter1/design.yaml"
 ```
 
 ### Meaningful-change config (strict)
+
 ```yaml
 autorun:
   meaningful_change:
@@ -284,17 +300,19 @@ autorun:
 In assistant mode (`--assistant`), the task cycle follows:
 
 1. **Task selection**: Picks the highest-priority open task from `docs/todo.md` (manual tasks first, then generated)
-2. **Implementation**: Runs the agent for the task's stage
-3. **Verification**: If `require_verification: true`, runs verifiers before marking complete
-4. **Review gate**: Checks for meaningful changes; if none detected, task stays open
-5. **Completion**: Marks task done, syncs todo state, optionally auto-commits
+1. **Implementation**: Runs the agent for the task's stage
+1. **Verification**: If `require_verification: true`, runs verifiers before marking complete
+1. **Review gate**: Checks for meaningful changes; if none detected, task stays open
+1. **Completion**: Marks task done, syncs todo state, optionally auto-commits
 
 Auto-stop behavior:
+
 - When no open tasks remain and no generated fallback tasks apply, assistant mode selects `stop`
 - The `strict_mode.forbid_auto_stop` policy can override this to `human_review`
 - Guardrail escalation applies: repeated same-decision or no-progress streaks trigger `on_breach`
 
 Blocked-experiment behavior:
+
 - If the active experiment is marked completed in `backlog.yaml`, the run writes `block_reason.json` and transitions to `stop`
 - Re-open the experiment in backlog to resume work
 

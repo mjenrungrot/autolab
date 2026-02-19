@@ -43,7 +43,10 @@ except Exception:  # pragma: no cover
     yaml = None
 
 try:
-    from autolab.constants import REVIEW_RESULT_REQUIRED_CHECKS, REVIEW_RESULT_CHECK_STATUSES
+    from autolab.constants import (
+        REVIEW_RESULT_REQUIRED_CHECKS,
+        REVIEW_RESULT_CHECK_STATUSES,
+    )
 except Exception:  # pragma: no cover
     REVIEW_RESULT_REQUIRED_CHECKS = (  # type: ignore[misc]
         "tests",
@@ -64,6 +67,7 @@ from verifier_lib import (
     load_state,
     resolve_iteration_dir,
 )
+
 TEMPLATE_ROOT = REPO_ROOT / ".autolab" / "templates"
 LINE_LIMITS_POLICY_FILE = REPO_ROOT / ".autolab" / "experiment_file_line_limits.yaml"
 RUN_METRICS_POLICY_KEY = "runs/<RUN_ID>/metrics.json"
@@ -81,7 +85,7 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTBD\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),
     re.compile(r"(?<!\.)\.\.\.(?!\.)"),  # ASCII ellipsis (not part of longer run)
-    re.compile(r"\u2026"),                # Unicode ellipsis …
+    re.compile(r"\u2026"),  # Unicode ellipsis …
 )
 
 COMMENTED_SCRIPT_LINES = ("#!", "#", "set -e", "set -u", "set -uo", "set -o")
@@ -163,7 +167,6 @@ class LineLimitPolicy:
     run_manifest_dynamic: RunManifestDynamicLimit
 
 
-
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -174,7 +177,9 @@ def _count_lines(text: str) -> int:
     return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
-def _coerce_positive_int(value: object, *, field_name: str, allow_zero: bool = False) -> int:
+def _coerce_positive_int(
+    value: object, *, field_name: str, allow_zero: bool = False
+) -> int:
     if isinstance(value, bool):
         raise RuntimeError(f"{field_name} must be an integer")
     try:
@@ -189,8 +194,9 @@ def _coerce_positive_int(value: object, *, field_name: str, allow_zero: bool = F
     return parsed
 
 
-
-def _load_limit_mapping(line_limits: dict, key: str, *, positive_only: bool) -> dict[str, int]:
+def _load_limit_mapping(
+    line_limits: dict, key: str, *, positive_only: bool
+) -> dict[str, int]:
     raw_mapping = line_limits.get(key, {})
     if not isinstance(raw_mapping, dict):
         raise RuntimeError(f"{key} must be a mapping in {LINE_LIMITS_POLICY_FILE}")
@@ -227,13 +233,21 @@ def _load_line_limits_policy(path: Path = LINE_LIMITS_POLICY_FILE) -> LineLimitP
     if not isinstance(line_limits, dict):
         raise RuntimeError(f"{path} must contain 'line_limits' mapping")
 
-    fixed_max_lines = _load_limit_mapping(line_limits, "fixed_max_lines", positive_only=True)
-    fixed_max_chars = _load_limit_mapping(line_limits, "fixed_max_chars", positive_only=False)
-    fixed_max_bytes = _load_limit_mapping(line_limits, "fixed_max_bytes", positive_only=False)
+    fixed_max_lines = _load_limit_mapping(
+        line_limits, "fixed_max_lines", positive_only=True
+    )
+    fixed_max_chars = _load_limit_mapping(
+        line_limits, "fixed_max_chars", positive_only=False
+    )
+    fixed_max_bytes = _load_limit_mapping(
+        line_limits, "fixed_max_bytes", positive_only=False
+    )
 
     dynamic_raw = line_limits.get("run_manifest_dynamic")
     if not isinstance(dynamic_raw, dict):
-        raise RuntimeError(f"{path} must contain 'line_limits.run_manifest_dynamic' mapping")
+        raise RuntimeError(
+            f"{path} must contain 'line_limits.run_manifest_dynamic' mapping"
+        )
 
     target = str(dynamic_raw.get("target", RUN_MANIFEST_POLICY_KEY)).strip()
     if target and target != RUN_MANIFEST_POLICY_KEY:
@@ -241,14 +255,20 @@ def _load_line_limits_policy(path: Path = LINE_LIMITS_POLICY_FILE) -> LineLimitP
             f"line_limits.run_manifest_dynamic.target must be '{RUN_MANIFEST_POLICY_KEY}', got '{target}'"
         )
 
-    count_paths = dynamic_raw.get("count_paths") or dynamic_raw.get("item_count_paths") or []
+    count_paths = (
+        dynamic_raw.get("count_paths") or dynamic_raw.get("item_count_paths") or []
+    )
     if not isinstance(count_paths, list) or not count_paths:
-        raise RuntimeError("line_limits.run_manifest_dynamic.count_paths (or item_count_paths) must be a non-empty list")
+        raise RuntimeError(
+            "line_limits.run_manifest_dynamic.count_paths (or item_count_paths) must be a non-empty list"
+        )
     normalized_count_paths: list[str] = []
     for raw_count_path in count_paths:
         count_path = str(raw_count_path).strip()
         if not count_path:
-            raise RuntimeError("line_limits.run_manifest_dynamic.count_paths contains an empty entry")
+            raise RuntimeError(
+                "line_limits.run_manifest_dynamic.count_paths contains an empty entry"
+            )
         normalized_count_paths.append(count_path)
 
     min_cap_value = _dynamic_field(dynamic_raw, "min_cap_lines", "min_lines")
@@ -272,7 +292,9 @@ def _load_line_limits_policy(path: Path = LINE_LIMITS_POLICY_FILE) -> LineLimitP
                 field_name="line_limits.run_manifest_dynamic.base_lines",
             ),
             per_item_lines=_coerce_positive_int(
-                dynamic_raw.get("per_item_lines", dynamic_raw.get("per_k_result_lines")),
+                dynamic_raw.get(
+                    "per_item_lines", dynamic_raw.get("per_k_result_lines")
+                ),
                 field_name="line_limits.run_manifest_dynamic.per_item_lines",
                 allow_zero=True,
             ),
@@ -280,12 +302,16 @@ def _load_line_limits_policy(path: Path = LINE_LIMITS_POLICY_FILE) -> LineLimitP
                 dynamic_raw.get("max_chars"),
                 field_name="line_limits.run_manifest_dynamic.max_chars",
                 allow_zero=True,
-            ) if dynamic_raw.get("max_chars") is not None else None,
+            )
+            if dynamic_raw.get("max_chars") is not None
+            else None,
             max_bytes=_coerce_positive_int(
                 dynamic_raw.get("max_bytes"),
                 field_name="line_limits.run_manifest_dynamic.max_bytes",
                 allow_zero=True,
-            ) if dynamic_raw.get("max_bytes") is not None else None,
+            )
+            if dynamic_raw.get("max_bytes") is not None
+            else None,
             count_paths=tuple(normalized_count_paths),
         ),
     )
@@ -338,7 +364,11 @@ def _is_trivial_text_file(text: str, path: Path) -> Optional[str]:
         if not _has_meaningful_script_line(text):
             return "script has no meaningful commands"
         return None
-    meaningful_lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    meaningful_lines = [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
     if not meaningful_lines:
         return "content has only comments/boilerplate"
     return None
@@ -352,7 +382,9 @@ def _count_bytes(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-def _check_size_limits(path: Path, policy: LineLimitPolicy, policy_key: str) -> list[Failure]:
+def _check_size_limits(
+    path: Path, policy: LineLimitPolicy, policy_key: str
+) -> list[Failure]:
     if not path.exists():
         return []
     text = _read_text(path)
@@ -395,7 +427,9 @@ def _check_size_limits(path: Path, policy: LineLimitPolicy, policy_key: str) -> 
 
 
 def _collect_terminal_values(payload: object, path_expression: str) -> list[object]:
-    segments = [segment.strip() for segment in path_expression.split(".") if segment.strip()]
+    segments = [
+        segment.strip() for segment in path_expression.split(".") if segment.strip()
+    ]
     current: list[object] = [payload]
 
     for raw_segment in segments:
@@ -437,7 +471,9 @@ def _count_manifest_items(payload: dict, count_paths: tuple[str, ...]) -> int:
     return total
 
 
-def _run_manifest_dynamic_limit(policy: RunManifestDynamicLimit, payload: dict) -> tuple[int, int]:
+def _run_manifest_dynamic_limit(
+    policy: RunManifestDynamicLimit, payload: dict
+) -> tuple[int, int]:
     item_count = max(0, int(_count_manifest_items(payload, policy.count_paths)))
     candidate = policy.base_lines + policy.per_item_lines * item_count
     dynamic_lines = max(policy.min_cap_lines, min(policy.max_cap_lines, candidate))
@@ -455,7 +491,9 @@ def _check_run_manifest_limits(path: Path, policy: LineLimitPolicy) -> list[Fail
 
     text = _read_text(path)
     failures: list[Failure] = []
-    item_count, dynamic_lines = _run_manifest_dynamic_limit(policy.run_manifest_dynamic, payload)
+    item_count, dynamic_lines = _run_manifest_dynamic_limit(
+        policy.run_manifest_dynamic, payload
+    )
     line_count = _count_lines(text)
     if line_count > dynamic_lines:
         failures.append(
@@ -516,7 +554,11 @@ def _check_hypothesis(path: Path) -> list[Failure]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     metric_lines = [line for line in lines if line.startswith("PrimaryMetric:")]
     if len(metric_lines) != 1:
-        failures.append(Failure(str(path), "must contain exactly one 'PrimaryMetric:' definition line"))
+        failures.append(
+            Failure(
+                str(path), "must contain exactly one 'PrimaryMetric:' definition line"
+            )
+        )
     elif not PRIMARY_METRIC_LINE_PATTERN.match(metric_lines[0]):
         failures.append(
             Failure(
@@ -560,7 +602,9 @@ def _check_review_result(path: Path) -> list[Failure]:
     failures: list[Failure] = []
     for check_name in REVIEW_RESULT_REQUIRED_CHECKS:
         if check_name not in required_checks:
-            failures.append(Failure(str(path), f"required_checks missing '{check_name}'"))
+            failures.append(
+                Failure(str(path), f"required_checks missing '{check_name}'")
+            )
             continue
         check_status = str(required_checks.get(check_name, "")).strip().lower()
         if check_status not in REVIEW_RESULT_CHECK_STATUSES:
@@ -586,7 +630,16 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
         return [Failure(str(path), reason)]
 
     data = load_yaml(path)
-    required = {"schema_version", "id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
+    required = {
+        "schema_version",
+        "id",
+        "iteration_id",
+        "hypothesis_id",
+        "entrypoint",
+        "compute",
+        "metrics",
+        "baselines",
+    }
     missing = required - data.keys()
     if missing:
         return [Failure(str(path), f"missing required keys: {sorted(missing)}")]
@@ -668,7 +721,9 @@ def _check_run_manifest(path: Path, iteration_id: str, run_id: str) -> list[Fail
     if data.get("iteration_id") and data.get("iteration_id") != iteration_id:
         return [Failure(str(path), "iteration_id does not match .autolab/state.json")]
     if data.get("run_id") and data.get("run_id") != run_id:
-        return [Failure(str(path), "run_id does not match .autolab/state.json.last_run_id")]
+        return [
+            Failure(str(path), "run_id does not match .autolab/state.json.last_run_id")
+        ]
 
     return []
 
@@ -679,7 +734,9 @@ def _check_metrics(path: Path) -> list[Failure]:
     if not path.exists():
         return [Failure(str(path), "required file is missing")]
     text = _read_text(path)
-    reason = _contains_placeholder(text, _template_text(Path("runs") / "<RUN_ID>" / "metrics.json"))
+    reason = _contains_placeholder(
+        text, _template_text(Path("runs") / "<RUN_ID>" / "metrics.json")
+    )
     if reason:
         return [Failure(str(path), reason)]
 
@@ -693,12 +750,21 @@ def _check_metrics(path: Path) -> list[Failure]:
     return []
 
 
-def _check_launch_scripts(iteration_dir: Path, policy: LineLimitPolicy) -> list[Failure]:
+def _check_launch_scripts(
+    iteration_dir: Path, policy: LineLimitPolicy
+) -> list[Failure]:
     failures: list[Failure] = []
     candidates = [Path("launch/run_local.sh"), Path("launch/run_slurm.sbatch")]
-    existing = [relative for relative in candidates if (iteration_dir / relative).exists()]
+    existing = [
+        relative for relative in candidates if (iteration_dir / relative).exists()
+    ]
     if not existing:
-        return [Failure(str(iteration_dir / "launch"), "launch stage requires run_local.sh or run_slurm.sbatch")]
+        return [
+            Failure(
+                str(iteration_dir / "launch"),
+                "launch stage requires run_local.sh or run_slurm.sbatch",
+            )
+        ]
 
     for relative in existing:
         path = iteration_dir / relative
@@ -745,13 +811,20 @@ def _stage_checks(
                 checks.extend(_check_review_result(path))
             else:
                 checks.extend(_check_file_text(path, relative=relative))
-            checks.extend(_check_size_limits(path, line_limit_policy, relative.as_posix()))
+            checks.extend(
+                _check_size_limits(path, line_limit_policy, relative.as_posix())
+            )
         return checks
 
     if stage == "launch":
         checks.extend(_check_launch_scripts(iteration_dir, line_limit_policy))
         if not run_id or run_id.startswith("<"):
-            checks.append(Failure(f"{iteration_dir}/runs/<RUN_ID>", "state.json has missing/placeholder last_run_id"))
+            checks.append(
+                Failure(
+                    f"{iteration_dir}/runs/<RUN_ID>",
+                    "state.json has missing/placeholder last_run_id",
+                )
+            )
             return checks
         manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
         checks.extend(_check_run_manifest(manifest_path, iteration_id, run_id))
@@ -760,7 +833,12 @@ def _stage_checks(
 
     if stage == "extract_results":
         if not run_id or run_id.startswith("<"):
-            checks.append(Failure(f"{iteration_dir}/runs/<RUN_ID>", "state.json has missing/placeholder last_run_id"))
+            checks.append(
+                Failure(
+                    f"{iteration_dir}/runs/<RUN_ID>",
+                    "state.json has missing/placeholder last_run_id",
+                )
+            )
             return checks
 
         run_dir = iteration_dir / "runs" / run_id
@@ -769,7 +847,9 @@ def _stage_checks(
 
         checks.extend(_check_run_manifest(manifest_path, iteration_id, run_id))
         checks.extend(_check_metrics(metrics_path))
-        checks.extend(_check_size_limits(metrics_path, line_limit_policy, RUN_METRICS_POLICY_KEY))
+        checks.extend(
+            _check_size_limits(metrics_path, line_limit_policy, RUN_METRICS_POLICY_KEY)
+        )
         checks.extend(_check_run_manifest_limits(manifest_path, line_limit_policy))
         return checks
 
@@ -777,7 +857,9 @@ def _stage_checks(
         for relative in [Path("docs_update.md"), Path("analysis/summary.md")]:
             path = iteration_dir / relative
             checks.extend(_check_file_text(path, relative=relative))
-            checks.extend(_check_size_limits(path, line_limit_policy, relative.as_posix()))
+            checks.extend(
+                _check_size_limits(path, line_limit_policy, relative.as_posix())
+            )
         return checks
 
     if stage == "decide_repeat":
@@ -790,15 +872,28 @@ def _stage_checks(
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", default=None, help="Override current stage from .autolab/state.json")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--stage", default=None, help="Override current stage from .autolab/state.json"
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
         state = load_state()
     except Exception as exc:
         if args.json:
-            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
+            envelope = {
+                "status": "fail",
+                "verifier": "template_fill",
+                "stage": "",
+                "checks": [],
+                "errors": [str(exc)],
+            }
             print(json.dumps(envelope))
         else:
             print(f"template_fill: ERROR {exc}")
@@ -808,7 +903,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         line_limit_policy = _load_line_limits_policy()
     except Exception as exc:
         if args.json:
-            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": [str(exc)]}
+            envelope = {
+                "status": "fail",
+                "verifier": "template_fill",
+                "stage": "",
+                "checks": [],
+                "errors": [str(exc)],
+            }
             print(json.dumps(envelope))
         else:
             print(f"template_fill: ERROR {exc}")
@@ -820,21 +921,43 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     if not iteration_id or iteration_id.startswith("<"):
         if args.json:
-            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["iteration_id in state is missing or placeholder"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "template_fill",
+                "stage": "",
+                "checks": [],
+                "errors": ["iteration_id in state is missing or placeholder"],
+            }
             print(json.dumps(envelope))
         else:
-            print("template_fill: ERROR iteration_id in state is missing or placeholder")
+            print(
+                "template_fill: ERROR iteration_id in state is missing or placeholder"
+            )
         return 1
     if not iteration_dir.exists():
         if args.json:
-            envelope = {"status": "fail", "verifier": "template_fill", "stage": stage, "checks": [], "errors": [f"iteration workspace missing at {iteration_dir}"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "template_fill",
+                "stage": stage,
+                "checks": [],
+                "errors": [f"iteration workspace missing at {iteration_dir}"],
+            }
             print(json.dumps(envelope))
         else:
-            print(f"template_fill: ERROR iteration workspace missing at {iteration_dir}")
+            print(
+                f"template_fill: ERROR iteration workspace missing at {iteration_dir}"
+            )
         return 1
     if not stage:
         if args.json:
-            envelope = {"status": "fail", "verifier": "template_fill", "stage": "", "checks": [], "errors": ["state stage is missing"]}
+            envelope = {
+                "status": "fail",
+                "verifier": "template_fill",
+                "stage": "",
+                "checks": [],
+                "errors": ["state stage is missing"],
+            }
             print(json.dumps(envelope))
         else:
             print("template_fill: ERROR state stage is missing")
@@ -845,9 +968,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     passed = not failures
 
     if args.json:
-        checks = [{"name": f.path, "status": "fail", "detail": f.reason} for f in failures]
+        checks = [
+            {"name": f.path, "status": "fail", "detail": f.reason} for f in failures
+        ]
         if passed:
-            checks = [{"name": "template_fill", "status": "pass", "detail": f"stage={stage} iteration={iteration_id}"}]
+            checks = [
+                {
+                    "name": "template_fill",
+                    "status": "pass",
+                    "detail": f"stage={stage} iteration={iteration_id}",
+                }
+            ]
         envelope = {
             "status": "pass" if passed else "fail",
             "verifier": "template_fill",

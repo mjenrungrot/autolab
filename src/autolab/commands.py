@@ -97,11 +97,14 @@ POLICY_PRESET_NAMES = ("local_dev", "ci_strict", "slurm")
 # Skill installer helpers
 # ---------------------------------------------------------------------------
 
+
 def _list_bundled_skills(provider: str) -> list[str]:
     normalized_provider = str(provider).strip().lower()
     if normalized_provider != "codex":
         raise RuntimeError(f"unsupported skill provider '{provider}'")
-    skills_root = importlib_resources.files("autolab").joinpath("skills", normalized_provider)
+    skills_root = importlib_resources.files("autolab").joinpath(
+        "skills", normalized_provider
+    )
     found: list[str] = []
     for child in skills_root.iterdir():
         if child.joinpath("SKILL.md").is_file():
@@ -154,6 +157,7 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 # Internal helper: dispatch a single run to standard or assistant runner
 # ---------------------------------------------------------------------------
 
+
 def _run_once(
     state_path: Path,
     decision: str | None,
@@ -166,7 +170,9 @@ def _run_once(
     strict_implementation_progress: bool = True,
 ) -> RunOutcome:
     if assistant:
-        return _run_once_assistant(state_path, run_agent_mode=run_agent_mode, auto_mode=auto_mode)
+        return _run_once_assistant(
+            state_path, run_agent_mode=run_agent_mode, auto_mode=auto_mode
+        )
     return _run_once_standard(
         state_path,
         decision,
@@ -181,6 +187,7 @@ def _run_once(
 # ---------------------------------------------------------------------------
 # Overnight summary helper (used by _cmd_loop)
 # ---------------------------------------------------------------------------
+
 
 def _write_overnight_summary(
     repo_root: Path,
@@ -251,6 +258,7 @@ def _write_overnight_summary(
 # CLI command handlers
 # ---------------------------------------------------------------------------
 
+
 def _cmd_status(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     try:
@@ -297,11 +305,16 @@ def _cmd_status(args: argparse.Namespace) -> int:
             lock_pid = lock_payload.get("pid", "<unknown>")
             lock_started = lock_payload.get("started_at", "<unknown>")
             from datetime import datetime, timedelta, timezone
+
             heartbeat_raw = lock_payload.get("last_heartbeat_at", "")
             from autolab.utils import _parse_utc
+
             heartbeat_dt = _parse_utc(str(heartbeat_raw))
             now = datetime.now(timezone.utc)
-            if heartbeat_dt is not None and (now - heartbeat_dt).total_seconds() > LOCK_STALE_SECONDS:
+            if (
+                heartbeat_dt is not None
+                and (now - heartbeat_dt).total_seconds() > LOCK_STALE_SECONDS
+            ):
                 print("lock: stale")
             else:
                 print(f"lock: held by PID {lock_pid} since {lock_started}")
@@ -371,7 +384,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         docs_cyc = repeat_guard.get("update_docs_cycles", 0)
         print("guardrails:")
         print(f"  same_decision_streak: {streak}/{max_streak} (breach -> {on_breach})")
-        print(f"  no_progress_decisions: {no_prog}/{max_no_prog} (breach -> {on_breach})")
+        print(
+            f"  no_progress_decisions: {no_prog}/{max_no_prog} (breach -> {on_breach})"
+        )
         print(f"  update_docs_cycles: {docs_cyc}/{max_docs} (breach -> {on_breach})")
 
     return 0
@@ -390,7 +405,10 @@ def _cmd_guardrails(args: argparse.Namespace) -> int:
     try:
         guardrail_cfg = _load_guardrail_config(repo_root)
     except Exception as exc:
-        print(f"autolab guardrails: ERROR loading guardrail config: {exc}", file=sys.stderr)
+        print(
+            f"autolab guardrails: ERROR loading guardrail config: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
     repeat_guard = state.get("repeat_guard", {})
@@ -442,7 +460,9 @@ def _cmd_guardrails(args: argparse.Namespace) -> int:
         print("")
         print("meaningful_change config:")
         print(f"  require_verification: {meaningful_cfg.require_verification}")
-        print(f"  require_implementation_progress: {meaningful_cfg.require_implementation_progress}")
+        print(
+            f"  require_implementation_progress: {meaningful_cfg.require_implementation_progress}"
+        )
         print(f"  require_git_for_progress: {meaningful_cfg.require_git_for_progress}")
         print(f"  on_non_git_behavior: {meaningful_cfg.on_non_git_behavior}")
         print(f"  exclude_paths: {list(meaningful_cfg.exclude_paths)}")
@@ -485,13 +505,17 @@ def _cmd_configure(args: argparse.Namespace) -> int:
                     policy = loaded
                     print(f"  [PASS] verifier_policy.yaml: valid ({policy_path})")
                 else:
-                    print(f"  [FAIL] verifier_policy.yaml: not a valid YAML mapping ({policy_path})")
+                    print(
+                        f"  [FAIL] verifier_policy.yaml: not a valid YAML mapping ({policy_path})"
+                    )
                     all_pass = False
             except Exception as exc:
                 print(f"  [FAIL] verifier_policy.yaml: parse error: {exc}")
                 all_pass = False
         else:
-            print(f"  [WARN] verifier_policy.yaml: exists but PyYAML is not installed; cannot validate")
+            print(
+                f"  [WARN] verifier_policy.yaml: exists but PyYAML is not installed; cannot validate"
+            )
             has_warn = True
     else:
         print(f"  [FAIL] verifier_policy.yaml: not found at {policy_path}")
@@ -510,7 +534,9 @@ def _cmd_configure(args: argparse.Namespace) -> int:
             version = proc.stdout.strip() or proc.stderr.strip()
             print(f"  [PASS] python_bin: {python_bin} ({version})")
         else:
-            print(f"  [FAIL] python_bin: {python_bin} exited with code {proc.returncode}")
+            print(
+                f"  [FAIL] python_bin: {python_bin} exited with code {proc.returncode}"
+            )
             all_pass = False
     except FileNotFoundError:
         print(f"  [FAIL] python_bin: {python_bin} not found on PATH")
@@ -535,7 +561,9 @@ def _cmd_configure(args: argparse.Namespace) -> int:
     if dry_run_command:
         # Check if it is the default stub that always fails
         if "AUTOLAB DRY-RUN STUB" in dry_run_command:
-            print("  [WARN] dry_run_command: using default stub (will fail until customized)")
+            print(
+                "  [WARN] dry_run_command: using default stub (will fail until customized)"
+            )
             has_warn = True
         else:
             print(f"  [PASS] dry_run_command: {dry_run_command}")
@@ -618,7 +646,9 @@ def _cmd_install_skill(args: argparse.Namespace) -> int:
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(template_text, encoding="utf-8")
         except Exception as exc:
-            print(f"  {skill_name}: ERROR writing {destination}: {exc}", file=sys.stderr)
+            print(
+                f"  {skill_name}: ERROR writing {destination}: {exc}", file=sys.stderr
+            )
             return 1
 
         print(f"  {skill_name}: installed -> {destination}")
@@ -643,10 +673,16 @@ def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
     try:
         manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"autolab slurm-job-list: ERROR loading manifest {manifest_path}: {exc}", file=sys.stderr)
+        print(
+            f"autolab slurm-job-list: ERROR loading manifest {manifest_path}: {exc}",
+            file=sys.stderr,
+        )
         return 1
     if not isinstance(manifest_payload, dict):
-        print(f"autolab slurm-job-list: ERROR manifest {manifest_path} must be a JSON object", file=sys.stderr)
+        print(
+            f"autolab slurm-job-list: ERROR manifest {manifest_path} must be a JSON object",
+            file=sys.stderr,
+        )
         return 1
 
     if action == "append":
@@ -660,13 +696,19 @@ def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
                 doc_path.parent.mkdir(parents=True, exist_ok=True)
             run_id = required_run_id(manifest_payload)
             canonical = canonical_slurm_job_bullet(manifest_payload)
-            existing_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
-            next_text, updated = append_entry_idempotent(existing_text, canonical, run_id)
+            existing_text = (
+                doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+            )
+            next_text, updated = append_entry_idempotent(
+                existing_text, canonical, run_id
+            )
             if updated:
                 doc_path.write_text(next_text, encoding="utf-8")
                 print(f"autolab slurm-job-list: appended run_id={run_id} -> {doc_path}")
             else:
-                print(f"autolab slurm-job-list: run_id={run_id} already present in {doc_path}")
+                print(
+                    f"autolab slurm-job-list: run_id={run_id} already present in {doc_path}"
+                )
             return 0
         except Exception as exc:
             print(f"autolab slurm-job-list: ERROR {exc}", file=sys.stderr)
@@ -674,7 +716,9 @@ def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
 
     try:
         if not is_slurm_manifest(manifest_payload):
-            print(f"autolab slurm-job-list: manifest is non-SLURM; verify skipped for {manifest_path}")
+            print(
+                f"autolab slurm-job-list: manifest is non-SLURM; verify skipped for {manifest_path}"
+            )
             return 0
         run_id = required_run_id(manifest_payload)
         job_id = required_slurm_job_id(manifest_payload)
@@ -688,7 +732,10 @@ def _cmd_slurm_job_list(args: argparse.Namespace) -> int:
         print(f"autolab slurm-job-list: PASS job_id={job_id}, run_id={run_id}")
         return 0
     except Exception as exc:
-        print(f"autolab slurm-job-list: ERROR verifying {manifest_path}: {exc}", file=sys.stderr)
+        print(
+            f"autolab slurm-job-list: ERROR verifying {manifest_path}: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
 
@@ -709,7 +756,9 @@ def _apply_init_policy_defaults(
     if interactive:
         print("")
         print("autolab init policy setup")
-        print("Configure a dry-run command now (leave empty to skip dry-run for implementation stages).")
+        print(
+            "Configure a dry-run command now (leave empty to skip dry-run for implementation stages)."
+        )
         try:
             selected_command = input("dry_run_command> ").strip()
         except EOFError:
@@ -804,7 +853,9 @@ def _cmd_policy_apply_preset(args: argparse.Namespace) -> int:
         return 1
 
     merged = _deep_merge_dict(current_policy, preset_policy)
-    policy_path.write_text(_yaml_mod.safe_dump(merged, sort_keys=False), encoding="utf-8")
+    policy_path.write_text(
+        _yaml_mod.safe_dump(merged, sort_keys=False), encoding="utf-8"
+    )
 
     print("autolab policy apply preset")
     print(f"preset: {preset_name}")
@@ -843,7 +894,9 @@ def _cmd_init(args: argparse.Namespace) -> int:
     except RuntimeError:
         scaffold_source = None
     if scaffold_source is not None:
-        copied, skipped = _sync_scaffold_bundle(scaffold_source, autolab_dir, overwrite=False)
+        copied, skipped = _sync_scaffold_bundle(
+            scaffold_source, autolab_dir, overwrite=False
+        )
         scaffold_copied = copied
         scaffold_skipped = skipped
 
@@ -861,7 +914,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
             iteration_id = _bootstrap_iteration_id()
         _ensure_json_file(state_path, _default_state(iteration_id), created)
 
-    _ensure_text_file(backlog_path, DEFAULT_BACKLOG_TEMPLATE.format(iteration_id=iteration_id), created)
+    _ensure_text_file(
+        backlog_path,
+        DEFAULT_BACKLOG_TEMPLATE.format(iteration_id=iteration_id),
+        created,
+    )
     _ensure_text_file(verifier_policy_path, DEFAULT_VERIFIER_POLICY, created)
     interactive = bool(getattr(args, "interactive", False))
     no_interactive = bool(getattr(args, "no_interactive", False))
@@ -881,11 +938,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 _default_stage_prompt_text(stage),
                 created,
             )
-    init_experiment_type = _resolve_experiment_type_from_backlog(
-        repo_root,
-        iteration_id=iteration_id,
-        experiment_id="",
-    ) or DEFAULT_EXPERIMENT_TYPE
+    init_experiment_type = (
+        _resolve_experiment_type_from_backlog(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id="",
+        )
+        or DEFAULT_EXPERIMENT_TYPE
+    )
     _ensure_iteration_skeleton(
         repo_root,
         iteration_id,
@@ -901,7 +961,10 @@ def _cmd_init(args: argparse.Namespace) -> int:
         if path not in created:
             created.append(path)
 
-    _append_log(repo_root, f"init completed for iteration {iteration_id}; created={len(created)}")
+    _append_log(
+        repo_root,
+        f"init completed for iteration {iteration_id}; created={len(created)}",
+    )
 
     print("autolab init")
     print(f"state_file: {state_path}")
@@ -937,7 +1000,9 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         try:
             shutil.rmtree(autolab_dir)
         except Exception as exc:
-            print(f"autolab reset: ERROR removing {autolab_dir}: {exc}", file=sys.stderr)
+            print(
+                f"autolab reset: ERROR removing {autolab_dir}: {exc}", file=sys.stderr
+            )
             return 1
 
     copied, skipped = _sync_scaffold_bundle(
@@ -953,7 +1018,10 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     try:
         _write_json(state_path, _default_state(iteration_id))
     except OSError as exc:
-        print(f"autolab reset: ERROR writing state file {state_path}: {exc}", file=sys.stderr)
+        print(
+            f"autolab reset: ERROR writing state file {state_path}: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
     print("autolab reset")
@@ -984,10 +1052,21 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         stage_override=stage_override,
     )
     canonical_result_path = repo_root / ".autolab" / "verification_result.json"
-    effective_stage = str(details.get("stage", "")).strip() or str(state.get("stage", "")).strip() or "unknown"
-    safe_stage = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in effective_stage) or "unknown"
+    effective_stage = (
+        str(details.get("stage", "")).strip()
+        or str(state.get("stage", "")).strip()
+        or "unknown"
+    )
+    safe_stage = (
+        "".join(
+            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in effective_stage
+        )
+        or "unknown"
+    )
     timestamp = _utc_now().replace("-", "").replace(":", "").replace(".", "")
-    summary_path = repo_root / ".autolab" / "logs" / f"verification_{timestamp}_{safe_stage}.json"
+    summary_path = (
+        repo_root / ".autolab" / "logs" / f"verification_{timestamp}_{safe_stage}.json"
+    )
     summary_payload = {
         "generated_at": _utc_now(),
         "state_file": str(state_path),
@@ -1033,14 +1112,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
         assistant=assistant_mode,
         auto_mode=False,
         auto_decision=bool(getattr(args, "auto_decision", False)),
-        strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
+        strict_implementation_progress=bool(
+            getattr(args, "strict_implementation_progress", True)
+        ),
     )
     commit_outcome = _prepare_standard_commit_outcome(
         repo_root,
         outcome,
         baseline_snapshot,
         assistant=assistant_mode,
-        strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
+        strict_implementation_progress=bool(
+            getattr(args, "strict_implementation_progress", True)
+        ),
     )
     commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
     print("autolab run")
@@ -1061,7 +1144,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         stage = outcome.stage_before
         prompt_file = STAGE_PROMPT_FILES.get(stage)
         if prompt_file:
-            print(f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage.")
+            print(
+                f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage."
+            )
 
     return outcome.exit_code
 
@@ -1071,7 +1156,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
         print("autolab loop: ERROR --max-iterations must be > 0", file=sys.stderr)
         return 2
     if args.auto and args.max_hours <= 0:
-        print("autolab loop: ERROR --max-hours must be > 0 when --auto is enabled", file=sys.stderr)
+        print(
+            "autolab loop: ERROR --max-hours must be > 0 when --auto is enabled",
+            file=sys.stderr,
+        )
         return 2
 
     state_path = Path(args.state_file).expanduser().resolve()
@@ -1079,7 +1167,9 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     effective_max_iterations = int(args.max_iterations)
     try:
         state_for_limit = _normalize_state(_load_state(state_path))
-        state_limit = int(state_for_limit.get("max_total_iterations", effective_max_iterations))
+        state_limit = int(
+            state_for_limit.get("max_total_iterations", effective_max_iterations)
+        )
         if state_limit > 0:
             effective_max_iterations = min(effective_max_iterations, state_limit)
     except StateError:
@@ -1101,7 +1191,9 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     print(f"state_file: {state_path}")
     print(f"max_iterations: {effective_max_iterations}")
     if effective_max_iterations != int(args.max_iterations):
-        print(f"max_iterations_clamped_by_state: {state_for_limit['max_total_iterations']}")
+        print(
+            f"max_iterations_clamped_by_state: {state_for_limit['max_total_iterations']}"
+        )
     run_agent_mode = _resolve_run_agent_mode(getattr(args, "run_agent_mode", "policy"))
     auto_decision_enabled = bool(args.auto or run_agent_mode == "force_on")
     assistant_mode = bool(getattr(args, "assistant", False))
@@ -1152,14 +1244,18 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 assistant=assistant_mode,
                 auto_mode=bool(args.auto),
                 auto_decision=auto_decision_enabled,
-                strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
+                strict_implementation_progress=bool(
+                    getattr(args, "strict_implementation_progress", True)
+                ),
             )
             commit_outcome = _prepare_standard_commit_outcome(
                 repo_root,
                 outcome,
                 baseline_snapshot,
                 assistant=assistant_mode,
-                strict_implementation_progress=bool(getattr(args, "strict_implementation_progress", True)),
+                strict_implementation_progress=bool(
+                    getattr(args, "strict_implementation_progress", True)
+                ),
             )
             commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
             if "escalating to human_review" in outcome.message:
@@ -1171,7 +1267,9 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     "stage_after": outcome.stage_after,
                     "transitioned": outcome.transitioned,
                     "exit_code": outcome.exit_code,
-                    "decision": "auto" if args.auto and current_stage == "decide_repeat" else "-",
+                    "decision": "auto"
+                    if args.auto and current_stage == "decide_repeat"
+                    else "-",
                     "message": outcome.message,
                 }
             )
@@ -1245,7 +1343,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     rows=loop_rows,
                 )
             except Exception as exc:
-                print(f"autolab loop: WARN failed to write overnight summary: {exc}", file=sys.stderr)
+                print(
+                    f"autolab loop: WARN failed to write overnight summary: {exc}",
+                    file=sys.stderr,
+                )
             if lock_acquired:
                 _release_lock(lock_path)
 
@@ -1253,6 +1354,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Phase 6b: review command
 # ---------------------------------------------------------------------------
+
 
 def _cmd_review(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
@@ -1263,7 +1365,10 @@ def _cmd_review(args: argparse.Namespace) -> int:
         print(f"autolab review: ERROR {exc}", file=sys.stderr)
         return 1
     if state["stage"] != "human_review":
-        print(f"autolab review: ERROR current stage is '{state['stage']}', not 'human_review'", file=sys.stderr)
+        print(
+            f"autolab review: ERROR current stage is '{state['stage']}', not 'human_review'",
+            file=sys.stderr,
+        )
         return 1
     status = args.status
     if status == "pass":
@@ -1280,8 +1385,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
         state["current_task_id"] = ""
         state["task_cycle_stage"] = "done"
         state["task_change_baseline"] = {}
-        completed, backlog_path, completion_summary = _mark_backlog_experiment_completed(
-            repo_root, str(state.get("experiment_id", "")).strip(),
+        completed, backlog_path, completion_summary = (
+            _mark_backlog_experiment_completed(
+                repo_root,
+                str(state.get("experiment_id", "")).strip(),
+            )
         )
         message = f"review decision: stop — experiment ended"
         if completed:
@@ -1290,7 +1398,9 @@ def _cmd_review(args: argparse.Namespace) -> int:
         print(f"autolab review: ERROR invalid status '{status}'", file=sys.stderr)
         return 1
     _write_json(state_path, state)
-    _persist_agent_result(repo_root, status="complete", summary=message, changed_files=[state_path])
+    _persist_agent_result(
+        repo_root, status="complete", summary=message, changed_files=[state_path]
+    )
     _append_log(repo_root, f"review command: {message}")
     print(f"autolab review: {message}")
     return 0
@@ -1313,7 +1423,15 @@ def _cmd_lock(args: argparse.Namespace) -> int:
             print("autolab lock: no active lock")
             return 0
         print("autolab lock: active")
-        for key in ("pid", "host", "owner_uuid", "started_at", "last_heartbeat_at", "command", "state_file"):
+        for key in (
+            "pid",
+            "host",
+            "owner_uuid",
+            "started_at",
+            "last_heartbeat_at",
+            "command",
+            "state_file",
+        ):
             print(f"  {key}: {info.get(key, '<unknown>')}")
         age = info.get("age_seconds")
         if age is not None:
@@ -1350,11 +1468,17 @@ def _cmd_skip(args: argparse.Namespace) -> int:
     reason = args.reason
 
     if current_stage in TERMINAL_STAGES:
-        print(f"autolab skip: ERROR current stage '{current_stage}' is terminal; cannot skip", file=sys.stderr)
+        print(
+            f"autolab skip: ERROR current stage '{current_stage}' is terminal; cannot skip",
+            file=sys.stderr,
+        )
         return 1
 
     if target_stage in TERMINAL_STAGES:
-        print(f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'", file=sys.stderr)
+        print(
+            f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'",
+            file=sys.stderr,
+        )
         return 1
 
     # Validate forward-only skip within ACTIVE_STAGES (includes decide_repeat)
@@ -1362,10 +1486,16 @@ def _cmd_skip(args: argparse.Namespace) -> int:
     if "decide_repeat" not in ordered_stages:
         ordered_stages.append("decide_repeat")
     if current_stage not in ordered_stages:
-        print(f"autolab skip: ERROR current stage '{current_stage}' is not skippable", file=sys.stderr)
+        print(
+            f"autolab skip: ERROR current stage '{current_stage}' is not skippable",
+            file=sys.stderr,
+        )
         return 1
     if target_stage not in ordered_stages:
-        print(f"autolab skip: ERROR target stage '{target_stage}' is not a valid skip target", file=sys.stderr)
+        print(
+            f"autolab skip: ERROR target stage '{target_stage}' is not a valid skip target",
+            file=sys.stderr,
+        )
         return 1
     current_idx = ordered_stages.index(current_stage)
     target_idx = ordered_stages.index(target_stage)
@@ -1411,7 +1541,9 @@ def _cmd_lint(args: argparse.Namespace) -> int:
         print("autolab lint: ERROR unable to determine stage", file=sys.stderr)
         return 1
 
-    passed, detail_message, _details = _run_verification_step_detailed(repo_root, state, stage_override=stage_override)
+    passed, detail_message, _details = _run_verification_step_detailed(
+        repo_root, state, stage_override=stage_override
+    )
     status = "PASS" if passed else "FAIL"
     print(f"autolab lint: {status} stage={stage}")
     if detail_message:
@@ -1477,16 +1609,16 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
                     'dry_run_command: "{{python_bin}} -c \\"print(\'golden iteration dry-run: OK\')\\""'
                 )
                 break
-        policy_text = "\n".join(policy_lines) + ("\n" if policy_text.endswith("\n") else "")
+        policy_text = "\n".join(policy_lines) + (
+            "\n" if policy_text.endswith("\n") else ""
+        )
         policy_path.write_text(policy_text, encoding="utf-8")
 
         # 3. Copy golden iteration experiments/ and paper/
         shutil.copytree(
             golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
         )
-        shutil.copytree(
-            golden_root / "paper", repo / "paper", dirs_exist_ok=True
-        )
+        shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
 
         # 4. Copy golden iteration state.json and backlog.yaml
         shutil.copy2(
@@ -1552,7 +1684,10 @@ def _cmd_explain(args: argparse.Namespace) -> int:
 
     registry = load_registry(repo_root)
     if not registry:
-        print("autolab explain: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        print(
+            "autolab explain: ERROR could not load workflow.yaml registry",
+            file=sys.stderr,
+        )
         return 1
 
     spec = registry.get(stage_name)
@@ -1588,17 +1723,30 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     verifier_scripts: list[str] = []
     verifiers_dir = repo_root / ".autolab" / "verifiers"
     if effective.get("schema"):
-        verifier_scripts.append(f"{python_bin} .autolab/verifiers/schema_checks.py --stage {stage_name} --json")
+        verifier_scripts.append(
+            f"{python_bin} .autolab/verifiers/schema_checks.py --stage {stage_name} --json"
+        )
     if effective.get("consistency"):
         if (verifiers_dir / "consistency_checks.py").exists():
-            verifier_scripts.append(f"{python_bin} .autolab/verifiers/consistency_checks.py --stage {stage_name} --json")
+            verifier_scripts.append(
+                f"{python_bin} .autolab/verifiers/consistency_checks.py --stage {stage_name} --json"
+            )
     if effective.get("env_smoke"):
         verifier_scripts.append(f"{python_bin} .autolab/verifiers/run_health.py --json")
-        verifier_scripts.append(f"{python_bin} .autolab/verifiers/result_sanity.py --json")
-    if effective.get("docs_target_update") and stage_name in {"update_docs", "implementation_review"}:
-        verifier_scripts.append(f"{python_bin} .autolab/verifiers/docs_targets.py --json")
+        verifier_scripts.append(
+            f"{python_bin} .autolab/verifiers/result_sanity.py --json"
+        )
+    if effective.get("docs_target_update") and stage_name in {
+        "update_docs",
+        "implementation_review",
+    }:
+        verifier_scripts.append(
+            f"{python_bin} .autolab/verifiers/docs_targets.py --json"
+        )
     if effective.get("prompt_lint"):
-        verifier_scripts.append(f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {stage_name} --json")
+        verifier_scripts.append(
+            f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {stage_name} --json"
+        )
 
     # Pattern-path notes on required_outputs
     output_notes: list[dict[str, str]] = []
@@ -1663,7 +1811,9 @@ def _cmd_explain(args: argparse.Namespace) -> int:
 
         print("")
         print(f"retry_policy: max_retries={max_retries}")
-        print(f"classifications: active={spec.is_active}, terminal={spec.is_terminal}, decision={spec.is_decision}, runner_eligible={spec.is_runner_eligible}")
+        print(
+            f"classifications: active={spec.is_active}, terminal={spec.is_terminal}, decision={spec.is_decision}, runner_eligible={spec.is_runner_eligible}"
+        )
 
     return 0
 
@@ -1702,7 +1852,10 @@ def _cmd_policy_show(args: argparse.Namespace) -> int:
 
     preset_path = scaffold_source / "policy" / f"{preset_name}.yaml"
     if not preset_path.exists():
-        print(f"autolab policy show: ERROR preset '{preset_name}' not found", file=sys.stderr)
+        print(
+            f"autolab policy show: ERROR preset '{preset_name}' not found",
+            file=sys.stderr,
+        )
         return 1
 
     print(f"autolab policy show {preset_name}")
@@ -1725,7 +1878,10 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
     policy = _load_verifier_policy(repo_root)
     registry = load_registry(repo_root)
     if not registry:
-        print("autolab policy doctor: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        print(
+            "autolab policy doctor: ERROR could not load workflow.yaml registry",
+            file=sys.stderr,
+        )
         return 1
 
     issues: list[str] = []
@@ -1737,7 +1893,10 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
     if isinstance(requirements, dict):
         for stage_name, reqs in requirements.items():
             if isinstance(reqs, dict) and reqs.get("dry_run"):
-                if "AUTOLAB DRY-RUN STUB" in dry_run_command or "sys.exit(1)" in dry_run_command:
+                if (
+                    "AUTOLAB DRY-RUN STUB" in dry_run_command
+                    or "sys.exit(1)" in dry_run_command
+                ):
                     issues.append(
                         f"stage '{stage_name}' requires dry_run but dry_run_command is the default stub. "
                         "Configure a project-specific dry_run_command or set dry_run: false."
@@ -1782,7 +1941,10 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
         if isinstance(runner_stages, list):
             for stage_name in runner_stages:
                 stage_name = str(stage_name).strip()
-                if stage_name in registry and not registry[stage_name].is_runner_eligible:
+                if (
+                    stage_name in registry
+                    and not registry[stage_name].is_runner_eligible
+                ):
                     issues.append(
                         f"agent_runner.stages includes '{stage_name}' which is not runner-eligible in workflow.yaml"
                     )
@@ -1814,13 +1976,20 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     registry = load_registry(repo_root)
 
     if not registry:
-        print("autolab docs generate: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        print(
+            "autolab docs generate: ERROR could not load workflow.yaml registry",
+            file=sys.stderr,
+        )
         return 1
 
     # 1. Stage flow diagram
     print("# Autolab Stage Flow")
     print("")
-    active = [name for name, spec in registry.items() if spec.is_active and not spec.is_terminal]
+    active = [
+        name
+        for name, spec in registry.items()
+        if spec.is_active and not spec.is_terminal
+    ]
     flow_parts: list[str] = []
     for name in active:
         spec = registry[name]
@@ -1840,7 +2009,9 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     print("| Stage | Required Outputs |")
     print("|-------|-----------------|")
     for name, spec in registry.items():
-        outputs = ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
+        outputs = (
+            ", ".join(spec.required_outputs) if spec.required_outputs else "(none)"
+        )
         print(f"| {name} | {outputs} |")
     print("")
 
@@ -1850,7 +2021,11 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     print("| Stage | Required Tokens |")
     print("|-------|----------------|")
     for name, spec in registry.items():
-        tokens = ", ".join(sorted(spec.required_tokens)) if spec.required_tokens else "(none)"
+        tokens = (
+            ", ".join(sorted(spec.required_tokens))
+            if spec.required_tokens
+            else "(none)"
+        )
         print(f"| {name} | {tokens} |")
     print("")
 
@@ -1860,7 +2035,9 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     print("| Stage | Active | Terminal | Decision | Runner Eligible |")
     print("|-------|--------|----------|----------|----------------|")
     for name, spec in registry.items():
-        print(f"| {name} | {spec.is_active} | {spec.is_terminal} | {spec.is_decision} | {spec.is_runner_eligible} |")
+        print(
+            f"| {name} | {spec.is_active} | {spec.is_terminal} | {spec.is_decision} | {spec.is_runner_eligible} |"
+        )
 
     return 0
 
@@ -1869,11 +2046,14 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
 # Argument parser
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="autolab command line interface")
     subparsers = parser.add_subparsers(dest="command")
 
-    init = subparsers.add_parser("init", help="Initialize autolab scaffold and state files")
+    init = subparsers.add_parser(
+        "init", help="Initialize autolab scaffold and state files"
+    )
     init.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -1892,12 +2072,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     init.set_defaults(handler=_cmd_init)
 
-    configure_parser = subparsers.add_parser("configure", help="Validate and configure autolab settings")
-    configure_parser.add_argument("--check", action="store_true", help="Check configuration without modifying")
-    configure_parser.add_argument("--state-file", default=".autolab/state.json", help="Path to state file")
+    configure_parser = subparsers.add_parser(
+        "configure", help="Validate and configure autolab settings"
+    )
+    configure_parser.add_argument(
+        "--check", action="store_true", help="Check configuration without modifying"
+    )
+    configure_parser.add_argument(
+        "--state-file", default=".autolab/state.json", help="Path to state file"
+    )
     configure_parser.set_defaults(handler=_cmd_configure)
 
-    reset = subparsers.add_parser("reset", help="Reset autolab scaffold and state to defaults")
+    reset = subparsers.add_parser(
+        "reset", help="Reset autolab scaffold and state to defaults"
+    )
     reset.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -1905,7 +2093,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     reset.set_defaults(handler=_cmd_reset)
 
-    verify = subparsers.add_parser("verify", help="Run stage-relevant verifier checks and write a summary artifact")
+    verify = subparsers.add_parser(
+        "verify", help="Run stage-relevant verifier checks and write a summary artifact"
+    )
     verify.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -1982,7 +2172,9 @@ def _build_parser() -> argparse.ArgumentParser:
     run.set_defaults(strict_implementation_progress=True)
     run.set_defaults(handler=_cmd_run)
 
-    loop = subparsers.add_parser("loop", help="Run bounded stage transitions in sequence")
+    loop = subparsers.add_parser(
+        "loop", help="Run bounded stage transitions in sequence"
+    )
     loop.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -2054,8 +2246,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_cmd_status)
 
-    guardrails_parser = subparsers.add_parser("guardrails", help="Show guardrail counters and thresholds")
-    guardrails_parser.add_argument("--state-file", default=".autolab/state.json", help="Path to state file")
+    guardrails_parser = subparsers.add_parser(
+        "guardrails", help="Show guardrail counters and thresholds"
+    )
+    guardrails_parser.add_argument(
+        "--state-file", default=".autolab/state.json", help="Path to state file"
+    )
     guardrails_parser.set_defaults(handler=_cmd_guardrails)
 
     sync_scaffold = subparsers.add_parser(
@@ -2117,11 +2313,20 @@ def _build_parser() -> argparse.ArgumentParser:
     slurm_job_list.set_defaults(handler=_cmd_slurm_job_list)
 
     # Phase 6b: review subcommand
-    review = subparsers.add_parser("review", help="Record a TA/instructor review decision")
-    review.add_argument("--state-file", default=".autolab/state.json",
-                        help="Path to autolab state JSON (default: .autolab/state.json)")
-    review.add_argument("--status", required=True, choices=("pass", "retry", "stop"),
-                        help="Review decision: pass (continue), retry (back to implementation), stop (end experiment)")
+    review = subparsers.add_parser(
+        "review", help="Record a TA/instructor review decision"
+    )
+    review.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    review.add_argument(
+        "--status",
+        required=True,
+        choices=("pass", "retry", "stop"),
+        help="Review decision: pass (continue), retry (back to implementation), stop (end experiment)",
+    )
     review.set_defaults(handler=_cmd_review)
 
     # Lock management
@@ -2144,7 +2349,9 @@ def _build_parser() -> argparse.ArgumentParser:
     lock.set_defaults(handler=_cmd_lock)
 
     # Unlock alias (delegates to lock break)
-    unlock = subparsers.add_parser("unlock", help="Force-break the autolab run lock (alias for 'lock break')")
+    unlock = subparsers.add_parser(
+        "unlock", help="Force-break the autolab run lock (alias for 'lock break')"
+    )
     unlock.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -2158,7 +2365,9 @@ def _build_parser() -> argparse.ArgumentParser:
     unlock.set_defaults(handler=_cmd_lock, action="break")
 
     # Skip stage
-    skip = subparsers.add_parser("skip", help="Skip the current stage forward with audit trail")
+    skip = subparsers.add_parser(
+        "skip", help="Skip the current stage forward with audit trail"
+    )
     skip.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -2177,7 +2386,9 @@ def _build_parser() -> argparse.ArgumentParser:
     skip.set_defaults(handler=_cmd_skip)
 
     # Lint (user-friendly verify alias)
-    lint = subparsers.add_parser("lint", help="Run stage verifiers with user-friendly output")
+    lint = subparsers.add_parser(
+        "lint", help="Run stage verifiers with user-friendly output"
+    )
     lint.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -2191,9 +2402,13 @@ def _build_parser() -> argparse.ArgumentParser:
     lint.set_defaults(handler=_cmd_lint)
 
     # Explain stage
-    explain = subparsers.add_parser("explain", help="Show effective configuration for a stage")
+    explain = subparsers.add_parser(
+        "explain", help="Show effective configuration for a stage"
+    )
     explain_subparsers = explain.add_subparsers(dest="explain_command")
-    explain_stage = explain_subparsers.add_parser("stage", help="Show effective stage config")
+    explain_stage = explain_subparsers.add_parser(
+        "stage", help="Show effective stage config"
+    )
     explain_stage.add_argument("stage", help="Stage name to explain")
     explain_stage.add_argument(
         "--state-file",
@@ -2215,14 +2430,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     policy_subparsers = policy.add_subparsers(dest="policy_command")
 
-    policy_list = policy_subparsers.add_parser("list", help="List available policy presets")
+    policy_list = policy_subparsers.add_parser(
+        "list", help="List available policy presets"
+    )
     policy_list.set_defaults(handler=_cmd_policy_list)
 
-    policy_show = policy_subparsers.add_parser("show", help="Show contents of a policy preset")
+    policy_show = policy_subparsers.add_parser(
+        "show", help="Show contents of a policy preset"
+    )
     policy_show.add_argument("preset", help="Preset name to show")
     policy_show.set_defaults(handler=_cmd_policy_show)
 
-    policy_doctor = policy_subparsers.add_parser("doctor", help="Diagnose common policy misconfigurations")
+    policy_doctor = policy_subparsers.add_parser(
+        "doctor", help="Diagnose common policy misconfigurations"
+    )
     policy_doctor.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -2251,7 +2472,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Docs generation
     docs = subparsers.add_parser("docs", help="Generate documentation from registry")
     docs_subparsers = docs.add_subparsers(dest="docs_command")
-    docs_generate = docs_subparsers.add_parser("generate", help="Generate stage flow, artifact map, and token reference")
+    docs_generate = docs_subparsers.add_parser(
+        "generate", help="Generate stage flow, artifact map, and token reference"
+    )
     docs_generate.add_argument(
         "--state-file",
         default=".autolab/state.json",

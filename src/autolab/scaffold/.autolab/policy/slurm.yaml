@@ -1,3 +1,4 @@
+---
 requirements_by_stage:
   implementation:
     tests: true
@@ -47,18 +48,16 @@ requirements_by_stage:
     consistency: true
     env_smoke: false
     docs_target_update: true
-
 prompt_lint:
   mode: enforce
-
 safe_automation_protected_files: true
-
 # Example SLURM-specific dry_run_command (uncomment and customize):
 # dry_run_command: "sbatch --test-only scripts/run.sbatch"
-
 autorun:
   todo_fallback:
     slurm:
-      stage: "hypothesis"
-      scope: "policy:no_task_fallback:slurm"
-      text: "No remaining actionable tasks were detected on remote SLURM execution context. Define a new experiment or analysis direction first, then plan implementation improvements only after that experiment/analysis path is explicit."
+      stage: hypothesis
+      scope: policy:no_task_fallback:slurm
+      text: No remaining actionable tasks were detected on remote SLURM execution
+        context. Define a new experiment or analysis direction first, then plan implementation
+        improvements only after that experiment/analysis path is explicit.

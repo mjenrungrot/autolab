@@ -43,9 +43,7 @@ def _check_subset_constraints(
             )
             continue
         if not isinstance(raw_requirements, dict):
-            failures.append(
-                f"requirements_by_stage.{stage} must be a mapping"
-            )
+            failures.append(f"requirements_by_stage.{stage} must be a mapping")
             continue
 
         for raw_key, raw_required in raw_requirements.items():
@@ -64,8 +62,15 @@ def _check_subset_constraints(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", default=None, help="Optional stage label for envelope context.")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--stage", default=None, help="Optional stage label for envelope context."
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
     stage = str(args.stage or "").strip()
 

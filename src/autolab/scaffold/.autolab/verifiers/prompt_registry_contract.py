@@ -42,7 +42,11 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
         normalized = str(output).replace("<RUN_ID>", "").replace("{{run_id}}", "")
         # Extract the filename portion
         filename = Path(normalized).name
-        if filename and filename not in outputs_text and str(output) not in outputs_text:
+        if (
+            filename
+            and filename not in outputs_text
+            and str(output) not in outputs_text
+        ):
             failures.append(
                 f"{prompt_path} OUTPUTS section does not mention required output '{output}' from workflow.yaml"
             )
@@ -52,19 +56,31 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Stage to check (default: all)")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     try:
         workflow = load_yaml(WORKFLOW_PATH)
     except Exception as exc:
-        result = make_result("prompt_registry_contract", args.stage or "", [], [str(exc)])
+        result = make_result(
+            "prompt_registry_contract", args.stage or "", [], [str(exc)]
+        )
         print_result(result, as_json=args.json)
         return 1
 
     stages_config = workflow.get("stages", {})
     if not isinstance(stages_config, dict):
-        result = make_result("prompt_registry_contract", "", [], ["workflow.yaml stages must be a mapping"])
+        result = make_result(
+            "prompt_registry_contract",
+            "",
+            [],
+            ["workflow.yaml stages must be a mapping"],
+        )
         print_result(result, as_json=args.json)
         return 1
 
@@ -72,7 +88,12 @@ def main() -> int:
     if args.stage:
         requested = str(args.stage).strip()
         if requested not in stages_config:
-            result = make_result("prompt_registry_contract", requested, [], [f"unknown stage '{requested}'"])
+            result = make_result(
+                "prompt_registry_contract",
+                requested,
+                [],
+                [f"unknown stage '{requested}'"],
+            )
             print_result(result, as_json=args.json)
             return 1
         failures.extend(_check_stage(requested, stages_config[requested], PROMPTS_DIR))
@@ -83,7 +104,13 @@ def main() -> int:
 
     checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
     if not failures:
-        checks = [{"name": "prompt_registry_contract", "status": "pass", "detail": "all prompts cover registry outputs"}]
+        checks = [
+            {
+                "name": "prompt_registry_contract",
+                "status": "pass",
+                "detail": "all prompts cover registry outputs",
+            }
+        ]
     result = make_result("prompt_registry_contract", args.stage or "", checks, failures)
     print_result(result, as_json=args.json)
     return 0 if not failures else 1

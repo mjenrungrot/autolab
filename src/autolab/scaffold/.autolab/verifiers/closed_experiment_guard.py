@@ -77,18 +77,45 @@ def _matches_closed_iteration(path: str, iteration_id: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     closed_iterations = _load_closed_iteration_ids()
     if not closed_iterations:
-        result = make_result("closed_experiment_guard", "", [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iterations"}], [])
+        result = make_result(
+            "closed_experiment_guard",
+            "",
+            [
+                {
+                    "name": "closed_experiment_guard",
+                    "status": "pass",
+                    "detail": "no closed iterations",
+                }
+            ],
+            [],
+        )
         print_result(result, as_json=args.json)
         return 0
 
     changed_paths = _git_changed_paths()
     if not changed_paths:
-        result = make_result("closed_experiment_guard", "", [{"name": "closed_experiment_guard", "status": "pass", "detail": "no changed paths"}], [])
+        result = make_result(
+            "closed_experiment_guard",
+            "",
+            [
+                {
+                    "name": "closed_experiment_guard",
+                    "status": "pass",
+                    "detail": "no changed paths",
+                }
+            ],
+            [],
+        )
         print_result(result, as_json=args.json)
         return 0
 
@@ -101,10 +128,26 @@ def main() -> int:
 
     passed = not violations
 
-    checks = [{"name": f"{iteration_id}:{changed}", "status": "fail", "detail": f"closed iteration '{iteration_id}' has modified path: {changed}"} for iteration_id, changed in violations]
+    checks = [
+        {
+            "name": f"{iteration_id}:{changed}",
+            "status": "fail",
+            "detail": f"closed iteration '{iteration_id}' has modified path: {changed}",
+        }
+        for iteration_id, changed in violations
+    ]
     if passed:
-        checks = [{"name": "closed_experiment_guard", "status": "pass", "detail": "no closed iteration violations"}]
-    errors = [f"closed iteration '{iteration_id}' has modified path: {changed}" for iteration_id, changed in violations]
+        checks = [
+            {
+                "name": "closed_experiment_guard",
+                "status": "pass",
+                "detail": "no closed iteration violations",
+            }
+        ]
+    errors = [
+        f"closed iteration '{iteration_id}' has modified path: {changed}"
+        for iteration_id, changed in violations
+    ]
     result = make_result("closed_experiment_guard", "", checks, errors)
     print_result(result, as_json=args.json)
 

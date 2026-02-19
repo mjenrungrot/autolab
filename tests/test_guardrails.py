@@ -29,6 +29,7 @@ from autolab.utils import _write_guardrail_breach, _write_json
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_policy(repo_root: Path, policy: dict[str, Any]) -> Path:
     """Write a verifier_policy.yaml and return its path."""
     policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
@@ -94,13 +95,16 @@ class TestLoadGuardrailConfigCustomValues:
     """_load_guardrail_config correctly parses custom policy values."""
 
     def test_all_fields_customized(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "max_same_decision_streak": 5,
-            "max_no_progress_decisions": 4,
-            "max_update_docs_cycles": 6,
-            "max_generated_todo_tasks": 10,
-            "on_breach": "stop",
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "max_same_decision_streak": 5,
+                "max_no_progress_decisions": 4,
+                "max_update_docs_cycles": 6,
+                "max_generated_todo_tasks": 10,
+                "on_breach": "stop",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.max_same_decision_streak == 5
         assert config.max_no_progress_decisions == 4
@@ -109,9 +113,12 @@ class TestLoadGuardrailConfigCustomValues:
         assert config.on_breach == "stop"
 
     def test_partial_override(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "max_same_decision_streak": 7,
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "max_same_decision_streak": 7,
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.max_same_decision_streak == 7
         # Other fields fall back to defaults.
@@ -123,23 +130,32 @@ class TestLoadGuardrailConfigCustomValues:
     def test_on_breach_invalid_falls_back_to_human_review(self, tmp_path: Path) -> None:
         """on_breach must be one of TERMINAL_STAGES; invalid values default
         to 'human_review'."""
-        repo = _make_repo(tmp_path, guardrails={
-            "on_breach": "implementation",  # not a terminal stage
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "on_breach": "implementation",  # not a terminal stage
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.on_breach == "human_review"
 
     def test_on_breach_empty_string_falls_back(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "on_breach": "",
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "on_breach": "",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.on_breach == "human_review"
 
     def test_on_breach_accepts_stop(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "on_breach": "stop",
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "on_breach": "stop",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.on_breach == "stop"
 
@@ -152,7 +168,9 @@ class TestLoadGuardrailConfigMinClamp:
     check.  Only genuinely negative values reach the ``< 1`` clamp.
     """
 
-    def test_zero_max_same_decision_streak_coerced_to_default(self, tmp_path: Path) -> None:
+    def test_zero_max_same_decision_streak_coerced_to_default(
+        self, tmp_path: Path
+    ) -> None:
         """0 is falsy so ``int(0 or 3)`` produces 3 (the default)."""
         repo = _make_repo(tmp_path, guardrails={"max_same_decision_streak": 0})
         config = _load_guardrail_config(repo)
@@ -163,27 +181,37 @@ class TestLoadGuardrailConfigMinClamp:
         config = _load_guardrail_config(repo)
         assert config.max_no_progress_decisions == 1
 
-    def test_zero_max_update_docs_cycles_coerced_to_default(self, tmp_path: Path) -> None:
+    def test_zero_max_update_docs_cycles_coerced_to_default(
+        self, tmp_path: Path
+    ) -> None:
         repo = _make_repo(tmp_path, guardrails={"max_update_docs_cycles": 0})
         config = _load_guardrail_config(repo)
         assert config.max_update_docs_cycles == 3
 
-    def test_zero_max_generated_todo_tasks_coerced_to_default(self, tmp_path: Path) -> None:
+    def test_zero_max_generated_todo_tasks_coerced_to_default(
+        self, tmp_path: Path
+    ) -> None:
         repo = _make_repo(tmp_path, guardrails={"max_generated_todo_tasks": 0})
         config = _load_guardrail_config(repo)
         assert config.max_generated_todo_tasks == 5
 
-    def test_negative_max_same_decision_streak_clamps_to_one(self, tmp_path: Path) -> None:
+    def test_negative_max_same_decision_streak_clamps_to_one(
+        self, tmp_path: Path
+    ) -> None:
         repo = _make_repo(tmp_path, guardrails={"max_same_decision_streak": -2})
         config = _load_guardrail_config(repo)
         assert config.max_same_decision_streak == 1
 
-    def test_negative_max_update_docs_cycles_clamps_to_one(self, tmp_path: Path) -> None:
+    def test_negative_max_update_docs_cycles_clamps_to_one(
+        self, tmp_path: Path
+    ) -> None:
         repo = _make_repo(tmp_path, guardrails={"max_update_docs_cycles": -1})
         config = _load_guardrail_config(repo)
         assert config.max_update_docs_cycles == 1
 
-    def test_negative_max_generated_todo_tasks_clamps_to_one(self, tmp_path: Path) -> None:
+    def test_negative_max_generated_todo_tasks_clamps_to_one(
+        self, tmp_path: Path
+    ) -> None:
         repo = _make_repo(tmp_path, guardrails={"max_generated_todo_tasks": -3})
         config = _load_guardrail_config(repo)
         assert config.max_generated_todo_tasks == 1
@@ -314,6 +342,7 @@ class TestWriteGuardrailBreach:
 # 3. Same-decision-streak escalation logic
 # ===================================================================
 
+
 class TestSameDecisionStreakEscalation:
     """Verify the same-decision-streak counter logic used in the
     decide_repeat path of _run_once_standard.
@@ -412,6 +441,7 @@ class TestSameDecisionStreakEscalation:
 # ===================================================================
 # 4. No-progress escalation logic
 # ===================================================================
+
 
 class TestNoProgressEscalation:
     """Verify the no-progress counter logic from the decide_repeat path.
@@ -514,6 +544,7 @@ class TestNoProgressEscalation:
 # 5. Update-docs-cycle escalation logic
 # ===================================================================
 
+
 class TestUpdateDocsCycleEscalation:
     """Verify the update_docs cycle counter logic from the
     extract_results -> update_docs transition in _run_once_standard.
@@ -579,10 +610,13 @@ class TestGuardrailConfigBreachRoundTrip:
     def test_same_decision_streak_breach_records_config_values(
         self, tmp_path: Path
     ) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "max_same_decision_streak": 2,
-            "on_breach": "stop",
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "max_same_decision_streak": 2,
+                "on_breach": "stop",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.max_same_decision_streak == 2
         assert config.on_breach == "stop"
@@ -603,13 +637,14 @@ class TestGuardrailConfigBreachRoundTrip:
         assert payload["counters"]["max_same_decision_streak"] == 2
         assert payload["remediation"] == "Escalated to 'stop'."
 
-    def test_no_progress_breach_records_config_values(
-        self, tmp_path: Path
-    ) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "max_no_progress_decisions": 4,
-            "on_breach": "human_review",
-        })
+    def test_no_progress_breach_records_config_values(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "max_no_progress_decisions": 4,
+                "on_breach": "human_review",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.max_no_progress_decisions == 4
 
@@ -630,10 +665,13 @@ class TestGuardrailConfigBreachRoundTrip:
     def test_update_docs_cycle_breach_records_config_values(
         self, tmp_path: Path
     ) -> None:
-        repo = _make_repo(tmp_path, guardrails={
-            "max_update_docs_cycles": 2,
-            "on_breach": "human_review",
-        })
+        repo = _make_repo(
+            tmp_path,
+            guardrails={
+                "max_update_docs_cycles": 2,
+                "on_breach": "human_review",
+            },
+        )
         config = _load_guardrail_config(repo)
         assert config.max_update_docs_cycles == 2
 

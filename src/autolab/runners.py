@@ -17,7 +17,12 @@ from autolab.constants import (
     ITERATION_ID_SAFE_PATTERN,
 )
 from autolab.models import AgentRunnerEditScopeConfig, StageCheckError, StateError
-from autolab.config import _load_agent_runner_config, _load_protected_files, _load_verifier_policy, _resolve_run_agent_mode
+from autolab.config import (
+    _load_agent_runner_config,
+    _load_protected_files,
+    _load_verifier_policy,
+    _resolve_run_agent_mode,
+)
 from autolab.state import (
     _load_state,
     _normalize_state,
@@ -58,7 +63,12 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
 def _redact_sensitive_text(text: str) -> str:
     redacted = str(text)
     for pattern in SECRET_PATTERNS:
-        redacted = pattern.sub(lambda match: f"{match.group(1)}=<redacted>" if match.groups() else "<redacted>", redacted)
+        redacted = pattern.sub(
+            lambda match: (
+                f"{match.group(1)}=<redacted>" if match.groups() else "<redacted>"
+            ),
+            redacted,
+        )
     return redacted
 
 
@@ -90,7 +100,8 @@ def _collect_filesystem_snapshot(repo_root: Path) -> dict[str, tuple[float, int]
     for dirpath, dirnames, filenames in os.walk(root):
         # Skip hidden dirs and __pycache__
         dirnames[:] = [
-            d for d in dirnames
+            d
+            for d in dirnames
             if not d.startswith(".") and d != "__pycache__" and d != "node_modules"
         ]
         for fname in filenames:
@@ -134,15 +145,21 @@ def _is_within_scope(path: str, allowed_roots: tuple[str, ...]) -> bool:
     return False
 
 
-def _resolve_repo_relative_dir(repo_root: Path, raw_dir: str, *, field_name: str) -> Path:
+def _resolve_repo_relative_dir(
+    repo_root: Path, raw_dir: str, *, field_name: str
+) -> Path:
     value = str(raw_dir).strip()
     if not value:
         raise StageCheckError(f"{field_name} must be a non-empty repo-relative path")
     candidate = Path(value)
     if candidate.is_absolute():
-        raise StageCheckError(f"{field_name} must be repo-relative, got absolute path '{value}'")
+        raise StageCheckError(
+            f"{field_name} must be repo-relative, got absolute path '{value}'"
+        )
     if any(part == ".." for part in candidate.parts):
-        raise StageCheckError(f"{field_name} must not traverse parent directories: '{value}'")
+        raise StageCheckError(
+            f"{field_name} must not traverse parent directories: '{value}'"
+        )
 
     root = repo_root.resolve()
     resolved = (repo_root / candidate).resolve()
@@ -187,14 +204,21 @@ def _resolve_runner_workspace(
         require_exists=not ensure_iteration_dir,
     )
 
-    if workspace_dir.parent.parent != experiments_root or workspace_dir.parent.name not in EXPERIMENT_TYPES:
+    if (
+        workspace_dir.parent.parent != experiments_root
+        or workspace_dir.parent.name not in EXPERIMENT_TYPES
+    ):
         raise StageCheckError(
             f"state.iteration_id must resolve within experiments/ for runner workspace scoping, got '{workspace_dir}'"
         )
 
     if ensure_iteration_dir and not workspace_dir.exists():
         created: list[Path] = []
-        effective_type = workspace_type if workspace_type in EXPERIMENT_TYPES else DEFAULT_EXPERIMENT_TYPE
+        effective_type = (
+            workspace_type
+            if workspace_type in EXPERIMENT_TYPES
+            else DEFAULT_EXPERIMENT_TYPE
+        )
         _ensure_iteration_skeleton(
             repo_root,
             normalized_iteration_id,
@@ -215,7 +239,9 @@ def _resolve_runner_workspace(
     if not workspace_dir.exists():
         raise StageCheckError(f"iteration workspace is missing at {workspace_dir}")
     if not workspace_dir.is_dir():
-        raise StageCheckError(f"iteration workspace path is not a directory at {workspace_dir}")
+        raise StageCheckError(
+            f"iteration workspace path is not a directory at {workspace_dir}"
+        )
     return workspace_dir
 
 
@@ -233,7 +259,9 @@ def _resolve_core_add_dirs(
             field_name="agent_runner.edit_scope.core_dirs",
         )
         if resolved == root:
-            raise StageCheckError("agent_runner.edit_scope.core_dirs must not include repository root")
+            raise StageCheckError(
+                "agent_runner.edit_scope.core_dirs must not include repository root"
+            )
         if resolved not in resolved_dirs:
             resolved_dirs.append(resolved)
     return tuple(resolved_dirs)
@@ -300,7 +328,9 @@ def _invoke_agent_runner(
     mode = _resolve_run_agent_mode(run_agent_mode)
     if stage not in runner.stages:
         if mode == "force_on":
-            _append_log(repo_root, f"agent runner skipped by stage filter stage={stage}")
+            _append_log(
+                repo_root, f"agent runner skipped by stage filter stage={stage}"
+            )
         return
 
     if mode == "force_off":
@@ -308,7 +338,9 @@ def _invoke_agent_runner(
     if mode == "policy" and not runner.enabled:
         return
     if mode == "force_on" and not runner.enabled:
-        _append_log(repo_root, "agent runner forced by --run-agent (policy enabled=false)")
+        _append_log(
+            repo_root, "agent runner forced by --run-agent (policy enabled=false)"
+        )
     if mode == "force_on" and not runner.command:
         raise StageCheckError(
             "agent_runner.command is empty; set agent_runner.command in .autolab/verifier_policy.yaml"
@@ -323,7 +355,9 @@ def _invoke_agent_runner(
     try:
         prompt_state = _normalize_state(_load_state(state_path))
     except StateError as exc:
-        raise StageCheckError(f"prompt rendering requires valid state at {state_path}: {exc}") from exc
+        raise StageCheckError(
+            f"prompt rendering requires valid state at {state_path}: {exc}"
+        ) from exc
     workspace_dir = _resolve_runner_workspace(
         repo_root,
         iteration_id=iteration_id,
@@ -338,7 +372,9 @@ def _invoke_agent_runner(
     runner_scope = {
         "mode": runner.edit_scope.mode,
         "workspace_dir": str(workspace_dir),
-        "allowed_edit_dirs": [str(path.relative_to(repo_root)) for path in resolved_core_dirs],
+        "allowed_edit_dirs": [
+            str(path.relative_to(repo_root)) for path in resolved_core_dirs
+        ],
     }
     prompt_bundle = _render_stage_prompt(
         repo_root,
@@ -373,7 +409,10 @@ def _invoke_agent_runner(
         sorted(
             {
                 workspace_rel,
-                *(path.relative_to(repo_root).as_posix() for path in resolved_core_dirs),
+                *(
+                    path.relative_to(repo_root).as_posix()
+                    for path in resolved_core_dirs
+                ),
             }
         )
     )
@@ -389,9 +428,13 @@ def _invoke_agent_runner(
     env["AUTOLAB_WORKSPACE_DIR"] = str(workspace_dir)
     env["AUTOLAB_CORE_ADD_DIRS"] = ",".join(str(path) for path in resolved_core_dirs)
 
-    timeout: float | None = None if runner.timeout_seconds <= 0 else runner.timeout_seconds
+    timeout: float | None = (
+        None if runner.timeout_seconds <= 0 else runner.timeout_seconds
+    )
     run_report: dict[str, Any] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "stage": stage,
         "runner": runner.runner,
         "workspace_dir": str(workspace_dir),
@@ -452,12 +495,13 @@ def _invoke_agent_runner(
         try:
             popen_command = shlex.split(command)
         except ValueError as exc:
-            raise StageCheckError(f"agent runner command could not be parsed: {exc}") from exc
+            raise StageCheckError(
+                f"agent runner command could not be parsed: {exc}"
+            ) from exc
         if not popen_command:
             raise StageCheckError("agent runner command resolved to empty arguments")
         run_report["command_argv"] = [
-            _redact_sensitive_text(str(token))
-            for token in popen_command
+            _redact_sensitive_text(str(token)) for token in popen_command
         ]
         _write_runner_execution_report(repo_root, payload=run_report)
 
@@ -483,12 +527,22 @@ def _invoke_agent_runner(
 
         stdout_thread = threading.Thread(
             target=_pump_stream,
-            args=(process.stdout, sys.stdout, captured_stdout_chunks, captured_stdout_len),
+            args=(
+                process.stdout,
+                sys.stdout,
+                captured_stdout_chunks,
+                captured_stdout_len,
+            ),
             daemon=True,
         )
         stderr_thread = threading.Thread(
             target=_pump_stream,
-            args=(process.stderr, sys.stderr, captured_stderr_chunks, captured_stderr_len),
+            args=(
+                process.stderr,
+                sys.stderr,
+                captured_stderr_chunks,
+                captured_stderr_len,
+            ),
             daemon=True,
         )
         stdout_thread.start()
@@ -497,7 +551,10 @@ def _invoke_agent_runner(
         try:
             returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            _append_log(repo_root, f"agent runner timeout stage={stage} timeout_seconds={runner.timeout_seconds}")
+            _append_log(
+                repo_root,
+                f"agent runner timeout stage={stage} timeout_seconds={runner.timeout_seconds}",
+            )
             run_report["status"] = "timeout"
             run_report["exit_code"] = None
             _write_runner_execution_report(repo_root, payload=run_report)
@@ -539,7 +596,9 @@ def _invoke_agent_runner(
         current_snapshot = _collect_change_snapshot(repo_root)
         delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
         effective_delta_paths = delta_paths
-        out_of_scope = sorted(path for path in delta_paths if not _is_within_scope(path, allowed_roots))
+        out_of_scope = sorted(
+            path for path in delta_paths if not _is_within_scope(path, allowed_roots)
+        )
         if out_of_scope:
             sample = ", ".join(out_of_scope[:8])
             _append_log(
@@ -555,9 +614,13 @@ def _invoke_agent_runner(
             )
     elif fs_baseline_snapshot is not None:
         fs_current_snapshot = _collect_filesystem_snapshot(repo_root)
-        fs_delta_paths = _filesystem_snapshot_delta_paths(fs_baseline_snapshot, fs_current_snapshot)
+        fs_delta_paths = _filesystem_snapshot_delta_paths(
+            fs_baseline_snapshot, fs_current_snapshot
+        )
         effective_delta_paths = fs_delta_paths
-        fs_out_of_scope = sorted(path for path in fs_delta_paths if not _is_within_scope(path, allowed_roots))
+        fs_out_of_scope = sorted(
+            path for path in fs_delta_paths if not _is_within_scope(path, allowed_roots)
+        )
         if fs_out_of_scope:
             sample = ", ".join(fs_out_of_scope[:8])
             _append_log(
@@ -579,7 +642,8 @@ def _invoke_agent_runner(
         if protected_files:
             protected_patterns = tuple(protected_files)
             violated = sorted(
-                path for path in effective_delta_paths
+                path
+                for path in effective_delta_paths
                 if _path_matches_any(path.replace("\\", "/"), protected_patterns)
             )
             if violated:
@@ -601,4 +665,7 @@ def _invoke_agent_runner(
     run_report["exit_code"] = int(returncode)
     _write_runner_execution_report(repo_root, payload=run_report)
     if returncode != 0:
-        _append_log(repo_root, f"agent runner non-zero exit at stage={stage}; continuing with stage evaluation")
+        _append_log(
+            repo_root,
+            f"agent runner non-zero exit at stage={stage}; continuing with stage evaluation",
+        )

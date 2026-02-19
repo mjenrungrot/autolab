@@ -44,10 +44,14 @@ def _check_review_gate(iteration_dir: Path, *, stage: str) -> list[str]:
     review_path = iteration_dir / "review_result.json"
     review_payload = _read_optional_json(review_path)
     if review_payload is None:
-        return [f"{review_path} is missing or invalid; review_result.status=pass is required before launch"]
+        return [
+            f"{review_path} is missing or invalid; review_result.status=pass is required before launch"
+        ]
     review_status = str(review_payload.get("status", "")).strip().lower()
     if review_status != "pass":
-        return [f"{review_path} status must be 'pass' before launch/extract/docs, got '{review_status or '<missing>'}'"]
+        return [
+            f"{review_path} status must be 'pass' before launch/extract/docs, got '{review_status or '<missing>'}'"
+        ]
     return []
 
 
@@ -63,11 +67,15 @@ def _check_design_manifest_consistency(
         if isinstance(design_payload.get("compute"), dict)
         else ""
     )
-    manifest_host_mode = str(
-        manifest_payload.get("host_mode")
-        or manifest_payload.get("launch_mode")
-        or (manifest_payload.get("launch") or {}).get("mode")
-    ).strip().lower()
+    manifest_host_mode = (
+        str(
+            manifest_payload.get("host_mode")
+            or manifest_payload.get("launch_mode")
+            or (manifest_payload.get("launch") or {}).get("mode")
+        )
+        .strip()
+        .lower()
+    )
     if design_location and manifest_host_mode and design_location != manifest_host_mode:
         failures.append(
             f"design.compute.location='{design_location}' does not match run_manifest host/launch mode '{manifest_host_mode}'"
@@ -92,7 +100,11 @@ def _check_metric_name_consistency(
     primary_metric = metrics_payload.get("primary_metric")
     if isinstance(primary_metric, dict):
         metrics_metric_name = str(primary_metric.get("name", "")).strip()
-    if design_metric_name and metrics_metric_name and design_metric_name != metrics_metric_name:
+    if (
+        design_metric_name
+        and metrics_metric_name
+        and design_metric_name != metrics_metric_name
+    ):
         failures.append(
             f"metrics.primary_metric.name='{metrics_metric_name}' does not match design.metrics.primary.name='{design_metric_name}'"
         )
@@ -111,7 +123,11 @@ def _check_run_scoped_fields(
 
     if isinstance(manifest_payload, dict):
         manifest_iteration_id = str(manifest_payload.get("iteration_id", "")).strip()
-        if state_iteration_id and manifest_iteration_id and state_iteration_id != manifest_iteration_id:
+        if (
+            state_iteration_id
+            and manifest_iteration_id
+            and state_iteration_id != manifest_iteration_id
+        ):
             failures.append(
                 f"run_manifest iteration_id '{manifest_iteration_id}' does not match state.iteration_id '{state_iteration_id}'"
             )
@@ -130,7 +146,11 @@ def _check_run_scoped_fields(
 
     if isinstance(metrics_payload, dict):
         metrics_iteration_id = str(metrics_payload.get("iteration_id", "")).strip()
-        if state_iteration_id and metrics_iteration_id and state_iteration_id != metrics_iteration_id:
+        if (
+            state_iteration_id
+            and metrics_iteration_id
+            and state_iteration_id != metrics_iteration_id
+        ):
             failures.append(
                 f"metrics iteration_id '{metrics_iteration_id}' does not match state.iteration_id '{state_iteration_id}'"
             )
@@ -180,6 +200,7 @@ def _check_decision_evidence_pointers(iteration_dir: Path) -> list[str]:
         if not candidate.exists():
             # Also try from repo root
             from verifier_lib import REPO_ROOT
+
             alt = REPO_ROOT / pointer
             if not alt.exists():
                 failures.append(
@@ -204,7 +225,9 @@ def _check_iteration_id_chain(iteration_dir: Path, run_id: str) -> list[str]:
     if decision is not None:
         artifacts.append(("decision_result.json", decision))
     if run_id:
-        manifest = _read_optional_json(iteration_dir / "runs" / run_id / "run_manifest.json")
+        manifest = _read_optional_json(
+            iteration_dir / "runs" / run_id / "run_manifest.json"
+        )
         if manifest is not None:
             artifacts.append((f"runs/{run_id}/run_manifest.json", manifest))
         metrics = _read_optional_json(iteration_dir / "runs" / run_id / "metrics.json")
@@ -224,14 +247,23 @@ def _check_iteration_id_chain(iteration_dir: Path, run_id: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", default=None, help="Optional stage override for gating behavior")
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--stage", default=None, help="Optional stage override for gating behavior"
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     try:
         state = load_state()
     except Exception as exc:
-        result = make_result("consistency_checks", str(args.stage or ""), [], [str(exc)])
+        result = make_result(
+            "consistency_checks", str(args.stage or ""), [], [str(exc)]
+        )
         print_result(result, as_json=args.json)
         return 1
 
@@ -240,12 +272,22 @@ def main() -> int:
     run_id = str(state.get("last_run_id", "")).strip()
 
     design_payload = _read_optional_yaml(iteration_dir / "design.yaml")
-    manifest_payload = _read_optional_json(iteration_dir / "runs" / run_id / "run_manifest.json") if run_id else None
-    metrics_payload = _read_optional_json(iteration_dir / "runs" / run_id / "metrics.json") if run_id else None
+    manifest_payload = (
+        _read_optional_json(iteration_dir / "runs" / run_id / "run_manifest.json")
+        if run_id
+        else None
+    )
+    metrics_payload = (
+        _read_optional_json(iteration_dir / "runs" / run_id / "metrics.json")
+        if run_id
+        else None
+    )
 
     failures: list[str] = []
     failures.extend(_check_review_gate(iteration_dir, stage=stage))
-    failures.extend(_check_design_manifest_consistency(design_payload, manifest_payload))
+    failures.extend(
+        _check_design_manifest_consistency(design_payload, manifest_payload)
+    )
     failures.extend(_check_metric_name_consistency(design_payload, metrics_payload))
     failures.extend(
         _check_run_scoped_fields(

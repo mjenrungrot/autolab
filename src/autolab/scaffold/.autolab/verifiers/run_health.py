@@ -32,11 +32,21 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
 
     run_id_in_manifest = str(manifest.get("run_id", "")).strip()
     if run_id_in_manifest and run_id_in_manifest != run_id:
-        failures.append(f"{manifest_path} run_id mismatch: expected {run_id}, found {run_id_in_manifest}")
+        failures.append(
+            f"{manifest_path} run_id mismatch: expected {run_id}, found {run_id_in_manifest}"
+        )
 
-    host_mode = str(
-        manifest.get("host_mode", manifest.get("launch_mode", manifest.get("location", "local")))
-    ).strip().lower() or "local"
+    host_mode = (
+        str(
+            manifest.get(
+                "host_mode",
+                manifest.get("launch_mode", manifest.get("location", "local")),
+            )
+        )
+        .strip()
+        .lower()
+        or "local"
+    )
     if host_mode not in {"local", "slurm"}:
         failures.append(f"{manifest_path} host_mode must be local or slurm")
 
@@ -74,7 +84,9 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
                     )
         slurm_ledger_path = REPO_ROOT / "docs" / "slurm_job_list.md"
         if not slurm_ledger_path.exists():
-            failures.append(f"{slurm_ledger_path} is required for slurm launch tracking")
+            failures.append(
+                f"{slurm_ledger_path} is required for slurm launch tracking"
+            )
         else:
             ledger_text = slurm_ledger_path.read_text(encoding="utf-8")
             if f"run_id={run_id}" not in ledger_text:
@@ -107,7 +119,11 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     run_status = manifest_status
     if run_status in {"failed", "error"}:
         failures.append(f"{manifest_path} has failed status")
-    if run_status and run_status not in completion_like_statuses and run_status not in in_progress_statuses:
+    if (
+        run_status
+        and run_status not in completion_like_statuses
+        and run_status not in in_progress_statuses
+    ):
         failures.append(
             f"{manifest_path} status '{run_status}' is not recognized "
             f"(expected completion-like or in-progress states)"
@@ -122,7 +138,12 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -139,12 +160,25 @@ def main() -> int:
     run_id = str(state.get("last_run_id", "")).strip()
 
     if stage != "launch":
-        result = make_result("run_health", stage, [{"name": "run_health", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        result = make_result(
+            "run_health",
+            stage,
+            [
+                {
+                    "name": "run_health",
+                    "status": "pass",
+                    "detail": f"skipped for stage={stage}",
+                }
+            ],
+            [],
+        )
         print_result(result, as_json=args.json)
         return 0
 
     if not iteration_id or not run_id or run_id.startswith("<"):
-        result = make_result("run_health", stage, [], ["missing iteration_id/last_run_id"])
+        result = make_result(
+            "run_health", stage, [], ["missing iteration_id/last_run_id"]
+        )
         print_result(result, as_json=args.json)
         return 1
 
@@ -159,7 +193,13 @@ def main() -> int:
 
     checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
     if passed:
-        checks = [{"name": "run_health", "status": "pass", "detail": "all run health checks passed"}]
+        checks = [
+            {
+                "name": "run_health",
+                "status": "pass",
+                "detail": "all run health checks passed",
+            }
+        ]
     result = make_result("run_health", stage, checks, failures)
     print_result(result, as_json=args.json)
 

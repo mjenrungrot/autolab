@@ -73,7 +73,9 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
 
     stage = str(normalized.get("stage", "")).strip()
     if stage not in ALL_STAGES:
-        raise StateError(f"state.stage must be one of {sorted(ALL_STAGES)}, got '{stage}'")
+        raise StateError(
+            f"state.stage must be one of {sorted(ALL_STAGES)}, got '{stage}'"
+        )
     normalized["stage"] = stage
 
     for key in ("stage_attempt", "max_stage_attempts", "max_total_iterations"):
@@ -112,9 +114,16 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         "last_open_task_count": -1,
         "no_progress_decisions": 0,
         "update_docs_cycle_count": 0,
-        "last_verification_passed": bool(repeat_guard_raw.get("last_verification_passed", False)),
+        "last_verification_passed": bool(
+            repeat_guard_raw.get("last_verification_passed", False)
+        ),
     }
-    for key in ("same_decision_streak", "last_open_task_count", "no_progress_decisions", "update_docs_cycle_count"):
+    for key in (
+        "same_decision_streak",
+        "last_open_task_count",
+        "no_progress_decisions",
+        "update_docs_cycle_count",
+    ):
         try:
             value = int(repeat_guard_raw.get(key, repeat_guard[key]))
         except Exception:
@@ -135,7 +144,9 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     run_group_raw = normalized.get("run_group", [])
     if not isinstance(run_group_raw, list):
         run_group_raw = []
-    normalized["run_group"] = [str(rid).strip() for rid in run_group_raw if str(rid).strip()]
+    normalized["run_group"] = [
+        str(rid).strip() for rid in run_group_raw if str(rid).strip()
+    ]
 
     history_raw = normalized.get("history", [])
     history: list[dict[str, Any]] = []
@@ -222,7 +233,12 @@ def _resolve_iteration_directory(
 
     candidates: list[tuple[Path, str]] = []
     if preferred_type:
-        candidates.append((experiments_root / preferred_type / normalized_iteration_id, preferred_type))
+        candidates.append(
+            (
+                experiments_root / preferred_type / normalized_iteration_id,
+                preferred_type,
+            )
+        )
     for experiment_type in EXPERIMENT_TYPES:
         candidate = experiments_root / experiment_type / normalized_iteration_id
         if all(existing_path != candidate for existing_path, _ in candidates):
@@ -295,9 +311,15 @@ def _find_backlog_experiment_entry(
             if _normalize_space(str(entry.get("id", ""))) == normalized_experiment_id:
                 matches.append(entry)
         if not matches:
-            return (None, f"backlog experiment '{normalized_experiment_id}' was not found")
+            return (
+                None,
+                f"backlog experiment '{normalized_experiment_id}' was not found",
+            )
         if len(matches) > 1:
-            return (None, f"backlog experiment id '{normalized_experiment_id}' is duplicated")
+            return (
+                None,
+                f"backlog experiment id '{normalized_experiment_id}' is duplicated",
+            )
         return (matches[0], "")
 
     if not normalized_iteration_id:
@@ -307,10 +329,16 @@ def _find_backlog_experiment_entry(
     for entry in experiments:
         if not isinstance(entry, dict):
             continue
-        if _normalize_space(str(entry.get("iteration_id", ""))) == normalized_iteration_id:
+        if (
+            _normalize_space(str(entry.get("iteration_id", "")))
+            == normalized_iteration_id
+        ):
             matches.append(entry)
     if not matches:
-        return (None, f"no backlog experiment matches iteration_id '{normalized_iteration_id}'")
+        return (
+            None,
+            f"no backlog experiment matches iteration_id '{normalized_iteration_id}'",
+        )
     if len(matches) > 1:
         duplicates: list[str] = []
         for match in matches:
@@ -319,7 +347,10 @@ def _find_backlog_experiment_entry(
                 duplicates.append(entry_id)
         if not duplicates:
             duplicates = ["<unidentified>"]
-        return (None, f"multiple backlog experiments match iteration_id '{normalized_iteration_id}': {', '.join(duplicates)}")
+        return (
+            None,
+            f"multiple backlog experiments match iteration_id '{normalized_iteration_id}': {', '.join(duplicates)}",
+        )
     return (matches[0], "")
 
 
@@ -342,7 +373,9 @@ def _is_active_experiment_completed(
     if entry is None:
         return (False, resolve_error)
 
-    experiment_label = _normalize_space(str(entry.get("id", ""))) or experiment_id or iteration_id
+    experiment_label = (
+        _normalize_space(str(entry.get("id", ""))) or experiment_id or iteration_id
+    )
     experiment_type = _normalize_experiment_type(entry.get("type"))
     if _is_experiment_type_locked(experiment_type):
         return (
@@ -395,7 +428,9 @@ def _write_backlog_yaml(path: Path, payload: dict[str, Any]) -> tuple[bool, str]
     return (True, "")
 
 
-def _infer_unique_experiment_id_from_backlog(repo_root: Path, iteration_id: str) -> tuple[str, str]:
+def _infer_unique_experiment_id_from_backlog(
+    repo_root: Path, iteration_id: str
+) -> tuple[str, str]:
     backlog_path = repo_root / ".autolab" / "backlog.yaml"
     payload, load_error = _load_backlog_yaml(backlog_path)
     if payload is None:
@@ -421,7 +456,10 @@ def _infer_unique_experiment_id_from_backlog(repo_root: Path, iteration_id: str)
     if not matches:
         return ("", f"no backlog experiment matches iteration_id '{iteration_id}'")
     if len(matches) > 1:
-        return ("", f"multiple backlog experiments match iteration_id '{iteration_id}': {', '.join(matches)}")
+        return (
+            "",
+            f"multiple backlog experiments match iteration_id '{iteration_id}': {', '.join(matches)}",
+        )
     return (matches[0], "")
 
 
@@ -452,7 +490,9 @@ def _mark_backlog_experiment_completed(
 
     status = _normalize_backlog_status(entry.get("status"))
     experiment_type = _normalize_experiment_type(entry.get("type"))
-    already_completed = _is_backlog_status_completed(status) and experiment_type == "done"
+    already_completed = (
+        _is_backlog_status_completed(status) and experiment_type == "done"
+    )
     if already_completed:
         return (
             False,
@@ -596,7 +636,9 @@ def _ensure_iteration_skeleton(
     created: list[Path],
     experiment_type: str = DEFAULT_EXPERIMENT_TYPE,
 ) -> None:
-    normalized_type = _normalize_experiment_type(experiment_type) or DEFAULT_EXPERIMENT_TYPE
+    normalized_type = (
+        _normalize_experiment_type(experiment_type) or DEFAULT_EXPERIMENT_TYPE
+    )
     iteration_dir = repo_root / "experiments" / normalized_type / iteration_id
     _ensure_text_file(
         iteration_dir / "hypothesis.md",
@@ -733,7 +775,9 @@ def _write_lock_payload_exclusive(lock_path: Path, payload: dict[str, Any]) -> N
         handle.write(rendered)
 
 
-def _acquire_lock(lock_path: Path, *, state_file: Path, command: str, stale_seconds: int) -> tuple[bool, str]:
+def _acquire_lock(
+    lock_path: Path, *, state_file: Path, command: str, stale_seconds: int
+) -> tuple[bool, str]:
     now = datetime.now(timezone.utc)
     started_at = _utc_now()
     monotonic_now = time.monotonic()
@@ -767,8 +811,12 @@ def _acquire_lock(lock_path: Path, *, state_file: Path, command: str, stale_seco
             holder_state = existing.get("state_file", "<unknown>")
             holder_command = existing.get("command", "<unknown>")
             heartbeat = _parse_utc(str(existing.get("last_heartbeat_at", "")))
-            if heartbeat is not None and now - heartbeat <= timedelta(seconds=stale_seconds):
-                age_text = f"{age_seconds:.0f}s" if age_seconds is not None else "unknown"
+            if heartbeat is not None and now - heartbeat <= timedelta(
+                seconds=stale_seconds
+            ):
+                age_text = (
+                    f"{age_seconds:.0f}s" if age_seconds is not None else "unknown"
+                )
                 return (
                     False,
                     (
@@ -778,7 +826,9 @@ def _acquire_lock(lock_path: Path, *, state_file: Path, command: str, stale_seco
                     ),
                 )
 
-            stale_path = lock_path.with_suffix(f"{lock_path.suffix}.stale.{owner_uuid[:8]}")
+            stale_path = lock_path.with_suffix(
+                f"{lock_path.suffix}.stale.{owner_uuid[:8]}"
+            )
             try:
                 os.replace(lock_path, stale_path)
             except FileNotFoundError:
@@ -808,7 +858,9 @@ def _release_lock(lock_path: Path) -> None:
         return
     payload = _read_lock_payload(lock_path)
     if isinstance(payload, dict):
-        holder_pid = int(payload.get("pid", -1)) if str(payload.get("pid", "")).isdigit() else -1
+        holder_pid = (
+            int(payload.get("pid", -1)) if str(payload.get("pid", "")).isdigit() else -1
+        )
         if holder_pid not in {-1, os.getpid()}:
             return
     lock_path.unlink(missing_ok=True)

@@ -54,9 +54,10 @@ class RunOutcome:
 @dataclass(frozen=True)
 class EvalResult:
     """Structured return from _evaluate_stage, replacing raw tuple."""
+
     next_stage: str
-    status: str          # "complete" | "failed"
-    summary: str         # human-readable message
+    status: str  # "complete" | "failed"
+    summary: str  # human-readable message
     needs_retry: bool = False  # structured flag replacing string matching
 
 

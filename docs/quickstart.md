@@ -15,6 +15,7 @@ autolab init --state-file .autolab/state.json
 ```
 
 This creates:
+
 - `.autolab/state.json` -- workflow state
 - `.autolab/backlog.yaml` -- experiment backlog
 - `.autolab/verifier_policy.yaml` -- verification policy
@@ -28,16 +29,19 @@ This creates:
 Edit `.autolab/verifier_policy.yaml`:
 
 1. **Set the dry-run command** (required -- the default stub fails on purpose):
+
    ```yaml
    dry_run_command: "python3 -m myproject.dry_run --config path/to/config.yaml"
    ```
 
-2. **Review stage requirements** under `requirements_by_stage`:
+1. **Review stage requirements** under `requirements_by_stage`:
+
    - Enable `tests: true` for stages where you want test runs
    - Enable `dry_run: true` for stages that need smoke tests
    - `schema: true` is recommended for all stages
 
-3. **Optional: Enable the agent runner** for automated stage execution:
+1. **Optional: Enable the agent runner** for automated stage execution:
+
    ```yaml
    agent_runner:
      enabled: true
@@ -56,6 +60,7 @@ Edit `.autolab/verifier_policy.yaml`:
 ## Step 3: Customize prompts (optional)
 
 Stage prompts live in `.autolab/prompts/stage_*.md`. Each prompt:
+
 - Defines the agent's role and objectives for that stage
 - Includes shared guardrails, scope rules, and verification rituals
 - Uses `{{token}}` placeholders resolved at runtime

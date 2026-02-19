@@ -67,10 +67,14 @@ def _validate_metrics(path: Path, failures: list[str]) -> None:
                 walk(value, f"{key_prefix}[{idx}]")
         elif isinstance(obj, float):
             if math.isnan(obj) or math.isinf(obj):
-                failures.append(f"{path} has invalid numeric value at {key_prefix}: {obj}")
+                failures.append(
+                    f"{path} has invalid numeric value at {key_prefix}: {obj}"
+                )
         elif isinstance(obj, str):
             if _has_placeholders(obj):
-                failures.append(f"{path} has placeholder-like string at {key_prefix}: {obj}")
+                failures.append(
+                    f"{path} has placeholder-like string at {key_prefix}: {obj}"
+                )
 
     walk(metrics)
 
@@ -83,7 +87,12 @@ def _validate_metrics(path: Path, failures: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON envelope",
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -99,23 +108,44 @@ def main() -> int:
     run_id = str(state.get("last_run_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
     if not iteration_id or not run_id:
-        result = make_result("result_sanity", stage, [], ["missing iteration_id/last_run_id in state"])
+        result = make_result(
+            "result_sanity", stage, [], ["missing iteration_id/last_run_id in state"]
+        )
         print_result(result, as_json=args.json)
         return 1
 
     if stage != "extract_results":
-        result = make_result("result_sanity", stage, [{"name": "result_sanity", "status": "pass", "detail": f"skipped for stage={stage}"}], [])
+        result = make_result(
+            "result_sanity",
+            stage,
+            [
+                {
+                    "name": "result_sanity",
+                    "status": "pass",
+                    "detail": f"skipped for stage={stage}",
+                }
+            ],
+            [],
+        )
         print_result(result, as_json=args.json)
         return 0
 
-    metrics_path = resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
+    metrics_path = (
+        resolve_iteration_dir(iteration_id) / "runs" / run_id / "metrics.json"
+    )
     _validate_metrics(metrics_path, failures)
 
     passed = not failures
 
     checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
     if passed:
-        checks = [{"name": "result_sanity", "status": "pass", "detail": "all result sanity checks passed"}]
+        checks = [
+            {
+                "name": "result_sanity",
+                "status": "pass",
+                "detail": "all result sanity checks passed",
+            }
+        ]
     result = make_result("result_sanity", stage, checks, failures)
     print_result(result, as_json=args.json)
 

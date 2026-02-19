@@ -151,7 +151,9 @@ def test_launch_requires_run_id_token(tmp_path: Path) -> None:
     assert "run_id" in launch.required_tokens
 
 
-def test_registry_run_scoped_required_outputs_use_run_id_pattern(tmp_path: Path) -> None:
+def test_registry_run_scoped_required_outputs_use_run_id_pattern(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -166,4 +168,7 @@ def test_registry_run_scoped_required_outputs_use_run_id_pattern(tmp_path: Path)
     assert extract_results is not None
     assert launch.required_outputs == ("runs/<RUN_ID>/run_manifest.json",)
     assert slurm_monitor.required_outputs == ("runs/<RUN_ID>/run_manifest.json",)
-    assert extract_results.required_outputs == ("runs/<RUN_ID>/metrics.json", "analysis/summary.md")
+    assert extract_results.required_outputs == (
+        "runs/<RUN_ID>/metrics.json",
+        "analysis/summary.md",
+    )

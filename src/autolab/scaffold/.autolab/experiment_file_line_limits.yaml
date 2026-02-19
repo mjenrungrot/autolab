@@ -1,9 +1,9 @@
+---
 # =============================================================================
 # Experiment File & Line Limits Policy
 # =============================================================================
 # Controls maximum sizes for iteration artifacts verified by template_fill.py.
 # Each entry maps a relative path (within the iteration directory) to a limit.
-
 line_limits:
   # ---------------------------------------------------------------------------
   # Fixed line limits per artifact
@@ -41,5 +41,4 @@ line_limits:
     per_item_lines: 25
     max_chars: 60000
     max_bytes: 80000
-    count_paths:
-      - "variants"
+    count_paths: [variants]

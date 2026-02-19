@@ -1,3 +1,4 @@
+---
 # CI-strict research mode: enable all verification categories where capable.
 requirements_by_stage:
   hypothesis:
@@ -72,12 +73,9 @@ requirements_by_stage:
     consistency: true
     env_smoke: false
     docs_target_update: false
-
 prompt_lint:
   mode: enforce
-
 implementation_plan_lint:
   scope_enforcement:
     fail_on_out_of_scope_touches: true
-
 safe_automation_protected_files: true

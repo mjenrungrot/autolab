@@ -20,7 +20,9 @@ from autolab.prompts import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SCAFFOLD_PROMPTS_DIR = _REPO_ROOT / "src" / "autolab" / "scaffold" / ".autolab" / "prompts"
+_SCAFFOLD_PROMPTS_DIR = (
+    _REPO_ROOT / "src" / "autolab" / "scaffold" / ".autolab" / "prompts"
+)
 _SKILLS_DIR = _REPO_ROOT / "src" / "autolab" / "skills"
 _DOCS_DIR = _REPO_ROOT / "docs"
 _ALL_PROMPT_MDS = sorted(_SCAFFOLD_PROMPTS_DIR.rglob("*.md"))
@@ -44,7 +46,13 @@ _TABLE_ENFORCED_MDS = sorted(dict.fromkeys(_TABLE_ENFORCED_MDS))
 
 
 def _copy_scaffold(repo: Path) -> None:
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
 
@@ -99,14 +107,21 @@ def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> 
     _write_backlog(repo)
 
     template_path = repo / ".autolab" / "prompts" / "stage_design.md"
-    bundle = _render_stage_prompt(repo, stage="design", state=state, template_path=template_path, runner_scope={})
+    bundle = _render_stage_prompt(
+        repo, stage="design", state=state, template_path=template_path, runner_scope={}
+    )
 
     assert "{{hypothesis_id}}" not in bundle.prompt_text
     assert "hypothesis_id: h1" in bundle.prompt_text
-    assert "python3 .autolab/verifiers/template_fill.py --stage design" in bundle.prompt_text
+    assert (
+        "python3 .autolab/verifiers/template_fill.py --stage design"
+        in bundle.prompt_text
+    )
 
 
-def test_render_prompt_auto_injects_registry_boilerplate_when_missing(tmp_path: Path) -> None:
+def test_render_prompt_auto_injects_registry_boilerplate_when_missing(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -127,7 +142,9 @@ def test_render_prompt_auto_injects_registry_boilerplate_when_missing(tmp_path: 
         encoding="utf-8",
     )
 
-    bundle = _render_stage_prompt(repo, stage="design", state=state, template_path=template_path, runner_scope={})
+    bundle = _render_stage_prompt(
+        repo, stage="design", state=state, template_path=template_path, runner_scope={}
+    )
 
     assert "## OUTPUTS (STRICT)" in bundle.prompt_text
     assert "- experiments/plan/iter1/design.yaml" in bundle.prompt_text
@@ -137,10 +154,14 @@ def test_render_prompt_auto_injects_registry_boilerplate_when_missing(tmp_path: 
     assert "- `h1`" in bundle.prompt_text
     assert "## FILE CHECKLIST" in bundle.prompt_text
     assert "## VERIFIER MAPPING" in bundle.prompt_text
-    assert bundle.prompt_text.index("## VERIFIER MAPPING") < bundle.prompt_text.index("## STEPS")
+    assert bundle.prompt_text.index("## VERIFIER MAPPING") < bundle.prompt_text.index(
+        "## STEPS"
+    )
 
 
-def test_render_prompt_manual_boilerplate_sections_override_auto_injection(tmp_path: Path) -> None:
+def test_render_prompt_manual_boilerplate_sections_override_auto_injection(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -169,7 +190,9 @@ def test_render_prompt_manual_boilerplate_sections_override_auto_injection(tmp_p
         encoding="utf-8",
     )
 
-    bundle = _render_stage_prompt(repo, stage="design", state=state, template_path=template_path, runner_scope={})
+    bundle = _render_stage_prompt(
+        repo, stage="design", state=state, template_path=template_path, runner_scope={}
+    )
 
     assert "manual outputs sentinel" in bundle.prompt_text
     assert "manual inputs sentinel" in bundle.prompt_text
@@ -183,7 +206,9 @@ def test_render_prompt_manual_boilerplate_sections_override_auto_injection(tmp_p
     assert len(re.findall(r"(?mi)^##\s*verifier mapping\b", bundle.prompt_text)) == 1
 
 
-def test_render_prompt_rejects_legacy_literal_placeholder_tokens(tmp_path: Path) -> None:
+def test_render_prompt_rejects_legacy_literal_placeholder_tokens(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -194,7 +219,13 @@ def test_render_prompt_rejects_legacy_literal_placeholder_tokens(tmp_path: Path)
     template_path.write_text("# bad\nlegacy token: <ITERATION_ID>\n", encoding="utf-8")
 
     with pytest.raises(StageCheckError, match="unresolved placeholders"):
-        _render_stage_prompt(repo, stage="hypothesis", state=state, template_path=template_path, runner_scope={})
+        _render_stage_prompt(
+            repo,
+            stage="hypothesis",
+            state=state,
+            template_path=template_path,
+            runner_scope={},
+        )
 
 
 @pytest.mark.parametrize(
@@ -210,7 +241,9 @@ def test_render_prompt_rejects_legacy_literal_placeholder_tokens(tmp_path: Path)
         "decide_repeat",
     ],
 )
-def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage: str) -> None:
+def test_render_scaffold_prompts_have_no_unresolved_tokens(
+    tmp_path: Path, stage: str
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -222,9 +255,14 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(tmp_path: Path, stage
     _write_backlog(repo)
 
     template_path = repo / ".autolab" / "prompts" / f"stage_{stage}.md"
-    bundle = _render_stage_prompt(repo, stage=stage, state=state, template_path=template_path, runner_scope={})
+    bundle = _render_stage_prompt(
+        repo, stage=stage, state=state, template_path=template_path, runner_scope={}
+    )
 
-    unresolved_tokens = {match.group(1).strip() for match in PROMPT_TOKEN_PATTERN.finditer(bundle.prompt_text)}
+    unresolved_tokens = {
+        match.group(1).strip()
+        for match in PROMPT_TOKEN_PATTERN.finditer(bundle.prompt_text)
+    }
     assert not unresolved_tokens
     assert "<ITERATION_ID>" not in bundle.prompt_text
     assert "## Runtime Stage Context" in bundle.prompt_text
@@ -294,7 +332,8 @@ def test_markdown_disallows_pipe_tables(md_path: Path) -> None:
         f"Pipe-style Markdown tables are not allowed in {md_path.name}; "
         "use bullet records instead:\n"
         + "\n".join(
-            f"  {md_path.name}:{lineno} -> {line_preview}" for lineno, line_preview in violations
+            f"  {md_path.name}:{lineno} -> {line_preview}"
+            for lineno, line_preview in violations
         )
     )
 
@@ -353,9 +392,18 @@ def _setup_metrics_repo(
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     backlog = {
-        "experiments": [{"id": "e1", "hypothesis_id": "h1", "status": "open", "iteration_id": "iter1"}],
+        "experiments": [
+            {
+                "id": "e1",
+                "hypothesis_id": "h1",
+                "status": "open",
+                "iteration_id": "iter1",
+            }
+        ],
     }
-    (repo / ".autolab" / "backlog.yaml").write_text(yaml.safe_dump(backlog), encoding="utf-8")
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog), encoding="utf-8"
+    )
 
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
@@ -392,16 +440,24 @@ def _setup_metrics_repo(
     return repo, state
 
 
-def test_suggest_decision_from_metrics_returns_stop_when_target_met(tmp_path: Path) -> None:
-    repo, state = _setup_metrics_repo(tmp_path, hypothesis_target_delta="5.0", metrics_delta=6.0)
+def test_suggest_decision_from_metrics_returns_stop_when_target_met(
+    tmp_path: Path,
+) -> None:
+    repo, state = _setup_metrics_repo(
+        tmp_path, hypothesis_target_delta="5.0", metrics_delta=6.0
+    )
     result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "stop"
     assert isinstance(evidence, dict)
     assert "comparison" in evidence
 
 
-def test_suggest_decision_from_metrics_returns_design_when_target_not_met(tmp_path: Path) -> None:
-    repo, state = _setup_metrics_repo(tmp_path, hypothesis_target_delta="10.0", metrics_delta=6.0)
+def test_suggest_decision_from_metrics_returns_design_when_target_not_met(
+    tmp_path: Path,
+) -> None:
+    repo, state = _setup_metrics_repo(
+        tmp_path, hypothesis_target_delta="10.0", metrics_delta=6.0
+    )
     result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "design"
     assert isinstance(evidence, dict)
@@ -416,8 +472,11 @@ def test_suggest_decision_from_metrics_returns_design_when_target_not_met(tmp_pa
 def test_target_comparison_maximize_met() -> None:
     payload = {"primary_metric": {"name": "accuracy", "delta_vs_baseline": 6.0}}
     _comp, suggestion = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=5.0,
-        design_target_delta="", run_id="run_001", metric_mode="maximize",
+        metrics_payload=payload,
+        hypothesis_target_delta=5.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="maximize",
     )
     assert "stop" in suggestion
 
@@ -425,8 +484,11 @@ def test_target_comparison_maximize_met() -> None:
 def test_target_comparison_maximize_not_met() -> None:
     payload = {"primary_metric": {"name": "accuracy", "delta_vs_baseline": 3.0}}
     _comp, suggestion = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=5.0,
-        design_target_delta="", run_id="run_001", metric_mode="maximize",
+        metrics_payload=payload,
+        hypothesis_target_delta=5.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="maximize",
     )
     assert "design" in suggestion
 
@@ -434,8 +496,11 @@ def test_target_comparison_maximize_not_met() -> None:
 def test_target_comparison_minimize_met() -> None:
     payload = {"primary_metric": {"name": "loss", "delta_vs_baseline": -3.0}}
     _comp, suggestion = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=-2.0,
-        design_target_delta="", run_id="run_001", metric_mode="minimize",
+        metrics_payload=payload,
+        hypothesis_target_delta=-2.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="minimize",
     )
     assert "stop" in suggestion
 
@@ -443,15 +508,21 @@ def test_target_comparison_minimize_met() -> None:
 def test_target_comparison_minimize_not_met() -> None:
     payload = {"primary_metric": {"name": "loss", "delta_vs_baseline": -1.0}}
     _comp, suggestion = _target_comparison_text(
-        metrics_payload=payload, hypothesis_target_delta=-2.0,
-        design_target_delta="", run_id="run_001", metric_mode="minimize",
+        metrics_payload=payload,
+        hypothesis_target_delta=-2.0,
+        design_target_delta="",
+        run_id="run_001",
+        metric_mode="minimize",
     )
     assert "design" in suggestion
 
 
 def test_suggest_decision_from_metrics_minimize_mode(tmp_path: Path) -> None:
     repo, state = _setup_metrics_repo(
-        tmp_path, hypothesis_target_delta="-2.0", metrics_delta=-3.0, metric_mode="minimize",
+        tmp_path,
+        hypothesis_target_delta="-2.0",
+        metrics_delta=-3.0,
+        metric_mode="minimize",
     )
     result, evidence = _suggest_decision_from_metrics(repo, state)
     assert result == "stop"

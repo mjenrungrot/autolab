@@ -1,3 +1,4 @@
+---
 requirements_by_stage:
   implementation:
     tests: false
@@ -15,12 +16,9 @@ requirements_by_stage:
     consistency: true
     env_smoke: true
     docs_target_update: true
-
 prompt_lint:
   mode: warn
-
 safe_automation_protected_files: false
-
 autorun:
   guardrails:
     max_same_decision_streak: 5

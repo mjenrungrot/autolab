@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autolab"
-version = "1.1.18"
+version = "1.1.19"
 description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,6 +12,14 @@ keywords = ["autolab", "workflow", "experiment", "orchestration"]
 dependencies = [
   "PyYAML>=6",
   "jsonschema>=4.18.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff>=0.15.0",
+  "mdformat>=1.0.0",
+  "yamlfix>=1.19.0",
 ]
 
 [project.scripts]

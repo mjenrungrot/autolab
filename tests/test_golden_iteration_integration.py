@@ -9,7 +9,13 @@ import autolab.commands as commands_module
 
 
 def _copy_scaffold(repo: Path) -> None:
-    source = Path(__file__).resolve().parents[1] / "src" / "autolab" / "scaffold" / ".autolab"
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+    )
     target = repo / ".autolab"
     shutil.copytree(source, target, dirs_exist_ok=True)
     policy_path = target / "verifier_policy.yaml"
@@ -22,7 +28,9 @@ def _copy_scaffold(repo: Path) -> None:
     policy_lines = policy_text.splitlines()
     for idx, line in enumerate(policy_lines):
         if line.strip().startswith("dry_run_command:"):
-            policy_lines[idx] = 'dry_run_command: "{{python_bin}} -c \\"print(\'golden iteration dry-run: OK\')\\""'
+            policy_lines[idx] = (
+                'dry_run_command: "{{python_bin}} -c \\"print(\'golden iteration dry-run: OK\')\\""'
+            )
             break
     policy_text = "\n".join(policy_lines) + ("\n" if policy_text.endswith("\n") else "")
     policy_path.write_text(policy_text, encoding="utf-8")
@@ -30,10 +38,16 @@ def _copy_scaffold(repo: Path) -> None:
 
 def _copy_golden_iteration(repo: Path) -> None:
     golden_root = Path(__file__).resolve().parents[1] / "examples" / "golden_iteration"
-    shutil.copytree(golden_root / "experiments", repo / "experiments", dirs_exist_ok=True)
+    shutil.copytree(
+        golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
+    )
     shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
-    shutil.copy2(golden_root / ".autolab" / "state.json", repo / ".autolab" / "state.json")
-    shutil.copy2(golden_root / ".autolab" / "backlog.yaml", repo / ".autolab" / "backlog.yaml")
+    shutil.copy2(
+        golden_root / ".autolab" / "state.json", repo / ".autolab" / "state.json"
+    )
+    shutil.copy2(
+        golden_root / ".autolab" / "backlog.yaml", repo / ".autolab" / "backlog.yaml"
+    )
 
 
 def _write_agent_result(repo: Path) -> None:
@@ -78,7 +92,9 @@ def test_golden_iteration_verify_passes_across_stages(tmp_path: Path) -> None:
         assert exit_code == 0, f"expected stage '{stage}' to pass verification"
 
 
-def test_golden_iteration_negative_fixture_fails_with_clear_error(tmp_path: Path) -> None:
+def test_golden_iteration_negative_fixture_fails_with_clear_error(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
@@ -88,7 +104,9 @@ def test_golden_iteration_negative_fixture_fails_with_clear_error(tmp_path: Path
 
     # Break the design schema contract.
     design_path = repo / "experiments" / "plan" / "iter_golden" / "design.yaml"
-    broken = design_path.read_text(encoding="utf-8").replace('schema_version: "1.0"\n', "")
+    broken = design_path.read_text(encoding="utf-8").replace(
+        'schema_version: "1.0"\n', ""
+    )
     design_path.write_text(broken, encoding="utf-8")
 
     exit_code = commands_module.main(

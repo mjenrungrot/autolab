@@ -20,7 +20,12 @@ import pytest
 import yaml
 
 from autolab.constants import ACTIVE_STAGES, ASSISTANT_CYCLE_STAGES, TERMINAL_STAGES
-from autolab.models import GuardrailConfig, MeaningfulChangeConfig, RunOutcome, StateError
+from autolab.models import (
+    GuardrailConfig,
+    MeaningfulChangeConfig,
+    RunOutcome,
+    StateError,
+)
 from autolab.run_assistant import (
     _append_task_ledger,
     _assistant_target_stage,
@@ -39,6 +44,7 @@ from autolab.utils import _evaluate_meaningful_change, _write_json
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +81,8 @@ def _make_state(
         "assistant_mode": assistant_mode,
         "current_task_id": current_task_id,
         "task_cycle_stage": task_cycle_stage,
-        "repeat_guard": repeat_guard or {
+        "repeat_guard": repeat_guard
+        or {
             "last_decision": "",
             "same_decision_streak": 0,
             "last_open_task_count": -1,
@@ -167,10 +174,17 @@ class TestTaskSelection:
 
     def test_select_returns_first_open_task(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_aaa", "stage": "design", "text": "Design the thing"},
-            {"task_id": "task_bbb", "stage": "implementation", "text": "Build the thing"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {"task_id": "task_aaa", "stage": "design", "text": "Design the thing"},
+                {
+                    "task_id": "task_bbb",
+                    "stage": "implementation",
+                    "text": "Build the thing",
+                },
+            ],
+        )
         result = select_open_task(repo)
         assert result is not None
         assert result["task_id"] == "task_aaa"
@@ -184,29 +198,52 @@ class TestTaskSelection:
 
     def test_select_skips_completed_tasks(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_done", "stage": "design", "status": "completed"},
-            {"task_id": "task_open", "stage": "implementation", "text": "Open task"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {"task_id": "task_done", "stage": "design", "status": "completed"},
+                {
+                    "task_id": "task_open",
+                    "stage": "implementation",
+                    "text": "Open task",
+                },
+            ],
+        )
         result = select_open_task(repo)
         assert result is not None
         assert result["task_id"] == "task_open"
 
     def test_select_returns_none_when_all_completed(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_done1", "stage": "design", "status": "completed"},
-            {"task_id": "task_done2", "stage": "implementation", "status": "completed"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {"task_id": "task_done1", "stage": "design", "status": "completed"},
+                {
+                    "task_id": "task_done2",
+                    "stage": "implementation",
+                    "status": "completed",
+                },
+            ],
+        )
         result = select_open_task(repo)
         assert result is None
 
-    def test_select_prioritizes_implementation_when_requested(self, tmp_path: Path) -> None:
+    def test_select_prioritizes_implementation_when_requested(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_design", "stage": "design", "text": "Design task"},
-            {"task_id": "task_impl", "stage": "implementation", "text": "Impl task"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {"task_id": "task_design", "stage": "design", "text": "Design task"},
+                {
+                    "task_id": "task_impl",
+                    "stage": "implementation",
+                    "text": "Impl task",
+                },
+            ],
+        )
         result = select_open_task(repo, prioritize_implementation=True)
         assert result is not None
         assert result["task_id"] == "task_impl"
@@ -214,20 +251,34 @@ class TestTaskSelection:
 
     def test_select_respects_priority_ordering(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_low", "stage": "implementation", "priority": "low"},
-            {"task_id": "task_high", "stage": "implementation", "priority": "high"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {"task_id": "task_low", "stage": "implementation", "priority": "low"},
+                {"task_id": "task_high", "stage": "implementation", "priority": "high"},
+            ],
+        )
         result = select_open_task(repo)
         assert result is not None
         assert result["task_id"] == "task_high"
 
     def test_select_prefers_manual_over_generated(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_gen", "stage": "implementation", "source": "generated"},
-            {"task_id": "task_manual", "stage": "implementation", "source": "manual"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_gen",
+                    "stage": "implementation",
+                    "source": "generated",
+                },
+                {
+                    "task_id": "task_manual",
+                    "stage": "implementation",
+                    "source": "manual",
+                },
+            ],
+        )
         result = select_open_task(repo)
         assert result is not None
         assert result["task_id"] == "task_manual"
@@ -241,7 +292,9 @@ class TestTaskSelection:
 class TestTaskCompletionEvidence:
     """Tests that the review stage writes .autolab/task_completions/<task_id>.json."""
 
-    def _run_review_pass(self, repo: Path, task_id: str, *, changed: list[str], meaningful: list[str]) -> RunOutcome:
+    def _run_review_pass(
+        self, repo: Path, task_id: str, *, changed: list[str], meaningful: list[str]
+    ) -> RunOutcome:
         """Set up state and mocks to exercise the review branch that writes evidence."""
         state = _make_state(
             stage="implementation",
@@ -258,21 +311,50 @@ class TestTaskCompletionEvidence:
             task_change_baseline={},
         )
         state_path = _write_state(repo, state)
-        _seed_todo_state(repo, [{"task_id": task_id, "stage": "implementation", "text": "Write evidence test"}])
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": task_id,
+                    "stage": "implementation",
+                    "text": "Write evidence test",
+                }
+            ],
+        )
 
         mock_config = _default_meaningful_config()
         mock_snapshot: dict[str, str] = {}
 
         with (
-            mock.patch("autolab.run_assistant._load_meaningful_change_config", return_value=mock_config),
-            mock.patch("autolab.run_assistant._evaluate_meaningful_change", return_value=(True, changed, meaningful, mock_snapshot)),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(True, changed, meaningful, mock_snapshot),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
-            mock.patch("autolab.run_assistant._collect_change_snapshot", return_value={}),
-            mock.patch("autolab.run_assistant._assistant_commit_paths", return_value=("src/foo.py",)),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._collect_change_snapshot", return_value={}
+            ),
+            mock.patch(
+                "autolab.run_assistant._assistant_commit_paths",
+                return_value=("src/foo.py",),
+            ),
             mock.patch("autolab.run_assistant.mark_task_completed", return_value=True),
             mock.patch("subprocess.run") as mock_subprocess,
         ):
@@ -286,7 +368,9 @@ class TestTaskCompletionEvidence:
         changed = ["src/foo.py", ".autolab/state.json"]
         meaningful = ["src/foo.py"]
 
-        outcome = self._run_review_pass(repo, task_id, changed=changed, meaningful=meaningful)
+        outcome = self._run_review_pass(
+            repo, task_id, changed=changed, meaningful=meaningful
+        )
 
         evidence_path = repo / ".autolab" / "task_completions" / f"{task_id}.json"
         assert evidence_path.exists(), "Evidence file must be written on review pass"
@@ -300,13 +384,17 @@ class TestTaskCompletionEvidence:
 
     def test_review_pass_outcome_marks_commit_allowed(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        outcome = self._run_review_pass(repo, "task_commit_01", changed=["src/x.py"], meaningful=["src/x.py"])
+        outcome = self._run_review_pass(
+            repo, "task_commit_01", changed=["src/x.py"], meaningful=["src/x.py"]
+        )
         assert outcome.commit_allowed is True
         assert outcome.commit_cycle_stage == "review"
 
     def test_review_pass_clears_task_and_sets_done(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        self._run_review_pass(repo, "task_clear_01", changed=["src/a.py"], meaningful=["src/a.py"])
+        self._run_review_pass(
+            repo, "task_clear_01", changed=["src/a.py"], meaningful=["src/a.py"]
+        )
         state = _read_state(repo)
         assert state["current_task_id"] == ""
         assert state["task_cycle_stage"] == "done"
@@ -322,7 +410,11 @@ class TestNoTasksRemaining:
     """Tests for behaviour when no open tasks are in todo_state."""
 
     def _run_with_no_tasks(
-        self, repo: Path, *, auto_complete: bool = True, auto_mode: bool = False,
+        self,
+        repo: Path,
+        *,
+        auto_complete: bool = True,
+        auto_mode: bool = False,
     ) -> RunOutcome:
         state = _make_state(
             stage="implementation",
@@ -334,18 +426,35 @@ class TestNoTasksRemaining:
 
         with (
             mock.patch("autolab.run_assistant.select_open_task", return_value=None),
-            mock.patch("autolab.run_assistant._load_assistant_auto_complete_policy", return_value=auto_complete),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._load_assistant_auto_complete_policy",
+                return_value=auto_complete,
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
-            mock.patch("autolab.run_assistant._mark_backlog_experiment_completed", return_value=(False, None, "nothing to mark")),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._mark_backlog_experiment_completed",
+                return_value=(False, None, "nothing to mark"),
+            ),
         ):
             outcome = _run_once_assistant(state_path, auto_mode=auto_mode)
         return outcome
 
-    def test_no_tasks_auto_complete_true_transitions_to_stop(self, tmp_path: Path) -> None:
+    def test_no_tasks_auto_complete_true_transitions_to_stop(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         outcome = self._run_with_no_tasks(repo, auto_complete=True)
         assert outcome.stage_after == "stop"
@@ -355,7 +464,9 @@ class TestNoTasksRemaining:
         assert state["task_cycle_stage"] == "done"
         assert state["current_task_id"] == ""
 
-    def test_no_tasks_auto_complete_false_transitions_to_human_review(self, tmp_path: Path) -> None:
+    def test_no_tasks_auto_complete_false_transitions_to_human_review(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         outcome = self._run_with_no_tasks(repo, auto_complete=False)
         assert outcome.stage_after == "human_review"
@@ -373,7 +484,9 @@ class TestNoTasksRemaining:
 class TestAssistantCycleStages:
     """Tests verifying correct transitions through select -> implement -> verify -> review -> done."""
 
-    def test_select_transition_picks_task_and_sets_implement(self, tmp_path: Path) -> None:
+    def test_select_transition_picks_task_and_sets_implement(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         task_id = "task_select_01"
         state = _make_state(
@@ -382,9 +495,17 @@ class TestAssistantCycleStages:
             current_task_id="",
         )
         state_path = _write_state(repo, state)
-        _seed_todo_state(repo, [
-            {"task_id": task_id, "stage": "implementation", "task_class": "feature", "text": "Build widget"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": task_id,
+                    "stage": "implementation",
+                    "task_class": "feature",
+                    "text": "Build widget",
+                },
+            ],
+        )
 
         fake_task = {
             "task_id": task_id,
@@ -395,13 +516,26 @@ class TestAssistantCycleStages:
         }
 
         with (
-            mock.patch("autolab.run_assistant.select_open_task", return_value=fake_task),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant.select_open_task", return_value=fake_task
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
-            mock.patch("autolab.run_assistant._collect_change_snapshot", return_value={}),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._collect_change_snapshot", return_value={}
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -430,11 +564,23 @@ class TestAssistantCycleStages:
         )
 
         with (
-            mock.patch("autolab.run_assistant._run_once_standard", return_value=standard_outcome),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
+            mock.patch(
+                "autolab.run_assistant._run_once_standard",
+                return_value=standard_outcome,
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -453,12 +599,24 @@ class TestAssistantCycleStages:
         state_path = _write_state(repo, state)
 
         with (
-            mock.patch("autolab.run_assistant._run_verification_step", return_value=(True, "all checks passed")),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._run_verification_step",
+                return_value=(True, "all checks passed"),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -478,12 +636,24 @@ class TestAssistantCycleStages:
         state_path = _write_state(repo, state)
 
         with (
-            mock.patch("autolab.run_assistant._run_verification_step", return_value=(False, "tests failed")),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._run_verification_step",
+                return_value=(False, "tests failed"),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -491,7 +661,9 @@ class TestAssistantCycleStages:
         assert state["task_cycle_stage"] == "implement"
         assert state["repeat_guard"]["last_verification_passed"] is False
 
-    def test_review_no_meaningful_change_loops_back_to_implement(self, tmp_path: Path) -> None:
+    def test_review_no_meaningful_change_loops_back_to_implement(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         task_id = "task_review_fail"
         state = _make_state(
@@ -512,14 +684,32 @@ class TestAssistantCycleStages:
         mock_config = _default_meaningful_config()
 
         with (
-            mock.patch("autolab.run_assistant._load_meaningful_change_config", return_value=mock_config),
-            mock.patch("autolab.run_assistant._evaluate_meaningful_change", return_value=(False, [], [], {})),
-            mock.patch("autolab.run_assistant._load_guardrail_config", return_value=_default_guardrail_config()),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(False, [], [], {}),
+            ),
+            mock.patch(
+                "autolab.run_assistant._load_guardrail_config",
+                return_value=_default_guardrail_config(),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -548,13 +738,26 @@ class TestAssistantCycleStages:
         }
 
         with (
-            mock.patch("autolab.run_assistant.select_open_task", return_value=fake_task),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant.select_open_task", return_value=fake_task
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
-            mock.patch("autolab.run_assistant._collect_change_snapshot", return_value={}),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._collect_change_snapshot", return_value={}
+            ),
         ):
             outcome = _run_once_assistant(state_path)
 
@@ -575,8 +778,12 @@ class TestMeaningfulChangeEvaluation:
         repo = _scaffold_repo(tmp_path)
         config = _default_meaningful_config()
         with mock.patch("autolab.utils._collect_change_snapshot", return_value={}):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot={},
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot={},
+                )
             )
         assert meaningful is False
         assert changed == []
@@ -584,14 +791,20 @@ class TestMeaningfulChangeEvaluation:
 
     def test_excluded_paths_are_filtered(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        config = _default_meaningful_config(exclude_paths=(".autolab/**", "docs/todo.md"))
+        config = _default_meaningful_config(
+            exclude_paths=(".autolab/**", "docs/todo.md")
+        )
         current = {
             ".autolab/state.json": "M:abc123",
             "docs/todo.md": "M:def456",
         }
         with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot={},
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot={},
+                )
             )
         assert meaningful is False
         assert len(changed) == 2
@@ -605,8 +818,12 @@ class TestMeaningfulChangeEvaluation:
             ".autolab/state.json": "M:bbb222",
         }
         with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot={},
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot={},
+                )
             )
         assert meaningful is True
         assert "src/model.py" in meaningful_files
@@ -622,8 +839,12 @@ class TestMeaningfulChangeEvaluation:
             "src/new.py": "M:new_hash",
         }
         with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot=baseline,
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot=baseline,
+                )
             )
         assert meaningful is True
         assert "src/new.py" in meaningful_files
@@ -635,8 +856,12 @@ class TestMeaningfulChangeEvaluation:
         baseline = {"src/changed.py": "M:old_hash"}
         current = {"src/changed.py": "M:new_hash"}
         with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot=baseline,
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot=baseline,
+                )
             )
         assert meaningful is True
         assert "src/changed.py" in meaningful_files
@@ -646,8 +871,12 @@ class TestMeaningfulChangeEvaluation:
         config = _default_meaningful_config()
         current = {"src/a.py": "M:h1", "src/b.py": "A:h2"}
         with mock.patch("autolab.utils._collect_change_snapshot", return_value=current):
-            meaningful, changed, meaningful_files, snapshot = _evaluate_meaningful_change(
-                repo, config, baseline_snapshot=None,
+            meaningful, changed, meaningful_files, snapshot = (
+                _evaluate_meaningful_change(
+                    repo,
+                    config,
+                    baseline_snapshot=None,
+                )
             )
         assert meaningful is True
         assert set(meaningful_files) == {"src/a.py", "src/b.py"}
@@ -732,7 +961,9 @@ class TestTaskLedger:
         assert record["verification"]["passed"] is True
         assert record["verification"]["message"] == "all good"
 
-    def test_ledger_includes_commit_decision_when_provided(self, tmp_path: Path) -> None:
+    def test_ledger_includes_commit_decision_when_provided(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         _append_task_ledger(
             repo,
@@ -767,7 +998,9 @@ class TestTaskLedger:
                 message=f"entry {i}",
             )
         ledger_path = repo / ".autolab" / "task_history.jsonl"
-        lines = [l for l in ledger_path.read_text(encoding="utf-8").strip().split("\n") if l]
+        lines = [
+            l for l in ledger_path.read_text(encoding="utf-8").strip().split("\n") if l
+        ]
         assert len(lines) == 3
 
 
@@ -801,14 +1034,31 @@ class TestGuardrailBreach:
         guardrail = _default_guardrail_config()
 
         with (
-            mock.patch("autolab.run_assistant._load_meaningful_change_config", return_value=mock_config),
-            mock.patch("autolab.run_assistant._evaluate_meaningful_change", return_value=(False, [], [], {})),
-            mock.patch("autolab.run_assistant._load_guardrail_config", return_value=guardrail),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(False, [], [], {}),
+            ),
+            mock.patch(
+                "autolab.run_assistant._load_guardrail_config", return_value=guardrail
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(False, "")),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
             mock.patch("autolab.run_assistant._write_guardrail_breach"),
         ):
             outcome = _run_once_assistant(state_path, auto_mode=True)
@@ -831,22 +1081,33 @@ class TestMarkTaskCompleted:
 
     def test_mark_completed_removes_task_from_open_list(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_mc_01", "stage": "implementation", "text": "Finish it"},
-            {"task_id": "task_mc_02", "stage": "design", "text": "Plan it"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_mc_01",
+                    "stage": "implementation",
+                    "text": "Finish it",
+                },
+                {"task_id": "task_mc_02", "stage": "design", "text": "Plan it"},
+            ],
+        )
 
         result = mark_task_completed(repo, "task_mc_01")
         assert result is True
 
-        todo_state = json.loads((repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8"))
+        todo_state = json.loads(
+            (repo / ".autolab" / "todo_state.json").read_text(encoding="utf-8")
+        )
         # Completed tasks are pruned
         assert "task_mc_01" not in todo_state["tasks"]
         remaining = [t for t in todo_state["tasks"].values() if t["status"] == "open"]
         assert len(remaining) == 1
         assert remaining[0]["task_id"] == "task_mc_02"
 
-    def test_mark_completed_returns_false_for_missing_task(self, tmp_path: Path) -> None:
+    def test_mark_completed_returns_false_for_missing_task(
+        self, tmp_path: Path
+    ) -> None:
         repo = _scaffold_repo(tmp_path)
         _seed_todo_state(repo, [])
         result = mark_task_completed(repo, "nonexistent_task")
@@ -860,9 +1121,16 @@ class TestMarkTaskCompleted:
 
     def test_mark_completed_updates_todo_md(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        _seed_todo_state(repo, [
-            {"task_id": "task_mc_03", "stage": "implementation", "text": "Write tests"},
-        ])
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_mc_03",
+                    "stage": "implementation",
+                    "text": "Write tests",
+                },
+            ],
+        )
         mark_task_completed(repo, "task_mc_03")
 
         todo_md = (repo / "docs" / "todo.md").read_text(encoding="utf-8")
@@ -879,15 +1147,28 @@ class TestCompletedExperimentBlocking:
 
     def test_completed_experiment_transitions_to_stop(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
-        state = _make_state(stage="implementation", task_cycle_stage="implement", current_task_id="task_exp_01")
+        state = _make_state(
+            stage="implementation",
+            task_cycle_stage="implement",
+            current_task_id="task_exp_01",
+        )
         state_path = _write_state(repo, state)
 
         with (
-            mock.patch("autolab.run_assistant._is_active_experiment_completed", return_value=(True, "experiment e1 is done")),
-            mock.patch("autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")),
-            mock.patch("autolab.run_assistant._safe_todo_post_sync", return_value=([], "")),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(True, "experiment e1 is done"),
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
             mock.patch("autolab.run_assistant._persist_agent_result"),
-            mock.patch("autolab.run_assistant._detect_priority_host_mode", return_value="local"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
             mock.patch("autolab.run_assistant._write_block_reason"),
         ):
             outcome = _run_once_assistant(state_path)

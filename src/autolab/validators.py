@@ -40,10 +40,11 @@ from autolab.slurm_job_list import (
 # ---------------------------------------------------------------------------
 
 
-def _replace_iteration_placeholders(command: str, iteration_id: str, iteration_path: str) -> str:
+def _replace_iteration_placeholders(
+    command: str, iteration_id: str, iteration_path: str
+) -> str:
     return (
-        command
-        .replace("<ITERATION_ID>", iteration_id)
+        command.replace("<ITERATION_ID>", iteration_id)
         .replace("{{iteration_id}}", iteration_id)
         .replace("<ITERATION_PATH>", iteration_path)
         .replace("{{iteration_path}}", iteration_path)
@@ -53,8 +54,7 @@ def _replace_iteration_placeholders(command: str, iteration_id: str, iteration_p
 def _require_non_empty(path: Path, label: str) -> None:
     if not path.exists():
         raise StageCheckError(
-            f"{label} is missing at {path}"
-            " Please create this file before proceeding."
+            f"{label} is missing at {path} Please create this file before proceeding."
         )
     text = path.read_text(encoding="utf-8").strip()
     if not text:
@@ -142,9 +142,17 @@ def _validate_stage_readiness(
 
     stage = _resolve_verification_stage(state, stage_override=stage_override)
     if stage in {"decide_repeat", "human_review", "stop"}:
-        return (True, "readiness check skipped for non-active stage", {"stage": stage, "missing_tokens": []})
+        return (
+            True,
+            "readiness check skipped for non-active stage",
+            {"stage": stage, "missing_tokens": []},
+        )
     if stage not in ACTIVE_STAGES:
-        return (True, "readiness check skipped for unsupported stage", {"stage": stage, "missing_tokens": []})
+        return (
+            True,
+            "readiness check skipped for unsupported stage",
+            {"stage": stage, "missing_tokens": []},
+        )
 
     registry = load_registry(repo_root)
     if not registry:
@@ -203,12 +211,16 @@ def _validate_stage_readiness(
     return (True, "stage readiness passed", details)
 
 
-_HYPOTHESIS_KEY_PATTERN = re.compile(r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+)$")
+_HYPOTHESIS_KEY_PATTERN = re.compile(
+    r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+)$"
+)
 _HYPOTHESIS_PRIMARY_METRIC_PATTERN = re.compile(
     r"^PrimaryMetric:\s*[^;]+;\s*Unit:\s*[^;]+;\s*Success:\s*.+$",
     flags=re.IGNORECASE | re.MULTILINE,
 )
-_MARKDOWN_DRY_RUN_SECTION_PATTERN = re.compile(r"^#{2,6}\s*dry[\s_-]?run\b", flags=re.IGNORECASE | re.MULTILINE)
+_MARKDOWN_DRY_RUN_SECTION_PATTERN = re.compile(
+    r"^#{2,6}\s*dry[\s_-]?run\b", flags=re.IGNORECASE | re.MULTILINE
+)
 
 
 def _extract_markdown_key_values(text: str) -> dict[str, str]:
@@ -292,11 +304,21 @@ def _validate_design(path: Path, iteration_id: str) -> None:
     try:
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise StageCheckError(f"design.yaml is not valid YAML at {path}: {exc}") from exc
+        raise StageCheckError(
+            f"design.yaml is not valid YAML at {path}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise StageCheckError("design.yaml must contain a mapping")
 
-    required = {"id", "iteration_id", "hypothesis_id", "entrypoint", "compute", "metrics", "baselines"}
+    required = {
+        "id",
+        "iteration_id",
+        "hypothesis_id",
+        "entrypoint",
+        "compute",
+        "metrics",
+        "baselines",
+    }
     missing = sorted(required - set(payload.keys()))
     if missing:
         raise StageCheckError(
@@ -305,10 +327,15 @@ def _validate_design(path: Path, iteration_id: str) -> None:
         )
 
     if str(payload.get("iteration_id", "")).strip() != iteration_id:
-        raise StageCheckError("design.yaml iteration_id does not match state.iteration_id")
+        raise StageCheckError(
+            "design.yaml iteration_id does not match state.iteration_id"
+        )
 
     entrypoint = payload.get("entrypoint")
-    if not isinstance(entrypoint, dict) or not str(entrypoint.get("module", "")).strip():
+    if (
+        not isinstance(entrypoint, dict)
+        or not str(entrypoint.get("module", "")).strip()
+    ):
         raise StageCheckError("design.yaml entrypoint.module must be set")
 
     compute = payload.get("compute")
@@ -325,7 +352,9 @@ def _validate_design(path: Path, iteration_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _validate_review_result(path: Path, *, policy_requirements: dict[str, bool] | None = None) -> str:
+def _validate_review_result(
+    path: Path, *, policy_requirements: dict[str, bool] | None = None
+) -> str:
     payload = _load_dict_json(path, "review_result.json")
     required = {"status", "blocking_findings", "required_checks", "reviewed_at"}
     missing = sorted(required - set(payload.keys()))
@@ -343,7 +372,9 @@ def _validate_review_result(path: Path, *, policy_requirements: dict[str, bool] 
     if not isinstance(required_checks, dict):
         raise StageCheckError("review_result.json required_checks must be a mapping")
 
-    missing_checks = sorted(set(REVIEW_RESULT_REQUIRED_CHECKS) - set(required_checks.keys()))
+    missing_checks = sorted(
+        set(REVIEW_RESULT_REQUIRED_CHECKS) - set(required_checks.keys())
+    )
     if missing_checks:
         raise StageCheckError(
             f"review_result.json required_checks missing keys: {missing_checks}"
@@ -403,7 +434,9 @@ def _validate_extract(iteration_dir: Path, run_id: str) -> None:
     manifest_payload = _load_dict_json(manifest, "runs/<run_id>/run_manifest.json")
     sync = manifest_payload.get("artifact_sync_to_local")
     if not isinstance(sync, dict):
-        raise StageCheckError("runs/<run_id>/run_manifest.json missing artifact_sync_to_local mapping")
+        raise StageCheckError(
+            "runs/<run_id>/run_manifest.json missing artifact_sync_to_local mapping"
+        )
     sync_status = str(sync.get("status", "")).strip().lower()
     if sync_status not in SYNC_SUCCESS_STATUSES:
         raise StageCheckError(
@@ -435,12 +468,18 @@ def _validate_update_docs(repo_root: Path, iteration_dir: Path, run_id: str) -> 
             "docs_update.md must reference state.last_run_id to keep documentation traceable"
         )
     metrics_artifact = f"runs/{normalized_run_id}/metrics.json"
-    if metrics_artifact not in docs_update_text and "metrics.json" not in docs_update_text:
+    if (
+        metrics_artifact not in docs_update_text
+        and "metrics.json" not in docs_update_text
+    ):
         raise StageCheckError(
             "docs_update.md must reference metrics artifacts (expected runs/<run_id>/metrics.json)"
         )
     manifest_artifact = f"runs/{normalized_run_id}/run_manifest.json"
-    if manifest_artifact not in docs_update_text and "run_manifest.json" not in docs_update_text:
+    if (
+        manifest_artifact not in docs_update_text
+        and "run_manifest.json" not in docs_update_text
+    ):
         raise StageCheckError(
             "docs_update.md must reference run artifacts (expected runs/<run_id>/run_manifest.json)"
         )
@@ -494,7 +533,9 @@ def _validate_slurm_job_ledger_entry(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = "") -> tuple[str, str]:
+def _resolve_latest_run_state(
+    iteration_dir: Path, *, preferred_run_id: str = ""
+) -> tuple[str, str]:
     # Lazy import to avoid circular dependency — _manifest_timestamp lives in
     # __main__ until the utils module is extracted.
     from autolab.utils import _manifest_timestamp
@@ -516,7 +557,9 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
     else:
         manifests = sorted(iteration_dir.glob("runs/*/run_manifest.json"))
         if not manifests:
-            raise StageCheckError(f"launch did not produce run_manifest.json under {iteration_dir / 'runs'}")
+            raise StageCheckError(
+                f"launch did not produce run_manifest.json under {iteration_dir / 'runs'}"
+            )
     manifest_candidates: list[tuple[int, datetime, str, str, dict[str, Any]]] = []
     for manifest_path in manifests:
         payload = _load_dict_json(manifest_path, "runs/<run_id>/run_manifest.json")
@@ -525,7 +568,9 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
         parsed_timestamp = _manifest_timestamp(payload, run_id)
         timestamp = parsed_timestamp or datetime.min.replace(tzinfo=timezone.utc)
         has_timestamp = 1 if parsed_timestamp is not None else 0
-        manifest_candidates.append((has_timestamp, timestamp, run_id, str(manifest_path), payload))
+        manifest_candidates.append(
+            (has_timestamp, timestamp, run_id, str(manifest_path), payload)
+        )
     _has_timestamp, _timestamp, run_id, _manifest_path, payload = max(
         manifest_candidates,
         key=lambda item: (item[0], item[1], item[2], item[3]),
@@ -546,13 +591,19 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
         elif raw_sync:
             sync_status = raw_sync
     launch_payload = payload.get("launch")
-    nested_launch_mode = launch_payload.get("mode", "") if isinstance(launch_payload, dict) else ""
-    launch_mode = str(
-        payload.get("launch_mode")
-        or payload.get("host_mode")
-        or payload.get("detected_host_mode")
-        or nested_launch_mode
-    ).strip().lower()
+    nested_launch_mode = (
+        launch_payload.get("mode", "") if isinstance(launch_payload, dict) else ""
+    )
+    launch_mode = (
+        str(
+            payload.get("launch_mode")
+            or payload.get("host_mode")
+            or payload.get("detected_host_mode")
+            or nested_launch_mode
+        )
+        .strip()
+        .lower()
+    )
     if launch_mode == "slurm" and sync_status not in {"completed", "ok", "success"}:
         raise StageCheckError(
             f"latest run {run_id} has incomplete artifact synchronization for slurm mode: {sync_status}"
@@ -565,7 +616,9 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
 # ---------------------------------------------------------------------------
 
 
-def _resolve_verification_stage(state: dict[str, Any], stage_override: str | None = None) -> str:
+def _resolve_verification_stage(
+    state: dict[str, Any], stage_override: str | None = None
+) -> str:
     stage = str(stage_override or state.get("stage", "")).strip()
     if not stage:
         raise StageCheckError("verification stage is missing from state")
@@ -583,7 +636,9 @@ def _persist_verification_result(
     details: dict[str, Any],
 ) -> None:
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "generated_at": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "iteration_id": str(state.get("iteration_id", "")).strip(),
         "experiment_id": str(state.get("experiment_id", "")).strip(),
         "state_stage": str(state.get("stage", "")).strip(),
@@ -623,10 +678,14 @@ def _persist_structured_verifier_results(
             structured = result.get("structured")
             if not isinstance(structured, dict):
                 continue
-            verifier_name = str(structured.get("verifier", result.get("name", "unknown"))).strip()
+            verifier_name = str(
+                structured.get("verifier", result.get("name", "unknown"))
+            ).strip()
             filename = f"{stage}_{verifier_name}.json"
             output_path = verification_dir / filename
-            output_path.write_text(json.dumps(structured, indent=2) + "\n", encoding="utf-8")
+            output_path.write_text(
+                json.dumps(structured, indent=2) + "\n", encoding="utf-8"
+            )
     except Exception:
         pass
 
@@ -662,35 +721,55 @@ def _build_verification_command_specs(
         iteration_path = iteration_dir.as_posix()
 
     registry = load_registry(repo_root)
-    reg_verifier_cats = registry[stage].verifier_categories if stage in registry else None
-    stage_requirements = _resolve_stage_requirements(policy, stage, registry_verifier_categories=reg_verifier_cats)
+    reg_verifier_cats = (
+        registry[stage].verifier_categories if stage in registry else None
+    )
+    stage_requirements = _resolve_stage_requirements(
+        policy, stage, registry_verifier_categories=reg_verifier_cats
+    )
     python_bin = _resolve_policy_python_bin(policy)
-    test_command = _resolve_policy_command(str(policy.get("test_command", "")).strip(), python_bin=python_bin)
-    dry_run_command = _resolve_policy_command(str(policy.get("dry_run_command", "")).strip(), python_bin=python_bin)
+    test_command = _resolve_policy_command(
+        str(policy.get("test_command", "")).strip(), python_bin=python_bin
+    )
+    dry_run_command = _resolve_policy_command(
+        str(policy.get("dry_run_command", "")).strip(), python_bin=python_bin
+    )
     if not dry_run_command and stage_requirements.get("dry_run"):
-        raise StageCheckError("verification dry-run command is required by policy but not configured")
+        raise StageCheckError(
+            "verification dry-run command is required by policy but not configured"
+        )
     if not test_command and stage_requirements.get("tests"):
-        raise StageCheckError("verification test command is required by policy but not configured")
+        raise StageCheckError(
+            "verification test command is required by policy but not configured"
+        )
 
     template_fill_section = policy.get("template_fill", {})
     template_fill_enabled = False
     template_fill_command = ""
     if isinstance(template_fill_section, dict):
-        template_fill_enabled = _coerce_bool(template_fill_section.get("enabled"), default=False)
+        template_fill_enabled = _coerce_bool(
+            template_fill_section.get("enabled"), default=False
+        )
         stage_enabled = True
         template_fill_stages = template_fill_section.get("stages")
         if isinstance(template_fill_stages, dict):
             stage_enabled = _coerce_bool(template_fill_stages.get(stage), default=True)
         if template_fill_enabled and stage_enabled:
-            raw_template_fill_command = str(template_fill_section.get("command", "")).strip()
-            template_fill_command = _resolve_policy_command(raw_template_fill_command, python_bin=python_bin)
+            raw_template_fill_command = str(
+                template_fill_section.get("command", "")
+            ).strip()
+            template_fill_command = _resolve_policy_command(
+                raw_template_fill_command, python_bin=python_bin
+            )
 
     template_fill_by_stage = policy.get("template_fill_by_stage", {})
     if isinstance(template_fill_by_stage, dict):
         stage_template_fill = template_fill_by_stage.get(stage)
         if isinstance(stage_template_fill, str) and stage_template_fill.strip():
             template_fill_enabled = True
-            template_fill_command = _resolve_policy_command(stage_template_fill.strip(), python_bin=python_bin)
+            template_fill_command = _resolve_policy_command(
+                stage_template_fill.strip(), python_bin=python_bin
+            )
 
     command_specs: list[tuple[str, str]] = []
     if stage_requirements["tests"] and test_command:
@@ -699,13 +778,17 @@ def _build_verification_command_specs(
         command_specs.append(
             (
                 "dry_run",
-                _replace_iteration_placeholders(dry_run_command, iteration_id, iteration_path),
+                _replace_iteration_placeholders(
+                    dry_run_command, iteration_id, iteration_path
+                ),
             )
         )
     if template_fill_enabled and template_fill_command:
         command_specs.append(("template_fill", f"{template_fill_command} --json"))
 
-    registry_consistency_path = repo_root / ".autolab" / "verifiers" / "registry_consistency.py"
+    registry_consistency_path = (
+        repo_root / ".autolab" / "verifiers" / "registry_consistency.py"
+    )
     if registry_consistency_path.exists():
         command_specs.append(
             (
@@ -714,7 +797,9 @@ def _build_verification_command_specs(
             )
         )
 
-    prompt_registry_contract_path = repo_root / ".autolab" / "verifiers" / "prompt_registry_contract.py"
+    prompt_registry_contract_path = (
+        repo_root / ".autolab" / "verifiers" / "prompt_registry_contract.py"
+    )
     if prompt_registry_contract_path.exists():
         command_specs.append(
             (
@@ -723,7 +808,9 @@ def _build_verification_command_specs(
             )
         )
 
-    closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
+    closed_guard_path = (
+        repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
+    )
     if closed_guard_path.exists():
         command_specs.append(
             (
@@ -732,14 +819,26 @@ def _build_verification_command_specs(
             )
         )
     if stage_requirements["env_smoke"]:
-        command_specs.append(("run_health", f"{python_bin} .autolab/verifiers/run_health.py --json"))
-        command_specs.append(("result_sanity", f"{python_bin} .autolab/verifiers/result_sanity.py --json"))
-    if stage_requirements["docs_target_update"] and stage in {"update_docs", "implementation_review"}:
+        command_specs.append(
+            ("run_health", f"{python_bin} .autolab/verifiers/run_health.py --json")
+        )
+        command_specs.append(
+            (
+                "result_sanity",
+                f"{python_bin} .autolab/verifiers/result_sanity.py --json",
+            )
+        )
+    if stage_requirements["docs_target_update"] and stage in {
+        "update_docs",
+        "implementation_review",
+    }:
         command_specs.append(
             ("docs_targets", f"{python_bin} .autolab/verifiers/docs_targets.py --json")
         )
     if stage_requirements.get("consistency", False):
-        consistency_checks_path = repo_root / ".autolab" / "verifiers" / "consistency_checks.py"
+        consistency_checks_path = (
+            repo_root / ".autolab" / "verifiers" / "consistency_checks.py"
+        )
         if consistency_checks_path.exists():
             command_specs.append(
                 (
@@ -750,9 +849,14 @@ def _build_verification_command_specs(
     docs_drift_path = repo_root / ".autolab" / "verifiers" / "docs_drift.py"
     if docs_drift_path.exists() and stage == "update_docs":
         command_specs.append(
-            ("docs_drift", f"{python_bin} .autolab/verifiers/docs_drift.py --stage {shlex.quote(stage)} --json")
+            (
+                "docs_drift",
+                f"{python_bin} .autolab/verifiers/docs_drift.py --stage {shlex.quote(stage)} --json",
+            )
         )
-    plan_lint_path = repo_root / ".autolab" / "verifiers" / "implementation_plan_lint.py"
+    plan_lint_path = (
+        repo_root / ".autolab" / "verifiers" / "implementation_plan_lint.py"
+    )
     if plan_lint_path.exists() and stage == "implementation":
         command_specs.append(
             (
@@ -772,12 +876,16 @@ def _build_verification_command_specs(
         prompt_lint_mode = "enforce"
         enabled_by_stage = prompt_lint_config.get("enabled_by_stage", {})
         if isinstance(enabled_by_stage, dict) and stage in enabled_by_stage:
-            prompt_lint_stage_enabled = _coerce_bool(enabled_by_stage.get(stage), default=True)
+            prompt_lint_stage_enabled = _coerce_bool(
+                enabled_by_stage.get(stage), default=True
+            )
 
     if stage_requirements.get("prompt_lint", False) and prompt_lint_stage_enabled:
         prompt_lint_path = repo_root / ".autolab" / "verifiers" / "prompt_lint.py"
         if prompt_lint_path.exists():
-            lint_name = "prompt_lint_warn" if prompt_lint_mode == "warn" else "prompt_lint"
+            lint_name = (
+                "prompt_lint_warn" if prompt_lint_mode == "warn" else "prompt_lint"
+            )
             command_specs.append(
                 (
                     lint_name,
@@ -853,7 +961,10 @@ def _run_verification_step_detailed(
             duration_seconds = round(time.monotonic() - started, 3)
         except subprocess.TimeoutExpired:
             detail = _compact_log_text(f"verification command timed out: {command}")
-            _append_log(repo_root, f"verification timeout command={command_name} detail={detail}")
+            _append_log(
+                repo_root,
+                f"verification timeout command={command_name} detail={detail}",
+            )
             results.append(
                 {
                     "name": command_name,
@@ -882,7 +993,10 @@ def _run_verification_step_detailed(
             return (False, message, details)
         except OSError as exc:
             detail = _compact_log_text(f"verification command failed to start: {exc}")
-            _append_log(repo_root, f"verification command failed command={command_name} detail={detail}")
+            _append_log(
+                repo_root,
+                f"verification command failed command={command_name} detail={detail}",
+            )
             results.append(
                 {
                     "name": command_name,
@@ -914,7 +1028,11 @@ def _run_verification_step_detailed(
         stderr = (process.stderr or "").strip()
         detail = _compact_log_text((stderr or stdout or "").strip())
         non_blocking_warning = command_name == "prompt_lint_warn"
-        status = "pass" if process.returncode == 0 else ("warn" if non_blocking_warning else "fail")
+        status = (
+            "pass"
+            if process.returncode == 0
+            else ("warn" if non_blocking_warning else "fail")
+        )
         result_payload = {
             "name": command_name,
             "command": command,
@@ -944,7 +1062,9 @@ def _run_verification_step_detailed(
             continue
 
         if process.returncode != 0:
-            _append_log(repo_root, f"verification failed command={command_name} detail={detail}")
+            _append_log(
+                repo_root, f"verification failed command={command_name} detail={detail}"
+            )
             details = {
                 "stage": stage,
                 "requirements": stage_requirements,

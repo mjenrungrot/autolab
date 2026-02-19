@@ -38,7 +38,12 @@ def test_policy_apply_preset_local_dev(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     state_path = repo / ".autolab" / "state.json"
-    assert commands_module.main(["init", "--state-file", str(state_path), "--no-interactive"]) == 0
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
 
     exit_code = commands_module.main(
         ["policy", "apply", "preset", "local_dev", "--state-file", str(state_path)]
@@ -56,7 +61,12 @@ def test_policy_apply_preset_ci_strict(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     state_path = repo / ".autolab" / "state.json"
-    assert commands_module.main(["init", "--state-file", str(state_path), "--no-interactive"]) == 0
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
 
     exit_code = commands_module.main(
         ["policy", "apply", "preset", "ci_strict", "--state-file", str(state_path)]

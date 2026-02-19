@@ -36,6 +36,7 @@ from autolab.todo_sync import sync_todo_pre_run, sync_todo_post_run
 # Host mode detection
 # ---------------------------------------------------------------------------
 
+
 def _probe_host_command(
     argv: list[str], *, timeout: float = HOST_MODE_COMMAND_TIMEOUT_SECONDS
 ) -> tuple[bool, str]:
@@ -51,7 +52,10 @@ def _probe_host_command(
         return (False, "missing")
     except subprocess.TimeoutExpired:
         return (False, "timeout")
-    return (proc.returncode == 0, "ok" if proc.returncode == 0 else f"exit_{proc.returncode}")
+    return (
+        proc.returncode == 0,
+        "ok" if proc.returncode == 0 else f"exit_{proc.returncode}",
+    )
 
 
 def _is_command_available(command: str) -> bool:
@@ -90,7 +94,11 @@ def _detect_host_mode_with_probe() -> tuple[str, dict[str, str]]:
         probe["sbatch"] = sbatch_status
 
     if _has_slurm_env():
-        if (has_sinfo and sinfo_ok) or (has_sbatch and sbatch_ok) or (has_squeue and squeue_ok):
+        if (
+            (has_sinfo and sinfo_ok)
+            or (has_sbatch and sbatch_ok)
+            or (has_squeue and squeue_ok)
+        ):
             return ("slurm", probe)
         probe["note"] = "slurm environment detected but command probes incomplete"
 
@@ -110,8 +118,11 @@ def _detect_priority_host_mode() -> str:
 # Timestamp helpers
 # ---------------------------------------------------------------------------
 
+
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _generate_run_id() -> str:
@@ -190,6 +201,7 @@ def _manifest_timestamp(payload: dict[str, Any], run_id: str) -> datetime | None
 # JSON I/O helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -231,6 +243,7 @@ def _compact_json(value: Any, *, max_chars: int = 2000) -> str:
 # Text / file helpers
 # ---------------------------------------------------------------------------
 
+
 def _safe_read_text(path: Path, *, max_chars: int = 2000) -> str:
     if not path.exists():
         return ""
@@ -246,7 +259,9 @@ def _safe_read_text(path: Path, *, max_chars: int = 2000) -> str:
     return f"{compact[:max_chars]}..."
 
 
-def _extract_matching_lines(path: Path, *, keywords: tuple[str, ...], limit: int = 8) -> str:
+def _extract_matching_lines(
+    path: Path, *, keywords: tuple[str, ...], limit: int = 8
+) -> str:
     if not path.exists():
         return ""
     try:
@@ -267,7 +282,9 @@ def _extract_matching_lines(path: Path, *, keywords: tuple[str, ...], limit: int
     return "\n".join(matched[:limit])
 
 
-def _extract_log_snippet(repo_root: Path, *, keywords: tuple[str, ...], limit: int = 8) -> str:
+def _extract_log_snippet(
+    repo_root: Path, *, keywords: tuple[str, ...], limit: int = 8
+) -> str:
     log_path = repo_root / ".autolab" / "logs" / "orchestrator.log"
     if not log_path.exists():
         return ""
@@ -319,6 +336,7 @@ def _ensure_json_file(path: Path, payload: dict[str, Any], created: list[Path]) 
 # Logging
 # ---------------------------------------------------------------------------
 
+
 def _append_log(repo_root: Path, message: str) -> None:
     log_path = repo_root / ".autolab" / "logs" / "orchestrator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -329,6 +347,7 @@ def _append_log(repo_root: Path, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     command = ["git", "-C", str(repo_root), *args]
@@ -411,7 +430,9 @@ def _build_auto_commit_message(outcome: RunOutcome, staged_paths: list[str]) -> 
     if outcome.commit_cycle_stage:
         commit_message = f"{commit_message} [cycle:{outcome.commit_cycle_stage}]"
     if outcome.transitioned:
-        commit_message = f"{commit_message} [stage:{outcome.stage_before}->{outcome.stage_after}]"
+        commit_message = (
+            f"{commit_message} [stage:{outcome.stage_before}->{outcome.stage_after}]"
+        )
     return commit_message
 
 
@@ -424,21 +445,27 @@ def _try_auto_commit(repo_root: Path, *, outcome: RunOutcome) -> str:
 
     conflicts = _run_git(repo_root, ["diff", "--name-only", "--diff-filter=U"])
     if conflicts.returncode != 0:
-        detail = _compact_log_text((conflicts.stderr or conflicts.stdout or "unknown git error").strip())
+        detail = _compact_log_text(
+            (conflicts.stderr or conflicts.stdout or "unknown git error").strip()
+        )
         _append_log(repo_root, f"auto_commit probe failed: {detail}")
         return f"auto_commit: skipped (probe failed: {detail})"
     if conflicts.stdout.strip():
         _append_log(repo_root, "auto_commit skipped due to unresolved merge conflicts")
         return "auto_commit: skipped (unresolved merge conflicts)"
 
-    scoped_paths = tuple(path for path in dict.fromkeys(outcome.commit_paths) if str(path).strip())
+    scoped_paths = tuple(
+        path for path in dict.fromkeys(outcome.commit_paths) if str(path).strip()
+    )
     if outcome.commit_paths and not scoped_paths:
         return "auto_commit: skipped (no scoped paths)"
 
     add_args = ["add", "--", *scoped_paths] if scoped_paths else ["add", "-A"]
     add = _run_git(repo_root, add_args)
     if add.returncode != 0:
-        detail = _compact_log_text((add.stderr or add.stdout or "git add failed").strip())
+        detail = _compact_log_text(
+            (add.stderr or add.stdout or "git add failed").strip()
+        )
         _append_log(repo_root, f"auto_commit add failed: {detail}")
         return f"auto_commit: failed (git add failed: {detail})"
 
@@ -449,7 +476,9 @@ def _try_auto_commit(repo_root: Path, *, outcome: RunOutcome) -> str:
     if staged.returncode == 0:
         return "auto_commit: skipped (no changes)"
     if staged.returncode not in {0, 1}:
-        detail = _compact_log_text((staged.stderr or staged.stdout or "git diff --cached failed").strip())
+        detail = _compact_log_text(
+            (staged.stderr or staged.stdout or "git diff --cached failed").strip()
+        )
         _append_log(repo_root, f"auto_commit staged-check failed: {detail}")
         return f"auto_commit: failed (staged check failed: {detail})"
 
@@ -460,7 +489,9 @@ def _try_auto_commit(repo_root: Path, *, outcome: RunOutcome) -> str:
         commit_args.extend(["--", *scoped_paths])
     commit = _run_git(repo_root, commit_args)
     if commit.returncode != 0:
-        detail = _compact_log_text((commit.stderr or commit.stdout or "git commit failed").strip())
+        detail = _compact_log_text(
+            (commit.stderr or commit.stdout or "git commit failed").strip()
+        )
         _append_log(repo_root, f"auto_commit commit failed: {detail}")
         return f"auto_commit: failed ({detail})"
 
@@ -500,11 +531,15 @@ def _collect_changed_paths(repo_root: Path) -> list[str]:
     return changed
 
 
-def _summarize_git_changes_for_prompt(repo_root: Path, *, limit: int = 12) -> tuple[str, list[str]]:
+def _summarize_git_changes_for_prompt(
+    repo_root: Path, *, limit: int = 12
+) -> tuple[str, list[str]]:
     entries = _collect_git_status_entries(repo_root)
     if not entries:
         return ("clean working tree", [])
-    summarized = [f"{status_code.strip() or '??'} {path}" for path, status_code in entries[:limit]]
+    summarized = [
+        f"{status_code.strip() or '??'} {path}" for path, status_code in entries[:limit]
+    ]
     summary = f"{len(entries)} changed path(s)"
     if len(entries) > limit:
         summary = f"{summary}; showing first {limit}"
@@ -514,6 +549,7 @@ def _summarize_git_changes_for_prompt(repo_root: Path, *, limit: int = 12) -> tu
 # ---------------------------------------------------------------------------
 # Change tracking / fingerprinting
 # ---------------------------------------------------------------------------
+
 
 def _path_fingerprint(repo_root: Path, relative_path: str) -> str:
     path = repo_root / relative_path
@@ -535,12 +571,20 @@ def _collect_change_snapshot(repo_root: Path) -> dict[str, str]:
     return snapshot
 
 
-def _snapshot_delta_paths(baseline_snapshot: dict[str, str], current_snapshot: dict[str, str]) -> list[str]:
-    delta_paths = [path for path, signature in current_snapshot.items() if baseline_snapshot.get(path) != signature]
+def _snapshot_delta_paths(
+    baseline_snapshot: dict[str, str], current_snapshot: dict[str, str]
+) -> list[str]:
+    delta_paths = [
+        path
+        for path, signature in current_snapshot.items()
+        if baseline_snapshot.get(path) != signature
+    ]
     return sorted(delta_paths)
 
 
-def _assistant_commit_paths(delta_paths: list[str], meaningful_paths: list[str]) -> tuple[str, ...]:
+def _assistant_commit_paths(
+    delta_paths: list[str], meaningful_paths: list[str]
+) -> tuple[str, ...]:
     meaningful_set = set(meaningful_paths)
     scoped: list[str] = []
     seen: set[str] = set()
@@ -576,7 +620,11 @@ def _evaluate_meaningful_change(
         delta_paths = changed_paths
     else:
         delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
-    meaningful_paths = [path for path in delta_paths if not _path_matches_any(path, config.exclude_paths)]
+    meaningful_paths = [
+        path
+        for path in delta_paths
+        if not _path_matches_any(path, config.exclude_paths)
+    ]
     return (bool(meaningful_paths), delta_paths, meaningful_paths, current_snapshot)
 
 
@@ -638,10 +686,12 @@ def _prepare_standard_commit_outcome(
     non_git_check = bool(
         meaningful_config.require_git_for_progress and not _is_git_worktree(repo_root)
     )
-    meaningful, delta_paths, meaningful_paths, _current_snapshot = _evaluate_meaningful_change(
-        repo_root,
-        meaningful_config,
-        baseline_snapshot=baseline_snapshot,
+    meaningful, delta_paths, meaningful_paths, _current_snapshot = (
+        _evaluate_meaningful_change(
+            repo_root,
+            meaningful_config,
+            baseline_snapshot=baseline_snapshot,
+        )
     )
 
     if require_progress_gate and non_git_check:
@@ -711,6 +761,7 @@ def _prepare_standard_commit_outcome(
 # Todo helpers
 # ---------------------------------------------------------------------------
 
+
 def _todo_open_count(repo_root: Path) -> int:
     todo_state_path = repo_root / ".autolab" / "todo_state.json"
     if not todo_state_path.exists():
@@ -722,7 +773,11 @@ def _todo_open_count(repo_root: Path) -> int:
     tasks = payload.get("tasks", {})
     if not isinstance(tasks, dict):
         return 0
-    return sum(1 for task in tasks.values() if isinstance(task, dict) and task.get("status") == "open")
+    return sum(
+        1
+        for task in tasks.values()
+        if isinstance(task, dict) and task.get("status") == "open"
+    )
 
 
 def _has_open_stage_todo_task(repo_root: Path, stage: str) -> bool:
@@ -797,6 +852,7 @@ def _append_todo_message(base_message: str, todo_message: str) -> str:
 # Backlog / experiment type helpers
 # ---------------------------------------------------------------------------
 
+
 def _normalize_backlog_status(value: Any) -> str:
     return _normalize_space(str(value)).lower()
 
@@ -819,6 +875,7 @@ def _is_experiment_type_locked(value: Any) -> bool:
 # ---------------------------------------------------------------------------
 # Agent result persistence
 # ---------------------------------------------------------------------------
+
 
 def _write_block_reason(
     repo_root: Path,
