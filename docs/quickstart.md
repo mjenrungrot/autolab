@@ -8,6 +8,16 @@ This guide walks you through setting up Autolab for a new or existing research r
 - `pip install autolab` (or `pip install -e .` from source)
 - PyYAML and jsonschema: `pip install pyyaml jsonschema`
 
+## Upgrading
+
+```bash
+autolab update
+```
+
+`autolab update` upgrades to the latest stable GitHub release tag (`vX.Y.Z`) and
+automatically runs `autolab sync-scaffold --force` when executed inside an Autolab
+repository. If run outside a repo, it upgrades and skips scaffold sync.
+
 ## Step 1: Initialize the scaffold
 
 ```bash
