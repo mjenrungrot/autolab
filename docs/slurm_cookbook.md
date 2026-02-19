@@ -7,7 +7,7 @@ Consolidated guide for running Autolab experiments on SLURM clusters.
 Autolab detects SLURM availability by checking:
 
 1. `design.yaml` `compute.location` value (`"slurm"`)
-1. Environment probes (`squeue`, `sinfo`, `sbatch` availability)
+2. Environment probes (`squeue`, `sinfo`, `sbatch` availability)
 
 When `compute.location: slurm`, the launch stage produces `run_slurm.sbatch` instead of `run_local.sh`.
 
@@ -75,10 +75,10 @@ The ledger contains one entry per run with `run_id`, `job_id`, and status.
 When `slurm_monitor` is active for an in-progress SLURM manifest:
 
 1. Read `docs/slurm_job_list.md` entry for the run
-1. Query scheduler state (`squeue -u $USER`, `sacct`)
-1. If job completed and artifacts synced -> advance to extraction
-1. If job still running -> remain in `slurm_monitor` and update manifest/ledger
-1. If job failed/cancelled/timed out -> mark manifest `status: failed` and advance so extraction can emit failed/partial metrics with evidence
+2. Query scheduler state (`squeue -u $USER`, `sacct`)
+3. If job completed and artifacts synced -> advance to extraction
+4. If job still running -> remain in `slurm_monitor` and update manifest/ledger
+5. If job failed/cancelled/timed out -> mark manifest `status: failed` and advance so extraction can emit failed/partial metrics with evidence
 
 `extract_results` should only compute metrics when `artifact_sync_to_local.status` is success-like (`ok`, `completed`, `success`, `passed`), otherwise emit `partial|failed` with explicit missing evidence.
 

@@ -1,10 +1,9 @@
-## name: autolab
-
-## description: Plan, run, and troubleshoot Autolab stage workflows with the right runtime mode, policy settings, and guardrails.
-
-## metadata:
-
-## short-description: Autolab Workflow Operator
+---
+name: autolab
+description: Plan, run, and troubleshoot Autolab stage workflows with the right runtime mode, policy settings, and guardrails.
+metadata:
+  short-description: Autolab Workflow Operator
+---
 
 # /autolab - Autolab Workflow Operator
 
@@ -13,8 +12,8 @@ Use this skill when the user wants to operate or troubleshoot an Autolab workflo
 ## Quick Triage (Top 3 Commands)
 
 1. `autolab status`
-1. `autolab verify --stage <stage>`
-1. `autolab run`
+2. `autolab verify --stage <stage>`
+3. `autolab run`
 
 ## Decision Tree
 
@@ -66,8 +65,8 @@ Verifier categories below are registry capabilities; policy controls actual requ
 Use this order:
 
 1. `autolab ...`
-1. `python -m autolab ...`
-1. `PYTHONPATH=src python -m autolab ...`
+2. `python -m autolab ...`
+3. `PYTHONPATH=src python -m autolab ...`
 
 ## Read-First Context Checklist
 
@@ -109,44 +108,44 @@ At `decide_repeat`:
 ### Stuck stage
 
 1. `autolab status`
-1. `autolab verify --stage <stage>`
-1. Fix the failing artifact(s) or policy mismatch.
-1. Re-run `autolab run`.
+2. `autolab verify --stage <stage>`
+3. Fix the failing artifact(s) or policy mismatch.
+4. Re-run `autolab run`.
 
 ### SLURM issues
 
 1. Inspect manifest: `cat experiments/<type>/<iteration_id>/runs/<run_id>/run_manifest.json`
-1. Verify ledger: `autolab slurm-job-list verify --manifest <manifest> --doc docs/slurm_job_list.md`
-1. Repair ledger if needed: `autolab slurm-job-list append --manifest <manifest> --doc docs/slurm_job_list.md`
-1. Re-run `autolab verify --stage launch` or `autolab verify --stage slurm_monitor`.
+2. Verify ledger: `autolab slurm-job-list verify --manifest <manifest> --doc docs/slurm_job_list.md`
+3. Repair ledger if needed: `autolab slurm-job-list append --manifest <manifest> --doc docs/slurm_job_list.md`
+4. Re-run `autolab verify --stage launch` or `autolab verify --stage slurm_monitor`.
 
 ### Assistant loop issues
 
 1. Check `assistant_mode`, `task_cycle_stage`, and guardrail counters via `autolab status`.
-1. Confirm meaningful-change policy (`autorun.meaningful_change.*`).
-1. Ensure backlog/todo tasks are actionable.
-1. If repeated churn occurs, reduce automation scope and escalate to `human_review`.
+2. Confirm meaningful-change policy (`autorun.meaningful_change.*`).
+3. Ensure backlog/todo tasks are actionable.
+4. If repeated churn occurs, reduce automation scope and escalate to `human_review`.
 
 ### Policy misconfiguration
 
 1. Run `autolab configure --check`.
-1. Inspect `requirements_by_stage` vs workflow capabilities.
-1. Validate `python_bin`, `dry_run_command`, and retry policies.
-1. Apply minimal corrective edits; rerun verification.
+2. Inspect `requirements_by_stage` vs workflow capabilities.
+3. Validate `python_bin`, `dry_run_command`, and retry policies.
+4. Apply minimal corrective edits; rerun verification.
 
 ## Failure Playbooks
 
 ### `prompt_lint` fails
 
 1. `autolab verify --stage <stage>`
-1. Inspect `.autolab/prompts/stage_<stage>.md` and `.autolab/workflow.yaml` token contracts.
-1. Fix unsupported/missing tokens and rerun verification.
+2. Inspect `.autolab/prompts/stage_<stage>.md` and `.autolab/workflow.yaml` token contracts.
+3. Fix unsupported/missing tokens and rerun verification.
 
 ### `schema_checks` fails
 
 1. `autolab verify --stage <stage>`
-1. `python .autolab/verifiers/schema_checks.py --stage <stage> --json`
-1. Fix required fields/types against `.autolab/schemas/*.schema.json`.
+2. `python .autolab/verifiers/schema_checks.py --stage <stage> --json`
+3. Fix required fields/types against `.autolab/schemas/*.schema.json`.
 
 ### `docs_targets` fails
 

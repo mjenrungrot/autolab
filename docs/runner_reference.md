@@ -83,7 +83,7 @@ When `ensure_iteration_dir: true`, the iteration directory is created before run
 Autolab detects out-of-scope edits after runner execution:
 
 1. **Git-based** (default): Compares git diff before/after runner execution
-1. **Filesystem snapshot** (fallback): When not a git worktree, uses `os.walk()` to detect file changes by mtime/size
+2. **Filesystem snapshot** (fallback): When not a git worktree, uses `os.walk()` to detect file changes by mtime/size
 
 Policy for non-git repos (`meaningful_change.on_non_git_behavior`):
 
