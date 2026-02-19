@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.8
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.9
 ```
 
 After upgrading from GitHub, refresh local workflow defaults:
@@ -27,8 +27,10 @@ Enable auto version bump on each commit:
 ./scripts/install-hooks.sh
 ```
 
-This also syncs the pinned release tag in `README.md` and keeps only the latest 10
-`vX.Y.Z` tags on GitHub (`origin`) after each commit.
+This also syncs the pinned release tag in `README.md` and can sync the current
+`vX.Y.Z` tag to GitHub (`origin`) after each commit on the default branch.
+By default, hooks only run on the default branch and release-tag pruning is disabled
+unless `scripts/sync_release_tags.py --prune` is used explicitly.
 These local hooks are optional; CI workflows under `.github/workflows/` are authoritative.
 
 After install, invoke with `autolab --help` or `python -m autolab --help`.

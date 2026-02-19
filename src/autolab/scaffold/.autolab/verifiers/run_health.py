@@ -47,6 +47,10 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     run_dir = _resolve_iteration_dir(iteration_id) / "runs" / run_id
     manifest_path = run_dir / "run_manifest.json"
     manifest = _load_json(manifest_path)
+    manifest_status = str(manifest.get("status", "")).strip().lower()
+    completion_like_statuses = {"completed", "complete", "success", "succeeded", "ok", "passed"}
+    in_progress_statuses = {"submitted", "queued", "pending", "running", "in_progress"}
+    sync_success_like = {"ok", "completed", "success", "passed"}
 
     run_id_in_manifest = str(manifest.get("run_id", "")).strip()
     if run_id_in_manifest and run_id_in_manifest != run_id:
@@ -65,11 +69,38 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
             failures.append(f"{manifest_path} artifact_sync_to_local must be a mapping")
         else:
             sync_status = str(sync_to_local.get("status", "")).lower()
-            if sync_status not in {"ok", "completed", "success", "passed"}:
-                failures.append(
-                    f"{manifest_path} requires slurm artifact sync status 'ok'/'completed'/'success', "
-                    f"found '{sync_status or '<missing>'}'"
-                )
+            if manifest_status in completion_like_statuses:
+                if sync_status not in sync_success_like:
+                    failures.append(
+                        f"{manifest_path} requires slurm artifact sync status 'ok'/'completed'/'success', "
+                        f"found '{sync_status or '<missing>'}'"
+                    )
+            else:
+                in_progress_sync_statuses = sync_success_like | {
+                    "submitted",
+                    "queued",
+                    "pending",
+                    "running",
+                    "in_progress",
+                    "na",
+                    "not_started",
+                }
+                if not sync_status:
+                    failures.append(
+                        f"{manifest_path} artifact_sync_to_local.status is required for slurm runs"
+                    )
+                elif sync_status not in in_progress_sync_statuses:
+                    failures.append(
+                        f"{manifest_path} has unsupported slurm artifact sync status '{sync_status}' "
+                        "for non-completed launch state"
+                    )
+        slurm_ledger_path = REPO_ROOT / "docs" / "slurm_job_list.md"
+        if not slurm_ledger_path.exists():
+            failures.append(f"{slurm_ledger_path} is required for slurm launch tracking")
+        else:
+            ledger_text = slurm_ledger_path.read_text(encoding="utf-8")
+            if f"run_id={run_id}" not in ledger_text:
+                failures.append(f"{slurm_ledger_path} is missing run_id={run_id} entry")
     else:
         command = manifest.get("command", "")
         if not command:
@@ -88,8 +119,6 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
         started_at = str(timestamps.get("started_at", "")).strip()
         if not started_at:
             failures.append(f"{manifest_path} timestamps.started_at is required")
-        manifest_status = str(manifest.get("status", "")).strip().lower()
-        completion_like_statuses = {"completed", "complete", "success", "succeeded", "ok", "passed"}
         if manifest_status in completion_like_statuses:
             completed_at = str(timestamps.get("completed_at", "")).strip()
             if not completed_at:
@@ -97,9 +126,14 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
                     f"{manifest_path} timestamps.completed_at is required when status is completion-like"
                 )
 
-    run_status = str(manifest.get("status", "")).strip().lower()
-    if run_status == "failed":
+    run_status = manifest_status
+    if run_status in {"failed", "error"}:
         failures.append(f"{manifest_path} has failed status")
+    if run_status and run_status not in completion_like_statuses and run_status not in in_progress_statuses:
+        failures.append(
+            f"{manifest_path} status '{run_status}' is not recognized "
+            f"(expected completion-like or in-progress states)"
+        )
 
     if not (run_dir / "logs").exists():
         failures.append(f"{run_dir / 'logs'} is missing")

@@ -4,6 +4,21 @@ set -eu
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+if [ -z "$default_branch" ]; then
+  default_branch="main"
+fi
+
+current_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if [ -z "$current_branch" ]; then
+  echo "post-commit: detached HEAD; skipping release-tag sync"
+  exit 0
+fi
+if [ "$current_branch" != "$default_branch" ]; then
+  echo "post-commit: skipping release-tag sync on branch '$current_branch' (default branch: '$default_branch')"
+  exit 0
+fi
+
 if command -v python3 >/dev/null 2>&1; then
   python_bin="python3"
 elif command -v python >/dev/null 2>&1; then

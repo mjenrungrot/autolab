@@ -19,20 +19,28 @@ Common tokens available in prompts:
 
 - `{{iteration_id}}`
 - `{{iteration_path}}`
+- `{{experiment_id}}`
+- `{{paper_targets}}`
+- `{{python_bin}}`
+- `{{recommended_memory_estimate}}`
+- `{{available_memory_gb}}`
 - `{{run_id}}`
 - `{{hypothesis_id}}`
 - `{{stage}}`
+- `{{stage_context}}`
 - `{{review_feedback}}`
 - `{{verifier_errors}}`
+- `{{diff_summary}}`
 - `{{verifier_outputs}}`
 - `{{dry_run_output}}`
 - `{{launch_mode}}`
 - `{{metrics_summary}}`
 - `{{target_comparison}}`
 - `{{decision_suggestion}}`
-- `{{stage_context}}`
+- `{{auto_metrics_evidence}}`
 
 Do not leave unresolved placeholders in required outputs.
+For per-token descriptions and stage guidance, see `docs/prompt_token_reference.md`.
 
 ## Rendered prompt outputs
 
