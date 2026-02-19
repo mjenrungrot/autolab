@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autolab"
-version = "1.1.23"
+version = "1.1.24"
 description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,6 +36,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 autolab = [
   "scaffold/.autolab/experiment_file_line_limits.yaml",
+  "scaffold/.autolab/workflow.yaml",
   "scaffold/.autolab/verifier_policy.yaml",
   "scaffold/.autolab/prompts/*.md",
   "scaffold/.autolab/prompts/shared/*.md",

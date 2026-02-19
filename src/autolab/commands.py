@@ -393,12 +393,15 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if isinstance(repeat_guard, dict):
         try:
             guardrail_cfg = _load_guardrail_config(repo_root)
+            max_streak = int(guardrail_cfg.max_same_decision_streak)
+            max_no_prog = int(guardrail_cfg.max_no_progress_decisions)
+            max_docs = int(guardrail_cfg.max_update_docs_cycles)
+            on_breach = str(guardrail_cfg.on_breach)
         except Exception:
-            guardrail_cfg = {}
-        max_streak = guardrail_cfg.get("max_same_decision_streak", 3)
-        max_no_prog = guardrail_cfg.get("max_no_progress_decisions", 2)
-        max_docs = guardrail_cfg.get("max_update_docs_cycles", 3)
-        on_breach = guardrail_cfg.get("on_breach", "human_review")
+            max_streak = 3
+            max_no_prog = 2
+            max_docs = 3
+            on_breach = "human_review"
 
         streak = repeat_guard.get("same_decision_streak", 0)
         no_prog = repeat_guard.get("no_progress_decisions", 0)
@@ -777,6 +780,9 @@ def _apply_init_policy_defaults(
 
     original = _yaml_mod.safe_dump(policy, sort_keys=False)
     selected_command = ""
+    configured_python_bin = str(policy.get("python_bin", "")).strip()
+    if not configured_python_bin or configured_python_bin in {"python", "python3"}:
+        policy["python_bin"] = sys.executable
     if interactive:
         print("")
         print("autolab init policy setup")
