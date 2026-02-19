@@ -9,6 +9,7 @@ from autolab.config import (
     _load_agent_runner_config,
     _load_guardrail_config,
     _load_launch_execute_policy,
+    _load_launch_runtime_config,
     _load_protected_files,
     _resolve_policy_python_bin,
     _load_slurm_lifecycle_strict_policy,
@@ -138,6 +139,62 @@ def test_load_launch_execute_policy_reads_false(tmp_path: Path) -> None:
     assert _load_launch_execute_policy(repo) is False
 
 
+def test_load_launch_runtime_config_defaults(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    config = _load_launch_runtime_config(repo)
+
+    assert config.execute is True
+    assert config.local_timeout_seconds == 900.0
+    assert config.slurm_submit_timeout_seconds == 30.0
+
+
+def test_load_launch_runtime_config_reads_custom_values(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        (
+            "launch:\n"
+            "  execute: true\n"
+            "  local_timeout_seconds: 120\n"
+            "  slurm_submit_timeout_seconds: 45\n"
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_launch_runtime_config(repo)
+
+    assert config.execute is True
+    assert config.local_timeout_seconds == 120.0
+    assert config.slurm_submit_timeout_seconds == 45.0
+
+
+def test_load_launch_runtime_config_non_positive_timeout_falls_back_to_defaults(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        (
+            "launch:\n"
+            "  execute: true\n"
+            "  local_timeout_seconds: 0\n"
+            "  slurm_submit_timeout_seconds: -1\n"
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_launch_runtime_config(repo)
+
+    assert config.local_timeout_seconds == 900.0
+    assert config.slurm_submit_timeout_seconds == 30.0
+
+
 def test_load_slurm_lifecycle_strict_policy_defaults_true(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -164,7 +221,10 @@ def test_resolve_policy_python_bin_normalizes_generic_python_binaries() -> None:
 
 
 def test_resolve_policy_python_bin_respects_explicit_custom_binary() -> None:
-    assert _resolve_policy_python_bin({"python_bin": "/usr/bin/python3"}) == "/usr/bin/python3"
+    assert (
+        _resolve_policy_python_bin({"python_bin": "/usr/bin/python3"})
+        == "/usr/bin/python3"
+    )
 
 
 def test_load_agent_runner_config_defaults_to_codex_dangerous(

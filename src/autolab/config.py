@@ -33,10 +33,12 @@ from autolab.models import (
     AgentRunnerEditScopeConfig,
     AutoCommitConfig,
     GuardrailConfig,
+    LaunchRuntimeConfig,
     MeaningfulChangeConfig,
     StageCheckError,
     StrictModeConfig,
     _coerce_bool,
+    _coerce_float,
 )
 
 
@@ -168,13 +170,38 @@ def _load_auto_commit_config(repo_root: Path) -> AutoCommitConfig:
     return AutoCommitConfig(mode=mode)
 
 
-def _load_launch_execute_policy(repo_root: Path) -> bool:
-    """Return whether launch stage is allowed to execute commands/submit jobs."""
+def _load_launch_runtime_config(repo_root: Path) -> LaunchRuntimeConfig:
+    """Return runtime launch execution configuration with safe defaults."""
     policy = _load_verifier_policy(repo_root)
     launch = policy.get("launch")
     if not isinstance(launch, dict):
-        return True
-    return _coerce_bool(launch.get("execute"), default=True)
+        launch = {}
+
+    execute = _coerce_bool(launch.get("execute"), default=True)
+
+    local_timeout_seconds = _coerce_float(
+        launch.get("local_timeout_seconds"), default=900.0
+    )
+    if local_timeout_seconds <= 0:
+        local_timeout_seconds = 900.0
+
+    slurm_submit_timeout_seconds = _coerce_float(
+        launch.get("slurm_submit_timeout_seconds"),
+        default=30.0,
+    )
+    if slurm_submit_timeout_seconds <= 0:
+        slurm_submit_timeout_seconds = 30.0
+
+    return LaunchRuntimeConfig(
+        execute=execute,
+        local_timeout_seconds=local_timeout_seconds,
+        slurm_submit_timeout_seconds=slurm_submit_timeout_seconds,
+    )
+
+
+def _load_launch_execute_policy(repo_root: Path) -> bool:
+    """Return whether launch stage is allowed to execute commands/submit jobs."""
+    return _load_launch_runtime_config(repo_root).execute
 
 
 def _load_slurm_lifecycle_strict_policy(repo_root: Path) -> bool:
@@ -315,10 +342,13 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         runner_section.get("claude_dangerously_skip_permissions"),
         default=True,
     ) or _coerce_bool(os.environ.get("AUTOLAB_CLAUDE_ALLOW_DANGEROUS"), default=False)
-    codex_dangerous_opt_in = _coerce_bool(
-        runner_section.get("codex_dangerously_bypass_approvals_and_sandbox"),
-        default=True,
-    ) or codex_dangerous_env_opt_in
+    codex_dangerous_opt_in = (
+        _coerce_bool(
+            runner_section.get("codex_dangerously_bypass_approvals_and_sandbox"),
+            default=True,
+        )
+        or codex_dangerous_env_opt_in
+    )
     if raw_command is not None:
         command = str(raw_command).strip()
     else:

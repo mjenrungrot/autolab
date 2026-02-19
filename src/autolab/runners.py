@@ -110,9 +110,7 @@ def _looks_like_codex_sandbox_permission_failure(
         and "operation not permitted" in haystack
     ):
         return True
-    return (
-        "failed to queue rollout items" in haystack and "channel closed" in haystack
-    )
+    return "failed to queue rollout items" in haystack and "channel closed" in haystack
 
 
 def _write_runner_execution_report(
@@ -722,9 +720,7 @@ def _invoke_agent_runner(
             if timeout_deadline is not None:
                 wait_timeout = min(wait_timeout, max(0.01, timeout_deadline - now))
             if dead_channel_deadline is not None:
-                wait_timeout = min(
-                    wait_timeout, max(0.01, dead_channel_deadline - now)
-                )
+                wait_timeout = min(wait_timeout, max(0.01, dead_channel_deadline - now))
             try:
                 returncode = process.wait(timeout=wait_timeout)
                 break
@@ -798,7 +794,9 @@ def _invoke_agent_runner(
             delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
             effective_delta_paths = delta_paths
             out_of_scope = sorted(
-                path for path in delta_paths if not _is_within_scope(path, allowed_roots)
+                path
+                for path in delta_paths
+                if not _is_within_scope(path, allowed_roots)
             )
             if out_of_scope:
                 sample = ", ".join(out_of_scope[:8])

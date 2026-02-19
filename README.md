@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.32
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.33
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -33,7 +33,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@vX.Y.Z
 autolab sync-scaffold --force
 ```
 
-Enable auto version bump on each commit:
+Enable commit hooks (staged-file formatting + default-branch version bump):
 
 ```bash
 ./scripts/install-hooks.sh

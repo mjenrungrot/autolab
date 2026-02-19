@@ -33,14 +33,10 @@ def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     )
     assert commands_module.main(["status", "--state-file", str(state_path)]) == 0
     assert (
-        commands_module.main(["docs", "generate", "--state-file", str(state_path)])
-        == 0
+        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 0
     )
     assert (
-        commands_module.main(
-            ["policy", "doctor", "--state-file", str(state_path)]
-        )
-        == 0
+        commands_module.main(["policy", "doctor", "--state-file", str(state_path)]) == 0
     )
 
 

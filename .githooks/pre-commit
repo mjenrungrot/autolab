@@ -4,6 +4,79 @@ set -eu
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python" ]; then
+  python_bin="${VIRTUAL_ENV}/bin/python"
+elif [ -x "${repo_root}/.venv/bin/python" ]; then
+  python_bin="${repo_root}/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  python_bin="python3"
+elif command -v python >/dev/null 2>&1; then
+  python_bin="python"
+else
+  echo "pre-commit: ERROR python interpreter not found" >&2
+  exit 1
+fi
+
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/mdformat" ]; then
+  mdformat_bin="${VIRTUAL_ENV}/bin/mdformat"
+elif [ -x "${repo_root}/.venv/bin/mdformat" ]; then
+  mdformat_bin="${repo_root}/.venv/bin/mdformat"
+elif command -v mdformat >/dev/null 2>&1; then
+  mdformat_bin="mdformat"
+else
+  mdformat_bin=""
+fi
+
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/yamlfix" ]; then
+  yamlfix_bin="${VIRTUAL_ENV}/bin/yamlfix"
+elif [ -x "${repo_root}/.venv/bin/yamlfix" ]; then
+  yamlfix_bin="${repo_root}/.venv/bin/yamlfix"
+elif command -v yamlfix >/dev/null 2>&1; then
+  yamlfix_bin="yamlfix"
+else
+  yamlfix_bin=""
+fi
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -n "$staged_files" ]; then
+  py_files="$(printf '%s\n' "$staged_files" | grep -E '\.py$' || true)"
+  md_files="$(
+    printf '%s\n' "$staged_files" \
+      | grep -E '\.md$' \
+      | grep -Ev '(^|/)\.' \
+      | grep -Ev '^src/autolab/skills/.+/SKILL\.md$' \
+      || true
+  )"
+  yaml_files="$(printf '%s\n' "$staged_files" | grep -E '^\.github/workflows/.*\.ya?ml$' || true)"
+
+  if [ -n "$py_files" ]; then
+    if ! "$python_bin" -m ruff --version >/dev/null 2>&1; then
+      echo "pre-commit: ERROR ruff is required for formatting. Install dev dependencies." >&2
+      exit 1
+    fi
+    printf '%s\n' "$py_files" | xargs "$python_bin" -m ruff format
+    printf '%s\n' "$py_files" | xargs git add --
+  fi
+
+  if [ -n "$md_files" ]; then
+    if [ -z "$mdformat_bin" ]; then
+      echo "pre-commit: ERROR mdformat is required for formatting. Install dev dependencies." >&2
+      exit 1
+    fi
+    printf '%s\n' "$md_files" | xargs "$mdformat_bin"
+    printf '%s\n' "$md_files" | xargs git add --
+  fi
+
+  if [ -n "$yaml_files" ]; then
+    if [ -z "$yamlfix_bin" ]; then
+      echo "pre-commit: ERROR yamlfix is required for formatting. Install dev dependencies." >&2
+      exit 1
+    fi
+    printf '%s\n' "$yaml_files" | xargs "$yamlfix_bin"
+    printf '%s\n' "$yaml_files" | xargs git add --
+  fi
+fi
+
 default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
 if [ -z "$default_branch" ]; then
   default_branch="main"
@@ -24,13 +97,6 @@ if [ "${AUTOLAB_DISABLE_VERSION_BUMP:-0}" = "1" ]; then
   exit 0
 fi
 
-if command -v python3 >/dev/null 2>&1; then
-  python3 scripts/bump_version.py
-elif command -v python >/dev/null 2>&1; then
-  python scripts/bump_version.py
-else
-  echo "pre-commit: ERROR python interpreter not found" >&2
-  exit 1
-fi
+"$python_bin" scripts/bump_version.py
 
 git add pyproject.toml README.md

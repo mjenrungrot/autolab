@@ -116,3 +116,10 @@ class StrictModeConfig:
 @dataclass(frozen=True)
 class AutoCommitConfig:
     mode: str
+
+
+@dataclass(frozen=True)
+class LaunchRuntimeConfig:
+    execute: bool
+    local_timeout_seconds: float
+    slurm_submit_timeout_seconds: float

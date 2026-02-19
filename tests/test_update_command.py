@@ -56,11 +56,19 @@ def test_fetch_latest_stable_tag_selects_highest_semver(
 
     monkeypatch.setattr(update_module.subprocess, "run", _fake_run)
 
-    latest = update_module.fetch_latest_stable_tag(update_module.DEFAULT_RELEASE_REPO_URL)
+    latest = update_module.fetch_latest_stable_tag(
+        update_module.DEFAULT_RELEASE_REPO_URL
+    )
 
     assert latest == "v2.0.0"
     assert captured["args"] == (
-        ["git", "ls-remote", "--tags", "--refs", update_module.DEFAULT_RELEASE_REPO_URL],
+        [
+            "git",
+            "ls-remote",
+            "--tags",
+            "--refs",
+            update_module.DEFAULT_RELEASE_REPO_URL,
+        ],
     )
 
 
@@ -104,7 +112,9 @@ def test_fetch_latest_stable_tag_surfaces_git_failure(
     monkeypatch.setattr(
         update_module.subprocess,
         "run",
-        lambda *args, **kwargs: _completed_process(returncode=128, stderr="fatal: boom"),
+        lambda *args, **kwargs: _completed_process(
+            returncode=128, stderr="fatal: boom"
+        ),
     )
 
     with pytest.raises(RuntimeError, match="unable to query release tags"):
@@ -211,7 +221,9 @@ def test_run_update_outside_repo_skips_scaffold_sync(
         lambda _spec: _completed_process(returncode=0),
     )
 
-    def _unexpected_sync(*, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def _unexpected_sync(
+        *, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         raise AssertionError(f"run_scaffold_sync should not be called (cwd={cwd})")
 
     monkeypatch.setattr(update_module, "run_scaffold_sync", _unexpected_sync)

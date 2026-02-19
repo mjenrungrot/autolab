@@ -117,9 +117,7 @@ def run_pip_upgrade(spec: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def run_scaffold_sync(
-    *, cwd: Path | None = None
-) -> subprocess.CompletedProcess[str]:
+def run_scaffold_sync(*, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "autolab", "sync-scaffold", "--force"],
         check=False,
