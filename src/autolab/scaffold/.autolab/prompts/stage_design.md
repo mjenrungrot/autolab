@@ -111,6 +111,13 @@ variants:
 - [ ] `compute.location` is set and explicit.
 - [ ] `metrics` includes `primary`, `success_delta`, and `aggregation`.
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, correct `design.yaml` and rerun from the verification ritual.
-- Do not advance by editing state manually; Autolab handles retry/escalation transitions.
+## EVIDENCE POINTERS
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/design.yaml`
+  what_it_proves: execution-ready experiment spec aligned with hypothesis
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/hypothesis.md`
+  what_it_proves: hypothesis intent that the design implements
+  verifier_output_pointer: `.autolab/verification_result.json`
+
+{{shared:failure_retry.md}}

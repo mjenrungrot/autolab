@@ -125,7 +125,5 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
   what_it_proves: documentation update context for iteration outcomes
   verifier_output_pointer: `.autolab/verification_result.json`
 
-## FAILURE / RETRY BEHAVIOR
-- If required decision evidence is missing or contradictory, escalate with `human_review` instead of guessing.
-- If any verification step fails, fix the decision artifact and rerun from the verification ritual.
-- Do not edit `.autolab/state.json` directly to apply the decision; orchestrator applies transitions.
+{{shared:failure_retry.md}}
+- Decision-specific: if required evidence is missing or contradictory, escalate with `human_review` instead of guessing.

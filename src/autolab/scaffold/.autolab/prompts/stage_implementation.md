@@ -163,6 +163,13 @@ Canonical minimal task block:
 - [ ] Parallel execution groups are consistent with task dependencies.
 - [ ] Run `{{python_bin}} .autolab/verifiers/implementation_plan_lint.py --stage implementation` passes when task blocks are present.
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, fix artifacts/code and rerun from the verification ritual.
-- Retry/escalation is orchestrator-managed via `state.stage_attempt`; do not update `state.json` manually.
+## EVIDENCE POINTERS
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/implementation_plan.md`
+  what_it_proves: auditable change trail with verifier outcomes and commands executed
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `{{iteration_path}}/design.yaml`
+  what_it_proves: design constraints that scoped the implementation
+  verifier_output_pointer: `.autolab/verification_result.json`
+
+{{shared:failure_retry.md}}

@@ -154,8 +154,9 @@ schema_validation:
 # Prompt lint policy
 # ---------------------------------------------------------------------------
 prompt_lint:
-  # warn   -> non-blocking warnings
+  # warn   -> non-blocking warnings (interactive use only)
   # enforce -> blocking failures
+  # Note: auto/runner modes always enforce regardless of this setting.
   mode: "warn"
   enabled_by_stage:
     hypothesis: true

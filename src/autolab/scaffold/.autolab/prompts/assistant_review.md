@@ -24,3 +24,11 @@ Produce a clear completion decision with evidence and residual-risk notes.
 1. Confirm changes map to focused task acceptance criteria.
 2. Confirm verification results are acceptable per policy.
 3. Emit completion decision with concise rationale.
+
+## EVIDENCE POINTERS
+{{shared:evidence_format.md}}
+- artifact_path: `.autolab/verification_result.json`
+  what_it_proves: verification gate status for the focused task
+  verifier_output_pointer: `.autolab/verification_result.json`
+
+{{shared:failure_retry.md}}

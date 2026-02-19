@@ -103,6 +103,13 @@ PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +re
 - [ ] Structured metadata block has target_delta, metric_name, metric_mode as key-value lines.
 - [ ] `hypothesis.md` is non-empty and contains explicit scope-in and scope-out boundaries.
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, fix artifacts and rerun from the verification ritual.
-- Do not modify `.autolab/state.json` to force progression; Autolab updates stage state and retry counters.
+## EVIDENCE POINTERS
+{{shared:evidence_format.md}}
+- artifact_path: `{{iteration_path}}/hypothesis.md`
+  what_it_proves: falsifiable hypothesis with measurable success criteria
+  verifier_output_pointer: `.autolab/verification_result.json`
+- artifact_path: `.autolab/backlog.yaml`
+  what_it_proves: backlog intent that motivated this hypothesis
+  verifier_output_pointer: `.autolab/verification_result.json`
+
+{{shared:failure_retry.md}}
