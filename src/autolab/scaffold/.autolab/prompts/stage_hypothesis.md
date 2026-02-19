@@ -58,9 +58,31 @@ Create `{{iteration_path}}/hypothesis.md` with one concrete, measurable hypothes
 ## OUTPUT TEMPLATE
 ```markdown
 # Hypothesis Statement
+One falsifiable statement for this iteration.
+
+## Motivation
+Why this hypothesis matters now.
+
+## Scope In
+- In-scope item 1
+
+## Scope Out
+- Out-of-scope item 1
 
 ## Primary Metric
 PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%
+
+## Expected Delta
+- target_delta: +2.5
+
+## Operational Success Criteria
+- Condition 1 that can be verified from run artifacts.
+
+## Risks and Failure Modes
+- Risk 1
+
+## Constraints for Design Stage
+- Constraint 1
 
 ## Structured Metadata (machine-parsed)
 - target_delta: +2.5

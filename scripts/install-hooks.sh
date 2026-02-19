@@ -10,5 +10,5 @@ git config core.hooksPath .githooks
 
 echo "Installed Git hooks: core.hooksPath=.githooks"
 echo "Active hooks:"
-echo "- .githooks/pre-commit (auto-bumps pyproject + syncs README tag)"
-echo "- .githooks/post-commit (pushes current release tag and keeps last 10 tags)"
+echo "- .githooks/pre-commit (default-branch-only version bump + README tag sync)"
+echo "- .githooks/post-commit (default-branch-only release tag sync; pruning disabled by default)"

@@ -44,6 +44,7 @@ Update iteration documentation and configured paper targets after result extract
 - If analysis/metrics are missing, stop and request extract-results completion.
 - If `paper_targets` is not configured, `docs_update.md` must include explicit `No target configured` (or `No targets configured`) rationale including metrics delta summary.
 - If a configured paper target file is missing, record it in `docs_update.md` and set follow-up action.
+- Do not poll SLURM state directly in this stage; consume synced artifacts produced by `launch`/`extract_results`.
 
 ## SCHEMA GOTCHAS
 - The `template_fill` verifier checks for unresolved placeholders (e.g. double-brace tokens, angle-bracket tokens, `TODO`, `TBD`, `FIXME`, `...`) and trivial/boilerplate content.

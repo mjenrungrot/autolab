@@ -67,9 +67,10 @@ Create `{{iteration_path}}/design.yaml` from the approved hypothesis, aligned to
 ## OUTPUT TEMPLATE
 ```yaml
 schema_version: "1.0"
-id: {{experiment_id}}
-iteration_id: {{iteration_id}}
+id: "{{experiment_id}}"
+iteration_id: "{{iteration_id}}"
 hypothesis_id: {{hypothesis_id}}
+description: "One-paragraph design summary"
 entrypoint:
   module: module.path
   args:
@@ -79,13 +80,14 @@ compute:
   walltime_estimate: "00:40:00"
   memory_estimate: "{{recommended_memory_estimate}}"
   gpu_count: 0
+  seed: 42
 metrics:
   primary:
     name: accuracy
     unit: "%"
     mode: maximize
   secondary: []
-  success_delta: +1.0%
+  success_delta: "+1.0%"
   aggregation: mean
   baseline_comparison: "vs baseline"
 baselines:

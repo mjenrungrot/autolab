@@ -19,6 +19,14 @@ Help the user execute Autolab safely and efficiently by:
 
 See also: `docs/workflow_modes.md` for mode responsibility boundaries.
 
+## 3-command triage
+
+Use this sequence first when debugging:
+
+1. `autolab status`
+2. `autolab verify --stage <stage>`
+3. `autolab run`
+
 ## Quickstart
 
 Autolab is an ML experiment workflow engine that orchestrates iterative
@@ -35,6 +43,17 @@ Stage flow at a glance:
 
     hypothesis -> design -> implementation -> implementation_review ->
     launch -> extract_results -> update_docs -> decide_repeat
+
+## Stage/Artifact/Verifier cheat sheet
+
+- `stage`: `hypothesis`; `artifacts`: `hypothesis.md`; `verifier_categories`: `schema`, `prompt_lint`.
+- `stage`: `design`; `artifacts`: `design.yaml`; `verifier_categories`: `schema`, `prompt_lint`.
+- `stage`: `implementation`; `artifacts`: `implementation_plan.md` + code changes; `verifier_categories`: `dry_run`, `schema`, `prompt_lint`.
+- `stage`: `implementation_review`; `artifacts`: `implementation_review.md`, `review_result.json`; `verifier_categories`: `dry_run`, `schema`, `prompt_lint`, `consistency`, `env_smoke`, `docs_target_update`.
+- `stage`: `launch`; `artifacts`: `launch/run_*.sh`, `runs/<run_id>/run_manifest.json`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `env_smoke`.
+- `stage`: `extract_results`; `artifacts`: `runs/<run_id>/metrics.json`, `analysis/summary.md`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `env_smoke`.
+- `stage`: `update_docs`; `artifacts`: `docs_update.md`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `docs_target_update`.
+- `stage`: `decide_repeat`; `artifacts`: `decision_result.json`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`.
 
 ## Quick recipes
 

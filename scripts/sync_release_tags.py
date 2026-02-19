@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync release tags to remote and keep only the latest N semantic versions."""
+"""Sync release tags to remote with optional semantic-tag pruning."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _remote_exists(remote: str) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Create/push current release tag and prune remote tags beyond retention."
+        description="Create/push current release tag and optionally prune old remote semantic tags."
     )
     parser.add_argument(
         "--pyproject",
@@ -109,7 +109,12 @@ def main(argv: list[str] | None = None) -> int:
         "--keep",
         type=int,
         default=10,
-        help="Number of newest semantic version tags to keep on remote (default: 10)",
+        help="Number of newest semantic version tags to keep when pruning (default: 10)",
+    )
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete remote semantic tags older than --keep (off by default)",
     )
     parser.add_argument(
         "--dry-run",
@@ -169,6 +174,13 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"sync-release-tags: WARN could not list remote tags: {exc}",
             file=sys.stderr,
+        )
+        return 0
+
+    if not args.prune:
+        print(
+            f"sync-release-tags: remote has {len(remote_tags)} semantic tags; "
+            "prune disabled (use --prune to remove old tags)"
         )
         return 0
 

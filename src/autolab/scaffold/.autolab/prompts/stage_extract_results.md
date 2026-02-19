@@ -37,6 +37,7 @@ Convert run artifacts into structured outputs:
 - `{{iteration_path}}/runs/{{run_id}}/run_manifest.json`
 - Run artifacts under `{{iteration_path}}/runs/{{run_id}}/`
 - `{{iteration_path}}/design.yaml`
+- `docs/slurm_job_list.md` for SLURM-tracked runs
 - Note: `metrics.json` is produced by this stage and is not a launch prerequisite.
 
 ## MISSING-INPUT FALLBACKS
@@ -45,7 +46,19 @@ Convert run artifacts into structured outputs:
 - If `metrics.schema.json` is missing, stop and request scaffold/schema restoration.
 
 ## REQUIRED PRECHECK
-`run_manifest.json.artifact_sync_to_local.status` must be success-like (`ok|completed|success|passed`) before extraction.
+- If `run_manifest.json.artifact_sync_to_local.status` is success-like (`ok|completed|success|passed`), proceed with metric extraction.
+- If run is SLURM and status is in-progress (`submitted|queued|pending|running|in_progress`), first query tracking state:
+  - read `docs/slurm_job_list.md` entry for `run_id`
+  - query scheduler (`squeue` and `sinfo`) when available
+  - update run tracking metadata (manifest/ledger) to reflect latest observed scheduler state
+
+## SLURM ASYNC EXTRACTION CONTRACT
+- If launch produced an in-progress SLURM manifest (`status` in `submitted|queued|pending|running|in_progress`), extraction is the async pickup stage.
+- Use `docs/slurm_job_list.md` + scheduler probes (`squeue`, `sinfo`) to decide whether to:
+  - continue waiting (job still queued/running), or
+  - proceed once sync is success-like and local artifacts are present.
+- If bounded waiting is unavailable or sync never reaches a success-like state, produce `status: partial|failed` with explicit missing-evidence accounting.
+- Do not fabricate metrics from unsynced remote logs.
 
 ## STATUS SEMANTICS
 - Use `status: completed` when required metrics and evidence are fully present.

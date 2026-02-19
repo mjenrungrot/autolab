@@ -503,6 +503,76 @@ def test_run_health_fails_completion_like_status_missing_completed_at(tmp_path: 
     assert "timestamps.completed_at is required" in result.stdout
 
 
+def test_run_health_slurm_submitted_allows_pending_sync(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "slurm",
+        "status": "submitted",
+        "command": "sbatch launch/run_slurm.sbatch",
+        "job_id": "123456",
+        "resource_request": {"cpus": 8, "memory": "64GB", "gpu_count": 1},
+        "artifact_sync_to_local": {"status": "pending"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    slurm_ledger = repo / "docs" / "slurm_job_list.md"
+    slurm_ledger.parent.mkdir(parents=True, exist_ok=True)
+    slurm_ledger.write_text(
+        "- 2026-01-01 | job_id=123456 | iteration_id=iter1 | run_id=run_001 | status=submitted\n",
+        encoding="utf-8",
+    )
+
+    result = _run_run_health(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "run_health: PASS" in result.stdout
+
+
+def test_run_health_slurm_launch_fails_when_ledger_entry_missing(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "slurm",
+        "status": "submitted",
+        "command": "sbatch launch/run_slurm.sbatch",
+        "job_id": "123456",
+        "resource_request": {"cpus": 8, "memory": "64GB", "gpu_count": 1},
+        "artifact_sync_to_local": {"status": "pending"},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    slurm_ledger = repo / "docs" / "slurm_job_list.md"
+    slurm_ledger.parent.mkdir(parents=True, exist_ok=True)
+    slurm_ledger.write_text(
+        "- 2026-01-01 | job_id=123456 | iteration_id=iter1 | run_id=run_other | status=submitted\n",
+        encoding="utf-8",
+    )
+
+    result = _run_run_health(repo)
+
+    assert result.returncode == 1
+    assert "missing run_id=run_001 entry" in result.stdout
+
+
 # ---------------------------------------------------------------------------
 # implementation_plan_lint verifier tests
 # ---------------------------------------------------------------------------
