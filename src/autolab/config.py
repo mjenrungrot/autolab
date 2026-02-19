@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -420,8 +421,12 @@ def _resolve_run_agent_mode(mode_value: str | None) -> str:
 
 
 def _resolve_policy_python_bin(policy: dict[str, Any]) -> str:
-    value = str(policy.get("python_bin", "python3")).strip()
-    return value or "python3"
+    value = str(policy.get("python_bin", "")).strip()
+    if not value:
+        return sys.executable
+    if value in {"python", "python3"}:
+        return sys.executable
+    return value
 
 
 def _resolve_stage_requirements(

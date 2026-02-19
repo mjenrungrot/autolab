@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import yaml
@@ -8,6 +9,7 @@ from autolab.config import (
     _load_guardrail_config,
     _load_launch_execute_policy,
     _load_protected_files,
+    _resolve_policy_python_bin,
     _load_slurm_lifecycle_strict_policy,
     _load_strict_mode_config,
 )
@@ -149,3 +151,16 @@ def test_load_slurm_lifecycle_strict_policy_reads_false(tmp_path: Path) -> None:
     policy_path.write_text("slurm:\n  lifecycle_strict: false\n", encoding="utf-8")
 
     assert _load_slurm_lifecycle_strict_policy(repo) is False
+
+
+def test_resolve_policy_python_bin_defaults_to_current_interpreter() -> None:
+    assert _resolve_policy_python_bin({}) == sys.executable
+
+
+def test_resolve_policy_python_bin_normalizes_generic_python_binaries() -> None:
+    assert _resolve_policy_python_bin({"python_bin": "python3"}) == sys.executable
+    assert _resolve_policy_python_bin({"python_bin": "python"}) == sys.executable
+
+
+def test_resolve_policy_python_bin_respects_explicit_custom_binary() -> None:
+    assert _resolve_policy_python_bin({"python_bin": "/usr/bin/python3"}) == "/usr/bin/python3"
