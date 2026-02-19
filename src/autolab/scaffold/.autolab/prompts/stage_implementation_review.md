@@ -129,6 +129,5 @@ If any input is empty, note it as "not available" in your review -- do not fabri
   what_it_proves: required checks policy for pass/needs_retry gating
   verifier_output_pointer: `.autolab/verification_result.json`
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, set `status: needs_retry` with actionable findings and rerun from the verification ritual.
-- Do not set next stage in `state.json`; orchestrator handles `pass`/`needs_retry`/`failed` transitions.
+{{shared:failure_retry.md}}
+- Implementation-review specific: if verification fails, set `status: needs_retry` with actionable findings.

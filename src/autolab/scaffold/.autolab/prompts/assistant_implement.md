@@ -24,3 +24,16 @@ Produce the requested code/documentation changes for the focused task without vi
 1. Implement only the focused task scope.
 2. Run targeted validation where feasible.
 3. Report files changed, checks run, and residual risks.
+
+## EVIDENCE POINTERS
+{{shared:evidence_format.md}}
+- artifact_path: files changed during implementation
+  what_it_proves: focused task acceptance criteria satisfied
+  verifier_output_pointer: `.autolab/verification_result.json`
+
+## FILE CHECKLIST (machine-auditable)
+{{shared:checklist.md}}
+- [ ] All edits are within allowed edit scope.
+- [ ] Evidence pointers reference concrete files and commands.
+
+{{shared:failure_retry.md}}

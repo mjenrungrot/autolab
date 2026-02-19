@@ -20,7 +20,12 @@ Summarize verification status for the focused task and identify blocking failure
 - `{{verifier_outputs}}`
 - `{{verifier_errors}}`
 
+## VERIFIER MAPPING
+{{shared:verifier_common.md}}
+
 ## STEPS
 1. Run/inspect required checks for the current stage.
 2. Mark pass/fail with concrete evidence pointers.
 3. If failing, provide explicit remediation steps.
+
+{{shared:failure_retry.md}}

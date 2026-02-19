@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from verifier_lib import REPO_ROOT
+from verifier_lib import REPO_ROOT, make_result, print_result
 PROMPTS_DIR = REPO_ROOT / ".autolab" / "prompts"
 TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 LEGACY_LITERAL_TOKENS = ("<ITERATION_ID>", "<ITERATION_PATH>", "<RUN_ID>")
@@ -48,6 +48,8 @@ _FALLBACK_ALLOWED_TOKENS = {
     "decision_suggestion",
     "auto_metrics_evidence",
     "diff_summary",
+    "run_group",
+    "replicate_count",
 }
 
 # Shared tokens always allowed (not stage-specific).
@@ -70,7 +72,7 @@ def _resolve_allowed_tokens() -> set[str]:
                 "decision_suggestion", "auto_metrics_evidence", "diff_summary",
                 "experiment_id", "paper_targets", "launch_mode",
                 "recommended_memory_estimate", "available_memory_gb",
-                "hypothesis_id",
+                "hypothesis_id", "run_group", "replicate_count",
             })
             return tokens
     except Exception:
@@ -85,6 +87,7 @@ DEFAULT_REQUIRED_TOKENS_BY_STAGE: dict[str, set[str]] = {
     "implementation": {"iteration_id", "iteration_path"},
     "implementation_review": {"iteration_id", "iteration_path"},
     "launch": {"iteration_id", "iteration_path", "run_id"},
+    "slurm_monitor": {"iteration_id", "iteration_path", "run_id"},
     "extract_results": {"iteration_id", "iteration_path", "run_id"},
     "update_docs": {"iteration_id", "iteration_path", "run_id"},
     "decide_repeat": {"iteration_id", "iteration_path"},
@@ -164,8 +167,16 @@ def _lint_stage_prompt(
             f"{prompt_path} must include runtime stage context via {{stage_context}} or shared runtime_context include"
         )
 
+    # Map sections to shared includes that satisfy the requirement
+    _section_shared_equivalents: dict[str, str] = {
+        "## FAILURE / RETRY BEHAVIOR": "{{shared:failure_retry.md}}",
+    }
     for section in REQUIRED_SECTIONS:
         if section.lower() not in lowered:
+            # Check if an equivalent shared include is present
+            equivalent = _section_shared_equivalents.get(section, "")
+            if equivalent and equivalent in text:
+                continue
             failures.append(f"{prompt_path} missing required section heading: {section}")
 
     for literal in LEGACY_LITERAL_TOKENS:
@@ -192,64 +203,97 @@ def _lint_stage_prompt(
     return failures
 
 
+ASSISTANT_PROMPTS_DIR = PROMPTS_DIR
+ASSISTANT_REQUIRED_SECTIONS = (
+    "## ROLE",
+    "## PRIMARY OBJECTIVE",
+)
+ASSISTANT_REQUIRED_SHARED_INCLUDES = (
+    "{{shared:guardrails.md}}",
+    "{{shared:repo_scope.md}}",
+    "{{shared:runtime_context.md}}",
+)
+
+
+def _lint_assistant_prompt(prompt_path: Path) -> list[str]:
+    """Lint an assistant-mode prompt for required sections and shared includes."""
+    if not prompt_path.exists():
+        return [f"{prompt_path} is missing"]
+    try:
+        text = prompt_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return [f"{prompt_path} could not be read: {exc}"]
+
+    failures: list[str] = []
+    lowered = text.lower()
+
+    for section in ASSISTANT_REQUIRED_SECTIONS:
+        if section.lower() not in lowered:
+            failures.append(f"{prompt_path} missing required section heading: {section}")
+
+    for include in ASSISTANT_REQUIRED_SHARED_INCLUDES:
+        if include not in text:
+            failures.append(f"{prompt_path} missing required shared include: {include}")
+
+    tokens_in_prompt = {match.group(1).strip() for match in TOKEN_PATTERN.finditer(text)}
+    unsupported_tokens = sorted(token for token in tokens_in_prompt if token not in ALLOWED_TOKENS)
+    if unsupported_tokens:
+        failures.append(f"{prompt_path} has unsupported token(s): {', '.join(unsupported_tokens)}")
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", default=None, help="Stage to lint (default: all stage prompts)")
+    parser.add_argument("--assistant", action="store_true", default=False, help="Lint assistant prompts instead of stage prompts")
     parser.add_argument("--json", action="store_true", default=False, help="Output machine-readable JSON envelope")
     args = parser.parse_args()
-    stage_prompt_files = _resolve_stage_prompt_files()
-    required_tokens_by_stage = _resolve_required_tokens_by_stage()
 
     stage_label = args.stage or ""
-
-    stages: list[str]
-    if args.stage:
-        requested = str(args.stage).strip()
-        if requested not in stage_prompt_files:
-            if args.json:
-                envelope = {"status": "fail", "verifier": "prompt_lint", "stage": requested, "checks": [], "errors": [f"unsupported stage '{requested}'"]}
-                print(json.dumps(envelope))
-            else:
-                print(f"prompt_lint: ERROR unsupported stage '{requested}'")
-            return 1
-        stages = [requested]
-    else:
-        stages = list(stage_prompt_files.keys())
-
     failures: list[str] = []
-    for stage in stages:
-        prompt_path = PROMPTS_DIR / stage_prompt_files[stage]
-        failures.extend(
-            _lint_stage_prompt(
-                stage,
-                prompt_path,
-                required_tokens_by_stage=required_tokens_by_stage,
-            )
-        )
 
-    passed = not failures
-
-    if args.json:
-        checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
-        if passed:
-            checks = [{"name": "prompt_lint", "status": "pass", "detail": "all prompt checks passed"}]
-        envelope = {
-            "status": "pass" if passed else "fail",
-            "verifier": "prompt_lint",
-            "stage": stage_label,
-            "checks": checks,
-            "errors": failures,
-        }
-        print(json.dumps(envelope))
+    if args.assistant:
+        # Lint assistant-mode prompts
+        assistant_files = sorted(ASSISTANT_PROMPTS_DIR.glob("assistant_*.md"))
+        if not assistant_files:
+            result = make_result("prompt_lint", "assistant", [], ["no assistant prompts found"])
+            print_result(result, as_json=args.json)
+            return 1
+        for prompt_path in assistant_files:
+            failures.extend(_lint_assistant_prompt(prompt_path))
     else:
-        if failures:
-            print("prompt_lint: FAIL")
-            for failure in failures:
-                print(failure)
-        else:
-            print("prompt_lint: PASS")
+        stage_prompt_files = _resolve_stage_prompt_files()
+        required_tokens_by_stage = _resolve_required_tokens_by_stage()
 
-    return 0 if passed else 1
+        stages: list[str]
+        if args.stage:
+            requested = str(args.stage).strip()
+            if requested not in stage_prompt_files:
+                result = make_result("prompt_lint", requested, [], [f"unsupported stage '{requested}'"])
+                print_result(result, as_json=args.json)
+                return 1
+            stages = [requested]
+        else:
+            stages = list(stage_prompt_files.keys())
+
+        for stage in stages:
+            prompt_path = PROMPTS_DIR / stage_prompt_files[stage]
+            failures.extend(
+                _lint_stage_prompt(
+                    stage,
+                    prompt_path,
+                    required_tokens_by_stage=required_tokens_by_stage,
+                )
+            )
+
+    checks = [{"name": f, "status": "fail", "detail": f} for f in failures]
+    if not failures:
+        checks = [{"name": "prompt_lint", "status": "pass", "detail": "all prompt checks passed"}]
+    result = make_result("prompt_lint", stage_label or ("assistant" if args.assistant else ""), checks, failures)
+    print_result(result, as_json=args.json)
+
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":

@@ -112,6 +112,4 @@ Update iteration documentation and configured paper targets after result extract
   what_it_proves: run metadata and sync status for traceability
   verifier_output_pointer: `.autolab/verification_result.json`
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, correct docs artifacts and rerun from the verification ritual.
-- Keep state transitions orchestrator-driven; do not manually change `state.json`.
+{{shared:failure_retry.md}}

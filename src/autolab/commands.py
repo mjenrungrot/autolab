@@ -1548,6 +1548,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     stage_name = str(args.stage).strip()
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
+    output_json = getattr(args, "json", False)
 
     registry = load_registry(repo_root)
     if not registry:
@@ -1562,39 +1563,107 @@ def _cmd_explain(args: argparse.Namespace) -> int:
 
     policy = _load_verifier_policy(repo_root)
 
-    print(f"autolab explain stage {stage_name}")
-    print("")
-    print(f"prompt_file: {spec.prompt_file}")
-    print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
-    print(f"required_outputs: {', '.join(spec.required_outputs) or '(none)'}")
-    print(f"next_stage: {spec.next_stage or '(branching)'}")
-    if spec.decision_map:
-        print(f"decision_map: {spec.decision_map}")
-    print("")
+    from autolab.config import (
+        _resolve_policy_python_bin,
+        _resolve_stage_requirements,
+        _resolve_stage_max_retries,
+    )
 
-    from autolab.config import _resolve_stage_requirements, _resolve_stage_max_retries
     effective = _resolve_stage_requirements(
         policy,
         stage_name,
         registry_verifier_categories=spec.verifier_categories,
     )
-    print("effective verifier requirements:")
-    for key in sorted(effective.keys()):
-        eff_val = effective[key]
-        reg_val = spec.verifier_categories.get(key, False)
-        # Determine source annotation
-        if eff_val and not reg_val:
-            note = "(policy override)"
-        elif reg_val and not eff_val:
-            note = f"(registry: {reg_val}, policy: {eff_val}) # capable but not required"
-        else:
-            note = ""
-        print(f"  {key}: {eff_val}{' ' + note if note else ''}")
-
     max_retries = _resolve_stage_max_retries(policy, stage_name)
-    print("")
-    print(f"retry_policy: max_retries={max_retries}")
-    print(f"classifications: active={spec.is_active}, terminal={spec.is_terminal}, decision={spec.is_decision}, runner_eligible={spec.is_runner_eligible}")
+    python_bin = _resolve_policy_python_bin(policy)
+
+    # Resolve prompt file path
+    prompt_path = repo_root / ".autolab" / "prompts" / spec.prompt_file
+    try:
+        resolved_prompt_path = prompt_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        resolved_prompt_path = str(prompt_path)
+
+    # Determine which verifier scripts would run
+    verifier_scripts: list[str] = []
+    verifiers_dir = repo_root / ".autolab" / "verifiers"
+    if effective.get("schema"):
+        verifier_scripts.append(f"{python_bin} .autolab/verifiers/schema_checks.py --stage {stage_name} --json")
+    if effective.get("consistency"):
+        if (verifiers_dir / "consistency_checks.py").exists():
+            verifier_scripts.append(f"{python_bin} .autolab/verifiers/consistency_checks.py --stage {stage_name} --json")
+    if effective.get("env_smoke"):
+        verifier_scripts.append(f"{python_bin} .autolab/verifiers/run_health.py --json")
+        verifier_scripts.append(f"{python_bin} .autolab/verifiers/result_sanity.py --json")
+    if effective.get("docs_target_update") and stage_name in {"update_docs", "implementation_review"}:
+        verifier_scripts.append(f"{python_bin} .autolab/verifiers/docs_targets.py --json")
+    if effective.get("prompt_lint"):
+        verifier_scripts.append(f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {stage_name} --json")
+
+    # Pattern-path notes on required_outputs
+    output_notes: list[dict[str, str]] = []
+    for output in spec.required_outputs:
+        note = {"pattern": output}
+        if "<RUN_ID>" in output:
+            note["note"] = "<RUN_ID> is replaced at runtime with state.last_run_id"
+        output_notes.append(note)
+
+    if output_json:
+        payload: dict[str, Any] = {
+            "stage": stage_name,
+            "prompt_file": spec.prompt_file,
+            "resolved_prompt_path": resolved_prompt_path,
+            "required_tokens": sorted(spec.required_tokens),
+            "required_outputs": output_notes,
+            "next_stage": spec.next_stage or None,
+            "decision_map": spec.decision_map or None,
+            "effective_requirements": effective,
+            "verifier_scripts": verifier_scripts,
+            "retry_policy": {"max_retries": max_retries},
+            "classifications": {
+                "active": spec.is_active,
+                "terminal": spec.is_terminal,
+                "decision": spec.is_decision,
+                "runner_eligible": spec.is_runner_eligible,
+            },
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"autolab explain stage {stage_name}")
+        print("")
+        print(f"prompt_file: {spec.prompt_file}")
+        print(f"resolved_prompt_path: {resolved_prompt_path}")
+        print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
+        print(f"required_outputs: {', '.join(spec.required_outputs) or '(none)'}")
+        for note in output_notes:
+            if "note" in note:
+                print(f"  {note['pattern']}: {note['note']}")
+        print(f"next_stage: {spec.next_stage or '(branching)'}")
+        if spec.decision_map:
+            print(f"decision_map: {spec.decision_map}")
+        print("")
+
+        print("effective verifier requirements:")
+        for key in sorted(effective.keys()):
+            eff_val = effective[key]
+            reg_val = spec.verifier_categories.get(key, False)
+            if eff_val and not reg_val:
+                note_str = "(policy override)"
+            elif reg_val and not eff_val:
+                note_str = f"(registry: {reg_val}, policy: {eff_val}) # capable but not required"
+            else:
+                note_str = ""
+            print(f"  {key}: {eff_val}{' ' + note_str if note_str else ''}")
+
+        if verifier_scripts:
+            print("")
+            print("verifier scripts that would run:")
+            for script in verifier_scripts:
+                print(f"  {script}")
+
+        print("")
+        print(f"retry_policy: max_retries={max_retries}")
+        print(f"classifications: active={spec.is_active}, terminal={spec.is_terminal}, decision={spec.is_decision}, runner_eligible={spec.is_runner_eligible}")
 
     return 0
 
@@ -1641,6 +1710,97 @@ def _cmd_policy_show(args: argparse.Namespace) -> int:
     print("---")
     print(preset_path.read_text(encoding="utf-8").rstrip())
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Policy doctor command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_policy_doctor(args: argparse.Namespace) -> int:
+    """Diagnose common policy misconfigurations."""
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+
+    policy = _load_verifier_policy(repo_root)
+    registry = load_registry(repo_root)
+    if not registry:
+        print("autolab policy doctor: ERROR could not load workflow.yaml registry", file=sys.stderr)
+        return 1
+
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    # Check 1: dry_run_command is not the stub if any stage requires dry_run
+    dry_run_command = str(policy.get("dry_run_command", "")).strip()
+    requirements = policy.get("requirements_by_stage", {})
+    if isinstance(requirements, dict):
+        for stage_name, reqs in requirements.items():
+            if isinstance(reqs, dict) and reqs.get("dry_run"):
+                if "AUTOLAB DRY-RUN STUB" in dry_run_command or "sys.exit(1)" in dry_run_command:
+                    issues.append(
+                        f"stage '{stage_name}' requires dry_run but dry_run_command is the default stub. "
+                        "Configure a project-specific dry_run_command or set dry_run: false."
+                    )
+                    break
+
+    # Check 2: test_command is configured if any stage requires tests
+    test_command = str(policy.get("test_command", "")).strip()
+    if isinstance(requirements, dict):
+        for stage_name, reqs in requirements.items():
+            if isinstance(reqs, dict) and reqs.get("tests"):
+                if not test_command:
+                    issues.append(
+                        f"stage '{stage_name}' requires tests but test_command is empty."
+                    )
+                    break
+
+    # Check 3: All requirements_by_stage keys match stages in workflow.yaml
+    if isinstance(requirements, dict):
+        registry_stages = set(registry.keys())
+        for stage_name in requirements:
+            if stage_name not in registry_stages:
+                issues.append(
+                    f"requirements_by_stage references unknown stage '{stage_name}' "
+                    f"(workflow.yaml stages: {', '.join(sorted(registry_stages))})"
+                )
+
+    # Check 4: retry_policy_by_stage covers all active stages
+    retry_policy = policy.get("retry_policy_by_stage", {})
+    if isinstance(retry_policy, dict):
+        for stage_name, spec in registry.items():
+            if spec.is_active and stage_name not in retry_policy:
+                warnings.append(
+                    f"retry_policy_by_stage missing active stage '{stage_name}'; "
+                    "will fall back to state.max_stage_attempts"
+                )
+
+    # Check 5: agent_runner.stages are runner-eligible per registry
+    agent_runner = policy.get("agent_runner", {})
+    if isinstance(agent_runner, dict):
+        runner_stages = agent_runner.get("stages", [])
+        if isinstance(runner_stages, list):
+            for stage_name in runner_stages:
+                stage_name = str(stage_name).strip()
+                if stage_name in registry and not registry[stage_name].is_runner_eligible:
+                    issues.append(
+                        f"agent_runner.stages includes '{stage_name}' which is not runner-eligible in workflow.yaml"
+                    )
+
+    print("autolab policy doctor")
+    print("")
+    if issues:
+        print(f"issues found: {len(issues)}")
+        for issue in issues:
+            print(f"  ERROR: {issue}")
+    if warnings:
+        print(f"warnings: {len(warnings)}")
+        for warning in warnings:
+            print(f"  WARN: {warning}")
+    if not issues and not warnings:
+        print("no issues found")
+    print("")
+    return 1 if issues else 0
 
 
 # ---------------------------------------------------------------------------
@@ -2040,6 +2200,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
+    explain_stage.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON",
+    )
     explain_stage.set_defaults(handler=_cmd_explain)
 
     # Policy management
@@ -2055,6 +2221,14 @@ def _build_parser() -> argparse.ArgumentParser:
     policy_show = policy_subparsers.add_parser("show", help="Show contents of a policy preset")
     policy_show.add_argument("preset", help="Preset name to show")
     policy_show.set_defaults(handler=_cmd_policy_show)
+
+    policy_doctor = policy_subparsers.add_parser("doctor", help="Diagnose common policy misconfigurations")
+    policy_doctor.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    policy_doctor.set_defaults(handler=_cmd_policy_doctor)
 
     policy_apply = policy_subparsers.add_parser("apply", help="Apply policy changes")
     policy_apply_subparsers = policy_apply.add_subparsers(dest="policy_apply_command")

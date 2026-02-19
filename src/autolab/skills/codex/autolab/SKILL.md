@@ -294,3 +294,53 @@ Auto-stop behavior:
 Blocked-experiment behavior:
 - If the active experiment is marked completed in `backlog.yaml`, the run writes `block_reason.json` and transitions to `stop`
 - Re-open the experiment in backlog to resume work
+
+## Decision Tree
+
+Use this tree when stuck:
+
+- **Stuck at `human_review`?**
+  -> Inspect `.autolab/agent_result.json` and guardrail counters (`autolab guardrails`).
+  -> Fix root cause, then `autolab skip --stage <target> --reason "resolved <issue>"`.
+
+- **Verifier keeps failing?**
+  -> Run `autolab verify --stage <stage>` to get specific errors.
+  -> Fix the artifact named in the error, not the state file.
+  -> If the verifier itself is misconfigured, run `autolab policy doctor`.
+
+- **Wrong stage / need to go back?**
+  -> Use `autolab skip --stage <target> --reason "manual correction"`.
+  -> Never edit `.autolab/state.json` directly.
+
+- **No tasks in assistant mode?**
+  -> Add tasks to `docs/todo.md` or check `backlog.yaml` for open experiments.
+  -> If backlog experiment is closed, re-open it.
+
+- **Agent runner produces no changes?**
+  -> Confirm `agent_runner.enabled: true` in policy.
+  -> Confirm the current stage is in `agent_runner.stages`.
+  -> Check `agent_result.json` for runner output.
+
+- **Lock prevents execution?**
+  -> Run `autolab lock status` to inspect.
+  -> If stale: `autolab lock break --reason "stale lock"`.
+
+## Symptom-to-Command Index
+
+- `symptom`: Check current state; `command`: `autolab status`
+- `symptom`: See what verifiers would run; `command`: `autolab explain stage <stage>`
+- `symptom`: Run verifiers for a stage; `command`: `autolab verify --stage <stage>`
+- `symptom`: Diagnose policy issues; `command`: `autolab policy doctor`
+- `symptom`: Check guardrail counters; `command`: `autolab guardrails`
+- `symptom`: Inspect lock state; `command`: `autolab lock status`
+- `symptom`: Break stale lock; `command`: `autolab lock break --reason "stale"`
+- `symptom`: Skip to a specific stage; `command`: `autolab skip --stage <target> --reason "reason"`
+- `symptom`: Force runner on for one run; `command`: `autolab run --run-agent`
+- `symptom`: Force runner off for one run; `command`: `autolab run --no-run-agent`
+- `symptom`: Run one stage transition; `command`: `autolab run`
+- `symptom`: Run unattended loop; `command`: `autolab loop --auto --max-hours 2 --max-iterations 10`
+- `symptom`: Run assistant mode; `command`: `autolab loop --auto --assistant --max-hours 2`
+- `symptom`: List policy presets; `command`: `autolab policy list`
+- `symptom`: Show a policy preset; `command`: `autolab policy show <preset>`
+- `symptom`: Apply a policy preset; `command`: `autolab policy apply preset <preset>`
+- `symptom`: Generate docs from registry; `command`: `autolab docs generate`
