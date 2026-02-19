@@ -40,6 +40,7 @@ template_fill:
     implementation: true
     implementation_review: true
     launch: true
+    slurm_monitor: false
     extract_results: true
     update_docs: true
     decide_repeat: true
@@ -50,6 +51,7 @@ template_fill_by_stage:
   implementation: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation"
   implementation_review: "{{python_bin}} .autolab/verifiers/template_fill.py --stage implementation_review"
   launch: "{{python_bin}} .autolab/verifiers/template_fill.py --stage launch"
+  slurm_monitor: "{{python_bin}} .autolab/verifiers/template_fill.py --stage slurm_monitor"
   extract_results: "{{python_bin}} .autolab/verifiers/template_fill.py --stage extract_results"
   update_docs: "{{python_bin}} .autolab/verifiers/template_fill.py --stage update_docs"
   decide_repeat: "{{python_bin}} .autolab/verifiers/template_fill.py --stage decide_repeat"
@@ -104,6 +106,14 @@ requirements_by_stage:
     schema: true
     prompt_lint: true
     consistency: true
+    env_smoke: true
+    docs_target_update: false
+  slurm_monitor:  # Lightweight async gate for SLURM polling/sync
+    tests: false
+    dry_run: false
+    schema: false
+    prompt_lint: false
+    consistency: false
     env_smoke: true
     docs_target_update: false
   extract_results:  # Validate metrics and run artifacts
@@ -164,6 +174,7 @@ prompt_lint:
     implementation: true
     implementation_review: true
     launch: true
+    slurm_monitor: false
     extract_results: true
     update_docs: true
     decide_repeat: true
@@ -179,6 +190,7 @@ retry_policy_by_stage:
   implementation: {max_retries: 5}
   implementation_review: {max_retries: 5}
   launch: {max_retries: 3}
+  slurm_monitor: {max_retries: 3}
   extract_results: {max_retries: 3}
   update_docs: {max_retries: 3}
   decide_repeat: {max_retries: 3}
@@ -198,6 +210,7 @@ agent_runner:
     - implementation
     - implementation_review
     - launch
+    - slurm_monitor
     - extract_results
     - update_docs
   edit_scope:

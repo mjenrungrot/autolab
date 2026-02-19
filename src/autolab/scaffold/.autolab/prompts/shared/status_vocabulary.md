@@ -14,6 +14,13 @@ Valid values for `run_manifest.json` `status` field:
 Use when checking artifact sync, run completion, or verifier outcomes:
 `completed`, `ok`, `success`, `passed`
 
+### Artifact Sync Status (run_manifest.json)
+Recommended canonical values for `artifact_sync_to_local.status`:
+- `pending` -- sync has not started
+- `syncing` -- sync in progress
+- `ok` -- sync completed and local artifacts are ready
+- `failed` -- sync attempt failed
+
 ### Completion-Like Statuses (triggers `completed_at` requirement)
 When `run_manifest.status` is one of these, `timestamps.completed_at` is required:
 `completed`, `failed`
@@ -33,6 +40,12 @@ Valid values for `review_result.json` `status` field:
 - `pass` -- launch-ready
 - `needs_retry` -- remediation required
 - `failed` -- escalation required
+
+### Review Required Check Status (review_result.json.required_checks.*)
+Valid values for each required check key:
+- `pass`
+- `skip`
+- `fail`
 
 ### Decision Values (decision_result.json)
 Valid values for `decision_result.json` `decision` field:

@@ -13,6 +13,7 @@
 - **implementation**: `{{iteration_id}}`, `{{iteration_path}}`
 - **implementation_review**: `{{iteration_id}}`, `{{iteration_path}}`
 - **launch**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{launch_mode}}`
+- **slurm_monitor**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`
 - **extract_results**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`
 - **update_docs**: `{{iteration_id}}`, `{{iteration_path}}`, `{{run_id}}`, `{{paper_targets}}`
 - **decide_repeat**: `{{iteration_id}}`, `{{iteration_path}}`

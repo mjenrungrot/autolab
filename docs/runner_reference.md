@@ -105,7 +105,7 @@ agent_runner:
 Not all stages support runner invocation. Eligible stages:
 
 - `hypothesis`, `design`, `implementation`, `implementation_review`
-- `launch`, `extract_results`, `update_docs`, `decide_repeat`
+- `launch`, `slurm_monitor`, `extract_results`, `update_docs`, `decide_repeat`
 
 Terminal stages (`human_review`, `stop`) are not runner-eligible.
 

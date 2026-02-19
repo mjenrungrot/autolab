@@ -8,9 +8,11 @@ import re
 import sys
 from pathlib import Path
 
-VERSION_LINE_RE = re.compile(
-    r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>"\s*(?:#.*)?)$'
-)
+try:
+    import tomllib
+except Exception:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 README_TAG_RE = re.compile(
     r"^(?P<prefix>\s*python -m pip install "
@@ -30,7 +32,22 @@ def _bump_patch(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
-def _bump_project_version_line(lines: list[str]) -> tuple[list[str], str, str]:
+def _load_project_version(pyproject_path: Path) -> str:
+    if tomllib is None:
+        raise RuntimeError("python tomllib is unavailable; use Python 3.11+")
+    payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("pyproject.toml must contain a top-level mapping")
+    project = payload.get("project")
+    if not isinstance(project, dict):
+        raise ValueError("pyproject.toml missing [project] table")
+    version = str(project.get("version", "")).strip()
+    if not version:
+        raise ValueError("pyproject.toml missing [project].version")
+    return version
+
+
+def _replace_project_version_line(lines: list[str], *, new_version: str) -> list[str]:
     in_project_section = False
 
     for idx, line in enumerate(lines):
@@ -42,14 +59,23 @@ def _bump_project_version_line(lines: list[str]) -> tuple[list[str], str, str]:
         if not in_project_section:
             continue
 
-        match = VERSION_LINE_RE.match(line)
-        if match is None:
+        if not stripped or stripped.startswith("#"):
             continue
 
-        old_version = match.group("version").strip()
-        new_version = _bump_patch(old_version)
-        lines[idx] = f'{match.group("prefix")}{new_version}{match.group("suffix")}'
-        return lines, old_version, new_version
+        key, sep, rhs = line.partition("=")
+        if not sep or key.strip() != "version":
+            continue
+
+        comment = ""
+        hash_idx = rhs.find("#")
+        if hash_idx >= 0:
+            comment = rhs[hash_idx:].strip()
+
+        indent = line[: len(line) - len(line.lstrip(" \t"))]
+        lines[idx] = f'{indent}version = "{new_version}"' + (
+            f" {comment}" if comment else ""
+        )
+        return lines
 
     raise ValueError("could not find [project].version in pyproject.toml")
 
@@ -84,10 +110,12 @@ def _update_readme_tag(
 def bump_version(
     pyproject_path: Path, readme_path: Path, *, dry_run: bool = False
 ) -> tuple[str, str, str]:
+    old_version = _load_project_version(pyproject_path)
+    new_version = _bump_patch(old_version)
     text = pyproject_path.read_text(encoding="utf-8")
     has_trailing_newline = text.endswith("\n")
     lines = text.splitlines()
-    updated_lines, old_version, new_version = _bump_project_version_line(lines)
+    updated_lines = _replace_project_version_line(lines, new_version=new_version)
     updated_text = "\n".join(updated_lines)
     if has_trailing_newline:
         updated_text += "\n"

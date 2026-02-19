@@ -42,7 +42,7 @@ Key commands:
 Stage flow at a glance:
 
     hypothesis -> design -> implementation -> implementation_review ->
-    launch -> extract_results -> update_docs -> decide_repeat
+    launch -> slurm_monitor -> extract_results -> update_docs -> decide_repeat
 
 ## Stage/Artifact/Verifier cheat sheet
 
@@ -53,6 +53,7 @@ Verifier categories below show **registry capabilities**. Actual requirements de
 - `stage`: `implementation`; `artifacts`: `implementation_plan.md` + code changes; `verifier_categories`: `dry_run`, `schema`, `prompt_lint`.
 - `stage`: `implementation_review`; `artifacts`: `implementation_review.md`, `review_result.json`; `verifier_categories`: `dry_run`, `schema`, `prompt_lint`, `consistency`, `env_smoke`, `docs_target_update`.
 - `stage`: `launch`; `artifacts`: `launch/run_*.sh`, `runs/<run_id>/run_manifest.json`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `env_smoke`.
+- `stage`: `slurm_monitor`; `artifacts`: `runs/<run_id>/run_manifest.json` (+ `docs/slurm_job_list.md` for SLURM); `verifier_categories`: `env_smoke`.
 - `stage`: `extract_results`; `artifacts`: `runs/<run_id>/metrics.json`, `analysis/summary.md`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `env_smoke`.
 - `stage`: `update_docs`; `artifacts`: `docs_update.md`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`, `docs_target_update`.
 - `stage`: `decide_repeat`; `artifacts`: `decision_result.json`; `verifier_categories`: `schema`, `prompt_lint`, `consistency`.
@@ -61,12 +62,14 @@ Verifier categories below show **registry capabilities**. Actual requirements de
 
 1. Standard mode:
    - `autolab status`
-   - `autolab verify --stage <stage>`
+   - `autolab verify --stage <stage>` (example: `autolab verify --stage implementation_review`)
    - `autolab run`
 2. Agent-runner unattended mode:
-   - `autolab loop --auto --max-hours <H> --max-iterations <N>`
+   - `autolab loop --auto --max-hours <hours> --max-iterations <iterations>`
+   - example: `autolab loop --auto --max-hours 2 --max-iterations 12`
 3. Assistant unattended mode:
-   - `autolab loop --auto --assistant --max-hours <H> --max-iterations <N>`
+   - `autolab loop --auto --assistant --max-hours <hours> --max-iterations <iterations>`
+   - example: `autolab loop --auto --assistant --max-hours 1 --max-iterations 8`
 
 ## Command resolution
 

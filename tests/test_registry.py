@@ -158,9 +158,12 @@ def test_registry_run_scoped_required_outputs_use_run_id_pattern(tmp_path: Path)
     registry = load_registry(repo)
 
     launch = registry.get("launch")
+    slurm_monitor = registry.get("slurm_monitor")
     extract_results = registry.get("extract_results")
 
     assert launch is not None
+    assert slurm_monitor is not None
     assert extract_results is not None
     assert launch.required_outputs == ("runs/<RUN_ID>/run_manifest.json",)
+    assert slurm_monitor.required_outputs == ("runs/<RUN_ID>/run_manifest.json",)
     assert extract_results.required_outputs == ("runs/<RUN_ID>/metrics.json", "analysis/summary.md")

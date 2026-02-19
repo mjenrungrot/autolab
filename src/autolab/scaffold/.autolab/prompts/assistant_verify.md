@@ -9,6 +9,7 @@ Summarize verification status for the focused task and identify blocking failure
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - Verification summary mapped to policy checks

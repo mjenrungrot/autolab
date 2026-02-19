@@ -10,7 +10,7 @@ try:
 except Exception:  # pragma: no cover — optional dependency
     yaml = None  # type: ignore[assignment]
 
-from autolab.constants import ACTIVE_STAGES, COMPLETION_LIKE_STATUSES, SYNC_SUCCESS_STATUSES
+from autolab.constants import ACTIVE_STAGES, SYNC_SUCCESS_STATUSES
 from autolab.models import EvalResult, StageCheckError
 from autolab.config import _load_verifier_policy, _resolve_stage_requirements
 from autolab.state import _resolve_iteration_directory
@@ -211,13 +211,14 @@ def _eval_slurm_monitor(
     if isinstance(sync_block, dict):
         sync_status = str(sync_block.get("status", "")).strip().lower()
 
-    if sync_status in SYNC_SUCCESS_STATUSES or run_status in COMPLETION_LIKE_STATUSES:
-        return EvalResult("extract_results", "complete", "slurm_monitor: artifacts ready")
+    # Extraction can proceed once artifacts are local-ready or terminal failure
+    # is recorded. Keep pending/running/unsynced runs in slurm_monitor.
+    if sync_status in SYNC_SUCCESS_STATUSES:
+        return EvalResult("extract_results", "complete", "slurm_monitor: artifacts synced")
+    if run_status in {"synced", "failed", "partial"}:
+        return EvalResult("extract_results", "complete", f"slurm_monitor: terminal status '{run_status}'")
 
-    # For in-progress SLURM jobs the agent runner should have updated the
-    # manifest during its turn.  Advance to extraction regardless so the
-    # pipeline doesn't stall; extraction will handle async pickup.
-    return EvalResult("extract_results", "complete", "slurm_monitor: advancing to extraction")
+    return EvalResult("slurm_monitor", "complete", "slurm_monitor: waiting for scheduler/sync readiness")
 
 
 def _eval_extract_results(

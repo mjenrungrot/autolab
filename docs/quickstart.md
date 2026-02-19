@@ -48,6 +48,7 @@ Edit `.autolab/verifier_policy.yaml`:
        - implementation
        - implementation_review
        - launch
+       - slurm_monitor
        - extract_results
        - update_docs
    ```

@@ -9,6 +9,7 @@ Produce a clear completion decision with evidence and residual-risk notes.
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:assistant_output_contract.md}}
 
 ## OUTPUTS (STRICT)
 - Completion decision (`complete` or `needs_retry`)
