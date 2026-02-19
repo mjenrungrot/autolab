@@ -6,7 +6,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from verifier_lib import REPO_ROOT, load_json, load_state, make_result, print_result, resolve_iteration_dir
+from verifier_lib import (
+    COMPLETION_LIKE_STATUSES,
+    IN_PROGRESS_STATUSES,
+    REPO_ROOT,
+    RUN_MANIFEST_STATUSES,
+    SYNC_SUCCESS_STATUSES,
+    load_json,
+    load_state,
+    make_result,
+    print_result,
+    resolve_iteration_dir,
+)
 
 
 def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
@@ -15,9 +26,9 @@ def _check_launch_artifacts(iteration_id: str, run_id: str) -> list[str]:
     manifest_path = run_dir / "run_manifest.json"
     manifest = load_json(manifest_path)
     manifest_status = str(manifest.get("status", "")).strip().lower()
-    completion_like_statuses = {"completed", "complete", "success", "succeeded", "ok", "passed"}
-    in_progress_statuses = {"submitted", "queued", "pending", "running", "in_progress"}
-    sync_success_like = {"ok", "completed", "success", "passed"}
+    completion_like_statuses = COMPLETION_LIKE_STATUSES
+    in_progress_statuses = IN_PROGRESS_STATUSES
+    sync_success_like = SYNC_SUCCESS_STATUSES
 
     run_id_in_manifest = str(manifest.get("run_id", "")).strip()
     if run_id_in_manifest and run_id_in_manifest != run_id:

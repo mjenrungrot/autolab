@@ -24,6 +24,7 @@ from autolab.constants import (
     REVIEW_RESULT_CHECK_STATUSES,
     REVIEW_RESULT_REQUIRED_CHECKS,
     SLURM_JOB_LIST_PATH,
+    SYNC_SUCCESS_STATUSES,
     VERIFIER_COMMAND_TIMEOUT_SECONDS,
 )
 from autolab.models import StageCheckError, _coerce_bool
@@ -404,7 +405,7 @@ def _validate_extract(iteration_dir: Path, run_id: str) -> None:
     if not isinstance(sync, dict):
         raise StageCheckError("runs/<run_id>/run_manifest.json missing artifact_sync_to_local mapping")
     sync_status = str(sync.get("status", "")).strip().lower()
-    if sync_status not in {"ok", "completed", "success", "passed"}:
+    if sync_status not in SYNC_SUCCESS_STATUSES:
         raise StageCheckError(
             "runs/<run_id>/run_manifest.json artifact_sync_to_local.status must be success-like before extract_results"
         )
@@ -540,7 +541,7 @@ def _resolve_latest_run_state(iteration_dir: Path, *, preferred_run_id: str = ""
                 sync_payload = nested_payload
     if isinstance(sync_payload, dict):
         raw_sync = str(sync_payload.get("status", "")).strip().lower()
-        if raw_sync in {"ok", "completed", "success"}:
+        if raw_sync in SYNC_SUCCESS_STATUSES:
             sync_status = "completed"
         elif raw_sync:
             sync_status = raw_sync
@@ -635,6 +636,7 @@ def _build_verification_command_specs(
     state: dict[str, Any],
     *,
     stage_override: str | None = None,
+    auto_mode: bool = False,
 ) -> tuple[str, dict[str, bool], list[tuple[str, str]]]:
     from autolab.config import (
         _load_verifier_policy,
@@ -712,6 +714,15 @@ def _build_verification_command_specs(
             )
         )
 
+    prompt_registry_contract_path = repo_root / ".autolab" / "verifiers" / "prompt_registry_contract.py"
+    if prompt_registry_contract_path.exists():
+        command_specs.append(
+            (
+                "prompt_registry_contract",
+                f"{python_bin} .autolab/verifiers/prompt_registry_contract.py --stage {shlex.quote(stage)} --json",
+            )
+        )
+
     closed_guard_path = repo_root / ".autolab" / "verifiers" / "closed_experiment_guard.py"
     if closed_guard_path.exists():
         command_specs.append(
@@ -756,6 +767,9 @@ def _build_verification_command_specs(
         raw_mode = str(prompt_lint_config.get("mode", "enforce")).strip().lower()
         if raw_mode in {"warn", "enforce"}:
             prompt_lint_mode = raw_mode
+    # In auto/runner modes, always enforce prompt lint regardless of policy setting
+    if auto_mode:
+        prompt_lint_mode = "enforce"
         enabled_by_stage = prompt_lint_config.get("enabled_by_stage", {})
         if isinstance(enabled_by_stage, dict) and stage in enabled_by_stage:
             prompt_lint_stage_enabled = _coerce_bool(enabled_by_stage.get(stage), default=True)
@@ -795,7 +809,7 @@ def _run_verification_step_detailed(
     stage_requested = str(stage_override or state.get("stage", "")).strip()
     try:
         stage, stage_requirements, command_specs = _build_verification_command_specs(
-            repo_root, state, stage_override=stage_override
+            repo_root, state, stage_override=stage_override, auto_mode=auto_mode
         )
     except StageCheckError as exc:
         stage = str(stage_override or state.get("stage", "")).strip()

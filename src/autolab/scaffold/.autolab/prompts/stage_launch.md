@@ -57,15 +57,20 @@ Submit the approved run and write launch artifacts:
 - `launch` can represent either:
   - **submitted/in-progress**: job accepted by scheduler and tracked in the ledger
   - **completed**: job finished and artifacts synced (optional when completion is immediate)
-- Use `run_manifest.status` to make lifecycle state explicit.
-- If status is completion-like (`completed|complete|success|succeeded|ok|passed`), include `timestamps.completed_at`.
-- If status is in-progress (`submitted|queued|pending|running|in_progress`), `timestamps.completed_at` can be omitted.
+- Use `run_manifest.status` to make lifecycle state explicit. Only use schema-valid values from {{shared:status_vocabulary.md}}.
+- Explicit mapping rules:
+  - Job accepted by scheduler -> `status=submitted`
+  - Remote artifacts synchronized -> `status=synced`
+  - Run finished successfully -> `status=completed`
+  - Run terminated with error -> `status=failed`
+- If status is completion-like (`completed`, `failed`), include `timestamps.completed_at`.
+- If status is in-progress (`pending`, `submitted`, `running`, `synced`), `timestamps.completed_at` may be omitted.
 - Do not block launch waiting for multi-day SLURM completion; downstream extraction handles async pickup.
 
 ## SCHEMA GOTCHAS
 - `host_mode` must match `design.yaml` `compute.location` value (`local` or `slurm`).
 - `timestamps.started_at` is required in `run_manifest.json`.
-- `timestamps.completed_at` is required when `run_manifest.status` is completion-like (`completed|complete|success|succeeded|ok|passed`).
+- `timestamps.completed_at` is required when `run_manifest.status` is `completed` or `failed` (see {{shared:status_vocabulary.md}}).
 - SLURM launches require `job_id` in the manifest.
 - `artifact_sync_to_local` is required with at least a `status` field.
 
@@ -73,6 +78,9 @@ Submit the approved run and write launch artifacts:
 - `verifier`: env_smoke; `checks`: `run_health.py` + `result_sanity.py` checks; `common_failure_fix`: Fix environment or result consistency issues.
 - `verifier`: consistency_checks; `checks`: Cross-artifact design/manifest/review consistency; `common_failure_fix`: Align design compute location, run manifest metadata, and review gate status.
 {{shared:verifier_common.md}}
+
+## MULTI-RUN SUPPORT
+If `{{replicate_count}}` is greater than 1, create `runs/<run_id>_rN/run_manifest.json` for each replicate (N = 1..replicate_count). Each replicate manifest follows the same schema as a single run. The base `run_id` serves as the group identifier; individual replicate run IDs are suffixed with `_r1`, `_r2`, etc. The `run_group` context token (`{{run_group}}`) contains the full list of replicate run IDs.
 
 ## STEPS
 1. Resolve host mode (`local` or `slurm`) using environment and probe outputs.
@@ -138,6 +146,4 @@ Run-manifest dynamic cap counts configured list-like fields in `.autolab/experim
   what_it_proves: executable launch command payload
   verifier_output_pointer: `.autolab/logs/verifier_*` or command output excerpt in `implementation_plan.md`
 
-## FAILURE / RETRY BEHAVIOR
-- If any verification step fails, fix artifacts and rerun from the verification ritual.
-- Do not force stage advancement in state; orchestrator applies retry/escalation behavior.
+{{shared:failure_retry.md}}

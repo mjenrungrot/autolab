@@ -373,16 +373,16 @@ class TestHappyPath:
         persisted = _read_state(repo)
         assert persisted["stage"] == "launch"
 
-    def test_launch_to_extract(self, tmp_path: Path) -> None:
+    def test_launch_to_slurm_monitor(self, tmp_path: Path) -> None:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_launch(it_dir)
 
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] == "extract_results"
+        assert persisted["stage"] == "slurm_monitor"
         assert persisted["last_run_id"] == "run_001"
 
     def test_extract_to_update_docs(self, tmp_path: Path) -> None:
@@ -976,8 +976,12 @@ class TestFullCycle:
         outcome = _run(state_path)
         assert outcome.stage_after == "launch"
 
-        # launch → extract_results
+        # launch → slurm_monitor
         _seed_launch(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "slurm_monitor"
+
+        # slurm_monitor → extract_results (auto-skip for local runs)
         outcome = _run(state_path)
         assert outcome.stage_after == "extract_results"
 
@@ -1127,10 +1131,10 @@ def _write_slurm_ledger(repo: Path, run_id: str, *, job_id: str = "12345", itera
 
 
 class TestSlurmLaunchHappyPath:
-    """SLURM launch → extract_results when sync is complete and ledger exists."""
+    """SLURM launch → slurm_monitor when sync is complete and ledger exists."""
 
-    def test_slurm_launch_to_extract_with_completed_sync(self, tmp_path: Path) -> None:
-        """SLURM run with completed artifact sync transitions to extract_results."""
+    def test_slurm_launch_to_slurm_monitor_with_completed_sync(self, tmp_path: Path) -> None:
+        """SLURM run with completed artifact sync transitions to slurm_monitor."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
         _seed_slurm_launch(it_dir, sync_status="completed")
         _write_slurm_ledger(repo, "run_001")
@@ -1138,9 +1142,9 @@ class TestSlurmLaunchHappyPath:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
-        assert persisted["stage"] == "extract_results"
+        assert persisted["stage"] == "slurm_monitor"
         assert persisted["last_run_id"] == "run_001"
         assert persisted["sync_status"] == "completed"
 
@@ -1303,7 +1307,7 @@ class TestSlurmManifestVariants:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
 
     def test_slurm_detected_via_nested_resource_request(self, tmp_path: Path) -> None:
         """SLURM detected through resource_request.mode nested field."""
@@ -1327,7 +1331,7 @@ class TestSlurmManifestVariants:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
 
     def test_slurm_manifest_missing_job_id_fails(self, tmp_path: Path) -> None:
         """SLURM manifest without job_id should fail ledger validation."""
@@ -1360,17 +1364,21 @@ class TestSlurmFullCycle:
     """End-to-end SLURM workflow from launch through decide_repeat."""
 
     def test_slurm_full_cycle_launch_to_stop(self, tmp_path: Path) -> None:
-        """Walk through launch → extract → update_docs → decide_repeat → stop for SLURM."""
+        """Walk through launch → slurm_monitor → extract → update_docs → decide_repeat → stop for SLURM."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="launch")
 
-        # launch → extract_results (SLURM with completed sync)
+        # launch → slurm_monitor (SLURM with completed sync)
         _seed_slurm_launch(it_dir, sync_status="completed")
         _write_slurm_ledger(repo, "run_001")
         outcome = _run(state_path)
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["last_run_id"] == "run_001"
         assert persisted["sync_status"] == "completed"
+
+        # slurm_monitor → extract_results (auto-skip for completed sync)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
 
         # extract_results → update_docs
         _seed_slurm_extract(it_dir, "run_001")
@@ -1405,7 +1413,7 @@ class TestSlurmFullCycle:
         _seed_slurm_launch(it_dir, sync_status="completed")
         outcome = _run(state_path)
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["sync_status"] == "completed"
         assert persisted["stage_attempt"] == 0  # reset on forward transition
@@ -1423,7 +1431,7 @@ class TestSlurmSyncStatusValues:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
 
     def test_sync_status_success_is_accepted(self, tmp_path: Path) -> None:
         """'success' is treated as completed sync."""
@@ -1434,7 +1442,7 @@ class TestSlurmSyncStatusValues:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
 
     def test_sync_status_running_blocks(self, tmp_path: Path) -> None:
         """'running' (long-running in-progress sync) should block."""
@@ -1585,7 +1593,7 @@ class TestLocalLaunchVsSlurm:
         outcome = _run(state_path)
 
         assert outcome.transitioned
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
 
     def test_local_update_docs_no_ledger_required(self, tmp_path: Path) -> None:
         """Local run at update_docs does not require slurm_job_list.md."""
@@ -1610,7 +1618,7 @@ class TestMultiIterationEndToEnd:
     """Two full iterations: local run with review retry, then SLURM with sync retry."""
 
     def test_full_two_iteration_journey(self, tmp_path: Path) -> None:
-        """Walk through 19 transitions across 2 iterations.
+        """Walk through 21 transitions across 2 iterations.
 
         Iteration 1 (local, review retry cycle):
           1. hypothesis → design
@@ -1619,7 +1627,8 @@ class TestMultiIterationEndToEnd:
           4. implementation_review (needs_retry) → implementation  (retry)
           5. implementation → implementation_review
           6. implementation_review (pass) → launch
-          7. launch → extract_results
+          7. launch → slurm_monitor
+          7b. slurm_monitor → extract_results (auto-skip for local)
           8. extract_results → update_docs
           9. update_docs → decide_repeat
          10. decide_repeat → hypothesis  (loop-back)
@@ -1630,7 +1639,8 @@ class TestMultiIterationEndToEnd:
          13. implementation → implementation_review
          14. implementation_review (pass) → launch
          15. launch (SLURM sync pending) → launch  (retry / stage_attempt++)
-         16. launch (SLURM sync completed) → extract_results
+         16. launch (SLURM sync completed) → slurm_monitor
+         16b. slurm_monitor → extract_results (auto-skip for completed sync)
          17. extract_results → update_docs
          18. update_docs → decide_repeat
          19. decide_repeat → stop
@@ -1674,12 +1684,16 @@ class TestMultiIterationEndToEnd:
         outcome = _run(state_path)
         assert outcome.stage_after == "launch"
 
-        # 7. launch → extract_results
+        # 7. launch → slurm_monitor
         _seed_launch(it_dir)
         outcome = _run(state_path)
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["last_run_id"] == "run_001"
+
+        # 7b. slurm_monitor → extract_results (auto-skip for local)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
 
         # 8. extract_results → update_docs
         _seed_extract(it_dir)
@@ -1731,13 +1745,17 @@ class TestMultiIterationEndToEnd:
         assert persisted["stage"] == "launch"
         assert persisted["stage_attempt"] == 1
 
-        # 16. launch (SLURM sync completed) → extract_results
+        # 16. launch (SLURM sync completed) → slurm_monitor
         _seed_slurm_launch(it_dir, sync_status="completed")
         outcome = _run(state_path)
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["sync_status"] == "completed"
         assert persisted["stage_attempt"] == 0
+
+        # 16b. slurm_monitor → extract_results (auto-skip for completed sync)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
 
         # 17. extract_results → update_docs
         _seed_slurm_extract(it_dir, "run_001")
@@ -1981,6 +1999,10 @@ class TestGapUpdateDocsCycleCountResetAcrossIterations:
         assert outcome.stage_after == "launch"
 
         _seed_launch(it_dir)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "slurm_monitor"
+
+        # slurm_monitor → extract_results (auto-skip for local runs)
         outcome = _run(state_path)
         assert outcome.stage_after == "extract_results"
 

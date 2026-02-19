@@ -25,6 +25,17 @@ STATE_FILE: Path = REPO_ROOT / ".autolab" / "state.json"
 EXPERIMENT_TYPES: tuple[str, ...] = ("plan", "in_progress", "done")
 DEFAULT_EXPERIMENT_TYPE: str = "plan"
 
+# ---------------------------------------------------------------------------
+# Canonical status vocabularies
+# ---------------------------------------------------------------------------
+
+SYNC_SUCCESS_STATUSES: frozenset[str] = frozenset({"ok", "completed", "success", "passed"})
+COMPLETION_LIKE_STATUSES: frozenset[str] = frozenset({"completed", "failed"})
+IN_PROGRESS_STATUSES: frozenset[str] = frozenset({"pending", "submitted", "running", "synced"})
+RUN_MANIFEST_STATUSES: frozenset[str] = frozenset({
+    "pending", "submitted", "running", "synced", "completed", "failed", "partial",
+})
+
 
 # ---------------------------------------------------------------------------
 # Iteration directory resolution

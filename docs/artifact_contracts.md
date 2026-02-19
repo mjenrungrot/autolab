@@ -133,3 +133,18 @@ See `examples/golden_iteration/` for canonical examples of all artifacts.
 - **Fields**: `blocked_at`, `reason`, `stage_at_block`, `action_required`
 - **Produced when**: Active experiment is completed in backlog
 - **Action**: Re-open experiment in backlog to resume
+
+## Pattern Paths vs Runtime Paths
+
+Throughout this document and in `workflow.yaml`, paths containing angle-bracket tokens like `<RUN_ID>`, `<ITERATION_ID>`, or `<type>` are **pattern paths** -- templates that are resolved at runtime.
+
+**Pattern path**: `experiments/<type>/<iteration_id>/runs/<run_id>/metrics.json`
+
+**Runtime path**: `experiments/plan/h1-focal-loss/runs/20260218T160045Z/metrics.json`
+
+Resolution rules:
+- `<type>` -> experiment type from backlog (`plan`, `in_progress`, `done`)
+- `<iteration_id>` -> active iteration ID from `.autolab/state.json`
+- `<run_id>` -> current run ID from `state.last_run_id`
+
+Never create filesystem paths containing unresolved angle-bracket tokens. If you see `runs/<RUN_ID>/...` in a schema or config file, it means "the path after substitution", not a literal directory named `<RUN_ID>`.

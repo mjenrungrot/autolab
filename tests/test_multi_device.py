@@ -715,7 +715,7 @@ class TestSlurmSyncRetryBudgetExhaustion:
 
         outcome2 = _run(state_path)
         assert outcome2.transitioned
-        assert outcome2.stage_after == "extract_results"
+        assert outcome2.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["stage_attempt"] == 0
 
@@ -837,14 +837,18 @@ class TestMultiDeviceEndToEnd:
 
         # --- REMOTE device: SLURM launch -> decide_repeat ---
 
-        # launch -> extract_results (SLURM with completed sync)
+        # launch -> slurm_monitor (SLURM with completed sync)
         _seed_slurm_launch(it_dir, sync_status="completed")
         _write_slurm_ledger(repo, "run_001")
         outcome = _run(state_path)
-        assert outcome.stage_after == "extract_results"
+        assert outcome.stage_after == "slurm_monitor"
         persisted = _read_state(repo)
         assert persisted["last_run_id"] == "run_001"
         assert persisted["sync_status"] == "completed"
+
+        # slurm_monitor -> extract_results (auto-skip for completed sync)
+        outcome = _run(state_path)
+        assert outcome.stage_after == "extract_results"
 
         # extract_results -> update_docs
         _seed_slurm_extract(it_dir, "run_001")
