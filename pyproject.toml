@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autolab"
-version = "1.1.41"
+version = "1.1.42"
 description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
