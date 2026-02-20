@@ -873,14 +873,19 @@ def _run_once_assistant(
         and refreshed.get("stage") not in TERMINAL_STAGES
     ):
         refreshed["assistant_mode"] = "on"
-        refreshed["task_cycle_stage"] = "verify"
+        if outcome.transitioned:
+            refreshed["task_cycle_stage"] = "implement"
+            cycle_label = "implement"
+        else:
+            refreshed["task_cycle_stage"] = "verify"
+            cycle_label = "verify"
         _write_json(state_path, refreshed)
         outcome = RunOutcome(
             exit_code=outcome.exit_code,
             transitioned=outcome.transitioned,
             stage_before=outcome.stage_before,
             stage_after=outcome.stage_after,
-            message=f"{outcome.message}; assistant cycle -> verify",
+            message=f"{outcome.message}; assistant cycle -> {cycle_label}",
             commit_allowed=False,
             commit_task_id=current_task_id,
             commit_cycle_stage="implement",

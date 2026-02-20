@@ -21,6 +21,7 @@ import yaml
 
 from autolab.constants import ACTIVE_STAGES, ASSISTANT_CYCLE_STAGES, TERMINAL_STAGES
 from autolab.models import (
+    EvalResult,
     GuardrailConfig,
     MeaningfulChangeConfig,
     RunOutcome,
@@ -815,6 +816,200 @@ class TestAssistantCycleStages:
         state = _read_state(repo)
         assert state["task_cycle_stage"] == "implement"
         assert state["current_task_id"] == "task_next"
+
+    def test_implement_stage_transition_sets_implement_not_verify(
+        self, tmp_path: Path
+    ) -> None:
+        """After a stage transition, cycle should go to implement, not verify."""
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_transition_01"
+        state = _make_state(
+            stage="implementation_review",
+            task_cycle_stage="implement",
+            current_task_id=task_id,
+        )
+        state_path = _write_state(repo, state)
+
+        standard_outcome = RunOutcome(
+            exit_code=0,
+            transitioned=True,
+            stage_before="implementation_review",
+            stage_after="launch",
+            message="stage transitioned",
+        )
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._run_once_standard",
+                return_value=standard_outcome,
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode",
+                return_value="local",
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            # _run_once_standard returns transitioned=True, so the refreshed
+            # state written by _run_once_assistant should be stage=launch but
+            # we need to fake that by writing state with the new stage before
+            # the assistant reloads it.
+            state["stage"] = "launch"
+            _write_state(repo, state)
+            outcome = _run_once_assistant(state_path)
+
+        assert "implement" in outcome.message
+        state = _read_state(repo)
+        assert state["task_cycle_stage"] == "implement"
+
+    def test_implement_no_transition_still_sets_verify(self, tmp_path: Path) -> None:
+        """Without a stage transition, cycle should go to verify as before."""
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_no_transition_01"
+        state = _make_state(
+            stage="implementation",
+            task_cycle_stage="implement",
+            current_task_id=task_id,
+        )
+        state_path = _write_state(repo, state)
+
+        standard_outcome = RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="implementation",
+            stage_after="implementation",
+            message="standard run ok",
+        )
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._run_once_standard",
+                return_value=standard_outcome,
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode",
+                return_value="local",
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            outcome = _run_once_assistant(state_path)
+
+        assert "verify" in outcome.message
+        state = _read_state(repo)
+        assert state["task_cycle_stage"] == "verify"
+
+
+# ===========================================================================
+# 4b. State persistence ordering (Fix B)
+# ===========================================================================
+
+
+class TestStatePersistenceBeforeVerification:
+    """Verify _write_json is called before _run_verification_step during launch."""
+
+    def test_write_json_called_before_verification_in_launch(
+        self, tmp_path: Path
+    ) -> None:
+        """_write_json must flush state to disk before the verifier subprocess."""
+        from autolab.run_standard import _run_once_standard
+
+        repo = _scaffold_repo(tmp_path)
+        state = _make_state(
+            stage="launch",
+            task_cycle_stage="implement",
+            current_task_id="task_launch_01",
+        )
+        state_path = _write_state(repo, state)
+
+        call_order: list[str] = []
+
+        original_write_json = _write_json
+
+        def tracking_write_json(path: Path, data: Any) -> None:
+            call_order.append("write_json")
+            return original_write_json(path, data)
+
+        def tracking_verify(*args: Any, **kwargs: Any) -> tuple[bool, str]:
+            call_order.append("verify")
+            return (True, "all checks passed")
+
+        with (
+            mock.patch(
+                "autolab.run_standard._write_json",
+                side_effect=tracking_write_json,
+            ),
+            mock.patch(
+                "autolab.run_standard._run_verification_step",
+                side_effect=tracking_verify,
+            ),
+            mock.patch("autolab.run_standard._invoke_agent_runner"),
+            mock.patch(
+                "autolab.run_standard._execute_launch_runtime",
+                return_value=mock.Mock(changed_files=[]),
+            ),
+            mock.patch(
+                "autolab.run_standard._validate_stage_readiness",
+                return_value=(True, "ready", {}),
+            ),
+            mock.patch(
+                "autolab.run_standard._safe_todo_pre_sync",
+                return_value=([], ""),
+            ),
+            mock.patch(
+                "autolab.run_standard._safe_todo_post_sync",
+                return_value=([], ""),
+            ),
+            mock.patch("autolab.run_standard._persist_agent_result"),
+            mock.patch("autolab.run_standard._append_log"),
+            mock.patch(
+                "autolab.run_standard._detect_priority_host_mode",
+                return_value="local",
+            ),
+            mock.patch(
+                "autolab.run_standard._evaluate_stage",
+                return_value=EvalResult(
+                    next_stage="extract_results",
+                    status="complete",
+                    summary="launch ok",
+                ),
+            ),
+            mock.patch(
+                "autolab.run_standard._collect_change_snapshot",
+                return_value={},
+            ),
+            mock.patch(
+                "autolab.run_standard._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            _run_once_standard(state_path, decision=None, auto_mode=True)
+
+        # _write_json must appear before verify in the call order
+        assert "write_json" in call_order, "Expected _write_json to be called"
+        assert "verify" in call_order, "Expected _run_verification_step to be called"
+        first_write = call_order.index("write_json")
+        first_verify = call_order.index("verify")
+        assert first_write < first_verify, (
+            f"_write_json (index {first_write}) must be called before "
+            f"_run_verification_step (index {first_verify})"
+        )
 
 
 # ===========================================================================

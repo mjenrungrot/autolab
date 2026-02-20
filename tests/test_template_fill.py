@@ -21,12 +21,19 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def _write_state(repo: Path, *, stage: str, last_run_id: str = "") -> None:
+def _write_state(
+    repo: Path,
+    *,
+    stage: str,
+    last_run_id: str = "",
+    pending_run_id: str = "",
+) -> None:
     state = {
         "iteration_id": "iter1",
         "stage": stage,
         "stage_attempt": 0,
         "last_run_id": last_run_id,
+        "pending_run_id": pending_run_id,
         "sync_status": "na",
         "max_stage_attempts": 3,
         "max_total_iterations": 20,
@@ -323,3 +330,38 @@ def test_template_fill_rejects_registry_required_outputs_with_prompt_mustache_to
 
     assert result.returncode == 1
     assert "uses prompt-style mustache token(s)" in result.stdout
+
+
+def test_template_fill_launch_resolves_pending_run_id_when_last_run_id_empty(
+    tmp_path: Path,
+) -> None:
+    """Fix C: template_fill should resolve pending_run_id for launch stage."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(
+        repo,
+        stage="launch",
+        last_run_id="",
+        pending_run_id="run_abc_001",
+    )
+    _write_launch_fixture(repo, host_mode="local", include_ledger=False)
+
+    # Rename the run directory to match pending_run_id
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    src_run = iteration_dir / "runs" / "run_001"
+    dst_run = iteration_dir / "runs" / "run_abc_001"
+    src_run.rename(dst_run)
+
+    # Update manifest run_id to match
+    manifest_path = dst_run / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["run_id"] = "run_abc_001"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    result = _run_template_fill(repo, stage="launch")
+
+    assert result.returncode == 0, (
+        f"Expected PASS but got failures:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "template_fill: PASS" in result.stdout
