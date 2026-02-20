@@ -168,11 +168,13 @@ def _get_slurm_allocation_resources() -> dict[str, Any]:
         except ValueError:
             pass
 
-    # Memory (SLURM_MEM_PER_NODE is in MB)
+    # Memory (SLURM_MEM_PER_NODE is in MB; some sites append "M" suffix)
     mem_raw = os.environ.get("SLURM_MEM_PER_NODE", "").strip()
     if mem_raw:
+        # Strip trailing unit suffix (e.g. "16384M" -> "16384")
+        mem_digits = mem_raw.rstrip("MmGgKk")
         try:
-            resources["memory_mb"] = int(mem_raw)
+            resources["memory_mb"] = int(mem_digits)
         except ValueError:
             pass
 

@@ -833,25 +833,16 @@ def _execute_slurm_interactive_run(
     if _local_skip_due_to_existing(
         manifest_payload=existing_manifest, logs_dir=logs_dir
     ):
-        if isinstance(existing_manifest, dict):
-            payload, success = _normalize_local_existing_manifest(
-                existing=existing_manifest,
-                run_id=run_id,
-                iteration_id=iteration_id,
-                design_payload=design_payload,
-            )
-            # Fixup: host_mode must be "slurm" for verifier consistency
-            payload["host_mode"] = "slurm"
-            payload["launch_mode"] = "slurm"
-        else:
-            payload, success = _normalize_local_existing_manifest(
-                existing=None,
-                run_id=run_id,
-                iteration_id=iteration_id,
-                design_payload=design_payload,
-            )
-            payload["host_mode"] = "slurm"
-            payload["launch_mode"] = "slurm"
+        payload, success = _normalize_local_existing_manifest(
+            existing=existing_manifest if isinstance(existing_manifest, dict) else None,
+            run_id=run_id,
+            iteration_id=iteration_id,
+            design_payload=design_payload,
+        )
+        # Fixup: host_mode/launch_mode/command must reflect slurm for verifier consistency
+        payload["host_mode"] = "slurm"
+        payload["launch_mode"] = "slurm"
+        payload["command"] = "bash launch/run_slurm.sbatch"
         if _write_json_if_changed(manifest_path, payload):
             changed_files.append(manifest_path)
         _append_log(
