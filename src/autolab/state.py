@@ -117,18 +117,24 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         "last_verification_passed": bool(
             repeat_guard_raw.get("last_verification_passed", False)
         ),
+        "last_blocker_fingerprint": "",
+        "stalled_blocker_cycles": 0,
     }
     for key in (
         "same_decision_streak",
         "last_open_task_count",
         "no_progress_decisions",
         "update_docs_cycle_count",
+        "stalled_blocker_cycles",
     ):
         try:
             value = int(repeat_guard_raw.get(key, repeat_guard[key]))
         except Exception:
             value = repeat_guard[key]
         repeat_guard[key] = value
+    repeat_guard["last_blocker_fingerprint"] = str(
+        repeat_guard_raw.get("last_blocker_fingerprint", "")
+    ).strip()
     normalized["repeat_guard"] = repeat_guard
     baseline_raw = normalized.get("task_change_baseline", {})
     if not isinstance(baseline_raw, dict):
@@ -574,6 +580,8 @@ def _default_state(iteration_id: str) -> dict[str, Any]:
             "no_progress_decisions": 0,
             "update_docs_cycle_count": 0,
             "last_verification_passed": False,
+            "last_blocker_fingerprint": "",
+            "stalled_blocker_cycles": 0,
         },
         "task_change_baseline": {},
         "history": [],

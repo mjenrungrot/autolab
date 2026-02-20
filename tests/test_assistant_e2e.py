@@ -29,6 +29,7 @@ from autolab.models import (
 from autolab.run_assistant import (
     _append_task_ledger,
     _assistant_target_stage,
+    _is_blocker_task_resolved,
     _run_once_assistant,
 )
 from autolab.todo_sync import (
@@ -1412,3 +1413,296 @@ class TestCompletedExperimentBlocking:
         state = _read_state(repo)
         assert state["stage"] == "stop"
         assert state["task_cycle_stage"] == "done"
+
+
+# ===========================================================================
+# 12. Blocker task resolution check (Fix 3)
+# ===========================================================================
+
+
+class TestBlockerTaskResolution:
+    """Tests for _is_blocker_task_resolved and the review gate integration."""
+
+    def test_non_blocker_task_always_resolved(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_normal",
+                    "stage": "implementation",
+                    "source": "manual",
+                    "scope": "manual_user",
+                    "text": "Regular task",
+                    "text_key": "regular task",
+                },
+            ],
+        )
+        state = _make_state(stage="implementation")
+        resolved, reason = _is_blocker_task_resolved(repo, state, "task_normal")
+        assert resolved is True
+        assert "not a blocker" in reason
+
+    def test_blocker_task_unresolved_when_finding_persists(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        # Create a blocker task that matches a current finding
+        finding_text = "Fix scripts/method_b.py before launch"
+        from autolab.todo_sync import _normalize_text_key
+
+        text_key = _normalize_text_key(finding_text)
+
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_blocker",
+                    "stage": "implementation",
+                    "source": "generated",
+                    "scope": "review:blocker:abc123",
+                    "text": f"Resolve implementation review blocker for iteration iter_test_001: {finding_text}",
+                    "text_key": text_key,
+                },
+            ],
+        )
+
+        # Create a review_result.json with the matching finding
+        iteration_dir = repo / "experiments" / "plan" / "iter_test_001"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        _write_json_file(
+            iteration_dir / "review_result.json",
+            {
+                "status": "needs_retry",
+                "blocking_findings": [finding_text],
+                "required_checks": {},
+                "reviewed_at": "2026-02-19T00:00:00Z",
+            },
+        )
+
+        state = _make_state(stage="implementation_review")
+        resolved, reason = _is_blocker_task_resolved(repo, state, "task_blocker")
+        assert resolved is False
+        assert "still matches" in reason
+
+    def test_blocker_task_resolved_when_findings_cleared(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": "task_blocker_resolved",
+                    "stage": "implementation",
+                    "source": "generated",
+                    "scope": "review:blocker:def456",
+                    "text": "Resolve blocker: old finding",
+                    "text_key": "old finding text key",
+                },
+            ],
+        )
+
+        # review_result passes now
+        iteration_dir = repo / "experiments" / "plan" / "iter_test_001"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        _write_json_file(
+            iteration_dir / "review_result.json",
+            {
+                "status": "pass",
+                "blocking_findings": [],
+                "required_checks": {},
+                "reviewed_at": "2026-02-19T01:00:00Z",
+            },
+        )
+
+        state = _make_state(stage="implementation_review")
+        resolved, reason = _is_blocker_task_resolved(
+            repo, state, "task_blocker_resolved"
+        )
+        assert resolved is True
+        assert "no blocking findings" in reason
+
+    def test_review_gate_blocks_unresolved_blocker_task(self, tmp_path: Path) -> None:
+        """When a blocker task passes meaningful-change gate but finding persists,
+        the review should return needs_retry instead of completing."""
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_blocker_gate"
+
+        finding_text = "Fix scripts/method_b.py before launch"
+        from autolab.todo_sync import _normalize_text_key
+
+        text_key = _normalize_text_key(finding_text)
+
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": task_id,
+                    "stage": "implementation",
+                    "source": "generated",
+                    "scope": "review:blocker:abc123",
+                    "text": f"Resolve blocker: {finding_text}",
+                    "text_key": text_key,
+                },
+            ],
+        )
+
+        # Create review_result with the persisting finding
+        iteration_dir = repo / "experiments" / "plan" / "iter_test_001"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        _write_json_file(
+            iteration_dir / "review_result.json",
+            {
+                "status": "needs_retry",
+                "blocking_findings": [finding_text],
+                "required_checks": {},
+                "reviewed_at": "2026-02-19T00:00:00Z",
+            },
+        )
+
+        state = _make_state(
+            stage="implementation",
+            current_task_id=task_id,
+            task_cycle_stage="review",
+            repeat_guard={
+                "last_decision": "",
+                "same_decision_streak": 0,
+                "last_open_task_count": -1,
+                "no_progress_decisions": 0,
+                "update_docs_cycle_count": 0,
+                "last_verification_passed": True,
+                "last_blocker_fingerprint": "",
+                "stalled_blocker_cycles": 0,
+            },
+        )
+        state_path = _write_state(repo, state)
+
+        mock_config = _default_meaningful_config()
+        guardrail = _default_guardrail_config()
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(True, ["src/fix.py"], ["src/fix.py"], {}),
+            ),
+            mock.patch(
+                "autolab.run_assistant._load_guardrail_config", return_value=guardrail
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch("autolab.run_assistant._persist_agent_result"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            outcome = _run_once_assistant(state_path)
+
+        assert outcome.commit_allowed is False
+        assert "unresolved" in outcome.message
+        result_state = _read_state(repo)
+        assert result_state["task_cycle_stage"] == "implement"
+        assert result_state["repeat_guard"]["no_progress_decisions"] == 1
+
+    def test_review_gate_completes_resolved_blocker_task(self, tmp_path: Path) -> None:
+        """When a blocker task's finding is cleared, review gate completes normally."""
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_blocker_pass"
+
+        _seed_todo_state(
+            repo,
+            [
+                {
+                    "task_id": task_id,
+                    "stage": "implementation",
+                    "source": "generated",
+                    "scope": "review:blocker:xyz789",
+                    "text": "Resolve blocker: old issue",
+                    "text_key": "old issue key",
+                },
+            ],
+        )
+
+        # Review passes now
+        iteration_dir = repo / "experiments" / "plan" / "iter_test_001"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        _write_json_file(
+            iteration_dir / "review_result.json",
+            {
+                "status": "pass",
+                "blocking_findings": [],
+                "required_checks": {},
+                "reviewed_at": "2026-02-19T01:00:00Z",
+            },
+        )
+
+        state = _make_state(
+            stage="implementation",
+            current_task_id=task_id,
+            task_cycle_stage="review",
+            repeat_guard={
+                "last_decision": "",
+                "same_decision_streak": 0,
+                "last_open_task_count": -1,
+                "no_progress_decisions": 0,
+                "update_docs_cycle_count": 0,
+                "last_verification_passed": True,
+                "last_blocker_fingerprint": "",
+                "stalled_blocker_cycles": 0,
+            },
+        )
+        state_path = _write_state(repo, state)
+
+        mock_config = _default_meaningful_config()
+        guardrail = _default_guardrail_config()
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._load_meaningful_change_config",
+                return_value=mock_config,
+            ),
+            mock.patch(
+                "autolab.run_assistant._evaluate_meaningful_change",
+                return_value=(True, ["src/fix.py"], ["src/fix.py"], {}),
+            ),
+            mock.patch(
+                "autolab.run_assistant._load_guardrail_config", return_value=guardrail
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch("autolab.run_assistant._persist_agent_result"),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode", return_value="local"
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+            mock.patch(
+                "autolab.run_assistant._assistant_commit_paths",
+                return_value=("src/fix.py",),
+            ),
+            mock.patch("autolab.run_assistant.mark_task_completed", return_value=True),
+            mock.patch("subprocess.run") as mock_subprocess,
+        ):
+            mock_subprocess.return_value = mock.Mock(returncode=0, stdout="abc123\n")
+            outcome = _run_once_assistant(state_path)
+
+        assert outcome.commit_allowed is True
+        result_state = _read_state(repo)
+        assert result_state["task_cycle_stage"] == "done"
+        assert result_state["current_task_id"] == ""
