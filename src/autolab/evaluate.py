@@ -214,7 +214,12 @@ def _eval_launch(
             .strip()
             .lower()
         )
-        resolved_launch_mode = manifest_mode or _detect_priority_host_mode()
+        raw_resolved = manifest_mode or _detect_priority_host_mode()
+        # Normalize internal "slurm_interactive" signal to "slurm" for
+        # design-location comparison — the manifest uses "slurm" in both cases.
+        resolved_launch_mode = (
+            "slurm" if raw_resolved == "slurm_interactive" else raw_resolved
+        )
         if (
             design_location
             and resolved_launch_mode
@@ -266,7 +271,7 @@ def _eval_slurm_monitor(
         else {}
     )
 
-    host_mode = (
+    raw_host_mode = (
         str(
             manifest.get("host_mode")
             or manifest.get("launch_mode")
@@ -275,6 +280,9 @@ def _eval_slurm_monitor(
         .strip()
         .lower()
     )
+    # Normalize internal "slurm_interactive" signal to "slurm" — the manifest
+    # uses "slurm" in both interactive and batch cases.
+    host_mode = "slurm" if raw_host_mode == "slurm_interactive" else raw_host_mode
 
     if host_mode != "slurm":
         return EvalResult(
