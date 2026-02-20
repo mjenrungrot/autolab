@@ -1084,7 +1084,7 @@ def _check_registry_required_outputs(
     if not required_outputs and not any_of_outputs and not conditional_outputs:
         return []
 
-    run_id = str(state.get("last_run_id", "")).strip()
+    run_id = _resolve_run_id_for_stage(state, stage)
     iteration_id = str(state.get("iteration_id", "")).strip()
     context = {
         "iteration_id": iteration_id,
@@ -1196,6 +1196,38 @@ def _check_launch_scripts(
     return failures
 
 
+def _resolve_run_id_for_stage(state: dict, stage: str) -> str:
+    """Resolve the effective run_id, mirroring prompts.py fallback logic.
+
+    Order: pending_run_id (launch only) -> .autolab/run_context.json
+    (launch only, matching iteration) -> last_run_id.
+    """
+    if stage == "launch":
+        pending = str(state.get("pending_run_id", "")).strip()
+        if pending and not pending.startswith("<"):
+            return pending
+        run_context_path = REPO_ROOT / ".autolab" / "run_context.json"
+        if run_context_path.exists():
+            try:
+                payload = json.loads(run_context_path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                ctx_stage = str(payload.get("stage", "")).strip()
+                ctx_iter = str(payload.get("iteration_id", "")).strip()
+                state_iter = str(state.get("iteration_id", "")).strip()
+                ctx_run = str(payload.get("run_id", "")).strip()
+                if (
+                    ctx_stage == "launch"
+                    and ctx_iter
+                    and ctx_iter == state_iter
+                    and ctx_run
+                    and not ctx_run.startswith("<")
+                ):
+                    return ctx_run
+    return str(state.get("last_run_id", "")).strip()
+
+
 def _stage_checks(
     stage: str,
     iteration_dir: Path,
@@ -1207,7 +1239,7 @@ def _stage_checks(
         iteration_dir=iteration_dir,
         state=state,
     )
-    run_id = str(state.get("last_run_id", "")).strip()
+    run_id = _resolve_run_id_for_stage(state, stage)
     iteration_id = str(state.get("iteration_id", "")).strip()
 
     if stage == "hypothesis":

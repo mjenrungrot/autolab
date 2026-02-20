@@ -966,6 +966,8 @@ def _run_once_standard(
                 verification=verification_summary,
             )
 
+    _write_json(state_path, state)
+
     if auto_mode or verify_before_evaluate:
         verified, verify_message = _run_verification_step(
             repo_root, state, auto_mode=auto_mode
