@@ -361,6 +361,27 @@ def _ensure_logs_dir(run_dir: Path, changed_files: list[Path]) -> Path:
     return logs_dir
 
 
+def _check_launch_artifacts(run_dir: Path) -> bool:
+    """Return True if *run_dir* contains at least one non-log output file.
+
+    A launch subprocess that exits 0 but produces no usable output (e.g. the
+    inner experiment failed with a codec error) should not be treated as a
+    successful run.  This helper checks for evidence of real output beyond the
+    ``logs/`` subdirectory.
+    """
+    if not run_dir.is_dir():
+        return False
+    for child in run_dir.iterdir():
+        if child.name == "logs" or child.name == "run_manifest.json":
+            continue
+        # Any non-log, non-manifest entry counts as a real artifact.
+        if child.is_file() and child.stat().st_size > 0:
+            return True
+        if child.is_dir() and any(child.iterdir()):
+            return True
+    return False
+
+
 def _timestamp_now() -> str:
     return (
         datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -674,21 +695,31 @@ def _execute_local_run(
         return payload, False
 
     completed_at = _timestamp_now()
+    if _check_launch_artifacts(run_dir):
+        status = "completed"
+        sync_status = "ok"
+    else:
+        status = "partial"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch local subprocess exited 0 but expected artifacts missing run_id={run_id}",
+        )
     payload = _manifest_payload(
         run_id=run_id,
         iteration_id=iteration_id,
         launch_mode="local",
         command=command_text,
         resource_request=_build_resource_request(design_payload, launch_mode="local"),
-        status="completed",
-        sync_status="ok",
+        status=status,
+        sync_status=sync_status,
         started_at=started_at,
         completed_at=completed_at,
     )
     if _write_json_if_changed(manifest_path, payload):
         changed_files.append(manifest_path)
-    _append_log(repo_root, f"launch local execution completed run_id={run_id}")
-    return payload, True
+    _append_log(repo_root, f"launch local execution {status} run_id={run_id}")
+    return payload, status == "completed"
 
 
 def _execute_slurm_submit(
@@ -926,6 +957,16 @@ def _execute_slurm_interactive_run(
         return payload, False
 
     completed_at = _timestamp_now()
+    if _check_launch_artifacts(run_dir):
+        status = "completed"
+        sync_status = "ok"
+    else:
+        status = "partial"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch slurm-interactive subprocess exited 0 but expected artifacts missing run_id={run_id}",
+        )
     payload = _manifest_payload(
         run_id=run_id,
         iteration_id=iteration_id,
@@ -934,8 +975,8 @@ def _execute_slurm_interactive_run(
         resource_request=_build_resource_request(
             design_payload, launch_mode="slurm", job_id=slurm_job_id
         ),
-        status="completed",
-        sync_status="ok",
+        status=status,
+        sync_status=sync_status,
         started_at=started_at,
         completed_at=completed_at,
         job_id=slurm_job_id,
@@ -943,14 +984,15 @@ def _execute_slurm_interactive_run(
     payload["slurm_environment"] = slurm_env_metadata
     if _write_json_if_changed(manifest_path, payload):
         changed_files.append(manifest_path)
-    _append_slurm_ledger_if_needed(
-        repo_root, manifest_payload=payload, changed_files=changed_files
-    )
+    if status == "completed":
+        _append_slurm_ledger_if_needed(
+            repo_root, manifest_payload=payload, changed_files=changed_files
+        )
     _append_log(
         repo_root,
-        f"launch slurm-interactive execution completed run_id={run_id} job_id={slurm_job_id}",
+        f"launch slurm-interactive execution {status} run_id={run_id} job_id={slurm_job_id}",
     )
-    return payload, True
+    return payload, status == "completed"
 
 
 def _write_group_manifest(

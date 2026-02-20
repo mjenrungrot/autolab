@@ -10,6 +10,7 @@ except Exception:
 
 from autolab.constants import DECISION_STAGES, TERMINAL_STAGES
 from autolab.models import EvalResult, RunOutcome, StageCheckError
+from autolab.registry import load_registry
 from autolab.config import (
     _load_guardrail_config,
     _load_meaningful_change_config,
@@ -55,6 +56,39 @@ from autolab.state import _resolve_repo_root
 from autolab.prompts import _suggest_decision_from_metrics
 from autolab.todo_sync import select_decision_from_todo
 from autolab.validators import _run_verification_step, _validate_stage_readiness
+
+
+def _stage_outputs_satisfied(
+    repo_root: Path,
+    state: dict[str, Any],
+    stage: str,
+) -> bool:
+    """Return True if all ``required_outputs`` for *stage* exist and are non-empty.
+
+    When the registry cannot be loaded or the stage has no required outputs the
+    function returns ``True`` (nothing to enforce).
+    """
+    registry = load_registry(repo_root)
+    spec = registry.get(stage)
+    if spec is None or not spec.required_outputs:
+        return True
+
+    iteration_dir, _ = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=str(state.get("iteration_id", "")).strip(),
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+
+    last_run_id = str(state.get("last_run_id", "")).strip()
+
+    for raw_output in spec.required_outputs:
+        resolved = raw_output.replace("<RUN_ID>", last_run_id)
+        path = iteration_dir / resolved
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+
+    return True
 
 
 def _decision_from_artifact(
@@ -923,14 +957,23 @@ def _run_once_standard(
 
     if _resolve_run_agent_mode(run_agent_mode) != "force_off":
         open_todo_count = _todo_open_count(repo_root)
+        _skip_agent_runner = False
         if open_todo_count > 0 and not _has_open_stage_todo_task(
             repo_root, stage_before
         ):
-            _append_log(
-                repo_root,
-                f"agent runner skipped stage={stage_before} (no stage-focused todo tasks)",
-            )
-        else:
+            if not _stage_outputs_satisfied(repo_root, state, stage_before):
+                _append_log(
+                    repo_root,
+                    f"agent runner forced for stage={stage_before} (required outputs missing)",
+                )
+            else:
+                _append_log(
+                    repo_root,
+                    f"agent runner skipped stage={stage_before} (no stage-focused todo tasks, outputs satisfied)",
+                )
+                _skip_agent_runner = True
+
+        if not _skip_agent_runner:
             try:
                 _invoke_agent_runner(
                     repo_root,
