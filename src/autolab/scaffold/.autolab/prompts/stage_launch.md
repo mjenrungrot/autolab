@@ -121,6 +121,9 @@ For SLURM: check `squeue -u $USER` output and verify job_id in `docs/slurm_job_l
 ## HOST MODE NORMALIZATION
 `{{launch_mode}}` provides the execution context; the output `host_mode` field in `run_manifest.json` must match `design.yaml.compute.location`. Use `host_mode` as the canonical term in all output artifacts.
 
+## INTERACTIVE SLURM AUTO-DETECTION
+When on an interactive SLURM allocation (`salloc` / `srun --pty bash`), the orchestrator automatically compares the experiment's compute requirements (`cpus`, `memory_estimate`, `gpu_count`, `walltime_estimate`) against the current allocation's resources. If requirements fit, the launch script (`run_slurm.sbatch`) is executed directly via `bash` instead of submitting via `sbatch`. The manifest retains `host_mode: "slurm"` and captures `slurm_environment` metadata. The `slurm_monitor` stage auto-advances for these directly-executed runs since `status` is already `completed`.
+
 ## RUN MANIFEST TEMPLATE (schema-aligned)
 ```json
 {

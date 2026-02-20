@@ -291,11 +291,11 @@ def _eval_slurm_monitor(
 
     strict_lifecycle = _load_slurm_lifecycle_strict_policy(repo_root)
     if strict_lifecycle:
-        if run_status == "synced":
+        if run_status in {"synced", "completed"}:
             return EvalResult(
                 "extract_results",
                 "complete",
-                "slurm_monitor: strict lifecycle ready (status=synced)",
+                f"slurm_monitor: strict lifecycle ready (status={run_status})",
             )
         if run_status in {"failed", "partial"}:
             return EvalResult(
@@ -306,10 +306,10 @@ def _eval_slurm_monitor(
         if (
             sync_status in SYNC_SUCCESS_STATUSES
             and run_status
-            and run_status != "synced"
+            and run_status not in {"synced", "completed"}
         ):
             raise StageCheckError(
-                "strict SLURM lifecycle requires run_manifest.status='synced' after sync success and before extraction"
+                "strict SLURM lifecycle requires run_manifest.status='synced' or 'completed' after sync success and before extraction"
             )
     else:
         # Backward-compatible mode: proceed once artifacts are local-ready

@@ -452,7 +452,9 @@ def _run_once_assistant(
     if force_task_selection or cycle_stage in {"select", "done"} or not current_task_id:
         task = select_open_task(
             repo_root,
-            prioritize_implementation=(detected_host_mode == "local"),
+            prioritize_implementation=(
+                detected_host_mode in {"local", "slurm_interactive"}
+            ),
         )
         if task is None:
             auto_complete = _load_assistant_auto_complete_policy(repo_root)

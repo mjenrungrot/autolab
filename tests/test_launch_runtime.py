@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from autolab.launch_runtime import _execute_launch_runtime
+from autolab.launch_runtime import (
+    _execute_launch_runtime,
+    _fits_current_allocation,
+    _parse_memory_to_mb,
+    _parse_walltime_to_seconds,
+)
 from autolab.models import StageCheckError
 
 
@@ -371,3 +376,329 @@ def test_execute_launch_runtime_honors_launch_execute_false(tmp_path: Path) -> N
     result = _execute_launch_runtime(repo, state=state)
     assert result.run_id == "run_001"
     assert result.changed_files == ()
+
+
+# ---------------------------------------------------------------------------
+# Parse helpers
+# ---------------------------------------------------------------------------
+
+
+class TestParseMemoryToMb:
+    def test_gigabytes(self) -> None:
+        assert _parse_memory_to_mb("4GB") == 4096
+
+    def test_megabytes(self) -> None:
+        assert _parse_memory_to_mb("16384MB") == 16384
+
+    def test_terabytes(self) -> None:
+        assert _parse_memory_to_mb("2TB") == 2 * 1_048_576
+
+    def test_bare_number_treated_as_mb(self) -> None:
+        assert _parse_memory_to_mb("8192") == 8192
+
+    def test_empty_string(self) -> None:
+        assert _parse_memory_to_mb("") is None
+
+    def test_unparseable(self) -> None:
+        assert _parse_memory_to_mb("lots") is None
+
+
+class TestParseWalltimeToSeconds:
+    def test_hh_mm_ss(self) -> None:
+        assert _parse_walltime_to_seconds("01:30:00") == 5400
+
+    def test_mm_ss(self) -> None:
+        assert _parse_walltime_to_seconds("30:00") == 1800
+
+    def test_days_hh_mm_ss(self) -> None:
+        assert _parse_walltime_to_seconds("1-12:00:00") == 129600
+
+    def test_empty(self) -> None:
+        assert _parse_walltime_to_seconds("") is None
+
+
+# ---------------------------------------------------------------------------
+# Resource fitness
+# ---------------------------------------------------------------------------
+
+
+class TestFitsCurrentAllocation:
+    def test_all_fit(self) -> None:
+        design = {
+            "compute": {
+                "cpus": 2,
+                "memory_estimate": "4GB",
+                "gpu_count": 1,
+                "walltime_estimate": "00:30:00",
+            }
+        }
+        allocation = {
+            "cpus": 4,
+            "memory_mb": 8192,
+            "gpu_count": 2,
+            "remaining_seconds": 3600,
+        }
+        assert _fits_current_allocation(design, allocation) is True
+
+    def test_exceeds_gpu(self) -> None:
+        design = {"compute": {"cpus": 1, "gpu_count": 4}}
+        allocation = {"cpus": 8, "gpu_count": 2}
+        assert _fits_current_allocation(design, allocation) is False
+
+    def test_exceeds_walltime(self) -> None:
+        design = {"compute": {"walltime_estimate": "02:00:00"}}
+        allocation = {"remaining_seconds": 3600}  # 1h remaining, need 2h
+        assert _fits_current_allocation(design, allocation) is False
+
+    def test_missing_fields_treated_as_fits(self) -> None:
+        design = {
+            "compute": {
+                "cpus": 2,
+                "memory_estimate": "4GB",
+                "gpu_count": 1,
+                "walltime_estimate": "00:30:00",
+            }
+        }
+        allocation = {}  # no resource info at all
+        assert _fits_current_allocation(design, allocation) is True
+
+
+# ---------------------------------------------------------------------------
+# Interactive SLURM execution
+# ---------------------------------------------------------------------------
+
+
+def _seed_design_with_compute(
+    iteration_dir: Path,
+    *,
+    mode: str,
+    cpus: int = 1,
+    gpus: int = 0,
+    memory: str = "",
+    walltime: str = "",
+) -> None:
+    compute: dict[str, object] = {"location": mode, "cpus": cpus, "gpus": gpus}
+    if memory:
+        compute["memory_estimate"] = memory
+    if walltime:
+        compute["walltime_estimate"] = walltime
+    payload = {
+        "schema_version": "1.0",
+        "id": "e1",
+        "iteration_id": iteration_dir.name,
+        "hypothesis_id": "h1",
+        "entrypoint": {"module": "pkg.train", "args": {}},
+        "compute": compute,
+        "metrics": {"primary": {"name": "accuracy", "mode": "maximize"}},
+        "baselines": [{"name": "baseline", "value": 0.0}],
+    }
+    (iteration_dir / "design.yaml").write_text(
+        yaml.safe_dump(payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def _mock_interactive_slurm(
+    monkeypatch,
+    *,
+    cpus: str = "8",
+    mem: str = "16384",
+    gpus: str = "2",
+    job_id: str = "55555",
+) -> None:
+    """Set env vars to simulate an interactive SLURM allocation."""
+    import sys
+
+    monkeypatch.setenv("SLURM_JOB_ID", job_id)
+    monkeypatch.setenv("SLURM_CPUS_ON_NODE", cpus)
+    monkeypatch.setenv("SLURM_MEM_PER_NODE", mem)
+    monkeypatch.setenv("SLURM_GPUS", gpus)
+    monkeypatch.setenv("SLURM_CLUSTER_NAME", "test-cluster")
+    # Ensure isatty returns True so interactive detection works
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+
+def test_slurm_interactive_runs_directly(tmp_path: Path, monkeypatch) -> None:
+    """On interactive node with fitting resources -> direct execution."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design_with_compute(iteration_dir, mode="slurm", cpus=2, gpus=1, memory="4GB")
+    _seed_scripts(iteration_dir)
+
+    _mock_interactive_slurm(monkeypatch, cpus="8", mem="16384", gpus="2")
+    # Patch squeue call for remaining time
+    original_run = subprocess.run
+
+    def _patched_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        if isinstance(cmd, list) and "squeue" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="2:00:00\n", stderr=""
+            )
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _patched_run)
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    result = _execute_launch_runtime(repo, state=state)
+
+    assert result.run_id == "run_001"
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["host_mode"] == "slurm"
+    assert payload["artifact_sync_to_local"]["status"] == "ok"
+    assert "slurm_environment" in payload
+
+
+def test_slurm_interactive_exceeds_resources_sbatches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """On interactive node but requirements exceed -> sbatch submission."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design_with_compute(
+        iteration_dir, mode="slurm", cpus=2, gpus=8, memory="64GB"
+    )
+    _seed_scripts(iteration_dir)
+
+    _mock_interactive_slurm(monkeypatch, cpus="4", mem="8192", gpus="2")
+    original_run = subprocess.run
+
+    def _patched_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        if isinstance(cmd, list) and "squeue" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="1:00:00\n", stderr=""
+            )
+        if isinstance(cmd, list) and "sbatch" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="Submitted batch job 77777\n", stderr=""
+            )
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _patched_run)
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    result = _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "submitted"
+    assert payload["job_id"] == "77777"
+
+
+def test_slurm_non_interactive_still_batches(tmp_path: Path, monkeypatch) -> None:
+    """Not on interactive node -> normal sbatch (regression guard)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design_with_compute(iteration_dir, mode="slurm", cpus=1, gpus=0)
+    _seed_scripts(iteration_dir)
+
+    # No SLURM_JOB_ID means not interactive
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    monkeypatch.delenv("SLURM_CPUS_ON_NODE", raising=False)
+    monkeypatch.delenv("SLURM_MEM_PER_NODE", raising=False)
+    monkeypatch.delenv("SLURM_GPUS", raising=False)
+
+    def _fake_sbatch(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=["sbatch"],
+            returncode=0,
+            stdout="Submitted batch job 88888\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_sbatch)
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    result = _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "submitted"
+    assert payload["job_id"] == "88888"
+    assert "slurm_environment" not in payload
+
+
+def test_slurm_interactive_captures_metadata(tmp_path: Path, monkeypatch) -> None:
+    """Verify slurm_environment field is populated in manifest."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design_with_compute(iteration_dir, mode="slurm", cpus=1, gpus=0)
+    _seed_scripts(iteration_dir)
+
+    _mock_interactive_slurm(monkeypatch, cpus="4", mem="8192", gpus="0", job_id="12300")
+    original_run = subprocess.run
+
+    def _patched_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", [])
+        if isinstance(cmd, list) and "squeue" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="3:00:00\n", stderr=""
+            )
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _patched_run)
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    slurm_env = payload.get("slurm_environment", {})
+    assert slurm_env.get("SLURM_JOB_ID") == "12300"
+    assert slurm_env.get("SLURM_CLUSTER_NAME") == "test-cluster"
+
+
+def test_slurm_interactive_monitor_advances(tmp_path: Path) -> None:
+    """Verify _eval_slurm_monitor advances for host_mode=slurm + status=completed."""
+    from autolab.evaluate import _eval_slurm_monitor
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+
+    run_dir = iteration_dir / "runs" / "run_001"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "1.0",
+        "run_id": "run_001",
+        "iteration_id": "iter1",
+        "host_mode": "slurm",
+        "launch_mode": "slurm",
+        "status": "completed",
+        "command": "bash launch/run_slurm.sbatch",
+        "job_id": "55555",
+        "resource_request": {"cpus": 1, "memory": "4GB", "gpu_count": 0},
+        "artifact_sync_to_local": {"status": "ok"},
+        "timestamps": {
+            "started_at": "2026-01-01T00:00:00Z",
+            "completed_at": "2026-01-01T00:05:00Z",
+        },
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # Write strict lifecycle policy
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        yaml.safe_dump({"slurm_lifecycle_strict": True}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    state = {"pending_run_id": "run_001", "last_run_id": "run_001", "sync_status": ""}
+    result = _eval_slurm_monitor(repo, state, iteration_dir, "iter1")
+    assert result.next_stage == "extract_results"
+    assert "completed" in result.summary

@@ -567,7 +567,9 @@ def _run_once_standard(
         if selected_decision is None and auto_decision:
             selected_decision = select_decision_from_todo(
                 repo_root,
-                prioritize_implementation=(detected_host_mode == "local"),
+                prioritize_implementation=(
+                    detected_host_mode in {"local", "slurm_interactive"}
+                ),
             )
             if selected_decision is not None:
                 decision_source = "auto_todo"
