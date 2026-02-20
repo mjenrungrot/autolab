@@ -152,14 +152,10 @@ def _check_launch_artifacts(
     run_status = manifest_status
     if run_status in {"failed", "error"}:
         failures.append(f"{manifest_path} has failed status")
-    if (
-        run_status
-        and run_status not in completion_like_statuses
-        and run_status not in in_progress_statuses
-    ):
+    if run_status and run_status not in RUN_MANIFEST_STATUSES:
         failures.append(
             f"{manifest_path} status '{run_status}' is not recognized "
-            f"(expected completion-like or in-progress states)"
+            f"(expected one of {sorted(RUN_MANIFEST_STATUSES)})"
         )
 
     if launch_execute and not (run_dir / "logs").exists():

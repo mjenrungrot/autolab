@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -207,4 +208,40 @@ def test_launch_registry_conditional_outputs_contract(tmp_path: Path) -> None:
             (("host_mode", "slurm"),),
             ("docs/slurm_job_list.md",),
         ),
+    )
+
+
+def test_workflow_stages_subset_of_state_schema_enum(tmp_path: Path) -> None:
+    """Every stage in workflow.yaml must appear in state.schema.json stage enum."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    registry = load_registry(repo)
+    workflow_stages = set(registry.keys())
+
+    schema_path = repo / ".autolab" / "schemas" / "state.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema_stages = set(schema["properties"]["stage"]["enum"])
+
+    missing = workflow_stages - schema_stages
+    assert not missing, (
+        f"workflow.yaml stages missing from state.schema.json enum: {sorted(missing)}"
+    )
+
+
+def test_state_schema_stage_enum_subset_of_workflow(tmp_path: Path) -> None:
+    """Every state.schema.json stage enum value must exist in workflow.yaml."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    registry = load_registry(repo)
+    workflow_stages = set(registry.keys())
+
+    schema_path = repo / ".autolab" / "schemas" / "state.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema_stages = set(schema["properties"]["stage"]["enum"])
+
+    orphans = schema_stages - workflow_stages
+    assert not orphans, (
+        f"state.schema.json enum values not in workflow.yaml: {sorted(orphans)}"
     )

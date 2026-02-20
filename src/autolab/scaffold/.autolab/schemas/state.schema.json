@@ -27,6 +27,7 @@
         "implementation",
         "implementation_review",
         "launch",
+        "slurm_monitor",
         "extract_results",
         "update_docs",
         "decide_repeat",
