@@ -231,6 +231,8 @@ def _write_overnight_summary(
     max_hours: float,
     auto_decision_count: int,
     retry_escalation_count: int,
+    recoverable_error_count: int,
+    consecutive_errors_at_exit: int,
     todo_open_before: int,
     todo_open_after: int,
     terminal_reason: str,
@@ -250,6 +252,8 @@ def _write_overnight_summary(
         f"- max_hours: `{max_hours}`",
         f"- auto_decisions: `{auto_decision_count}`",
         f"- retry_escalations: `{retry_escalation_count}`",
+        f"- recoverable_errors: `{recoverable_error_count}`",
+        f"- consecutive_errors_at_exit: `{consecutive_errors_at_exit}`",
         f"- todo_open_before: `{todo_open_before}`",
         f"- todo_open_after: `{todo_open_after}`",
         f"- terminal_reason: `{terminal_reason}`",
@@ -266,6 +270,9 @@ def _write_overnight_summary(
             ]
         )
         for row in rows:
+            _msg = str(row.get("message", "")).replace("|", "/")
+            if row.get("recoverable"):
+                _msg = f"[recoverable] {_msg}"
             lines.append(
                 "| {i} | {before} | {after} | {transitioned} | {exit} | {decision} | {message} |".format(
                     i=row.get("index", ""),
@@ -274,7 +281,7 @@ def _write_overnight_summary(
                     transitioned=row.get("transitioned", ""),
                     exit=row.get("exit_code", ""),
                     decision=str(row.get("decision", "-")).replace("|", "/"),
-                    message=str(row.get("message", "")).replace("|", "/"),
+                    message=_msg,
                 )
             )
     else:
@@ -2053,6 +2060,8 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     loop_rows: list[dict[str, Any]] = []
     auto_decision_count = 0
     retry_escalation_count = 0
+    consecutive_errors = 0
+    recoverable_error_count = 0
     overall_exit_code = 0
     lock_acquired = False
 
@@ -2083,6 +2092,9 @@ def _cmd_loop(args: argparse.Namespace) -> int:
             return 1
         lock_acquired = True
         _append_log(repo_root, f"auto loop lock acquired: {lock_msg}")
+        _guardrail_cfg = _load_guardrail_config(repo_root)
+        _max_consecutive_errors = _guardrail_cfg.max_consecutive_errors
+        _error_backoff_base = _guardrail_cfg.error_backoff_base_seconds
 
     try:
         for index in range(1, effective_max_iterations + 1):
@@ -2129,6 +2141,11 @@ def _cmd_loop(args: argparse.Namespace) -> int:
             commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
             if "escalating to human_review" in outcome.message:
                 retry_escalation_count += 1
+            _is_recoverable = (
+                outcome.exit_code != 0
+                and args.auto
+                and outcome.stage_after not in TERMINAL_STAGES
+            )
             loop_rows.append(
                 {
                     "index": index,
@@ -2140,6 +2157,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     if args.auto and current_stage == "decide_repeat"
                     else "-",
                     "message": outcome.message,
+                    "recoverable": _is_recoverable,
                 }
             )
             print(
@@ -2147,9 +2165,37 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 f"(transitioned={outcome.transitioned}, exit={outcome.exit_code})"
             )
             print(f"iteration {index}: {commit_summary}")
+            if outcome.exit_code == 0:
+                consecutive_errors = 0
+
             if outcome.exit_code != 0:
                 print(f"autolab loop: ERROR {outcome.message}", file=sys.stderr)
                 overall_exit_code = outcome.exit_code
+                consecutive_errors += 1
+
+                # Auto mode: recoverable errors continue the loop
+                if args.auto and outcome.stage_after not in TERMINAL_STAGES:
+                    recoverable_error_count += 1
+                    if consecutive_errors >= _max_consecutive_errors:
+                        terminal_reason = "consecutive_error_limit"
+                        print(
+                            f"autolab loop: stop (consecutive error limit "
+                            f"{consecutive_errors}/{_max_consecutive_errors})",
+                            file=sys.stderr,
+                        )
+                        break
+                    backoff = min(
+                        _error_backoff_base * (2 ** (consecutive_errors - 1)), 300.0
+                    )
+                    if backoff > 0:
+                        print(
+                            f"autolab loop: recoverable error, backoff {backoff:.0f}s "
+                            f"before retry ({consecutive_errors}/{_max_consecutive_errors})"
+                        )
+                        time.sleep(backoff)
+                    continue
+
+                # Fatal or interactive: break as before
                 terminal_reason = "error"
                 if outcome.stage_after == "human_review":
                     terminal_reason = "human_review"
@@ -2204,6 +2250,8 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     max_hours=max_hours,
                     auto_decision_count=auto_decision_count,
                     retry_escalation_count=retry_escalation_count,
+                    recoverable_error_count=recoverable_error_count,
+                    consecutive_errors_at_exit=consecutive_errors,
                     todo_open_before=todo_open_before,
                     todo_open_after=todo_open_after,
                     terminal_reason=terminal_reason,
