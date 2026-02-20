@@ -20,6 +20,7 @@ from autolab.__main__ import (
     RunOutcome,
     _run_once,
 )
+from autolab.state import _default_state, _normalize_state
 
 
 # ---------------------------------------------------------------------------
@@ -2537,3 +2538,62 @@ class TestStageGateContracts:
 
         assert outcome.exit_code == 1
         assert "must reference state.last_run_id" in outcome.message
+
+
+# ===========================================================================
+# Fix 1: _normalize_state preserves blocker-stall fields
+# ===========================================================================
+
+
+class TestNormalizeStateBlockerFields:
+    """Verify that _normalize_state preserves and defaults blocker-stall fields."""
+
+    def _minimal_state(self, **overrides: Any) -> dict[str, Any]:
+        state = _make_state()
+        state.update(overrides)
+        return state
+
+    def test_defaults_blocker_fields_when_absent(self) -> None:
+        state = self._minimal_state()
+        # Remove the new keys from repeat_guard if present
+        state["repeat_guard"].pop("last_blocker_fingerprint", None)
+        state["repeat_guard"].pop("stalled_blocker_cycles", None)
+        normalized = _normalize_state(state)
+        rg = normalized["repeat_guard"]
+        assert rg["last_blocker_fingerprint"] == ""
+        assert rg["stalled_blocker_cycles"] == 0
+
+    def test_preserves_blocker_fields_through_normalization(self) -> None:
+        state = self._minimal_state()
+        state["repeat_guard"]["last_blocker_fingerprint"] = "abc123"
+        state["repeat_guard"]["stalled_blocker_cycles"] = 5
+        normalized = _normalize_state(state)
+        rg = normalized["repeat_guard"]
+        assert rg["last_blocker_fingerprint"] == "abc123"
+        assert rg["stalled_blocker_cycles"] == 5
+
+    def test_coerces_stalled_blocker_cycles_to_int(self) -> None:
+        state = self._minimal_state()
+        state["repeat_guard"]["stalled_blocker_cycles"] = "3"
+        normalized = _normalize_state(state)
+        assert normalized["repeat_guard"]["stalled_blocker_cycles"] == 3
+
+    def test_coerces_invalid_stalled_blocker_cycles_to_default(self) -> None:
+        state = self._minimal_state()
+        state["repeat_guard"]["stalled_blocker_cycles"] = "not_a_number"
+        normalized = _normalize_state(state)
+        assert normalized["repeat_guard"]["stalled_blocker_cycles"] == 0
+
+    def test_strips_whitespace_from_fingerprint(self) -> None:
+        state = self._minimal_state()
+        state["repeat_guard"]["last_blocker_fingerprint"] = "  abc123  "
+        normalized = _normalize_state(state)
+        assert normalized["repeat_guard"]["last_blocker_fingerprint"] == "abc123"
+
+    def test_default_state_includes_blocker_fields(self) -> None:
+        state = _default_state("test_iter")
+        rg = state["repeat_guard"]
+        assert "last_blocker_fingerprint" in rg
+        assert "stalled_blocker_cycles" in rg
+        assert rg["last_blocker_fingerprint"] == ""
+        assert rg["stalled_blocker_cycles"] == 0

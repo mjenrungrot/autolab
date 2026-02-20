@@ -45,7 +45,12 @@ from autolab.utils import (
     _write_json,
 )
 from autolab.validators import _run_verification_step
-from autolab.todo_sync import mark_task_completed, select_open_task
+from autolab.todo_sync import (
+    _load_todo_state,
+    _normalize_text_key,
+    mark_task_completed,
+    select_open_task,
+)
 
 
 def _append_task_ledger(
@@ -176,6 +181,40 @@ def _review_blocker_fingerprint(
     normalized = sorted(set(normalized))
     digest = hashlib.sha1("\n".join(normalized).encode("utf-8")).hexdigest()
     return (digest, normalized)
+
+
+def _is_blocker_task_resolved(
+    repo_root: Path,
+    state: dict[str, Any],
+    task_id: str,
+) -> tuple[bool, str]:
+    """Check whether a blocker task's underlying finding is still present.
+
+    Returns (resolved, reason).  Non-blocker tasks always return (True, ...).
+    """
+    todo_state_path = repo_root / ".autolab" / "todo_state.json"
+    todo_state = _load_todo_state(todo_state_path)
+    task = todo_state.get("tasks", {}).get(task_id)
+    if not isinstance(task, dict):
+        return (True, "task not found in todo_state")
+
+    scope = str(task.get("scope", "")).strip()
+    if not scope.startswith("review:blocker:"):
+        return (True, "not a blocker task")
+
+    fingerprint, findings = _review_blocker_fingerprint(repo_root, state)
+    if not fingerprint:
+        return (True, "no blocking findings")
+
+    task_text_key = str(task.get("text_key", "")).strip()
+    if not task_text_key:
+        return (True, "task has no text_key")
+
+    for finding_text in findings:
+        if _normalize_text_key(finding_text) == task_text_key:
+            return (False, f"finding still matches task text_key: {task_text_key}")
+
+    return (True, "task text_key no longer matches any current finding")
 
 
 def _needs_segment_list_preflight(iteration_dir: Path, stage: str) -> bool:
@@ -644,6 +683,34 @@ def _run_once_assistant(
         )
 
         if passes_gate:
+            # Before completing a blocker task, verify the finding is resolved.
+            blocker_resolved, blocker_reason = _is_blocker_task_resolved(
+                repo_root, state, current_task_id
+            )
+            if not blocker_resolved:
+                repeat_guard["no_progress_decisions"] = (
+                    int(repeat_guard.get("no_progress_decisions", 0)) + 1
+                )
+                state["repeat_guard"] = repeat_guard
+                state["task_cycle_stage"] = "implement"
+                _write_json(state_path, state)
+                return _persist_simple(
+                    status="needs_retry",
+                    message=(
+                        f"assistant review: blocker task {current_task_id} still unresolved "
+                        f"({blocker_reason}); returning to implement"
+                    ),
+                    changed_files=[state_path],
+                    transitioned=False,
+                    stage_after=str(state.get("stage", stage_before)),
+                    commit_allowed=False,
+                    commit_cycle_stage="review",
+                    verification_passed=verification_passed,
+                    verification_message="blocker resolution check",
+                    commit_reason=f"blocker unresolved: {blocker_reason}",
+                    ledger_event="review",
+                )
+
             mark_task_completed(repo_root, current_task_id)
             # Persist task completion evidence
             try:

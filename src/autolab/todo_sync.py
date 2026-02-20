@@ -841,8 +841,10 @@ def _is_actionable_blocking_finding(text: str) -> bool:
 
 def _map_blocking_finding_stage(*, text: str, stage_hint: str) -> str:
     normalized_hint = _normalize_space(stage_hint).lower()
-    if normalized_hint in {"implementation", "implementation_review"}:
+    if normalized_hint == "implementation":
         return "implementation"
+    if normalized_hint == "implementation_review":
+        return "implementation_review"
     if normalized_hint in {"launch", "slurm_monitor"}:
         return "launch"
     if normalized_hint == "extract_results":
@@ -921,6 +923,40 @@ def _extract_review_blocker_candidates(
     status = _normalize_space(str(payload.get("status", ""))).lower()
     if status == "pass":
         return []
+
+    # --- Freshness check: if implementation artifacts are newer than the
+    # review_result.json, the review is stale and should be re-run rather
+    # than emitting individual (potentially outdated) blocker tasks. ---
+    reviewed_at = _normalize_space(str(payload.get("reviewed_at", "")))
+    is_scaffold_placeholder = reviewed_at == "1970-01-01T00:00:00Z"
+    if not is_scaffold_placeholder:
+        try:
+            review_mtime = review_result_path.stat().st_mtime
+            impl_newer = False
+            for subdir_name in ("scripts", "data"):
+                subdir = iteration_dir / subdir_name
+                if not subdir.is_dir():
+                    continue
+                for child in subdir.rglob("*"):
+                    if child.is_file() and child.stat().st_mtime > review_mtime:
+                        impl_newer = True
+                        break
+                if impl_newer:
+                    break
+            if impl_newer:
+                return [
+                    _GeneratedCandidate(
+                        stage="implementation_review",
+                        scope="review:blocker:stale_review",
+                        text=(
+                            f"Rerun implementation_review for iteration {iteration_id}: "
+                            "review_result.json is stale (implementation artifacts changed after last review)."
+                        ),
+                    )
+                ]
+        except OSError:
+            pass  # fall through to normal blocker emission
+
     findings = payload.get("blocking_findings")
     if not isinstance(findings, list):
         return []
