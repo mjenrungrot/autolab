@@ -382,6 +382,62 @@ def _check_launch_artifacts(run_dir: Path) -> bool:
     return False
 
 
+_FATAL_MARKER_PATTERNS = tuple(
+    re.compile(pat)
+    for pat in (
+        r"RuntimeError:",
+        r"Failed to initialize",
+        r"Failed to open",
+        r"\bFATAL\b",
+        r"Segmentation fault",
+        r"core dumped",
+        r"Traceback \(most recent call last\)",
+        r"CUDA error:",
+        r"OutOfMemoryError",
+        r"\bkilled\b",
+    )
+)
+
+
+def _stderr_has_fatal_markers(stderr_text: str) -> str:
+    """Return the first fatal marker found in *stderr_text*, or ``""``."""
+    for pattern in _FATAL_MARKER_PATTERNS:
+        if pattern.search(stderr_text):
+            return pattern.pattern
+    return ""
+
+
+def _check_run_id_consistency(run_dir: Path, *, expected_run_id: str) -> str:
+    """Check for run-ID drift: sibling dirs created after *run_dir* with wrong name.
+
+    Returns a diagnostic message string (empty if no anomaly detected).
+    """
+    runs_parent = run_dir.parent  # …/runs/
+    if not runs_parent.is_dir():
+        return ""
+    try:
+        run_dir_mtime = run_dir.stat().st_mtime
+    except OSError:
+        return ""
+    drifted: list[str] = []
+    for sibling in runs_parent.iterdir():
+        if not sibling.is_dir():
+            continue
+        if sibling.name == expected_run_id:
+            continue
+        try:
+            if sibling.stat().st_mtime >= run_dir_mtime:
+                drifted.append(sibling.name)
+        except OSError:
+            continue
+    if not drifted:
+        return ""
+    return (
+        f"run-id drift detected: expected artifacts under '{expected_run_id}' "
+        f"but found sibling directories {drifted}"
+    )
+
+
 def _timestamp_now() -> str:
     return (
         datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -628,6 +684,7 @@ def _execute_local_run(
     started_at = _timestamp_now()
     env = os.environ.copy()
     env["AUTOLAB_RUN_ID"] = run_id
+    env["RUN_ID"] = run_id
     env["AUTOLAB_ITERATION_ID"] = iteration_id
     command = ["bash", "launch/run_local.sh"]
     stdout_text = ""
@@ -695,7 +752,23 @@ def _execute_local_run(
         return payload, False
 
     completed_at = _timestamp_now()
-    if _check_launch_artifacts(run_dir):
+    fatal_marker = _stderr_has_fatal_markers(stderr_text)
+    run_id_drift = _check_run_id_consistency(run_dir, expected_run_id=run_id)
+    if fatal_marker:
+        status = "failed"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch local stderr contains fatal marker '{fatal_marker}' run_id={run_id}",
+        )
+    elif run_id_drift:
+        status = "failed"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch local {run_id_drift} run_id={run_id}",
+        )
+    elif _check_launch_artifacts(run_dir):
         status = "completed"
         sync_status = "ok"
     else:
@@ -885,6 +958,7 @@ def _execute_slurm_interactive_run(
     started_at = _timestamp_now()
     env = os.environ.copy()
     env["AUTOLAB_RUN_ID"] = run_id
+    env["RUN_ID"] = run_id
     env["AUTOLAB_ITERATION_ID"] = iteration_id
     command = ["bash", "launch/run_slurm.sbatch"]
     stdout_text = ""
@@ -957,7 +1031,23 @@ def _execute_slurm_interactive_run(
         return payload, False
 
     completed_at = _timestamp_now()
-    if _check_launch_artifacts(run_dir):
+    fatal_marker = _stderr_has_fatal_markers(stderr_text)
+    run_id_drift = _check_run_id_consistency(run_dir, expected_run_id=run_id)
+    if fatal_marker:
+        status = "failed"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch slurm-interactive stderr contains fatal marker '{fatal_marker}' run_id={run_id}",
+        )
+    elif run_id_drift:
+        status = "failed"
+        sync_status = "failed"
+        _append_log(
+            repo_root,
+            f"launch slurm-interactive {run_id_drift} run_id={run_id}",
+        )
+    elif _check_launch_artifacts(run_dir):
         status = "completed"
         sync_status = "ok"
     else:

@@ -12,6 +12,7 @@ from autolab.launch_runtime import (
     _fits_current_allocation,
     _parse_memory_to_mb,
     _parse_walltime_to_seconds,
+    _stderr_has_fatal_markers,
 )
 from autolab.models import StageCheckError
 
@@ -741,3 +742,151 @@ def test_slurm_interactive_monitor_advances(tmp_path: Path) -> None:
     result = _eval_slurm_monitor(repo, state, iteration_dir, "iter1")
     assert result.next_stage == "extract_results"
     assert "completed" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# RUN_ID env var, stderr fatal markers, and run-id drift
+# ---------------------------------------------------------------------------
+
+
+def test_run_id_env_var_is_set(tmp_path: Path) -> None:
+    """Script echoes $RUN_ID — verify it matches and manifest is completed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(
+        iteration_dir,
+        local_script=(
+            'echo "RUN_ID=$RUN_ID"\n'
+            'mkdir -p "runs/$RUN_ID"\n'
+            'echo \'{"acc":0.9}\' > "runs/$RUN_ID/output.json"\n'
+        ),
+    )
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    result = _execute_launch_runtime(repo, state=state)
+
+    assert result.run_id == "run_001"
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    stdout_log = (
+        iteration_dir / "runs" / "run_001" / "logs" / "launch.stdout.log"
+    ).read_text(encoding="utf-8")
+    assert "RUN_ID=run_001" in stdout_log
+
+
+def test_stderr_fatal_marker_forces_failed_despite_artifacts(
+    tmp_path: Path,
+) -> None:
+    """Script produces artifacts but writes RuntimeError to stderr -> failed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(
+        iteration_dir,
+        local_script=(
+            'mkdir -p "runs/$AUTOLAB_RUN_ID"\n'
+            'echo \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\n'
+            'echo "RuntimeError: Failed to open temp writer" >&2\n'
+        ),
+    )
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    with pytest.raises(StageCheckError, match="failed"):
+        _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["artifact_sync_to_local"]["status"] == "failed"
+
+
+def test_stderr_without_fatal_markers_allows_completed(tmp_path: Path) -> None:
+    """Script produces artifacts with benign stderr warnings -> completed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(
+        iteration_dir,
+        local_script=(
+            'mkdir -p "runs/$AUTOLAB_RUN_ID"\n'
+            'echo \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\n'
+            'echo "UserWarning: some benign deprecation notice" >&2\n'
+        ),
+    )
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    result = _execute_launch_runtime(repo, state=state)
+
+    assert result.run_id == "run_001"
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["artifact_sync_to_local"]["status"] == "ok"
+
+
+class TestStderrFatalMarkerDetection:
+    """Unit tests for _stderr_has_fatal_markers."""
+
+    def test_runtime_error(self) -> None:
+        assert _stderr_has_fatal_markers("RuntimeError: boom") != ""
+
+    def test_traceback(self) -> None:
+        assert _stderr_has_fatal_markers("Traceback (most recent call last)") != ""
+
+    def test_cuda_error(self) -> None:
+        assert _stderr_has_fatal_markers("CUDA error: device-side assert") != ""
+
+    def test_out_of_memory(self) -> None:
+        assert _stderr_has_fatal_markers("OutOfMemoryError") != ""
+
+    def test_segfault(self) -> None:
+        assert _stderr_has_fatal_markers("Segmentation fault (core dumped)") != ""
+
+    def test_killed(self) -> None:
+        assert _stderr_has_fatal_markers("process killed by signal") != ""
+
+    def test_fatal_word(self) -> None:
+        assert _stderr_has_fatal_markers("FATAL: cannot allocate memory") != ""
+
+    def test_benign_warning(self) -> None:
+        assert _stderr_has_fatal_markers("UserWarning: deprecated API") == ""
+
+    def test_empty_string(self) -> None:
+        assert _stderr_has_fatal_markers("") == ""
+
+    def test_normal_output(self) -> None:
+        assert _stderr_has_fatal_markers("Training epoch 1/10 loss=0.42") == ""
+
+
+def test_run_id_drift_marks_failed(tmp_path: Path) -> None:
+    """Script writes artifacts under wrong directory name -> failed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    # Script creates artifacts under a *wrong* run-id directory
+    _seed_scripts(
+        iteration_dir,
+        local_script=(
+            'mkdir -p "runs/wrong_run_id"\n'
+            'echo \'{"acc":0.9}\' > "runs/wrong_run_id/output.json"\n'
+        ),
+    )
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    with pytest.raises(StageCheckError, match="failed"):
+        _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["artifact_sync_to_local"]["status"] == "failed"
