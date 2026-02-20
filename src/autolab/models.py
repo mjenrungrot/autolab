@@ -97,6 +97,8 @@ class GuardrailConfig:
     max_generated_todo_tasks: int
     on_breach: str
     max_stalled_blocker_cycles: int = 3
+    max_consecutive_errors: int = 5
+    error_backoff_base_seconds: float = 10.0
 
 
 @dataclass(frozen=True)

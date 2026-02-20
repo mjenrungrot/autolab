@@ -244,6 +244,9 @@ autorun:
     max_generated_todo_tasks: 5
     # Escalate when implementation-review blockers remain unchanged for too long.
     max_stalled_blocker_cycles: 3
+    # Auto-loop resilience: retry budget for recoverable stage errors.
+    max_consecutive_errors: 5
+    error_backoff_base_seconds: 10
     on_breach: human_review
 
   # Strict-mode toggles for unattended loops.

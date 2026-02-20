@@ -84,6 +84,14 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
         max_generated_todo_tasks = 1
     if max_stalled_blocker_cycles < 1:
         max_stalled_blocker_cycles = 1
+    max_consecutive_errors = int(guardrails.get("max_consecutive_errors", 5) or 5)
+    error_backoff_base_seconds = float(
+        guardrails.get("error_backoff_base_seconds", 10.0) or 10.0
+    )
+    if max_consecutive_errors < 1:
+        max_consecutive_errors = 1
+    if error_backoff_base_seconds < 0:
+        error_backoff_base_seconds = 0.0
     return GuardrailConfig(
         max_same_decision_streak=max_same,
         max_no_progress_decisions=max_no_progress,
@@ -91,6 +99,8 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
         max_generated_todo_tasks=max_generated_todo_tasks,
         on_breach=on_breach,
         max_stalled_blocker_cycles=max_stalled_blocker_cycles,
+        max_consecutive_errors=max_consecutive_errors,
+        error_backoff_base_seconds=error_backoff_base_seconds,
     )
 
 
