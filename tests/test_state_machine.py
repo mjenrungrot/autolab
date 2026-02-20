@@ -251,7 +251,10 @@ def _seed_launch(iteration_dir: Path, run_id: str = "run_001") -> None:
         _seed_review_pass(iteration_dir)
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
-    (launch_dir / "run_local.sh").write_text("#!/bin/bash\necho run", encoding="utf-8")
+    (launch_dir / "run_local.sh").write_text(
+        '#!/bin/bash\nmkdir -p "runs/$AUTOLAB_RUN_ID"\necho \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\necho run',
+        encoding="utf-8",
+    )
     run_dir = iteration_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = {

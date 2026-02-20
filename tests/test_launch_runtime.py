@@ -33,7 +33,12 @@ def _seed_design(iteration_dir: Path, *, mode: str) -> None:
     )
 
 
-def _seed_scripts(iteration_dir: Path, *, local_script: str = "echo local\n") -> None:
+def _seed_scripts(
+    iteration_dir: Path,
+    *,
+    local_script: str = "echo local\n",
+    slurm_script: str = "echo slurm\n",
+) -> None:
     launch_dir = iteration_dir / "launch"
     launch_dir.mkdir(parents=True, exist_ok=True)
     (launch_dir / "run_local.sh").write_text(
@@ -41,7 +46,7 @@ def _seed_scripts(iteration_dir: Path, *, local_script: str = "echo local\n") ->
         encoding="utf-8",
     )
     (launch_dir / "run_slurm.sbatch").write_text(
-        "#!/usr/bin/env bash\n#SBATCH --job-name=test\necho slurm\n",
+        "#!/usr/bin/env bash\n#SBATCH --job-name=test\n" + slurm_script,
         encoding="utf-8",
     )
 
@@ -89,7 +94,11 @@ def test_execute_launch_runtime_local_success(tmp_path: Path) -> None:
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
     _seed_design(iteration_dir, mode="local")
-    _seed_scripts(iteration_dir, local_script="echo hello-local\n")
+    # Script must produce a real artifact in runs/<run_id>/ for status=completed
+    _seed_scripts(
+        iteration_dir,
+        local_script='mkdir -p "runs/$AUTOLAB_RUN_ID"\necho \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\necho hello-local\n',
+    )
 
     state = _base_state(iteration_id="iter1", pending_run_id="run_001")
     result = _execute_launch_runtime(repo, state=state)
@@ -104,6 +113,27 @@ def test_execute_launch_runtime_local_success(tmp_path: Path) -> None:
     assert payload["artifact_sync_to_local"]["status"] == "ok"
     assert (iteration_dir / "runs" / "run_001" / "logs" / "launch.stdout.log").exists()
     assert (iteration_dir / "runs" / "run_001" / "logs" / "launch.stderr.log").exists()
+
+
+def test_execute_launch_runtime_local_exit0_no_artifacts_marks_partial(
+    tmp_path: Path,
+) -> None:
+    """Script exits 0 but produces no output files -> status=partial."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(iteration_dir, local_script='echo "starting" && exit 0\n')
+
+    state = _base_state(iteration_id="iter1", pending_run_id="run_001")
+    with pytest.raises(StageCheckError, match="partial"):
+        _execute_launch_runtime(repo, state=state)
+
+    manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "partial"
+    assert payload["artifact_sync_to_local"]["status"] == "failed"
 
 
 def test_execute_launch_runtime_local_failure_writes_failed_manifest(
@@ -294,7 +324,10 @@ def test_execute_launch_runtime_multi_run_local_writes_replicates_and_base(
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
     _seed_design(iteration_dir, mode="local")
-    _seed_scripts(iteration_dir, local_script="echo replicate\n")
+    _seed_scripts(
+        iteration_dir,
+        local_script='mkdir -p "runs/$AUTOLAB_RUN_ID"\necho \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\necho replicate\n',
+    )
 
     state = _base_state(iteration_id="iter1", pending_run_id="run_base")
     state["run_group"] = ["run_base_r1", "run_base_r2"]
@@ -525,7 +558,10 @@ def test_slurm_interactive_runs_directly(tmp_path: Path, monkeypatch) -> None:
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
     _seed_design_with_compute(iteration_dir, mode="slurm", cpus=2, gpus=1, memory="4GB")
-    _seed_scripts(iteration_dir)
+    _seed_scripts(
+        iteration_dir,
+        slurm_script='mkdir -p "runs/$AUTOLAB_RUN_ID"\necho \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\necho slurm\n',
+    )
 
     _mock_interactive_slurm(monkeypatch, cpus="8", mem="16384", gpus="2")
     # Patch squeue call for remaining time
@@ -634,7 +670,10 @@ def test_slurm_interactive_captures_metadata(tmp_path: Path, monkeypatch) -> Non
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
     _seed_design_with_compute(iteration_dir, mode="slurm", cpus=1, gpus=0)
-    _seed_scripts(iteration_dir)
+    _seed_scripts(
+        iteration_dir,
+        slurm_script='mkdir -p "runs/$AUTOLAB_RUN_ID"\necho \'{"acc":0.9}\' > "runs/$AUTOLAB_RUN_ID/output.json"\necho slurm\n',
+    )
 
     _mock_interactive_slurm(monkeypatch, cpus="4", mem="8192", gpus="0", job_id="12300")
     original_run = subprocess.run
