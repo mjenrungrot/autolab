@@ -109,8 +109,149 @@ def _detect_host_mode_with_probe() -> tuple[str, dict[str, str]]:
     return ("local", probe)
 
 
+def _is_slurm_interactive_session() -> bool:
+    """Return True when running inside an interactive SLURM allocation.
+
+    Interactive sessions (``salloc`` / ``srun --pty bash``) have a ``SLURM_JOB_ID``
+    **and** stdin connected to a TTY.  Batch jobs launched via ``sbatch`` also set
+    ``SLURM_JOB_ID`` but do *not* have a TTY.
+    """
+    if not os.environ.get("SLURM_JOB_ID"):
+        return False
+    if sys.stdin.isatty():
+        return True
+    # Fallback heuristic: some sites set SLURM_JOB_NAME to recognisable values
+    # for interactive allocations.
+    job_name = os.environ.get("SLURM_JOB_NAME", "").strip().lower()
+    return job_name in {"interactive", "bash", "sh", "zsh"}
+
+
+def _collect_slurm_env_metadata() -> dict[str, str]:
+    """Capture SLURM environment variables for manifest metadata."""
+    keys = (
+        "SLURM_JOB_ID",
+        "SLURM_NODELIST",
+        "SLURM_JOB_PARTITION",
+        "SLURM_CLUSTER_NAME",
+        "SLURM_CPUS_ON_NODE",
+        "SLURM_MEM_PER_NODE",
+        "SLURM_GPUS",
+        "SLURM_JOB_GPUS",
+        "SLURM_JOB_QOS",
+        "SLURM_JOB_ACCOUNT",
+        "SLURM_JOB_NAME",
+        "CUDA_VISIBLE_DEVICES",
+    )
+    metadata: dict[str, str] = {}
+    for key in keys:
+        value = os.environ.get(key, "").strip()
+        if value:
+            metadata[key] = value
+    return metadata
+
+
+def _get_slurm_allocation_resources() -> dict[str, Any]:
+    """Return the current SLURM allocation's available resources.
+
+    Returns an empty dict if not on an interactive allocation.
+    """
+    if not _is_slurm_interactive_session():
+        return {}
+
+    resources: dict[str, Any] = {}
+
+    # CPUs
+    cpus_raw = os.environ.get("SLURM_CPUS_ON_NODE", "").strip()
+    if cpus_raw:
+        try:
+            resources["cpus"] = int(cpus_raw)
+        except ValueError:
+            pass
+
+    # Memory (SLURM_MEM_PER_NODE is in MB)
+    mem_raw = os.environ.get("SLURM_MEM_PER_NODE", "").strip()
+    if mem_raw:
+        try:
+            resources["memory_mb"] = int(mem_raw)
+        except ValueError:
+            pass
+
+    # GPUs — try several env vars in order of specificity
+    gpu_count: int | None = None
+    for key in ("SLURM_GPUS", "SLURM_JOB_GPUS"):
+        raw = os.environ.get(key, "").strip()
+        if raw:
+            try:
+                gpu_count = int(raw)
+            except ValueError:
+                pass
+            if gpu_count is not None:
+                break
+    if gpu_count is None:
+        cuda_devs = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+        if cuda_devs:
+            gpu_count = len([d for d in cuda_devs.split(",") if d.strip()])
+    if gpu_count is not None:
+        resources["gpu_count"] = gpu_count
+
+    # Remaining time — query squeue
+    job_id = os.environ.get("SLURM_JOB_ID", "").strip()
+    if job_id:
+        try:
+            proc = subprocess.run(
+                ["squeue", "-j", job_id, "-h", "-o", "%L"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                remaining = _parse_squeue_time_remaining(proc.stdout.strip())
+                if remaining is not None:
+                    resources["remaining_seconds"] = remaining
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            pass
+
+    return resources
+
+
+def _parse_squeue_time_remaining(raw: str) -> int | None:
+    """Parse squeue ``%L`` time-remaining output to seconds.
+
+    Formats: ``UNLIMITED``, ``D-HH:MM:SS``, ``HH:MM:SS``, ``MM:SS``.
+    """
+    text = raw.strip()
+    if not text or text.upper() in {"UNLIMITED", "NOT_SET", "INVALID"}:
+        return None
+    days = 0
+    if "-" in text:
+        parts = text.split("-", 1)
+        try:
+            days = int(parts[0])
+        except ValueError:
+            return None
+        text = parts[1]
+    segments = text.split(":")
+    try:
+        int_segments = [int(s) for s in segments]
+    except ValueError:
+        return None
+    if len(int_segments) == 3:
+        hours, minutes, seconds = int_segments
+    elif len(int_segments) == 2:
+        hours = 0
+        minutes, seconds = int_segments
+    elif len(int_segments) == 1:
+        return int_segments[0] + days * 86400
+    else:
+        return None
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
 def _detect_priority_host_mode() -> str:
     host_mode, _probe = _detect_host_mode_with_probe()
+    if host_mode == "slurm" and _is_slurm_interactive_session():
+        return "slurm_interactive"
     return host_mode
 
 

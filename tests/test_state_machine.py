@@ -1513,10 +1513,10 @@ class TestSlurmFullCycle:
         assert outcome.stage_after == "slurm_monitor"
         assert "waiting" in outcome.message
 
-    def test_slurm_monitor_strict_mode_rejects_sync_ok_without_synced_status(
+    def test_slurm_monitor_strict_mode_rejects_sync_ok_without_synced_or_completed_status(
         self, tmp_path: Path
     ) -> None:
-        """Strict mode requires manifest status=synced once sync reports success."""
+        """Strict mode requires manifest status=synced or completed once sync reports success."""
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="slurm_monitor")
         run_dir = it_dir / "runs" / "run_001"
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1526,12 +1526,11 @@ class TestSlurmFullCycle:
             "host_mode": "slurm",
             "command": "sbatch launch/run_slurm.sbatch",
             "resource_request": {"partition": "debug"},
-            "status": "completed",
+            "status": "running",
             "slurm": {"job_id": "12345"},
             "artifact_sync_to_local": {"status": "ok"},
             "timestamps": {
                 "started_at": "2026-01-01T00:00:00Z",
-                "completed_at": "2026-01-01T00:05:00Z",
             },
         }
         (run_dir / "run_manifest.json").write_text(
@@ -1548,7 +1547,7 @@ class TestSlurmFullCycle:
         persisted = _read_state(repo)
         assert persisted["stage"] in {"slurm_monitor", "human_review"}
         assert (
-            "strict SLURM lifecycle requires run_manifest.status='synced'"
+            "strict SLURM lifecycle requires run_manifest.status='synced' or 'completed'"
             in outcome.message
         )
 

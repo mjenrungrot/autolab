@@ -139,3 +139,24 @@ squeue -j <job_id>
 # Then re-run monitor/extract stages
 autolab run
 ```
+
+## Interactive SLURM Sessions
+
+When on an interactive SLURM allocation (`salloc` / `srun --pty bash`), autolab
+automatically compares your experiment's compute requirements against the current
+allocation's resources:
+
+- **Requirements fit**: Runs directly on the interactive node (like local execution).
+  SLURM metadata is captured in the manifest. `slurm_monitor` auto-advances.
+- **Requirements exceed**: Submits via `sbatch` as normal (batch submission).
+
+Detection checks:
+
+- CPUs: `design.yaml compute.cpus` vs `SLURM_CPUS_ON_NODE`
+- Memory: `design.yaml compute.memory_estimate` vs `SLURM_MEM_PER_NODE`
+- GPUs: `design.yaml compute.gpu_count` vs available GPUs in allocation
+- Walltime: `design.yaml compute.walltime_estimate` vs remaining time in allocation
+
+No new `compute.location` values are needed. The decision is fully automatic
+based on the SLURM environment. The manifest retains `host_mode: "slurm"` so
+all verifiers and consistency checks pass unchanged.

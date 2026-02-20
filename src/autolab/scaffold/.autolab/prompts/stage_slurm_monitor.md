@@ -57,6 +57,7 @@ Never use non-canonical tokens such as `queued` or `in_progress` in `run_manifes
 
 ## LIFECYCLE RULES
 - Local host mode: no monitor work required; stage should pass through.
+- SLURM interactive runs with `status: completed` (directly executed on an interactive allocation): pass through to extraction without scheduler polling.
 - SLURM host mode:
   - If job is still pending/running or artifacts are not synced, remain in `slurm_monitor` and keep tracking artifacts up to date.
   - Advance to extraction only when artifacts are local-ready (`status=synced`) or terminal failure is recorded.
