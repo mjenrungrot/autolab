@@ -10,7 +10,7 @@ line_limits:
   # ---------------------------------------------------------------------------
   # These are hard caps on the number of lines for each file type.
   fixed_max_lines:
-    hypothesis.md: 90
+    hypothesis.md: 180
     design.yaml: 220
     implementation_plan.md: 260
     implementation_review.md: 120

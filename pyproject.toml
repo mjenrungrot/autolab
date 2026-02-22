@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autolab"
-version = "1.1.46"
+version = "1.1.47"
 description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,15 +45,15 @@ autolab = [
   "scaffold/.autolab/schemas/*.json",
   "scaffold/.autolab/verifiers/*.py",
   "skills/*/*/*.md",
-  "golden_iteration/README.md",
-  "golden_iteration/.autolab/*.yaml",
-  "golden_iteration/.autolab/*.json",
-  "golden_iteration/experiments/plan/iter_golden/*.md",
-  "golden_iteration/experiments/plan/iter_golden/*.json",
-  "golden_iteration/experiments/plan/iter_golden/*.yaml",
-  "golden_iteration/experiments/plan/iter_golden/analysis/*.md",
-  "golden_iteration/experiments/plan/iter_golden/launch/*.sh",
-  "golden_iteration/experiments/plan/iter_golden/launch/*.sbatch",
-  "golden_iteration/experiments/plan/iter_golden/runs/*/*.json",
-  "golden_iteration/paper/*.md",
+  "example_golden_iterations/README.md",
+  "example_golden_iterations/.autolab/*.yaml",
+  "example_golden_iterations/.autolab/*.json",
+  "example_golden_iterations/experiments/plan/iter_golden/*.md",
+  "example_golden_iterations/experiments/plan/iter_golden/*.json",
+  "example_golden_iterations/experiments/plan/iter_golden/*.yaml",
+  "example_golden_iterations/experiments/plan/iter_golden/analysis/*.md",
+  "example_golden_iterations/experiments/plan/iter_golden/launch/*.sh",
+  "example_golden_iterations/experiments/plan/iter_golden/launch/*.sbatch",
+  "example_golden_iterations/experiments/plan/iter_golden/runs/*/*.json",
+  "example_golden_iterations/paper/*.md",
 ]
