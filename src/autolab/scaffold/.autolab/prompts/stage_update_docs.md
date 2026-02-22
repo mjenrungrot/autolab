@@ -24,7 +24,7 @@ Update iteration documentation and configured paper targets after result extract
 - configured paper target files (or explicit no-change rationale)
 
 ## GOLDEN EXAMPLE
-Example: `examples/golden_iteration/experiments/plan/iter_golden/docs_update.md`
+Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/docs_update.md`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

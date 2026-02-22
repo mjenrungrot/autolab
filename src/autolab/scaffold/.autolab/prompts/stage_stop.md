@@ -8,7 +8,7 @@ You are the terminal-stage recorder. Confirm that workflow execution is complete
 Acknowledge terminal completion and keep the repository unchanged.
 
 ## GOLDEN EXAMPLE
-Example: `examples/golden_iteration/.autolab/state.json`
+Example: `src/autolab/example_golden_iterations/.autolab/state.json`
 
 ## OUTPUTS (STRICT)
 - No new artifacts are required in this terminal stage.

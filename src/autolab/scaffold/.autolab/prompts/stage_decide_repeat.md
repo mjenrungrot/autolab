@@ -25,7 +25,7 @@ Recommend one next transition decision based on run outcomes, backlog progress, 
 - `human_review` (escalate)
 
 ## GOLDEN EXAMPLE
-Example: `examples/golden_iteration/experiments/plan/iter_golden/decision_result.json`
+Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/decision_result.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

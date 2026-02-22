@@ -36,7 +36,12 @@ def _copy_scaffold(repo: Path) -> None:
 
 
 def _copy_golden_iteration(repo: Path) -> None:
-    golden_root = Path(__file__).resolve().parents[1] / "examples" / "golden_iteration"
+    golden_root = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "autolab"
+        / "example_golden_iterations"
+    )
     shutil.copytree(
         golden_root / "experiments", repo / "experiments", dirs_exist_ok=True
     )

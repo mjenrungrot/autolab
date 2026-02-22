@@ -1025,7 +1025,6 @@ def _resolve_required_output_path(
         "src/",
         "scripts/",
         "tests/",
-        "examples/",
         "experiments/",
     )
     normalized = resolved.replace("\\", "/")
