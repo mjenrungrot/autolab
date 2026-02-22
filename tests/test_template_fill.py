@@ -54,6 +54,77 @@ def _run_template_fill(repo: Path, *, stage: str) -> subprocess.CompletedProcess
     )
 
 
+def test_scaffold_line_limit_policy_sets_hypothesis_budget_to_180(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    policy_path = repo / ".autolab" / "experiment_file_line_limits.yaml"
+    payload = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    line_limits = payload.get("line_limits", {})
+    assert isinstance(line_limits, dict)
+    fixed_max_lines = line_limits.get("fixed_max_lines", {})
+    assert isinstance(fixed_max_lines, dict)
+    assert fixed_max_lines.get("hypothesis.md") == 180
+
+
+def test_golden_hypothesis_examples_fit_configured_line_budget() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    policy_path = (
+        repo_root
+        / "src"
+        / "autolab"
+        / "scaffold"
+        / ".autolab"
+        / "experiment_file_line_limits.yaml"
+    )
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy, dict)
+    line_limits = policy.get("line_limits", {})
+    assert isinstance(line_limits, dict)
+    fixed_max_lines = line_limits.get("fixed_max_lines", {})
+    assert isinstance(fixed_max_lines, dict)
+    hypothesis_limit = fixed_max_lines.get("hypothesis.md")
+    assert isinstance(hypothesis_limit, int)
+
+    candidate_paths = (
+        repo_root
+        / "src"
+        / "autolab"
+        / "example_golden_iterations"
+        / "experiments"
+        / "plan"
+        / "iter_golden"
+        / "hypothesis.md",
+        repo_root
+        / "examples"
+        / "golden_iteration"
+        / "experiments"
+        / "plan"
+        / "iter_golden"
+        / "hypothesis.md",
+        repo_root
+        / "src"
+        / "autolab"
+        / "golden_iteration"
+        / "experiments"
+        / "plan"
+        / "iter_golden"
+        / "hypothesis.md",
+    )
+    golden_paths = tuple(path for path in candidate_paths if path.exists())
+    assert golden_paths, "no golden hypothesis fixture paths found"
+
+    for hypothesis_path in golden_paths:
+        text = hypothesis_path.read_text(encoding="utf-8")
+        line_count = text.count("\n") + (0 if text.endswith("\n") else 1)
+        assert line_count <= hypothesis_limit, (
+            f"{hypothesis_path} has {line_count} lines, exceeds limit {hypothesis_limit}"
+        )
+
+
 def test_template_fill_fails_hypothesis_placeholder_content(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -220,6 +291,41 @@ def test_template_fill_launch_local_does_not_require_slurm_ledger(
     _copy_scaffold(repo)
     _write_state(repo, stage="launch", last_run_id="run_001")
     _write_launch_fixture(repo, host_mode="local", include_ledger=False)
+
+    result = _run_template_fill(repo, stage="launch")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "template_fill: PASS" in result.stdout
+
+
+def test_template_fill_registry_required_outputs_examples_prefix_is_iteration_scoped(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="launch", last_run_id="run_001")
+    _write_launch_fixture(repo, host_mode="local", include_ledger=False)
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow_payload = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    assert isinstance(workflow_payload, dict)
+    stages = workflow_payload.get("stages", {})
+    assert isinstance(stages, dict)
+    launch_stage = stages.get("launch", {})
+    assert isinstance(launch_stage, dict)
+    example_dirname = "examples"
+    probe_name = "local_contract_probe.txt"
+    launch_stage["required_outputs"] = ["/".join((example_dirname, probe_name))]
+    workflow_path.write_text(
+        yaml.safe_dump(workflow_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    iteration_examples_path = (
+        repo / "experiments" / "plan" / "iter1" / Path(example_dirname) / probe_name
+    )
+    iteration_examples_path.parent.mkdir(parents=True, exist_ok=True)
+    iteration_examples_path.write_text("ok\n", encoding="utf-8")
 
     result = _run_template_fill(repo, stage="launch")
 
