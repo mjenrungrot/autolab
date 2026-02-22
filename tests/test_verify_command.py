@@ -118,6 +118,23 @@ def _seed_verification_summaries(repo: Path, *, count: int) -> list[str]:
     return names
 
 
+def _write_lock(repo: Path, *, state_path: Path, command: str = "autolab run") -> Path:
+    now = commands_module._utc_now()
+    payload = {
+        "pid": 99999,
+        "host": "test-host",
+        "owner_uuid": "owner-test",
+        "started_at": now,
+        "last_heartbeat_at": now,
+        "command": command,
+        "state_file": str(state_path),
+    }
+    lock_path = repo / ".autolab" / "lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return lock_path
+
+
 def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -241,6 +258,32 @@ def test_run_with_verify_blocks_stage_transition_on_verification_failure(
     assert state["stage_attempt"] == 1
 
 
+def test_run_fails_when_active_lock_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    lock_path = _write_lock(repo, state_path=state_path, command="autolab loop --auto")
+
+    exit_code = commands_module.main(
+        [
+            "run",
+            "--state-file",
+            str(state_path),
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 1
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["stage"] == "design"
+    assert state["stage_attempt"] == 0
+    assert lock_path.exists()
+
+
 def test_run_blocks_on_stage_readiness_when_run_id_missing(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -274,6 +317,45 @@ def test_run_blocks_on_stage_readiness_when_run_id_missing(tmp_path: Path) -> No
     next_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert next_state["stage"] == "extract_results"
     assert next_state["stage_attempt"] == 1
+
+
+def test_lock_status_reads_runtime_lock(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_lock(repo, state_path=state_path)
+
+    exit_code = commands_module.main(
+        ["lock", "status", "--state-file", str(state_path)]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "autolab lock: active" in captured.out
+    assert "pid: 99999" in captured.out
+
+
+def test_lock_break_removes_runtime_lock(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    lock_path = _write_lock(repo, state_path=state_path)
+
+    exit_code = commands_module.main(
+        [
+            "lock",
+            "break",
+            "--state-file",
+            str(state_path),
+            "--reason",
+            "test",
+        ]
+    )
+
+    assert exit_code == 0
+    assert not lock_path.exists()
 
 
 def test_verification_specs_skip_result_sanity_for_implementation_review(

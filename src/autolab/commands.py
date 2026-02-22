@@ -1977,54 +1977,72 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    lock_path = autolab_dir / "lock"
     run_agent_mode = _resolve_run_agent_mode(getattr(args, "run_agent_mode", "policy"))
     assistant_mode = bool(getattr(args, "assistant", False))
-    baseline_snapshot = _collect_change_snapshot(repo_root)
-    outcome = _run_once(
-        state_path,
-        args.decision,
-        run_agent_mode=run_agent_mode,
-        verify_before_evaluate=bool(getattr(args, "verify", False)),
-        assistant=assistant_mode,
-        auto_mode=False,
-        auto_decision=bool(getattr(args, "auto_decision", False)),
-        strict_implementation_progress=bool(
-            getattr(args, "strict_implementation_progress", True)
-        ),
+    lock_ok, lock_msg = _acquire_lock(
+        lock_path,
+        state_file=state_path,
+        command=" ".join(sys.argv),
+        stale_seconds=LOCK_STALE_SECONDS,
     )
-    commit_outcome = _prepare_standard_commit_outcome(
-        repo_root,
-        outcome,
-        baseline_snapshot,
-        assistant=assistant_mode,
-        strict_implementation_progress=bool(
-            getattr(args, "strict_implementation_progress", True)
-        ),
-    )
-    commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
-    print("autolab run")
-    print(f"state_file: {state_path}")
-    print(f"run_agent_mode: {run_agent_mode}")
-    print(f"assistant: {bool(getattr(args, 'assistant', False))}")
-    print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
-    print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
-    print(f"stage_before: {outcome.stage_before}")
-    print(f"stage_after: {outcome.stage_after}")
-    print(f"transitioned: {outcome.transitioned}")
-    print(f"message: {outcome.message}")
-    print(commit_summary)
-    if outcome.exit_code != 0:
-        print(f"autolab run: ERROR {outcome.message}", file=sys.stderr)
+    if not lock_ok:
+        print(f"autolab run: ERROR {lock_msg}", file=sys.stderr)
+        return 1
+    lock_acquired = True
 
-        # Phase 7a: manual mode hint
-        stage = outcome.stage_before
-        prompt_file = STAGE_PROMPT_FILES.get(stage)
-        if prompt_file:
-            print(
-                f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage."
-            )
+    try:
+        _append_log(repo_root, f"run lock acquired: {lock_msg}")
+        baseline_snapshot = _collect_change_snapshot(repo_root)
+        outcome = _run_once(
+            state_path,
+            args.decision,
+            run_agent_mode=run_agent_mode,
+            verify_before_evaluate=bool(getattr(args, "verify", False)),
+            assistant=assistant_mode,
+            auto_mode=False,
+            auto_decision=bool(getattr(args, "auto_decision", False)),
+            strict_implementation_progress=bool(
+                getattr(args, "strict_implementation_progress", True)
+            ),
+        )
+        commit_outcome = _prepare_standard_commit_outcome(
+            repo_root,
+            outcome,
+            baseline_snapshot,
+            assistant=assistant_mode,
+            strict_implementation_progress=bool(
+                getattr(args, "strict_implementation_progress", True)
+            ),
+        )
+        commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
+        print("autolab run")
+        print(f"state_file: {state_path}")
+        print(f"run_agent_mode: {run_agent_mode}")
+        print(f"assistant: {bool(getattr(args, 'assistant', False))}")
+        print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
+        print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
+        print(f"stage_before: {outcome.stage_before}")
+        print(f"stage_after: {outcome.stage_after}")
+        print(f"transitioned: {outcome.transitioned}")
+        print(f"message: {outcome.message}")
+        print(commit_summary)
+        if outcome.exit_code != 0:
+            print(f"autolab run: ERROR {outcome.message}", file=sys.stderr)
 
-    return outcome.exit_code
+            # Phase 7a: manual mode hint
+            stage = outcome.stage_before
+            prompt_file = STAGE_PROMPT_FILES.get(stage)
+            if prompt_file:
+                print(
+                    f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage."
+                )
+
+        return outcome.exit_code
+    finally:
+        if lock_acquired:
+            _release_lock(lock_path)
 
 
 def _cmd_loop(args: argparse.Namespace) -> int:
@@ -2331,7 +2349,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
 def _cmd_lock(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
-    lock_path = repo_root / ".autolab" / "run.lock"
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    lock_path = autolab_dir / "lock"
     action = args.action
 
     if action == "status":
@@ -2487,7 +2506,7 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
     results: list[tuple[str, bool]] = []
     with ExitStack() as resource_stack:
         golden_resource = importlib_resources.files("autolab").joinpath(
-            "golden_iteration"
+            "example_golden_iterations"
         )
         scaffold_resource = importlib_resources.files("autolab").joinpath(
             "scaffold", ".autolab"
@@ -2495,7 +2514,7 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
         if not golden_resource.is_dir():
             print(
                 "autolab verify-golden: ERROR packaged golden iteration fixtures are unavailable "
-                "(expected package://autolab/golden_iteration)",
+                "(expected package://autolab/example_golden_iterations)",
                 file=sys.stderr,
             )
             return 1
