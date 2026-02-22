@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.45
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.46
 ```
 
 Upgrade to the latest stable GitHub tag in one step:

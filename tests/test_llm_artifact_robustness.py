@@ -1042,7 +1042,41 @@ class TestLaunchMalformedArtifacts:
 
 
 # ---------------------------------------------------------------------------
-# 6. TestExtractResultsMalformedArtifacts
+# 6. TestSlurmMonitorMalformedArtifacts
+# ---------------------------------------------------------------------------
+
+
+class TestSlurmMonitorMalformedArtifacts:
+    """Malformed run_manifest.json at slurm_monitor → StageCheckError → retry."""
+
+    @pytest.mark.parametrize(
+        "case_id, manifest_content",
+        [
+            ("manifest_invalid_json", "{bad"),
+            ("manifest_not_dict", "[1, 2]"),
+        ],
+        ids=["manifest_invalid_json", "manifest_not_dict"],
+    )
+    def test_slurm_monitor_manifest_malformed(
+        self,
+        tmp_path: Path,
+        case_id: str,
+        manifest_content: str,
+    ) -> None:
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="slurm_monitor", last_run_id="run_001"
+        )
+        run_dir = it_dir / "runs" / "run_001"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run_manifest.json").write_text(manifest_content, encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        _assert_retry(outcome, repo, "slurm_monitor")
+
+
+# ---------------------------------------------------------------------------
+# 7. TestExtractResultsMalformedArtifacts
 # ---------------------------------------------------------------------------
 
 
@@ -1138,7 +1172,7 @@ class TestExtractResultsMalformedArtifacts:
 
 
 # ---------------------------------------------------------------------------
-# 7. TestUpdateDocsMalformedArtifacts
+# 8. TestUpdateDocsMalformedArtifacts
 # ---------------------------------------------------------------------------
 
 
@@ -1258,9 +1292,36 @@ class TestUpdateDocsMalformedArtifacts:
 
         _assert_retry(outcome, repo, "update_docs")
 
+    @pytest.mark.parametrize(
+        "case_id, manifest_content",
+        [
+            ("manifest_invalid_json", "{bad"),
+            ("manifest_not_dict", "[1, 2]"),
+        ],
+        ids=["manifest_invalid_json", "manifest_not_dict"],
+    )
+    def test_manifest_malformed(
+        self,
+        tmp_path: Path,
+        case_id: str,
+        manifest_content: str,
+    ) -> None:
+        """run_manifest.json exists but cannot be parsed as an object."""
+        repo, state_path, it_dir = _setup_repo(
+            tmp_path, stage="update_docs", last_run_id="run_001"
+        )
+        _seed_update_docs(it_dir)
+        run_dir = it_dir / "runs" / "run_001"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run_manifest.json").write_text(manifest_content, encoding="utf-8")
+
+        outcome = _run(state_path)
+
+        _assert_retry(outcome, repo, "update_docs")
+
 
 # ---------------------------------------------------------------------------
-# 8. TestDecideRepeatMalformedArtifacts
+# 9. TestDecideRepeatMalformedArtifacts
 # ---------------------------------------------------------------------------
 
 
@@ -1420,7 +1481,7 @@ class TestDecideRepeatMalformedArtifacts:
 
 
 # ---------------------------------------------------------------------------
-# 9. TestGracefulHandlingNoCrash
+# 10. TestGracefulHandlingNoCrash
 # ---------------------------------------------------------------------------
 
 
