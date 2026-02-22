@@ -92,11 +92,6 @@ if [ "$current_branch" != "$default_branch" ]; then
   exit 0
 fi
 
-if [ "${AUTOLAB_DISABLE_VERSION_BUMP:-0}" = "1" ]; then
-  echo "pre-commit: AUTOLAB_DISABLE_VERSION_BUMP=1; skipping version bump"
-  exit 0
-fi
-
 "$python_bin" scripts/bump_version.py
 
 git add pyproject.toml README.md
