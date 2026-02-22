@@ -25,7 +25,7 @@ Gate launch readiness and produce:
 - `{{iteration_path}}/review_result.json`
 
 ## GOLDEN EXAMPLE
-Examples: `examples/golden_iteration/experiments/plan/iter_golden/implementation_review.md`, `examples/golden_iteration/experiments/plan/iter_golden/review_result.json`
+Examples: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/implementation_review.md`, `src/autolab/example_golden_iterations/experiments/plan/iter_golden/review_result.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

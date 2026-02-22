@@ -24,7 +24,7 @@ Submit the approved run and write launch artifacts:
 - `docs/slurm_job_list.md` for SLURM mode
 
 ## GOLDEN EXAMPLE
-Examples: `examples/golden_iteration/experiments/plan/iter_golden/launch/run_local.sh`, `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
+Examples: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/launch/run_local.sh`, `src/autolab/example_golden_iterations/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

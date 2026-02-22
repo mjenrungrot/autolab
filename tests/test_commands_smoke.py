@@ -89,31 +89,45 @@ def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
     assert isinstance(package_data, list)
 
     assert "scaffold/.autolab/workflow.yaml" in package_data
-    assert "golden_iteration/README.md" in package_data
-    assert "golden_iteration/experiments/plan/iter_golden/runs/*/*.json" in package_data
+    assert "example_golden_iterations/README.md" in package_data
+    assert (
+        "example_golden_iterations/experiments/plan/iter_golden/runs/*/*.json"
+        in package_data
+    )
 
 
-def test_packaged_golden_iteration_is_in_sync_with_examples() -> None:
+def test_packaged_golden_iteration_fixture_contract() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    examples_root = repo_root / "examples" / "golden_iteration"
-    packaged_root = repo_root / "src" / "autolab" / "golden_iteration"
-
-    assert examples_root.is_dir()
+    packaged_root = repo_root / "src" / "autolab" / "example_golden_iterations"
     assert packaged_root.is_dir()
 
-    example_files = sorted(
-        path.relative_to(examples_root)
-        for path in examples_root.rglob("*")
-        if path.is_file()
-    )
     packaged_files = sorted(
         path.relative_to(packaged_root)
         for path in packaged_root.rglob("*")
         if path.is_file()
     )
+    expected_files = sorted(
+        [
+            Path(".autolab/backlog.yaml"),
+            Path(".autolab/state.json"),
+            Path("README.md"),
+            Path("experiments/plan/iter_golden/analysis/summary.md"),
+            Path("experiments/plan/iter_golden/decision_result.json"),
+            Path("experiments/plan/iter_golden/design.yaml"),
+            Path("experiments/plan/iter_golden/docs_update.md"),
+            Path("experiments/plan/iter_golden/hypothesis.md"),
+            Path("experiments/plan/iter_golden/implementation_plan.md"),
+            Path("experiments/plan/iter_golden/implementation_review.md"),
+            Path("experiments/plan/iter_golden/launch/run_local.sh"),
+            Path("experiments/plan/iter_golden/review_result.json"),
+            Path(
+                "experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json"
+            ),
+            Path(
+                "experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json"
+            ),
+            Path("paper/results.md"),
+        ]
+    )
 
-    assert packaged_files == example_files
-    for relative in example_files:
-        assert (packaged_root / relative).read_bytes() == (
-            examples_root / relative
-        ).read_bytes()
+    assert packaged_files == expected_files

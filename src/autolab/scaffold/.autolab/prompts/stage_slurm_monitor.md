@@ -15,7 +15,7 @@ Update run tracking artifacts for the current run:
 - `docs/slurm_job_list.md` (SLURM mode)
 
 ## GOLDEN EXAMPLE
-Example: `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
+Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/runs/20260201T120000Z_demo/run_manifest.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

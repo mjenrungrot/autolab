@@ -8,7 +8,7 @@ You are assisting a **human reviewer** who is inspecting the current state of an
 Summarize the experiment state and present the available actions to the human reviewer.
 
 ## GOLDEN EXAMPLE
-Examples: `examples/golden_iteration/.autolab/state.json`, `examples/golden_iteration/experiments/plan/iter_golden/review_result.json`
+Examples: `src/autolab/example_golden_iterations/.autolab/state.json`, `src/autolab/example_golden_iterations/experiments/plan/iter_golden/review_result.json`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

@@ -26,7 +26,7 @@ You are the **Research Engineer** -- the builder responsible for implementing **
 Implement design-scoped changes and produce `{{iteration_path}}/implementation_plan.md` with auditable verifier outcomes.
 
 ## GOLDEN EXAMPLE
-Example: `examples/golden_iteration/experiments/plan/iter_golden/implementation_plan.md`
+Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/implementation_plan.md`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

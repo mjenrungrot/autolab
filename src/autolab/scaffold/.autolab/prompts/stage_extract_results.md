@@ -24,7 +24,7 @@ Convert run artifacts into structured outputs:
 - `{{iteration_path}}/analysis/summary.md`
 
 ## GOLDEN EXAMPLE
-Examples: `examples/golden_iteration/experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`, `examples/golden_iteration/experiments/plan/iter_golden/analysis/summary.md`
+Examples: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/runs/20260201T120000Z_demo/metrics.json`, `src/autolab/example_golden_iterations/experiments/plan/iter_golden/analysis/summary.md`
 
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}

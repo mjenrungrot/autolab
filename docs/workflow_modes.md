@@ -41,4 +41,4 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 ## See Also
 
 - `docs/skills/autolab/SKILL.md` for copy/paste operating commands by mode.
-- `examples/golden_iteration/README.md` for canonical stage artifacts and expected layout.
+- `src/autolab/example_golden_iterations/README.md` for canonical stage artifacts and expected layout.
