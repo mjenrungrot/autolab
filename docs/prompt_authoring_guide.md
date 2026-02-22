@@ -72,6 +72,29 @@ Then include:
 - explicit verifier command (`autolab verify --stage <stage>`)
 - failure/retry note
 
+## Methodology-rich hypothesis prompts
+
+When authoring `stage_hypothesis.md`, optimize for onboarding quality while keeping
+stage boundaries clear:
+
+- Make the artifact standalone for orientation: a new reader should understand the
+  hypothesis rationale, workflow, measurement logic, and handoff constraints.
+- Keep implementation grounding explicit but non-committal:
+  - expected modules/files and dependency assumptions are allowed
+  - executable protocol details still belong to `design.yaml`
+  - execution proof still belongs to `implementation_plan.md`
+- Require a concise methodology workflow in numbered
+  `input -> action -> output artifact` form.
+- Require a measurement plan that states:
+  - primary metric definition (`PrimaryMetric:` strict line)
+  - aggregation rule
+  - baseline comparison rule
+  - success-threshold interpretation
+- Require reproducibility commitments (seed strategy, config provenance,
+  data/version assumptions).
+- Keep narrative bounded and scannable: prefer short sections and bullets over
+  long prose blocks.
+
 ## Adding a new stage prompt
 
 1. Add `src/autolab/scaffold/.autolab/prompts/stage_<name>.md`.

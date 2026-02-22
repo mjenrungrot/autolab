@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.46
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.47
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -215,4 +215,4 @@ autolab reset --state-file .autolab/state.json
 - `docs/skills/README.md` -- skill source/distribution layout and redirect rationale
 - `docs/prompt_authoring_guide.md` -- scaffold prompt conventions and stage-prompt wiring
 - `docs/quickstart.md` -- getting started walkthrough
-- `examples/golden_iteration/` -- complete stage-by-stage artifact example
+- `src/autolab/example_golden_iterations/` -- complete stage-by-stage artifact example

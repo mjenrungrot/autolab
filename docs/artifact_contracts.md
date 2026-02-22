@@ -2,19 +2,30 @@
 
 This document describes each artifact produced during an Autolab iteration: its path pattern, required fields, governing schema, and which stages produce/consume it.
 
-See `examples/golden_iteration/` for canonical examples of all artifacts.
+See `src/autolab/example_golden_iterations/` for canonical examples of all artifacts.
 
 ## hypothesis.md
 
 - **Path**: `experiments/<type>/<iteration_id>/hypothesis.md`
 - **Format**: Markdown
-- **Required sections**: Hypothesis Statement, Primary Metric, Scope In, Scope Out
+- **Required sections**: Hypothesis Statement, Measurement and Analysis Plan, Scope In, Scope Out
+- **Onboarding-recommended methodology sections**:
+  - `Research Context and Baseline Evidence`
+  - `Methodology Workflow` (numbered `input -> action -> output artifact` steps)
+  - `Experimental Units and Data Scope`
+  - `Intervention and Control`
+  - `Reproducibility Commitments`
+  - `Implementation Grounding`
+  - `Constraints for Design Stage`
 - **Key constraint**: Exactly one `PrimaryMetric:` line matching:
   `PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta or +relative%`
+- **Section note**: the `PrimaryMetric:` line can live inside `Measurement and Analysis Plan`; a dedicated `## Primary Metric` heading is optional.
+- **Machine-validated hypothesis metadata**: `metric_mode` (`maximize|minimize`) and signed `target_delta` semantics remain unchanged.
 - **Producing stage**: hypothesis
 - **Consuming stages**: design, implementation
-- **Schema**: None (verified by template_fill.py)
-- **Line limit**: Configured in `experiment_file_line_limits.yaml`
+- **Schema**: None (verified by `template_fill.py` and stage hypothesis checks)
+- **Enforcement mode for methodology richness**: prompt/template guidance (no new hard verifier gates in this iteration)
+- **Line limit**: Configured in `experiment_file_line_limits.yaml` (scaffold default: 180 lines)
 
 ## design.yaml
 
