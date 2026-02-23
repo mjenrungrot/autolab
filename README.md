@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.51
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.52
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -82,13 +82,17 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 ## Configuration
 
+**Command categories (onboarding-first).**
+
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
+- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
+- **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab reset`.
+
+**Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
+
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
-
-**Manual steering commands.**
-
-- `autolab focus --iteration-id <id>` or `autolab focus --experiment-id <id>` retargets state focus with legal checks and a clean handoff reset.
-- `autolab todo list|add|done|remove|sync` manages `docs/todo.md` and `.autolab/todo_state.json` for cross-session steering.
-- `autolab experiment move --to planned|plan|in_progress|done` updates backlog lifecycle type/status, moves iteration folders across `experiments/<type>/`, and rewrites scoped path references.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

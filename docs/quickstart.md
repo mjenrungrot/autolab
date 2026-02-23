@@ -18,6 +18,23 @@ autolab update
 automatically runs `autolab sync-scaffold --force` when executed inside an Autolab
 repository. If run outside a repo, it upgrades and skips scaffold sync.
 
+## Command map (grouped)
+
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
+- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
+- **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab reset`.
+
+Recommended onboarding flow:
+
+```bash
+autolab init
+autolab configure --check
+autolab status
+autolab run --verify
+```
+
 ## Step 1: Initialize the scaffold
 
 ```bash
@@ -35,6 +52,12 @@ This creates:
 - `experiments/plan/<iteration_id>/` -- iteration directory skeleton
 
 ## Step 2: Configure the verifier policy
+
+Start by checking that your generated config is valid:
+
+```bash
+autolab configure --check --state-file .autolab/state.json
+```
 
 Edit `.autolab/verifier_policy.yaml`:
 
