@@ -108,6 +108,81 @@ SKILL_INSTALL_ROOT_BY_PROVIDER = {
 }
 VERIFICATION_SUMMARY_RETENTION_LIMIT = 200
 
+TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Getting started", ("init", "configure", "status", "docs", "explain")),
+    (
+        "Run workflow",
+        ("run", "loop", "verify", "verify-golden", "lint", "review", "skip"),
+    ),
+    ("Backlog steering", ("focus", "todo", "experiment")),
+    ("Safety and policy", ("policy", "guardrails", "lock", "unlock")),
+    (
+        "Maintenance",
+        ("sync-scaffold", "update", "install-skill", "slurm-job-list", "reset"),
+    ),
+)
+
+
+class _AutolabHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Render top-level commands grouped by onboarding categories."""
+
+    def _format_action(self, action: argparse.Action) -> str:
+        subparsers_action = getattr(argparse, "_SubParsersAction", None)
+        if (
+            subparsers_action is not None
+            and isinstance(action, subparsers_action)
+            and action.dest == "command"
+        ):
+            return self._format_top_level_subparsers(action)
+        return super()._format_action(action)
+
+    def _format_top_level_subparsers(self, action: argparse.Action) -> str:
+        subactions = list(action._get_subactions())  # type: ignore[attr-defined]
+        help_by_command: dict[str, str] = {}
+        for subaction in subactions:
+            command = str(getattr(subaction, "dest", "")).strip()
+            if not command:
+                continue
+            help_by_command[command] = str(getattr(subaction, "help", "") or "").strip()
+
+        choices = getattr(action, "choices", {})
+        commands_in_order = [str(name).strip() for name in choices]
+
+        indent = " " * self._current_indent
+        invocation = self._format_action_invocation(action)
+        lines = [f"{indent}{invocation}"]
+
+        rendered_commands: set[str] = set()
+        command_width = max((len(name) for name in help_by_command), default=0)
+        command_width = max(10, min(command_width, 24))
+
+        for group_name, group_commands in TOP_LEVEL_COMMAND_GROUPS:
+            available = [cmd for cmd in group_commands if cmd in help_by_command]
+            if not available:
+                continue
+            lines.append(f"{indent}  {group_name}:")
+            for command in available:
+                rendered_commands.add(command)
+                summary = help_by_command.get(command, "")
+                lines.append(
+                    f"{indent}    {command.ljust(command_width)}  {summary}".rstrip()
+                )
+
+        leftovers = [
+            command
+            for command in commands_in_order
+            if command in help_by_command and command not in rendered_commands
+        ]
+        if leftovers:
+            lines.append(f"{indent}  Other commands:")
+            for command in leftovers:
+                summary = help_by_command.get(command, "")
+                lines.append(
+                    f"{indent}    {command.ljust(command_width)}  {summary}".rstrip()
+                )
+
+        return "\n".join(lines) + "\n"
+
 
 # ---------------------------------------------------------------------------
 # Skill installer helpers
@@ -3035,9 +3110,23 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _top_level_help_epilog() -> str:
+    lines = [
+        "Recommended onboarding flow:",
+        "  autolab init -> autolab configure --check -> autolab status -> autolab run --verify",
+        "",
+        "Run 'autolab COMMAND --help' for command-level details.",
+    ]
+    return "\n".join(lines)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="autolab command line interface")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        description="autolab command line interface",
+        epilog=_top_level_help_epilog(),
+        formatter_class=_AutolabHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     init = subparsers.add_parser(
         "init", help="Initialize autolab scaffold and state files"

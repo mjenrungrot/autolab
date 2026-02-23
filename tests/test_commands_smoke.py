@@ -96,6 +96,25 @@ def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
     )
 
 
+def test_top_level_help_groups_commands_for_onboarding() -> None:
+    help_text = commands_module._build_parser().format_help()
+    assert "positional arguments:" in help_text
+    assert "COMMAND" in help_text
+    assert "  Getting started:" in help_text
+    assert "  Run workflow:" in help_text
+    assert "  Backlog steering:" in help_text
+    assert "  Safety and policy:" in help_text
+    assert "  Maintenance:" in help_text
+    assert "init" in help_text
+    assert "configure" in help_text
+    assert "run" in help_text
+    assert "loop" in help_text
+    assert "todo" in help_text
+    assert "policy" in help_text
+    assert "update" in help_text
+    assert "Recommended onboarding flow:" in help_text
+
+
 def test_packaged_golden_iteration_fixture_contract() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     packaged_root = repo_root / "src" / "autolab" / "example_golden_iterations"
