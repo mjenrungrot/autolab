@@ -57,6 +57,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/des
 - Set `compute.memory_estimate` to a high value: use at least `64GB` when host capacity permits, otherwise use available memory divided safely for concurrent runs (recommended current value: `{{recommended_memory_estimate}}`, detected total RAM GB: `{{available_memory_gb}}`).
 - Include `metrics.primary`, `metrics.success_delta`, `metrics.aggregation`, `metrics.baseline_comparison`.
 - Provide non-empty `baselines`; include `variants` when proposing changes.
+- If using replicates, set `replicates.count`, `replicates.seed_strategy`, and `replicates.base_seed`; place the one-line rationale as an inline YAML comment on the `count` line (for example: `count: 3  # rationale: seed-variance estimation`). For exploratory single-run designs, use `count: 1` with `seed_strategy: fixed` and acknowledge that run-to-run variance is unobserved.
 
 ## SCHEMA GOTCHAS
 - `schema_version` must be the **string** `"1.0"` -- omitting it or using a number (`1.0`) will fail schema validation.
@@ -65,6 +66,8 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/des
 - `metrics.primary.mode` must be `"maximize"` or `"minimize"` -- no other values accepted.
 - `walltime_estimate` should follow `HH:MM:SS` format (e.g. `"00:40:00"`).
 - `memory_estimate` should include units (e.g. `"64GB"`).
+- `replicates.seed_strategy` must be one of `"increment"`, `"random"`, or `"fixed"`. For exploratory single-run designs (`count: 1`), prefer `"fixed"`.
+- `replicates.base_seed` should be a positive integer (e.g. `42`).
 
 ## VERIFIER MAPPING
 {{shared:verifier_common.md}}
@@ -91,7 +94,10 @@ compute:
   walltime_estimate: "00:40:00"
   memory_estimate: "{{recommended_memory_estimate}}"
   gpu_count: 0
-  seed: 42
+replicates:
+  count: 1  # rationale: exploratory single run; run-to-run variance unobserved
+  seed_strategy: fixed
+  base_seed: 42
 metrics:
   primary:
     name: accuracy
@@ -119,6 +125,8 @@ variants:
 - [ ] `design.yaml` contains required top-level keys and valid YAML syntax.
 - [ ] `compute.location` is set and explicit.
 - [ ] `metrics` includes `primary`, `success_delta`, and `aggregation`.
+- [ ] [guidance] `replicates.count` includes an inline `# rationale: ...` comment.
+- [ ] [guidance] When `replicates.count: 1`, the rationale explicitly notes the single-run variance limitation.
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}
