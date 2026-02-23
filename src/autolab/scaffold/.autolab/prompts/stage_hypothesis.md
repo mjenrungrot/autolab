@@ -85,6 +85,7 @@ Write `hypothesis.md` so a new person/agent can answer:
 
 Section-level rules:
 - `Methodology Workflow`: use numbered steps in `input -> action -> output artifact` format.
+- `Experimental Units and Data Scope`: state the concrete unit of analysis, data source with version or split identifier, and inclusion/exclusion boundaries for this iteration. If boundaries are approximate or exploratory, label them explicitly (e.g., "boundary is approximate pending full-dataset availability").
 - `Measurement and Analysis Plan`: include primary metric rule, aggregation rule, baseline comparison rule, and success threshold interpretation.
 - `Reproducibility Commitments`: include seed strategy, config provenance, and data/version assumptions.
 - `Implementation Grounding`: include expected modules/files to touch, dependency assumptions, and known feasibility risks.
@@ -117,7 +118,7 @@ One falsifiable statement for this iteration.
 ## Experimental Units and Data Scope
 - Unit of analysis:
 - Data source/split/version assumptions:
-- Inclusion/exclusion boundaries for this iteration:
+- Inclusion/exclusion boundaries for this iteration (label if approximate):
 
 ## Intervention and Control
 - Intervention:
@@ -175,6 +176,7 @@ PrimaryMetric: metric_name; Unit: unit_name; Success: baseline +abs_delta (maxim
 - [ ] Structured metadata block has target_delta, metric_name, metric_mode as key-value lines.
 - [ ] [guidance] Methodology workflow uses numbered `input -> action -> output artifact` steps.
 - [ ] [guidance] Measurement and analysis plan states aggregation, baseline comparison, and success-threshold interpretation.
+- [ ] [guidance] Experimental units and data scope states concrete unit of analysis, data source with version/split, and inclusion/exclusion boundaries (approximate boundaries labeled as such).
 - [ ] [guidance] Reproducibility commitments include seed, config provenance, and data/version assumptions.
 - [ ] [guidance] Implementation grounding includes expected files/modules, dependency assumptions, and feasibility risks.
 - [ ] `hypothesis.md` is non-empty and contains explicit scope-in and scope-out boundaries.
