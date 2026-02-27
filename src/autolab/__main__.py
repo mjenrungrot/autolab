@@ -192,6 +192,7 @@ _EXPORTS_BY_MODULE: dict[str, tuple[str, ...]] = {
         "_cmd_install_skill",
         "_cmd_loop",
         "_cmd_policy_apply_preset",
+        "_cmd_report",
         "_cmd_reset",
         "_cmd_run",
         "_cmd_todo",
