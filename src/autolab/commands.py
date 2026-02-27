@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from datetime import datetime, timezone
+import importlib.metadata as importlib_metadata
 import importlib.resources as importlib_resources
 import json
+import os
+import platform
+import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -118,7 +124,14 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Safety and policy", ("policy", "guardrails", "lock", "unlock")),
     (
         "Maintenance",
-        ("sync-scaffold", "update", "install-skill", "slurm-job-list", "reset"),
+        (
+            "sync-scaffold",
+            "update",
+            "install-skill",
+            "slurm-job-list",
+            "report",
+            "reset",
+        ),
     ),
 )
 
@@ -3106,6 +3119,365 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Issue report command
+# ---------------------------------------------------------------------------
+
+
+def _truncate_issue_context(text: str, *, max_chars: int = 20000) -> str:
+    normalized = str(text).strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"...\n{normalized[-max_chars:]}"
+
+
+def _tail_issue_log(path: Path, *, max_lines: int, max_chars: int = 20000) -> str:
+    if max_lines <= 0 or not path.exists():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    if not lines:
+        return ""
+    tail = "\n".join(lines[-max_lines:])
+    return _truncate_issue_context(tail, max_chars=max_chars)
+
+
+def _autolab_version_text() -> str:
+    try:
+        return str(importlib_metadata.version("autolab")).strip()
+    except Exception:
+        return "unknown"
+
+
+def _resolve_issue_report_agent_invocation(
+    repo_root: Path,
+) -> tuple[list[str], dict[str, str], str]:
+    override = str(os.environ.get("AUTOLAB_REPORT_AGENT_COMMAND", "")).strip()
+    if override:
+        try:
+            parsed = shlex.split(override)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"AUTOLAB_REPORT_AGENT_COMMAND could not be parsed: {exc}"
+            ) from exc
+        if not parsed:
+            raise RuntimeError("AUTOLAB_REPORT_AGENT_COMMAND is empty")
+        return (parsed, dict(os.environ), override)
+
+    if shutil.which("claude"):
+        env = dict(os.environ)
+        env.pop("CLAUDECODE", None)
+        argv = [
+            "claude",
+            "-p",
+            "--permission-mode",
+            "plan",
+            "--output-format",
+            "text",
+            "-",
+        ]
+        display = " ".join(shlex.quote(token) for token in argv)
+        return (argv, env, display)
+
+    if shutil.which("codex"):
+        argv = [
+            "codex",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "-C",
+            str(repo_root),
+            "-",
+        ]
+        display = " ".join(shlex.quote(token) for token in argv)
+        return (argv, dict(os.environ), display)
+
+    raise RuntimeError(
+        "no supported local LLM CLI found; install 'claude' or 'codex', or set AUTOLAB_REPORT_AGENT_COMMAND"
+    )
+
+
+def _run_issue_report_agent(
+    repo_root: Path,
+    *,
+    prompt_text: str,
+    timeout_seconds: float,
+) -> tuple[int, str, str, str]:
+    command_argv, command_env, command_display = _resolve_issue_report_agent_invocation(
+        repo_root
+    )
+    try:
+        process = subprocess.run(
+            command_argv,
+            cwd=repo_root,
+            input=prompt_text,
+            text=True,
+            capture_output=True,
+            env=command_env,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return (127, "", str(exc), command_display)
+    except subprocess.TimeoutExpired as exc:
+        return (
+            124,
+            str(getattr(exc, "stdout", "") or "").strip(),
+            f"timed out after {timeout_seconds:.0f}s",
+            command_display,
+        )
+    except Exception as exc:
+        return (1, "", str(exc), command_display)
+
+    return (
+        int(process.returncode),
+        str(process.stdout or "").strip(),
+        str(process.stderr or "").strip(),
+        command_display,
+    )
+
+
+def _build_issue_report_prompt(
+    *,
+    user_comment: str,
+    state_json: str,
+    verification_json: str,
+    orchestrator_log_tail: str,
+    log_tail_lines: int,
+) -> str:
+    comment_block = user_comment.strip() or "None provided."
+    return "\n".join(
+        [
+            "You are an Autolab maintainer assistant.",
+            "Analyze the provided runtime evidence and produce a concise, developer-facing issue report.",
+            "Do not invent facts. Use only the provided evidence.",
+            "",
+            "Return Markdown with these sections in order:",
+            "## Summary",
+            "## User Comment",
+            "## Evidence",
+            "## Likely Root Cause",
+            "## Recommendations",
+            "",
+            "Constraints:",
+            "- Keep the report actionable and specific.",
+            "- If evidence is insufficient, say exactly what is missing.",
+            "- Do not include instructions that require modifying user files right now.",
+            "",
+            f"User comment:\n{comment_block}",
+            "",
+            "State snapshot (JSON):",
+            "```json",
+            state_json.strip() or "{}",
+            "```",
+            "",
+            "Latest verification result (JSON, optional):",
+            "```json",
+            verification_json.strip() or "null",
+            "```",
+            "",
+            f"orchestrator.log tail (last {log_tail_lines} lines):",
+            "```text",
+            orchestrator_log_tail.strip() or "<orchestrator.log missing or empty>",
+            "```",
+            "",
+            "Now produce the issue report.",
+        ]
+    )
+
+
+def _build_issue_report_document(
+    *,
+    generated_at_utc: str,
+    user_comment: str,
+    state_json: str,
+    verification_json: str,
+    orchestrator_log_tail: str,
+    log_tail_lines: int,
+    command_display: str,
+    analysis_markdown: str,
+    analysis_error: str,
+) -> str:
+    comment_block = user_comment.strip() or "_None provided._"
+    analysis_block = analysis_markdown.strip()
+    if not analysis_block:
+        failure_detail = analysis_error.strip() or "agent returned no output"
+        analysis_block = "\n".join(
+            [
+                "## Summary",
+                "Automated issue analysis could not complete.",
+                "",
+                "## User Comment",
+                comment_block,
+                "",
+                "## Evidence",
+                "- LLM agent invocation failed.",
+                "",
+                "## Likely Root Cause",
+                f"- {failure_detail}",
+                "",
+                "## Recommendations",
+                "- Review the captured context snapshot below and retry the report command.",
+                "- If the failure persists, set AUTOLAB_REPORT_AGENT_COMMAND to a known-good LLM CLI command.",
+            ]
+        )
+
+    lines = [
+        "# Autolab Issue Report",
+        "",
+        f"- generated_at_utc: `{generated_at_utc}`",
+        f"- host: `{socket.gethostname()}`",
+        f"- platform: `{platform.platform()}`",
+        f"- autolab_version: `{_autolab_version_text()}`",
+        f"- llm_command: `{command_display or '<unresolved>'}`",
+        "",
+        analysis_block,
+        "",
+        "## Context Snapshot",
+        "",
+        "### User Comment (raw)",
+        comment_block,
+        "",
+        "### State (raw JSON)",
+        "```json",
+        state_json.strip() or "{}",
+        "```",
+        "",
+        "### Verification Result (raw JSON)",
+        "```json",
+        verification_json.strip() or "null",
+        "```",
+        "",
+        f"### orchestrator.log tail (last {log_tail_lines} lines)",
+        "```text",
+        orchestrator_log_tail.strip() or "<orchestrator.log missing or empty>",
+        "```",
+    ]
+    if analysis_error.strip():
+        lines.extend(
+            [
+                "",
+                "### Agent Error",
+                "```text",
+                analysis_error.strip(),
+                "```",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    if not autolab_dir.exists():
+        print(
+            f"autolab report: ERROR .autolab directory not found at {autolab_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        log_tail_lines = int(args.log_tail)
+    except Exception:
+        print("autolab report: ERROR --log-tail must be an integer", file=sys.stderr)
+        return 1
+    if log_tail_lines <= 0:
+        print("autolab report: ERROR --log-tail must be > 0", file=sys.stderr)
+        return 1
+
+    try:
+        timeout_seconds = float(args.timeout_seconds)
+    except Exception:
+        print(
+            "autolab report: ERROR --timeout-seconds must be a number",
+            file=sys.stderr,
+        )
+        return 1
+    if timeout_seconds <= 0:
+        print("autolab report: ERROR --timeout-seconds must be > 0", file=sys.stderr)
+        return 1
+
+    user_comment = str(args.comment or "").strip()
+    state_payload = _load_json_if_exists(state_path)
+    verification_payload = _load_json_if_exists(
+        autolab_dir / "verification_result.json"
+    )
+    state_json = _truncate_issue_context(
+        json.dumps(state_payload, indent=2, sort_keys=True)
+        if state_payload is not None
+        else "{}"
+    )
+    verification_json = _truncate_issue_context(
+        json.dumps(verification_payload, indent=2, sort_keys=True)
+        if verification_payload is not None
+        else "null"
+    )
+    orchestrator_log_path = autolab_dir / "logs" / "orchestrator.log"
+    orchestrator_log_tail = _tail_issue_log(
+        orchestrator_log_path,
+        max_lines=log_tail_lines,
+    )
+
+    prompt_text = _build_issue_report_prompt(
+        user_comment=user_comment,
+        state_json=state_json,
+        verification_json=verification_json,
+        orchestrator_log_tail=orchestrator_log_tail,
+        log_tail_lines=log_tail_lines,
+    )
+    (
+        agent_returncode,
+        agent_stdout,
+        agent_stderr,
+        command_display,
+    ) = _run_issue_report_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+    )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+    else:
+        output_path = autolab_dir / "logs" / f"issue_report_{timestamp}.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    analysis_error = ""
+    if agent_returncode != 0:
+        if agent_stderr:
+            analysis_error = (
+                f"agent exited with code {agent_returncode}: {agent_stderr.strip()}"
+            )
+        else:
+            analysis_error = f"agent exited with code {agent_returncode}"
+
+    report_text = _build_issue_report_document(
+        generated_at_utc=_utc_now(),
+        user_comment=user_comment,
+        state_json=state_json,
+        verification_json=verification_json,
+        orchestrator_log_tail=orchestrator_log_tail,
+        log_tail_lines=log_tail_lines,
+        command_display=command_display,
+        analysis_markdown=agent_stdout,
+        analysis_error=analysis_error,
+    )
+    output_path.write_text(report_text, encoding="utf-8")
+    print(f"autolab report: wrote {output_path}")
+
+    if agent_returncode != 0:
+        print(
+            "autolab report: WARN agent analysis failed; wrote fallback report with captured context",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -3498,6 +3870,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to docs/slurm_job_list.md.",
     )
     slurm_job_list.set_defaults(handler=_cmd_slurm_job_list)
+
+    report = subparsers.add_parser(
+        "report",
+        help="Generate a developer issue report from local autolab logs",
+    )
+    report.add_argument(
+        "--comment",
+        "-m",
+        default="",
+        help="Optional user comment describing the issue or improvement idea.",
+    )
+    report.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    report.add_argument(
+        "--log-tail",
+        type=int,
+        default=500,
+        help="Number of trailing orchestrator.log lines to analyze (default: 500).",
+    )
+    report.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="LLM command timeout in seconds (default: 240).",
+    )
+    report.add_argument(
+        "--output",
+        default="",
+        help="Optional output path for the issue document (default: .autolab/logs/issue_report_<timestamp>.md).",
+    )
+    report.set_defaults(handler=_cmd_report)
 
     # Phase 6b: review subcommand
     review = subparsers.add_parser(

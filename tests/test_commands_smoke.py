@@ -112,6 +112,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "todo" in help_text
     assert "policy" in help_text
     assert "update" in help_text
+    assert "report" in help_text
     assert "Recommended onboarding flow:" in help_text
 
 
