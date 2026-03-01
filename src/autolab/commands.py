@@ -118,7 +118,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Getting started", ("init", "configure", "status", "docs", "explain")),
     (
         "Run workflow",
-        ("run", "loop", "verify", "verify-golden", "lint", "review", "skip"),
+        ("run", "loop", "tui", "verify", "verify-golden", "lint", "review", "skip"),
     ),
     ("Backlog steering", ("focus", "todo", "experiment")),
     ("Safety and policy", ("policy", "guardrails", "lock", "unlock")),
@@ -2375,6 +2375,67 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Interactive TUI cockpit
+# ---------------------------------------------------------------------------
+
+
+def _cmd_tui(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    raw_tail_lines = getattr(args, "tail_lines", 2000)
+    try:
+        tail_lines = 2000 if raw_tail_lines is None else int(raw_tail_lines)
+    except Exception:
+        print("autolab tui: ERROR --tail-lines must be an integer > 0", file=sys.stderr)
+        return 2
+    if tail_lines <= 0:
+        print("autolab tui: ERROR --tail-lines must be > 0", file=sys.stderr)
+        return 2
+    if not state_path.exists():
+        print(
+            f"autolab tui: ERROR state file does not exist: {state_path}",
+            file=sys.stderr,
+        )
+        return 1
+    if not state_path.is_file():
+        print(
+            f"autolab tui: ERROR state path is not a file: {state_path}",
+            file=sys.stderr,
+        )
+        return 1
+    if not os.access(state_path, os.R_OK):
+        print(
+            f"autolab tui: ERROR state file is not readable: {state_path}",
+            file=sys.stderr,
+        )
+        return 1
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print(
+            "autolab tui: ERROR requires an interactive TTY (stdin/stdout).",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        from autolab.tui.app import AutolabCockpitApp
+    except Exception as exc:
+        print(
+            f"autolab tui: ERROR failed to load Textual cockpit: {exc}", file=sys.stderr
+        )
+        return 1
+
+    app = AutolabCockpitApp(state_path=state_path, tail_lines=tail_lines)
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        print("autolab tui: interrupted", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        print(f"autolab tui: ERROR app runtime failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 6b: review command
 # ---------------------------------------------------------------------------
 
@@ -3686,6 +3747,22 @@ def _build_parser() -> argparse.ArgumentParser:
     loop.set_defaults(run_agent_mode="policy")
     loop.set_defaults(strict_implementation_progress=True)
     loop.set_defaults(handler=_cmd_loop)
+
+    tui = subparsers.add_parser(
+        "tui", help="Launch the interactive Textual inspector cockpit"
+    )
+    tui.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    tui.add_argument(
+        "--tail-lines",
+        type=int,
+        default=2000,
+        help="Maximum console lines retained in-memory (default: 2000).",
+    )
+    tui.set_defaults(handler=_cmd_tui)
 
     status = subparsers.add_parser("status", help="Show current .autolab state")
     status.add_argument(

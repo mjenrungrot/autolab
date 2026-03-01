@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.53
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.54
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -85,7 +85,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Command categories (onboarding-first).**
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -93,6 +93,8 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
+
+**Interactive cockpit.** `autolab tui` launches a selection-first Textual inspector with read-only-by-default navigation, confirmation-gated command execution, and an arm/disarm safety toggle for mutating actions. Snapshot refresh is fail-closed: on refresh failure, cockpit disarms and blocks action execution until a successful refresh. Verify is treated as mutating and still requires arm + confirm. See `docs/tui_cockpit.md`.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

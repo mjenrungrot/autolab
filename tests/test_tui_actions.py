@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from autolab.tui.actions import (
+    build_lock_break_intent,
+    build_loop_intent,
+    build_open_in_editor_intent,
+    build_run_intent,
+    build_todo_sync_intent,
+    build_verify_intent,
+    list_actions,
+)
+from autolab.tui.models import LoopActionOptions, RunActionOptions
+
+
+def test_action_catalog_contains_required_entries() -> None:
+    actions = list_actions()
+    action_ids = {action.action_id for action in actions}
+    assert "verify_current_stage" in action_ids
+    assert "run_once" in action_ids
+    assert "run_loop" in action_ids
+    assert "todo_sync" in action_ids
+    assert "open_selected_artifact" in action_ids
+    verify_action = next(
+        action for action in actions if action.action_id == "verify_current_stage"
+    )
+    assert verify_action.kind == "mutating"
+    assert verify_action.requires_arm is True
+    assert verify_action.requires_confirmation is True
+
+
+def test_build_run_intent_respects_options(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_run_intent(
+        state_path=state_path,
+        options=RunActionOptions(
+            verify=True,
+            run_agent_mode="force_off",
+            auto_decision=True,
+        ),
+    )
+    assert intent.action_id == "run_once"
+    assert "--verify" in intent.argv
+    assert "--auto-decision" in intent.argv
+    assert "--no-run-agent" in intent.argv
+    assert intent.mutating is True
+    assert ".autolab/state.json" in intent.expected_writes
+
+
+def test_build_loop_intent_respects_options(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_loop_intent(
+        state_path=state_path,
+        options=LoopActionOptions(
+            max_iterations=4,
+            max_hours=1.5,
+            auto=True,
+            verify=False,
+            run_agent_mode="force_on",
+        ),
+    )
+    assert intent.action_id == "run_loop"
+    assert "--max-iterations" in intent.argv
+    assert "4" in intent.argv
+    assert "--auto" in intent.argv
+    assert "--max-hours" in intent.argv
+    assert "1.5" in intent.argv
+    assert "--run-agent" in intent.argv
+    assert "--verify" not in intent.argv
+    assert ".autolab/logs/overnight_summary.md" in intent.expected_writes
+    assert ".autolab/lock" in intent.expected_writes
+
+
+def test_build_loop_intent_without_auto_omits_auto_only_outputs(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_loop_intent(
+        state_path=state_path,
+        options=LoopActionOptions(
+            max_iterations=2,
+            max_hours=3.0,
+            auto=False,
+            verify=True,
+            run_agent_mode="invalid-mode",
+        ),
+    )
+    assert "--auto" not in intent.argv
+    assert "--max-hours" not in intent.argv
+    assert "--run-agent" not in intent.argv
+    assert "--no-run-agent" not in intent.argv
+    assert ".autolab/logs/overnight_summary.md" not in intent.expected_writes
+    assert ".autolab/lock" not in intent.expected_writes
+
+
+def test_build_verify_and_todo_sync_intents(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    verify_intent = build_verify_intent(state_path=state_path, stage="design")
+    assert verify_intent.argv[-2:] == ("--stage", "design")
+    assert verify_intent.mutating is True
+
+    todo_sync_intent = build_todo_sync_intent(state_path=state_path)
+    assert todo_sync_intent.argv[:3] == ("autolab", "todo", "sync")
+    assert todo_sync_intent.mutating is True
+
+
+def test_build_verify_intent_omits_blank_stage(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    verify_intent = build_verify_intent(state_path=state_path, stage="  ")
+    assert "--stage" not in verify_intent.argv
+
+
+def test_build_run_intent_invalid_run_agent_mode_falls_back_to_policy(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_run_intent(
+        state_path=state_path,
+        options=RunActionOptions(
+            verify=False,
+            run_agent_mode="invalid",
+            auto_decision=False,
+        ),
+    )
+    assert "--run-agent" not in intent.argv
+    assert "--no-run-agent" not in intent.argv
+
+
+def test_lock_break_and_editor_intent_invariants(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    lock_break_intent = build_lock_break_intent(state_path=state_path, reason="   ")
+    assert lock_break_intent.action_id == "lock_break"
+    assert lock_break_intent.argv[-2:] == ("--reason", "tui manual break")
+    assert lock_break_intent.mutating is True
+
+    target = tmp_path / "docs" / "notes.md"
+    editor_intent = build_open_in_editor_intent(target_path=target, cwd=tmp_path)
+    assert editor_intent.action_id == "open_selected_artifact_editor"
+    assert editor_intent.argv[-1] == str(target)
+    assert editor_intent.expected_writes == (str(target),)
+    assert editor_intent.mutating is False
+
+    editor_action = next(
+        action
+        for action in list_actions()
+        if action.action_id == "open_selected_artifact_editor"
+    )
+    assert editor_action.requires_confirmation is True
+    assert editor_action.requires_arm is False

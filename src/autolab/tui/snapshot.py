@@ -1,0 +1,487 @@
+from __future__ import annotations
+
+import json
+import mimetypes
+from pathlib import Path
+from typing import Any
+
+from autolab.constants import (
+    ALL_STAGES,
+    ACTIVE_STAGES,
+    STAGE_PROMPT_FILES,
+    TERMINAL_STAGES,
+)
+from autolab.state import (
+    _load_state,
+    _normalize_state,
+    _resolve_autolab_dir,
+    _resolve_iteration_directory,
+    _resolve_repo_root,
+)
+from autolab.todo_sync import list_open_tasks
+from autolab.tui.models import (
+    ArtifactItem,
+    CockpitSnapshot,
+    RunItem,
+    StageItem,
+    TodoItem,
+    VerificationSummary,
+)
+
+_STAGE_SUMMARY: dict[str, str] = {
+    "hypothesis": "Define the hypothesis and measurable target delta.",
+    "design": "Specify design.yaml with entrypoint, compute, metrics, and variants.",
+    "implementation": "Implement changes and capture implementation evidence.",
+    "implementation_review": "Record implementation review outcome and required checks.",
+    "launch": "Run launch command and produce run manifest.",
+    "slurm_monitor": "Track manifest/scheduler progress and sync evidence.",
+    "extract_results": "Generate run metrics and analysis summary artifacts.",
+    "update_docs": "Update docs/paper with run evidence and references.",
+    "decide_repeat": "Choose next action: hypothesis, design, stop, or human_review.",
+    "human_review": "Human intervention required before continuing.",
+    "stop": "Terminal stage; experiment completed.",
+}
+
+_STAGE_ARTIFACTS: dict[str, tuple[str, ...]] = {
+    "hypothesis": ("hypothesis.md",),
+    "design": ("design.yaml",),
+    "implementation": ("implementation_plan.md",),
+    "implementation_review": ("implementation_review.md", "review_result.json"),
+    "launch": (
+        "launch/run_local.sh",
+        "launch/run_slurm.sbatch",
+        "runs/{run_id}/run_manifest.json",
+    ),
+    "slurm_monitor": ("runs/{run_id}/run_manifest.json", "runs/{run_id}/metrics.json"),
+    "extract_results": ("runs/{run_id}/metrics.json", "analysis/summary.md"),
+    "update_docs": ("docs_update.md",),
+    "decide_repeat": ("decision_result.json",),
+    "human_review": ("implementation_review.md", "review_result.json"),
+    "stop": (),
+}
+
+_COMMON_ARTIFACTS: tuple[str, ...] = (
+    ".autolab/state.json",
+    ".autolab/verification_result.json",
+    ".autolab/todo_state.json",
+    "docs/todo.md",
+)
+
+_TEXT_EXTENSIONS: frozenset[str] = frozenset(
+    {".md", ".txt", ".json", ".yaml", ".yml", ".log", ".py", ".sh", ".toml"}
+)
+
+
+def _safe_json_load(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _coerce_int(
+    raw_value: object,
+    *,
+    default: int,
+    minimum: int | None = None,
+) -> int:
+    try:
+        value = int(raw_value)  # type: ignore[arg-type]
+    except Exception:
+        value = default
+    if minimum is not None and value < minimum:
+        value = minimum
+    return value
+
+
+def _format_attempts(
+    *, stage_name: str, current_stage: str, stage_attempt: int, max_stage_attempts: int
+) -> str:
+    if stage_name != current_stage:
+        return "-"
+    normalized_attempt = _coerce_int(stage_attempt, default=0, minimum=0)
+    normalized_max = _coerce_int(max_stage_attempts, default=1, minimum=1)
+    return f"{normalized_attempt}/{normalized_max}"
+
+
+def _build_stage_items(
+    *,
+    current_stage: str,
+    stage_attempt: int,
+    max_stage_attempts: int,
+    verification: VerificationSummary | None,
+) -> tuple[StageItem, ...]:
+    ordered_stages = list(ACTIVE_STAGES) + list(TERMINAL_STAGES)
+    current_index = (
+        ordered_stages.index(current_stage) if current_stage in ordered_stages else -1
+    )
+    current_blocked = (
+        bool(
+            verification
+            and not verification.passed
+            and verification.stage_effective == current_stage
+        )
+        or current_stage == "human_review"
+    )
+
+    items: list[StageItem] = []
+    for index, stage_name in enumerate(ordered_stages):
+        if stage_name == current_stage:
+            status = "blocked" if current_blocked else "current"
+        elif (
+            current_index >= 0 and index < current_index and stage_name in ACTIVE_STAGES
+        ):
+            status = "complete"
+        else:
+            status = "upcoming"
+        items.append(
+            StageItem(
+                name=stage_name,
+                status=status,
+                attempts=_format_attempts(
+                    stage_name=stage_name,
+                    current_stage=current_stage,
+                    stage_attempt=stage_attempt,
+                    max_stage_attempts=max_stage_attempts,
+                ),
+                is_current=stage_name == current_stage,
+            )
+        )
+    return tuple(items)
+
+
+def _resolve_stage_artifacts(
+    *,
+    repo_root: Path,
+    iteration_dir: Path | None,
+    last_run_id: str,
+) -> dict[str, tuple[ArtifactItem, ...]]:
+    artifact_map: dict[str, tuple[ArtifactItem, ...]] = {}
+    for stage_name in [*ACTIVE_STAGES, *TERMINAL_STAGES]:
+        paths: list[ArtifactItem] = []
+        for template in _STAGE_ARTIFACTS.get(stage_name, ()):
+            relative = (
+                template.format(run_id=last_run_id)
+                if "{run_id}" in template
+                else template
+            )
+            if "{run_id}" in template and not last_run_id:
+                continue
+            if relative.startswith(".autolab/") or relative.startswith("docs/"):
+                target = repo_root / relative
+            elif iteration_dir is None:
+                continue
+            else:
+                target = iteration_dir / relative
+            paths.append(
+                ArtifactItem(
+                    path=target,
+                    exists=target.exists(),
+                    source="stage",
+                )
+            )
+        artifact_map[stage_name] = tuple(paths)
+    return artifact_map
+
+
+def _load_runs(iteration_dir: Path | None) -> tuple[RunItem, ...]:
+    if iteration_dir is None:
+        return ()
+    runs_root = iteration_dir / "runs"
+    if not runs_root.exists():
+        return ()
+    runs: list[RunItem] = []
+    for manifest_path in sorted(runs_root.glob("*/run_manifest.json")):
+        payload = _safe_json_load(manifest_path) or {}
+        run_id = str(payload.get("run_id", "")).strip() or manifest_path.parent.name
+        timestamps = (
+            payload.get("timestamps", {})
+            if isinstance(payload.get("timestamps"), dict)
+            else {}
+        )
+        started_at = str(timestamps.get("started_at", "")).strip()
+        completed_at = str(timestamps.get("completed_at", "")).strip()
+        status = str(payload.get("status", "")).strip()
+        if not status:
+            sync_payload = payload.get("artifact_sync_to_local", {})
+            if isinstance(sync_payload, dict):
+                status = str(sync_payload.get("status", "")).strip()
+        if not status:
+            status = "unknown"
+        metrics_path = manifest_path.parent / "metrics.json"
+        runs.append(
+            RunItem(
+                run_id=run_id,
+                status=status,
+                started_at=started_at,
+                completed_at=completed_at,
+                manifest_path=manifest_path,
+                metrics_path=metrics_path,
+            )
+        )
+    runs.sort(
+        key=lambda item: (item.started_at, item.run_id, item.manifest_path.as_posix()),
+        reverse=True,
+    )
+    return tuple(runs)
+
+
+def _load_verification(autolab_dir: Path) -> VerificationSummary | None:
+    payload = _safe_json_load(autolab_dir / "verification_result.json")
+    if payload is None:
+        return None
+    details = payload.get("details", {})
+    failing_commands: list[str] = []
+    if isinstance(details, dict):
+        raw_commands = details.get("commands", [])
+        if isinstance(raw_commands, list):
+            for command_result in raw_commands:
+                if not isinstance(command_result, dict):
+                    continue
+                status = str(command_result.get("status", "")).strip().lower()
+                if status not in {"fail", "timeout", "error"}:
+                    continue
+                name = str(command_result.get("name", "")).strip() or "unknown"
+                detail = (
+                    str(command_result.get("detail", "")).strip()
+                    or str(command_result.get("stderr", "")).strip()
+                    or str(command_result.get("stdout", "")).strip()
+                    or "verification command returned non-zero"
+                )
+                failing_commands.append(f"{name}: {detail}")
+    return VerificationSummary(
+        generated_at=str(payload.get("generated_at", "")).strip(),
+        stage_effective=str(payload.get("stage_effective", "")).strip(),
+        passed=bool(payload.get("passed", False)),
+        message=str(payload.get("message", "")).strip(),
+        failing_commands=tuple(failing_commands),
+    )
+
+
+def _load_todos(repo_root: Path) -> tuple[TodoItem, ...]:
+    try:
+        raw_todos = list_open_tasks(repo_root)
+    except Exception:
+        return ()
+    todos: list[TodoItem] = []
+    for raw in raw_todos:
+        if not isinstance(raw, dict):
+            continue
+        todos.append(
+            TodoItem(
+                task_id=str(raw.get("task_id", "")).strip(),
+                source=str(raw.get("source", "")).strip(),
+                stage=str(raw.get("stage", "")).strip(),
+                task_class=str(raw.get("task_class", "")).strip(),
+                text=str(raw.get("text", "")).strip(),
+                priority=str(raw.get("priority", "")).strip(),
+            )
+        )
+    return tuple(todos)
+
+
+def _load_review_blockers(iteration_dir: Path | None) -> tuple[str, ...]:
+    if iteration_dir is None:
+        return ()
+    review_payload = _safe_json_load(iteration_dir / "review_result.json")
+    if review_payload is None:
+        return ()
+    findings = review_payload.get("blocking_findings", [])
+    if not isinstance(findings, list):
+        return ()
+    blockers: list[str] = []
+    for finding in findings:
+        text = str(finding).strip()
+        if text:
+            blockers.append(text)
+    return tuple(blockers)
+
+
+def _build_common_artifacts(
+    repo_root: Path,
+    iteration_dir: Path | None,
+) -> tuple[ArtifactItem, ...]:
+    entries: list[ArtifactItem] = []
+    for relative in _COMMON_ARTIFACTS:
+        path = repo_root / relative
+        entries.append(ArtifactItem(path=path, exists=path.exists(), source="common"))
+    if iteration_dir is not None:
+        review_path = iteration_dir / "review_result.json"
+        entries.append(
+            ArtifactItem(path=review_path, exists=review_path.exists(), source="common")
+        )
+    return tuple(entries)
+
+
+def _merge_blockers(
+    verification: VerificationSummary | None,
+    review_blockers: tuple[str, ...],
+) -> tuple[str, ...]:
+    blockers: list[str] = []
+    seen: set[str] = set()
+    if verification is not None:
+        if not verification.passed and verification.message:
+            blockers.append(verification.message)
+        blockers.extend(verification.failing_commands)
+    blockers.extend(review_blockers)
+    deduped: list[str] = []
+    for blocker in blockers:
+        normalized = blocker.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return tuple(deduped[:10])
+
+
+def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
+    resolved_state_path = state_path.expanduser().resolve()
+    repo_root = _resolve_repo_root(resolved_state_path)
+    autolab_dir = _resolve_autolab_dir(resolved_state_path, repo_root)
+
+    state_payload = _load_state(resolved_state_path)
+    try:
+        state = _normalize_state(state_payload)
+    except Exception:
+        fallback_state = dict(state_payload)
+        fallback_stage = str(fallback_state.get("stage", "")).strip()
+        if fallback_stage not in ALL_STAGES:
+            fallback_stage = ACTIVE_STAGES[0]
+        state = fallback_state
+        state["stage"] = fallback_stage
+        state["stage_attempt"] = _coerce_int(
+            fallback_state.get("stage_attempt"),
+            default=0,
+            minimum=0,
+        )
+        state["max_stage_attempts"] = _coerce_int(
+            fallback_state.get("max_stage_attempts"),
+            default=1,
+            minimum=1,
+        )
+        state["max_total_iterations"] = _coerce_int(
+            fallback_state.get("max_total_iterations"),
+            default=1,
+            minimum=1,
+        )
+        state["last_run_id"] = str(fallback_state.get("last_run_id", "")).strip()
+        state["iteration_id"] = str(fallback_state.get("iteration_id", "")).strip()
+        state["experiment_id"] = str(fallback_state.get("experiment_id", "")).strip()
+    current_stage = str(state.get("stage", "")).strip()
+    stage_attempt = _coerce_int(state.get("stage_attempt"), default=0, minimum=0)
+    max_stage_attempts = _coerce_int(
+        state.get("max_stage_attempts"), default=1, minimum=1
+    )
+    last_run_id = str(state.get("last_run_id", "")).strip()
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+
+    iteration_dir: Path | None = None
+    if iteration_id:
+        try:
+            iteration_dir, _iteration_type = _resolve_iteration_directory(
+                repo_root,
+                iteration_id=iteration_id,
+                experiment_id=experiment_id,
+                require_exists=False,
+            )
+        except Exception:
+            iteration_dir = None
+
+    verification = _load_verification(autolab_dir)
+    stage_items = _build_stage_items(
+        current_stage=current_stage,
+        stage_attempt=stage_attempt,
+        max_stage_attempts=max_stage_attempts,
+        verification=verification,
+    )
+    runs = _load_runs(iteration_dir)
+    todos = _load_todos(repo_root)
+    review_blockers = _load_review_blockers(iteration_dir)
+    blockers = _merge_blockers(verification, review_blockers)
+    artifacts_by_stage = _resolve_stage_artifacts(
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
+        last_run_id=last_run_id,
+    )
+    common_artifacts = _build_common_artifacts(repo_root, iteration_dir)
+
+    return CockpitSnapshot(
+        repo_root=repo_root,
+        state_path=resolved_state_path,
+        autolab_dir=autolab_dir,
+        iteration_dir=iteration_dir,
+        current_stage=current_stage,
+        stage_attempt=stage_attempt,
+        max_stage_attempts=max_stage_attempts,
+        last_run_id=last_run_id,
+        stage_items=stage_items,
+        runs=runs,
+        todos=todos,
+        verification=verification,
+        top_blockers=blockers,
+        stage_summaries=dict(_STAGE_SUMMARY),
+        artifacts_by_stage=artifacts_by_stage,
+        common_artifacts=common_artifacts,
+    )
+
+
+def is_text_artifact(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix in _TEXT_EXTENSIONS:
+        return True
+    guessed, _encoding = mimetypes.guess_type(str(path))
+    return bool(guessed and guessed.startswith("text/"))
+
+
+def load_artifact_text(path: Path, *, max_chars: int = 200_000) -> tuple[str, bool]:
+    if max_chars <= 0:
+        max_chars = 1
+    if not path.exists():
+        return ("File does not exist.", False)
+    if not is_text_artifact(path):
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            return (f"Binary/unsupported artifact (size unavailable: {exc}).", False)
+        return (
+            f"Binary/unsupported artifact ({size} bytes). Use external editor.",
+            False,
+        )
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read(max_chars + 1)
+    except OSError as exc:
+        return (f"Unable to read file: {exc}", False)
+
+    truncated = len(text) > max_chars
+    if truncated:
+        text = text[:max_chars]
+
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(text)
+            text = json.dumps(payload, indent=2, sort_keys=True)
+            if len(text) > max_chars:
+                truncated = True
+                text = text[:max_chars]
+        except Exception:
+            pass
+    if truncated:
+        text = text + "\n\n... [truncated]"
+    return (text, truncated)
+
+
+def resolve_stage_prompt_path(
+    snapshot: CockpitSnapshot, stage_name: str
+) -> Path | None:
+    prompt_filename = STAGE_PROMPT_FILES.get(stage_name)
+    if not prompt_filename:
+        return None
+    return snapshot.autolab_dir / "prompts" / prompt_filename

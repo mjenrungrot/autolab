@@ -109,6 +109,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "configure" in help_text
     assert "run" in help_text
     assert "loop" in help_text
+    assert "tui" in help_text
     assert "todo" in help_text
     assert "policy" in help_text
     assert "update" in help_text
