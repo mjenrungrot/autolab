@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-03-01T09:01:26Z",
+  "topic": "autolab_tui_review",
+  "planner_count": 3,
+  "judge_count": 1,
+  "parallelizability_score": 0.89,
+  "conflict_risk_score": 0.18,
+  "total_task_count": 12,
+  "status": "completed"
+}

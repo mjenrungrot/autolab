@@ -125,7 +125,7 @@ def test_build_run_intent_invalid_run_agent_mode_falls_back_to_policy(
     assert "--no-run-agent" not in intent.argv
 
 
-def test_lock_break_and_editor_intent_invariants(tmp_path: Path) -> None:
+def test_lock_break_and_editor_intent_invariants(tmp_path: Path, monkeypatch) -> None:
     state_path = tmp_path / ".autolab" / "state.json"
     lock_break_intent = build_lock_break_intent(state_path=state_path, reason="   ")
     assert lock_break_intent.action_id == "lock_break"
@@ -133,8 +133,10 @@ def test_lock_break_and_editor_intent_invariants(tmp_path: Path) -> None:
     assert lock_break_intent.mutating is True
 
     target = tmp_path / "docs" / "notes.md"
+    monkeypatch.delenv("EDITOR", raising=False)
     editor_intent = build_open_in_editor_intent(target_path=target, cwd=tmp_path)
     assert editor_intent.action_id == "open_selected_artifact_editor"
+    assert editor_intent.argv[0] == "cursor"
     assert editor_intent.argv[-1] == str(target)
     assert editor_intent.expected_writes == (str(target),)
     assert editor_intent.mutating is False

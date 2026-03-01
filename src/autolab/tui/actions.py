@@ -248,10 +248,10 @@ def build_open_in_editor_intent(
     target_path: Path,
     cwd: Path,
 ) -> CommandIntent:
-    editor = os.environ.get("EDITOR", "").strip() or "vi"
+    editor = os.environ.get("EDITOR", "").strip() or "cursor"
     editor_parts = shlex.split(editor)
     if not editor_parts:
-        editor_parts = ["vi"]
+        editor_parts = ["cursor"]
     argv = [*editor_parts, str(target_path)]
     return CommandIntent(
         action_id="open_selected_artifact_editor",

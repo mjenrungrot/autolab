@@ -309,18 +309,24 @@ class AutolabCockpitApp(App[None]):
     #safety-row {
       height: auto;
       margin: 0 1;
-      padding: 0 0 1 0;
+      padding: 0 1;
     }
 
     #safety-status {
       width: 1fr;
       content-align: left middle;
-      padding: 0 1;
     }
 
     #running-banner {
       width: 36;
       content-align: right middle;
+    }
+
+    #key-hints {
+      height: auto;
+      margin: 0 1 1 1;
+      padding: 0 1;
+      color: $text-muted;
     }
 
     #top-row {
@@ -369,11 +375,12 @@ class AutolabCockpitApp(App[None]):
 
     #action-list {
       min-height: 14;
-      margin-bottom: 1;
     }
 
-    #run-action {
-      margin-bottom: 1;
+    #actions-help {
+      height: auto;
+      margin-top: 1;
+      color: $text-muted;
     }
 
     #console-pane {
@@ -383,18 +390,22 @@ class AutolabCockpitApp(App[None]):
       padding: 0 1;
     }
 
-    #console-header {
-      height: auto;
-      margin-top: 0;
-    }
-
     #console-log {
       height: 1fr;
       border: round $surface;
     }
     """
 
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS = [
+        ("tab", "focus_next", "Next"),
+        ("shift+tab", "focus_previous", "Prev"),
+        ("enter", "activate_selection", "Activate"),
+        ("a", "toggle_arm", "Arm"),
+        ("r", "refresh_snapshot", "Refresh"),
+        ("s", "stop_loop", "Stop Loop"),
+        ("c", "clear_console", "Clear Console"),
+        ("q", "quit", "Quit"),
+    ]
 
     def __init__(self, *, state_path: Path, tail_lines: int = 2000) -> None:
         super().__init__()
@@ -419,9 +430,12 @@ class AutolabCockpitApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="safety-row"):
-            yield Button("Arm actions: OFF", id="arm-toggle", variant="warning")
             yield Static("Disarmed (read-only mode).", id="safety-status")
             yield Static("", id="running-banner")
+        yield Static(
+            "Keys: Tab/Shift+Tab move focus, ↑/↓ navigate lists, Enter activate, a arm, r refresh, s stop loop, c clear.",
+            id="key-hints",
+        )
         with Horizontal(id="top-row"):
             with Vertical(id="nav-pane"):
                 yield Static("Navigator", classes="pane-title")
@@ -442,15 +456,12 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="actions-pane"):
                 yield Static("Actions", classes="pane-title")
                 yield ListView(id="action-list")
-                yield Button("Run selected action", id="run-action", variant="primary")
-                yield Button(
-                    "Stop loop", id="stop-loop", variant="error", disabled=True
+                yield Static(
+                    "Focus this list and press Enter to run selected action.",
+                    id="actions-help",
                 )
-                yield Button("Refresh snapshot", id="refresh-snapshot")
         with Vertical(id="console-pane"):
-            with Horizontal(id="console-header"):
-                yield Static("Console", classes="pane-title")
-                yield Button("Clear", id="clear-console")
+            yield Static("Console", classes="pane-title")
             yield RichLog(id="console-log", markup=False, wrap=False, highlight=False)
         yield Footer()
 
@@ -459,6 +470,7 @@ class AutolabCockpitApp(App[None]):
         self._populate_action_list()
         self._update_safety_row()
         self._update_action_button_state()
+        self.query_one("#action-list", ListView).focus()
 
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
@@ -758,15 +770,10 @@ class AutolabCockpitApp(App[None]):
         blockers_widget.update(blockers_text)
 
     def _update_safety_row(self) -> None:
-        arm_button = self.query_one("#arm-toggle", Button)
         status = self.query_one("#safety-status", Static)
         if self._armed:
-            arm_button.label = "Arm actions: ON"
-            arm_button.variant = "success"
             status.update("Armed: mutating commands enabled.")
         else:
-            arm_button.label = "Arm actions: OFF"
-            arm_button.variant = "warning"
             status.update("Disarmed (read-only mode).")
 
     def _update_running_banner(self) -> None:
@@ -778,37 +785,9 @@ class AutolabCockpitApp(App[None]):
         banner.update(f"Running: {command[:72]}")
 
     def _update_action_button_state(self) -> None:
-        run_button = self.query_one("#run-action", Button)
-        stop_button = self.query_one("#stop-loop", Button)
-        action = self._selected_action()
-        running = self._running_intent is not None
-        if running:
-            run_button.disabled = True
-        elif self._snapshot is None:
-            run_button.disabled = True
-        elif action is None:
-            run_button.disabled = True
-        elif action.requires_arm and not self._armed:
-            run_button.disabled = True
-        else:
-            run_button.disabled = False
-        if self._snapshot is None:
-            run_button.label = "Run selected action (snapshot unavailable)"
-        elif action and action.requires_arm and not self._armed:
-            run_button.label = "Run selected action (disarmed)"
-        else:
-            run_button.label = "Run selected action"
-        stop_button.disabled = not (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        )
         self._update_running_banner()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        list_id = event.list_view.id or ""
-        selected_index = event.list_view.index
-        if selected_index is None or selected_index < 0:
-            selected_index = 0
+    def _apply_list_selection(self, *, list_id: str, selected_index: int) -> None:
         if list_id == "stage-list":
             self._selected_stage_index = selected_index
             snapshot = self._snapshot
@@ -829,6 +808,26 @@ class AutolabCockpitApp(App[None]):
             self._selected_action_index = selected_index
             self._update_action_button_state()
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        selected_index = event.list_view.index
+        if selected_index is None or selected_index < 0:
+            return
+        self._apply_list_selection(
+            list_id=event.list_view.id or "",
+            selected_index=selected_index,
+        )
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        selected_index = event.list_view.index
+        if selected_index is None or selected_index < 0:
+            selected_index = 0
+        list_id = event.list_view.id or ""
+        self._apply_list_selection(
+            list_id=list_id,
+            selected_index=selected_index,
+        )
+        self._activate_list_selection(list_id)
+
     def _start_ui_flow(
         self,
         *,
@@ -848,6 +847,73 @@ class AutolabCockpitApp(App[None]):
             group="tui-ui-flows",
             exit_on_error=False,
         )
+
+    def action_toggle_arm(self) -> None:
+        self._start_ui_flow(label="arm-toggle", flow_factory=self._toggle_arm)
+
+    def action_refresh_snapshot(self) -> None:
+        if self._refresh_snapshot():
+            self._append_console("snapshot refreshed")
+
+    def action_clear_console(self) -> None:
+        self._console_tail.clear()
+        self._render_console_tail()
+
+    def action_stop_loop(self) -> None:
+        self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+
+    def action_activate_selection(self) -> None:
+        focused = self.focused
+        if not isinstance(focused, ListView):
+            self.query_one("#action-list", ListView).focus()
+            return
+
+        selected_index = focused.index
+        if selected_index is None or selected_index < 0:
+            selected_index = 0
+        list_id = focused.id or ""
+        self._apply_list_selection(list_id=list_id, selected_index=selected_index)
+        self._activate_list_selection(list_id)
+
+    def _activate_list_selection(self, list_id: str) -> None:
+        if list_id == "stage-list":
+            return
+
+        if list_id == "action-list":
+            action = self._selected_action()
+            if action is None:
+                self.notify("No action selected.")
+                return
+            self._start_ui_flow(
+                label="run-action",
+                flow_factory=lambda: self._handle_action(action),
+            )
+            return
+
+        if list_id == "artifact-list":
+            artifact_path = self._selected_artifact_path()
+            if artifact_path is None:
+                self.notify("No artifact selected.")
+                return
+            self._start_ui_flow(
+                label="open-artifact",
+                flow_factory=lambda: self._open_artifact_viewer(artifact_path),
+            )
+            return
+
+        if list_id == "run-list":
+            run = self._selected_run()
+            if run is None:
+                self.notify("No run selected.")
+                return
+            self._start_ui_flow(
+                label="open-run-manifest",
+                flow_factory=lambda: self._open_artifact_viewer(run.manifest_path),
+            )
+            return
+
+        if list_id == "todo-list":
+            self.notify("Todo list is read-only in cockpit.")
 
     async def _confirm_command(
         self, *, title: str, intent: CommandIntent, confirm_label: str = "Confirm"
@@ -1087,29 +1153,3 @@ class AutolabCockpitApp(App[None]):
             self._append_console("stop requested for active loop process")
         else:
             self._append_console("no running loop process to stop")
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id or ""
-        if button_id == "arm-toggle":
-            self._start_ui_flow(label="arm-toggle", flow_factory=self._toggle_arm)
-            return
-        if button_id == "run-action":
-            action = self._selected_action()
-            if action is None:
-                self.notify("No action selected.")
-                return
-            self._start_ui_flow(
-                label="run-action",
-                flow_factory=lambda: self._handle_action(action),
-            )
-            return
-        if button_id == "stop-loop":
-            self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
-            return
-        if button_id == "refresh-snapshot":
-            if self._refresh_snapshot():
-                self._append_console("snapshot refreshed")
-            return
-        if button_id == "clear-console":
-            self._console_tail.clear()
-            self._render_console_tail()

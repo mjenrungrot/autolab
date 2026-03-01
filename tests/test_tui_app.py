@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -44,13 +43,6 @@ class _FakeListView:
 
     def clear(self) -> None:
         self.children.clear()
-
-
-class _FakeButton:
-    def __init__(self) -> None:
-        self.disabled = False
-        self.label = ""
-        self.variant = ""
 
 
 class _FakeStatic:
@@ -164,48 +156,37 @@ def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) ->
     assert any("Snapshot refresh failed: boom" in line for line in notices)
 
 
-def test_refresh_button_logs_success_only_when_refresh_succeeds(
+def test_action_refresh_snapshot_logs_success_only_on_true_refresh(
     tmp_path: Path, monkeypatch
 ) -> None:
     app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
     logs: list[str] = []
     monkeypatch.setattr(app, "_append_console", lambda text: logs.append(text))
     monkeypatch.setattr(app, "_refresh_snapshot", lambda: False)
-    asyncio.run(
-        app.on_button_pressed(
-            SimpleNamespace(button=SimpleNamespace(id="refresh-snapshot"))
-        )
-    )
+    app.action_refresh_snapshot()
     assert "snapshot refreshed" not in logs
 
     monkeypatch.setattr(app, "_refresh_snapshot", lambda: True)
-    asyncio.run(
-        app.on_button_pressed(
-            SimpleNamespace(button=SimpleNamespace(id="refresh-snapshot"))
-        )
-    )
+    app.action_refresh_snapshot()
     assert logs == ["snapshot refreshed"]
 
 
-def test_action_button_disabled_without_snapshot(tmp_path: Path) -> None:
+def test_action_activate_selection_focuses_action_list_when_no_focus(
+    tmp_path: Path, monkeypatch
+) -> None:
     app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
-    run_button = _FakeButton()
-    stop_button = _FakeButton()
-    banner = _FakeStatic()
+    action_list = _FakeStatic()
+    focused: list[str] = []
+    monkeypatch.setattr(type(app), "focused", property(lambda _self: None))
     _bind_query(
         app,
         {
-            "#run-action": run_button,
-            "#stop-loop": stop_button,
-            "#running-banner": banner,
+            "#action-list": action_list,
         },
     )
-    app._snapshot = None
-    app._armed = True
-    app._update_action_button_state()
-    assert run_button.disabled is True
-    assert stop_button.disabled is True
-    assert banner.value == ""
+    action_list.focus = lambda: focused.append("action-list")  # type: ignore[attr-defined]
+    app.action_activate_selection()
+    assert focused == ["action-list"]
 
 
 def test_populate_stage_list_keeps_explicit_first_selection(
@@ -299,11 +280,11 @@ def test_refresh_snapshot_repeated_clicks_no_crash(tmp_path: Path) -> None:
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
-            await pilot.click("#refresh-snapshot")
+            await pilot.press("r")
             await pilot.pause()
-            await pilot.click("#refresh-snapshot")
+            await pilot.press("r")
             await pilot.pause()
-            await pilot.click("#refresh-snapshot")
+            await pilot.press("r")
             await pilot.pause()
 
     asyncio.run(_run())
@@ -316,7 +297,7 @@ def test_run_action_viewer_modal_opens_and_closes(tmp_path: Path) -> None:
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
-            await pilot.click("#run-action")
+            await pilot.press("enter")
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())
@@ -329,10 +310,10 @@ def test_arm_modal_opens_and_cancel_keeps_disarmed(tmp_path: Path) -> None:
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
-            await pilot.click("#arm-toggle")
+            await pilot.press("a")
             assert await _click_when_visible(pilot, "#cancel") is True
             await pilot.pause()
-            arm_button = app.query_one("#arm-toggle", app_module.Button)
-            assert str(arm_button.label) == "Arm actions: OFF"
+            safety_status = app.query_one("#safety-status", app_module.Static)
+            assert "Disarmed (read-only mode)." in str(safety_status.render())
 
     asyncio.run(_run())
