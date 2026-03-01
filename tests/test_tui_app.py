@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,6 +41,9 @@ class _FakeListView:
 
     def append(self, item: object) -> None:
         self.children.append(item)
+
+    def clear(self) -> None:
+        self.children.clear()
 
 
 class _FakeButton:
@@ -131,7 +135,18 @@ def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(
         app, "notify", lambda message, *args, **kwargs: notices.append(str(message))
     )
-    monkeypatch.setattr(app, "_clear_snapshot_views", lambda: None)
+    monkeypatch.setattr(
+        app,
+        "_clear_snapshot_views",
+        lambda: (
+            setattr(app, "_selected_stage_index", 0),
+            setattr(app, "_selected_stage_key", None),
+            setattr(app, "_selected_run_index", 0),
+            setattr(app, "_selected_todo_index", 0),
+            setattr(app, "_selected_artifact_index", 0),
+            setattr(app, "_current_artifacts", ()),
+        ),
+    )
     monkeypatch.setattr(app, "_update_safety_row", lambda: None)
     monkeypatch.setattr(app, "_update_action_button_state", lambda: None)
     monkeypatch.setattr(
@@ -240,3 +255,84 @@ def test_runner_done_auto_disarms_after_mutating_command(
     assert app._running_intent is None
     assert refreshed == [True]
     assert "process exit code: 0" in logs
+
+
+def _write_state_file(repo_root: Path) -> Path:
+    payload = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "design",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "sync_status": "completed",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+    state_path = repo_root / ".autolab" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return state_path
+
+
+async def _click_when_visible(
+    pilot,
+    selector: str,
+    *,
+    attempts: int = 30,
+) -> bool:
+    for _ in range(attempts):
+        await pilot.pause()
+        try:
+            pilot.app.screen.query_one(selector)
+        except Exception:
+            continue
+        await pilot.click(selector)
+        await pilot.pause()
+        return True
+    return False
+
+
+def test_refresh_snapshot_repeated_clicks_no_crash(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.click("#refresh-snapshot")
+            await pilot.pause()
+            await pilot.click("#refresh-snapshot")
+            await pilot.pause()
+            await pilot.click("#refresh-snapshot")
+            await pilot.pause()
+
+    asyncio.run(_run())
+
+
+def test_run_action_viewer_modal_opens_and_closes(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.click("#run-action")
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
+def test_arm_modal_opens_and_cancel_keeps_disarmed(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.click("#arm-toggle")
+            assert await _click_when_visible(pilot, "#cancel") is True
+            await pilot.pause()
+            arm_button = app.query_one("#arm-toggle", app_module.Button)
+            assert str(arm_button.label) == "Arm actions: OFF"
+
+    asyncio.run(_run())

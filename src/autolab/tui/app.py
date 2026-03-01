@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 from collections import deque
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -475,16 +476,7 @@ class AutolabCockpitApp(App[None]):
             log.write(line)
 
     def _clear_list_view(self, list_view: ListView) -> None:
-        for child in list(list_view.children):
-            child.remove()
-
-    def _parse_index(self, item_id: str, prefix: str) -> int:
-        if not item_id.startswith(prefix):
-            return 0
-        try:
-            return int(item_id[len(prefix) :])
-        except ValueError:
-            return 0
+        list_view.clear()
 
     def _display_path(self, path: Path) -> str:
         snapshot = self._snapshot
@@ -560,10 +552,10 @@ class AutolabCockpitApp(App[None]):
         artifact_list = self.query_one("#artifact-list", ListView)
         for widget in (stage_list, run_list, todo_list, artifact_list):
             self._clear_list_view(widget)
-        stage_list.append(ListItem(Label("(snapshot unavailable)"), id="stage-0"))
-        run_list.append(ListItem(Label("(snapshot unavailable)"), id="run-0"))
-        todo_list.append(ListItem(Label("(snapshot unavailable)"), id="todo-0"))
-        artifact_list.append(ListItem(Label("(snapshot unavailable)"), id="artifact-0"))
+        stage_list.append(ListItem(Label("(snapshot unavailable)")))
+        run_list.append(ListItem(Label("(snapshot unavailable)")))
+        todo_list.append(ListItem(Label("(snapshot unavailable)")))
+        artifact_list.append(ListItem(Label("(snapshot unavailable)")))
 
         self.query_one("#stage-summary", Static).update("Current stage: unavailable")
         self.query_one("#required-artifacts", Static).update(
@@ -612,7 +604,7 @@ class AutolabCockpitApp(App[None]):
             label = (
                 f"{status_icon} {item.name} [{item.status}] attempts {item.attempts}"
             )
-            stage_list.append(ListItem(Label(label), id=f"stage-{index}"))
+            stage_list.append(ListItem(Label(label)))
             if item.is_current:
                 current_index = index
         if snapshot.stage_items:
@@ -636,13 +628,13 @@ class AutolabCockpitApp(App[None]):
         if snapshot is None:
             return
         if not snapshot.runs:
-            run_list.append(ListItem(Label("(no runs found)"), id="run-0"))
+            run_list.append(ListItem(Label("(no runs found)")))
             self._selected_run_index = 0
             return
-        for index, run in enumerate(snapshot.runs):
+        for run in snapshot.runs:
             started = run.started_at or "-"
             label = f"{run.run_id} [{run.status}] start={started}"
-            run_list.append(ListItem(Label(label), id=f"run-{index}"))
+            run_list.append(ListItem(Label(label)))
         self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
         run_list.index = self._selected_run_index
 
@@ -653,16 +645,16 @@ class AutolabCockpitApp(App[None]):
         if snapshot is None:
             return
         if not snapshot.todos:
-            todo_list.append(ListItem(Label("(no open todo tasks)"), id="todo-0"))
+            todo_list.append(ListItem(Label("(no open todo tasks)")))
             self._selected_todo_index = 0
             return
-        for index, todo in enumerate(snapshot.todos):
+        for todo in snapshot.todos:
             task_text = todo.text.replace("\n", " ").strip()
             if len(task_text) > 56:
                 task_text = f"{task_text[:56]}…"
             prefix = todo.priority.lower() if todo.priority else "normal"
             label = f"{todo.task_id} [{prefix}] {task_text}"
-            todo_list.append(ListItem(Label(label), id=f"todo-{index}"))
+            todo_list.append(ListItem(Label(label)))
         self._selected_todo_index = min(
             self._selected_todo_index, len(snapshot.todos) - 1
         )
@@ -672,15 +664,13 @@ class AutolabCockpitApp(App[None]):
         artifact_list = self.query_one("#artifact-list", ListView)
         self._clear_list_view(artifact_list)
         if not self._current_artifacts:
-            artifact_list.append(
-                ListItem(Label("(no relevant files)"), id="artifact-0")
-            )
+            artifact_list.append(ListItem(Label("(no relevant files)")))
             self._selected_artifact_index = 0
             return
-        for index, artifact in enumerate(self._current_artifacts):
+        for artifact in self._current_artifacts:
             marker = "✓" if artifact.exists else "✗"
             label = f"{marker} {self._display_path(artifact.path)}"
-            artifact_list.append(ListItem(Label(label), id=f"artifact-{index}"))
+            artifact_list.append(ListItem(Label(label)))
         self._selected_artifact_index = min(
             self._selected_artifact_index, len(self._current_artifacts) - 1
         )
@@ -689,10 +679,10 @@ class AutolabCockpitApp(App[None]):
     def _populate_action_list(self) -> None:
         action_list = self.query_one("#action-list", ListView)
         self._clear_list_view(action_list)
-        for index, action in enumerate(self._actions):
+        for action in self._actions:
             prefix = "MUTATE" if action.kind == "mutating" else "VIEW"
             label = f"[{prefix}] {action.label}"
-            action_list.append(ListItem(Label(label), id=f"action-{index}"))
+            action_list.append(ListItem(Label(label)))
         if self._actions:
             self._selected_action_index = min(
                 self._selected_action_index, len(self._actions) - 1
@@ -816,9 +806,11 @@ class AutolabCockpitApp(App[None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         list_id = event.list_view.id or ""
-        item_id = event.item.id or ""
+        selected_index = event.list_view.index
+        if selected_index is None or selected_index < 0:
+            selected_index = 0
         if list_id == "stage-list":
-            self._selected_stage_index = self._parse_index(item_id, "stage-")
+            self._selected_stage_index = selected_index
             snapshot = self._snapshot
             if snapshot is not None and 0 <= self._selected_stage_index < len(
                 snapshot.stage_items
@@ -828,14 +820,34 @@ class AutolabCockpitApp(App[None]):
                 ].name
             self._update_details()
         elif list_id == "run-list":
-            self._selected_run_index = self._parse_index(item_id, "run-")
+            self._selected_run_index = selected_index
         elif list_id == "todo-list":
-            self._selected_todo_index = self._parse_index(item_id, "todo-")
+            self._selected_todo_index = selected_index
         elif list_id == "artifact-list":
-            self._selected_artifact_index = self._parse_index(item_id, "artifact-")
+            self._selected_artifact_index = selected_index
         elif list_id == "action-list":
-            self._selected_action_index = self._parse_index(item_id, "action-")
+            self._selected_action_index = selected_index
             self._update_action_button_state()
+
+    def _start_ui_flow(
+        self,
+        *,
+        label: str,
+        flow_factory: Callable[[], Awaitable[None]],
+    ) -> None:
+        async def _run_flow_guarded() -> None:
+            try:
+                await flow_factory()
+            except Exception as exc:
+                self._append_console(f"ui action failed ({label}): {exc}")
+                self.notify(f"UI action failed ({label}): {exc}")
+
+        self.run_worker(
+            _run_flow_guarded(),
+            name=f"ui-flow:{label}",
+            group="tui-ui-flows",
+            exit_on_error=False,
+        )
 
     async def _confirm_command(
         self, *, title: str, intent: CommandIntent, confirm_label: str = "Confirm"
@@ -1079,17 +1091,20 @@ class AutolabCockpitApp(App[None]):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if button_id == "arm-toggle":
-            await self._toggle_arm()
+            self._start_ui_flow(label="arm-toggle", flow_factory=self._toggle_arm)
             return
         if button_id == "run-action":
             action = self._selected_action()
             if action is None:
                 self.notify("No action selected.")
                 return
-            await self._handle_action(action)
+            self._start_ui_flow(
+                label="run-action",
+                flow_factory=lambda: self._handle_action(action),
+            )
             return
         if button_id == "stop-loop":
-            await self._stop_loop()
+            self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
             return
         if button_id == "refresh-snapshot":
             if self._refresh_snapshot():
