@@ -18,13 +18,13 @@ autolab tui --tail-lines 2000
 
 - **Left (Navigator)**: stage list, run list, todo list.
 - **Center (Details)**: stage summary, required artifacts checklist, last verification result, top blockers, relevant files.
-- **Right (Actions)**: view + mutating action list, execute button, loop stop button.
+- **Right (Actions)**: view + mutating action list.
 - **Bottom (Console)**: timestamped output stream for the most recent command.
 
 ## Safety model
 
 - Cockpit starts **disarmed** (read-only default).
-- Mutating actions are disabled until you press **Arm actions** and confirm.
+- Mutating actions are disabled until you arm with keyboard (`a`) and confirm.
 - If snapshot refresh fails, cockpit enters a fail-closed state: it clears snapshot-derived context, auto-disarms, and keeps action execution blocked until refresh succeeds.
 - Every command execution is confirmation-gated and shows:
   - exact command
@@ -35,7 +35,7 @@ autolab tui --tail-lines 2000
 ## View actions
 
 - Open selected artifact in read-only in-TUI viewer (default artifact behavior).
-- Open selected artifact in `$EDITOR` (confirmation-gated).
+- Open selected artifact in `$EDITOR` (confirmation-gated, defaults to `cursor` when `EDITOR` is unset).
 - Open selected run manifest.
 - Open selected run metrics.
 - Open current stage prompt.
@@ -45,7 +45,7 @@ autolab tui --tail-lines 2000
 
 - Verify current stage.
 - Run one transition (form-backed options).
-- Start loop (form-backed options, with `Stop loop` button).
+- Start loop (form-backed options, stop with keyboard `s`).
 - Todo sync.
 - Lock break.
 
@@ -69,5 +69,6 @@ autolab tui --tail-lines 2000
 
 - The cockpit never writes repo files from view-only actions.
 - `Verify current stage` is treated as mutating because it updates verification artifacts/logs.
+- Cockpit interaction is keyboard-first: Tab/Shift+Tab changes focus, arrow keys move list selection, and Enter activates the focused list selection.
 - Stage selection is persisted by stage name across refreshes, including explicit selection of the first row.
 - If `stdin/stdout` are not interactive TTYs, `autolab tui` exits with an error.

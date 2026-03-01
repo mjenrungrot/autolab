@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.55
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.56
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -94,7 +94,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
 
-**Interactive cockpit.** `autolab tui` launches a selection-first Textual inspector with read-only-by-default navigation, confirmation-gated command execution, and an arm/disarm safety toggle for mutating actions. Snapshot refresh is fail-closed: on refresh failure, cockpit disarms and blocks action execution until a successful refresh. Verify is treated as mutating and still requires arm + confirm. See `docs/tui_cockpit.md`.
+**Interactive cockpit.** `autolab tui` launches a simplified keyboard-first Textual inspector with read-only-by-default navigation, confirmation-gated command execution, and an arm/disarm safety flow for mutating actions. Snapshot refresh is fail-closed: on refresh failure, cockpit disarms and blocks action execution until a successful refresh. Verify is treated as mutating and still requires arm + confirm. Artifact external open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

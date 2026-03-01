@@ -129,7 +129,7 @@ autolab lint --stage hypothesis
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
-- **Interactive inspector**: `autolab tui` (starts disarmed; mutating actions require arm + confirm, and refresh failures fail closed until the next successful refresh)
+- **Interactive inspector**: `autolab tui` (keyboard-first interaction; starts disarmed; mutating actions require arm + confirm; refresh failures fail closed until the next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review**: `autolab review --status=pass`
