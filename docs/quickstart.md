@@ -21,7 +21,7 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 ## Command map (grouped)
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -129,6 +129,7 @@ autolab lint --stage hypothesis
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
+- **Interactive inspector**: `autolab tui` (starts disarmed; mutating actions require arm + confirm, and refresh failures fail closed until the next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review**: `autolab review --status=pass`
