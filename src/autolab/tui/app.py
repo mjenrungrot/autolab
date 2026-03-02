@@ -1269,6 +1269,9 @@ class AutolabCockpitApp(App[None]):
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
+        ("o", "quick_open", "Open"),
+        ("m", "quick_secondary", "Mode Quick"),
+        ("e", "open_selected_in_editor", "Open Editor"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
         ("x", "toggle_advanced", "Advanced"),
@@ -1298,6 +1301,9 @@ class AutolabCockpitApp(App[None]):
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
+        self._all_artifacts: tuple[ArtifactItem, ...] = ()
+        self._missing_artifacts_count = 0
+        self._files_missing_only = False
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1314,7 +1320,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Enter activate | u lock | x advanced | r refresh | ? help",
+            "Keys: 1-5 view | [/] cycle views | Enter activate | o open | m mode quick | ? help",
             id="key-hints",
             classes="tone-muted",
         )
@@ -1356,6 +1362,7 @@ class AutolabCockpitApp(App[None]):
                     yield Button("Open Context", id="file-open-context")
                     yield Button("Open Template", id="file-open-prompt")
                     yield Button("Open State", id="file-open-state")
+                    yield Button("Filter: All", id="file-toggle-missing-filter")
                 with Horizontal(id="file-advanced-buttons"):
                     yield Button(
                         "Start Loop (Advanced)", id="file-run-loop", variant="warning"
@@ -1445,6 +1452,7 @@ class AutolabCockpitApp(App[None]):
             "1-5 view",
             "[ / ] cycle",
             "Enter activate",
+            "o open",
             "u lock",
             "x advanced",
             "r refresh",
@@ -1456,14 +1464,16 @@ class AutolabCockpitApp(App[None]):
             parts.append("c clear")
         elif self._mode == "runs":
             parts.append("Enter manifest")
+            parts.append("m metrics")
         elif self._mode == "files":
             parts.append("Enter viewer")
+            parts.append("e editor")
+            filter_state = "on" if self._files_missing_only else "off"
+            parts.append(f"m missing-only({filter_state})")
         elif self._mode == "home":
             parts.append("Enter recommended action")
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
+            parts.append("m rendered prompt")
+        if self._running_intent is not None and self._running_intent.action_id == "run_loop":
             parts.append("s stop loop")
         return "Keys: " + " | ".join(parts)
 
@@ -1529,6 +1539,11 @@ class AutolabCockpitApp(App[None]):
         self.query_one(
             "#file-advanced-buttons", Horizontal
         ).display = self._show_advanced
+        filter_button = self.query_one("#file-toggle-missing-filter", Button)
+        filter_button.label = (
+            "Filter: Missing Only" if self._files_missing_only else "Filter: All"
+        )
+        filter_button.variant = "primary" if self._files_missing_only else "default"
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -1599,6 +1614,8 @@ class AutolabCockpitApp(App[None]):
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts = ()
+        self._all_artifacts = ()
+        self._missing_artifacts_count = 0
 
         home_actions = self.query_one("#home-action-list", ListView)
         home_actions.clear()
@@ -1853,6 +1870,8 @@ class AutolabCockpitApp(App[None]):
         artifact_list = self.query_one("#artifact-list", ListView)
         artifact_list.clear()
         self._current_artifacts = ()
+        self._all_artifacts = ()
+        self._missing_artifacts_count = 0
 
         if snapshot is None:
             return
@@ -1866,16 +1885,33 @@ class AutolabCockpitApp(App[None]):
                 continue
             seen.add(artifact.path)
             merged.append(artifact)
-        self._current_artifacts = tuple(merged)
+        self._all_artifacts = tuple(merged)
+        self._missing_artifacts_count = sum(
+            1 for artifact in self._all_artifacts if not artifact.exists
+        )
+        if self._files_missing_only:
+            self._current_artifacts = tuple(
+                artifact for artifact in self._all_artifacts if not artifact.exists
+            )
+        else:
+            self._current_artifacts = self._all_artifacts
 
         if not self._current_artifacts:
-            empty_label = Label("(No relevant files)")
+            empty_text = (
+                "(No missing files for this stage)"
+                if self._files_missing_only
+                else "(No relevant files)"
+            )
+            empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
             self._selected_artifact_index = 0
             context_widget = self.query_one("#files-context", Static)
             context_widget.update(
-                f"Files\n- Stage: {stage}\n- No files detected for this stage."
+                "Files\n"
+                f"- Stage: {stage}\n"
+                f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+                f"- {empty_text}"
             )
             self._set_tone(context_widget, "tone-muted")
             return
@@ -1901,11 +1937,16 @@ class AutolabCockpitApp(App[None]):
             return
         selected = self._selected_artifact_path()
         selected_text = self._display_path(selected) if selected else "none"
+        total_count = len(self._all_artifacts)
+        visible_count = len(self._current_artifacts)
+        missing_count = self._missing_artifacts_count
         context_widget = self.query_one("#files-context", Static)
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
             f"- Selected: {selected_text}\n"
+            f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+            f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
             "  (unlock + confirm required)"
@@ -1930,6 +1971,10 @@ class AutolabCockpitApp(App[None]):
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
             "- w: toggle console line wrapping.\n"
+            "Quick Actions\n"
+            "- o: Open selected item in current view (action/manifest/viewer).\n"
+            "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
+            "- e: Open selected file in editor (Files view).\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -2027,6 +2072,60 @@ class AutolabCockpitApp(App[None]):
     def action_stop_loop(self) -> None:
         self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
 
+    def action_quick_open(self) -> None:
+        if self._mode == "home":
+            self._activate_list_selection("home-action-list")
+            return
+        if self._mode == "runs":
+            self._start_ui_flow(
+                label="quick-open:run-manifest",
+                flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
+            )
+            return
+        if self._mode == "files":
+            self._start_ui_flow(
+                label="quick-open:file-viewer",
+                flow_factory=lambda: self._execute_action("open_selected_artifact"),
+            )
+            return
+        self.notify("Quick open is available in Home, Runs, and Files views.")
+
+    def action_quick_secondary(self) -> None:
+        if self._mode == "home":
+            self._start_ui_flow(
+                label="quick-secondary:rendered-prompt",
+                flow_factory=lambda: self._execute_action("open_rendered_prompt"),
+            )
+            return
+        if self._mode == "runs":
+            self._start_ui_flow(
+                label="quick-secondary:run-metrics",
+                flow_factory=lambda: self._execute_action("open_selected_run_metrics"),
+            )
+            return
+        if self._mode == "files":
+            self.action_toggle_missing_only_filter()
+            return
+        self.notify("Mode quick action is available in Home, Runs, and Files views.")
+
+    def action_open_selected_in_editor(self) -> None:
+        if self._mode != "files":
+            self.notify("Open in editor is available in Files view (3).")
+            return
+        self._start_ui_flow(
+            label="quick-open:file-editor",
+            flow_factory=lambda: self._execute_action("open_selected_artifact_editor"),
+        )
+
+    def action_toggle_missing_only_filter(self) -> None:
+        if self._mode != "files":
+            self.notify("Missing-only filter is available in Files view (3).")
+            return
+        self._files_missing_only = not self._files_missing_only
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
     def action_activate_selection(self) -> None:
         focused = self.focused
         if isinstance(focused, ListView):
@@ -2091,6 +2190,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "toggle-advanced":
             self.action_toggle_advanced()
+            return
+        if button_id == "file-toggle-missing-filter":
+            self.action_toggle_missing_only_filter()
             return
 
         action_by_button = {

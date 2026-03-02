@@ -157,6 +157,42 @@ def _assert_artifact_viewer_edge_to_edge_layout(app: AutolabCockpitApp) -> None:
     assert buttons.region.y >= scroll.region.y + scroll.region.height
 
 
+def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
+    labels: list[str] = []
+    for item in list_view.children:
+        label = item.query_one(app_module.Label)
+        labels.append(str(label.render()))
+    return labels
+
+
+def _write_run_files(repo_root: Path, *, run_id: str = "run-001") -> None:
+    run_dir = repo_root / "experiments" / "plan" / "iter1" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest_payload = {
+        "run_id": run_id,
+        "status": "completed",
+        "timestamps": {
+            "started_at": "2026-03-01T10:00:00Z",
+            "completed_at": "2026-03-01T10:10:00Z",
+        },
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "metrics.json").write_text('{"loss": 0.1}\n', encoding="utf-8")
+
+
+def _materialize_all_current_stage_artifacts(state_path: Path) -> None:
+    snapshot = load_cockpit_snapshot(state_path)
+    stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+    for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
+        if artifact.path.exists():
+            continue
+        artifact.path.parent.mkdir(parents=True, exist_ok=True)
+        artifact.path.write_text("placeholder\n", encoding="utf-8")
+
+
 def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) -> None:
     app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
     app._armed = True
@@ -305,6 +341,10 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             await pilot.pause()
             await pilot.press("3")
             await pilot.pause()
+            filter_button = app.query_one(
+                "#file-toggle-missing-filter", app_module.Button
+            )
+            assert "Filter: All" in str(filter_button.label)
 
             await pilot.click("#file-open-rendered")
             await pilot.pause()
@@ -329,6 +369,131 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             )
             assert context_content._markdown.startswith("```json\n")
             assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
+def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Filter: all files" in str(context.render())
+
+            await pilot.press("m")
+            await pilot.pause()
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Filter: missing only" in str(context.render())
+            filter_button = app.query_one(
+                "#file-toggle-missing-filter", app_module.Button
+            )
+            assert "Filter: Missing Only" in str(filter_button.label)
+
+            await pilot.press("m")
+            await pilot.pause()
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Filter: all files" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        # Ensure at least one visible "OK" artifact while other artifacts stay missing.
+        design_path = repo_root / "experiments" / "plan" / "iter1" / "design.yaml"
+        design_path.parent.mkdir(parents=True, exist_ok=True)
+        design_path.write_text("entrypoint: train.py\n", encoding="utf-8")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            before_entries = _list_item_label_texts(artifact_list)
+            assert any(entry.startswith("[OK]") for entry in before_entries)
+            assert any(entry.startswith("[MISS]") for entry in before_entries)
+
+            await pilot.press("m")
+            await pilot.pause()
+
+            after_entries = _list_item_label_texts(artifact_list)
+            assert after_entries
+            assert all(entry.startswith("[MISS]") for entry in after_entries)
+
+    asyncio.run(_run())
+
+
+def test_files_missing_filter_empty_state_when_no_missing_files(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _materialize_all_current_stage_artifacts(state_path)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            entries = _list_item_label_texts(artifact_list)
+            assert entries == ["(No missing files for this stage)"]
+            context = app.query_one("#files-context", app_module.Static)
+            assert "(No missing files for this stage)" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_files(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        dispatched: list[str] = []
+
+        async def _fake_execute(action_id: str) -> None:
+            dispatched.append(action_id)
+
+        app._execute_action = _fake_execute  # type: ignore[method-assign]
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            expected_home_open = app._home_action_ids[app._home_action_index]
+
+            await pilot.press("o")
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("o")
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+
+        assert dispatched == [
+            expected_home_open,
+            "open_rendered_prompt",
+            "open_selected_run_manifest",
+            "open_selected_run_metrics",
+            "open_selected_artifact_editor",
+        ]
 
     asyncio.run(_run())
 
