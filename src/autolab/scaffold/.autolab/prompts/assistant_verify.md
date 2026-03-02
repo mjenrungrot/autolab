@@ -18,6 +18,8 @@ Summarize verification status for the focused task and identify blocking failure
 ## REQUIRED INPUTS
 - `.autolab/state.json`
 - `.autolab/verification_result.json` (if present)
+- `docs/todo.md`
+- `{{iteration_path}}/documentation.md`
 - `{{verifier_outputs}}`
 - `{{verifier_errors}}`
 
@@ -26,8 +28,9 @@ Summarize verification status for the focused task and identify blocking failure
 
 ## STEPS
 1. Run/inspect required checks for the current stage.
-2. Mark pass/fail with concrete evidence pointers.
-3. If failing, provide explicit remediation steps.
+2. Audit dual-memory consistency: compare actionable items in `{{iteration_path}}/documentation.md` against `docs/todo.md` actionable checklist entries.
+3. Mark pass/fail with concrete evidence pointers, including both memory artifacts when relevant.
+4. If failing, provide explicit remediation steps, including synchronization actions for dual-memory mismatches.
 
 ## RESPONSE FORMAT
 {{shared:assistant_output_contract.md}}

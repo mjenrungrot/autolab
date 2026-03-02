@@ -19,12 +19,16 @@ Select exactly one in-scope task and emit a concise selection rationale.
 - `.autolab/state.json`
 - `.autolab/todo_state.json` (when available)
 - `.autolab/backlog.yaml`
+- `docs/todo.md`
+- `{{iteration_path}}/documentation.md`
 - `{{task_context}}`
 
 ## STEPS
-1. Prefer explicit open tasks over generated fallback tasks.
-2. Enforce scope using `runner_scope.allowed_edit_dirs`.
-3. Select one highest-priority task and explain why.
+1. Parse `{{iteration_path}}/documentation.md` first for action items and next-step intent.
+2. Reconcile documentation-derived actionable items into `docs/todo.md` as concise stage-tagged checklist entries.
+3. Enforce scope using `runner_scope.allowed_edit_dirs`.
+4. Select one highest-priority in-scope task, preferring documentation-derived tasks over pre-existing todo/generated fallback tasks.
+5. Explain selection rationale and explicitly state source as one of: `documentation`, `todo`, `generated`.
 
 ## RESPONSE FORMAT
 {{shared:assistant_output_contract.md}}
@@ -33,5 +37,6 @@ Select exactly one in-scope task and emit a concise selection rationale.
 {{shared:checklist.md}}
 - [ ] Exactly one task selected with rationale.
 - [ ] Selected task is within allowed edit scope.
+- [ ] Selection rationale explicitly labels task source (`documentation`, `todo`, or `generated`).
 
 {{shared:failure_retry.md}}

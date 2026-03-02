@@ -3,6 +3,7 @@
 - If the mapped experiment is closed, stop and request human intervention instead of editing artifacts.
 - `runs/<run-id>/...` in policy/docs/workflow.yaml is a **pattern path**, not a literal filesystem path. At runtime the angle-bracket token is replaced with the actual run ID (e.g. `runs/20260218T160045Z/metrics.json`). Similarly, iteration-id tokens resolve to the active iteration directory name.
 - Never create literal placeholder paths (for example `experiments//design.yaml` or `runs//metrics.json`).
+- Never leave executable/actionable work only in `{{iteration_path}}/documentation.md`; mirror actionable items in `docs/todo.md` so orchestration can track them.
 - **No unresolved placeholders**: Never leave template markers in required outputs. Forbidden markers include:
   - Double-brace tokens (mustache-style template markers like `{` `{token}` `}`)
   - `<PLACEHOLDER>`, `<VALUE>` --angle-bracket placeholders

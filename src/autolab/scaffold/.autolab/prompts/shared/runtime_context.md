@@ -12,3 +12,10 @@ If any required token remains unresolved, this stage must fail before work start
 `state.json` is owned by Autolab orchestration; do not edit it manually unless a human explicitly asks.
 The runtime stage context block includes resolved edit scope allowlists (workspace + allowed dirs). Use those as the hard edit boundary.
 If protected-file patterns are listed in runtime context/policy, treat them as hard denylist paths even when they appear under an allowed edit directory.
+
+## DUAL MEMORY CONTRACT
+- Read both memory artifacts at stage start: `docs/todo.md` and `{{iteration_path}}/documentation.md`.
+- Treat `{{iteration_path}}/documentation.md` as the experiment-local source of intent and context.
+- Reconcile actionable items from documentation into `docs/todo.md` before finalizing stage outputs.
+- Keep `{{iteration_path}}/documentation.md` natural-language and handoff-friendly (status, decisions, blockers, handoff notes).
+- Keep `docs/todo.md` concise, actionable, and stage-tagged where possible.
