@@ -111,6 +111,15 @@ def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_design_prompt(repo_root: Path, *, lines: int = 40) -> None:
+    prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(
+        "# Stage design\n\n" + "\n".join(f"line {index}" for index in range(1, lines)),
+        encoding="utf-8",
+    )
+
+
 async def _click_when_visible(
     pilot,
     selector: str,
@@ -313,11 +322,7 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
-        prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
-        prompt_path.write_text(
-            "# Stage design\n\n" + "\n".join(f"line {index}" for index in range(1, 26)),
-            encoding="utf-8",
-        )
+        _write_design_prompt(repo_root)
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
@@ -327,7 +332,37 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
                 "#home-render-markdown", app_module.Markdown
             )
             assert "**Stage:** `design`" in render_markdown._markdown
-            assert "line 25" in render_markdown._markdown
+            assert "Excerpt shown." in render_markdown._markdown
+            assert "line 39" not in render_markdown._markdown
+            toggle_button = app.query_one("#home-render-toggle", app_module.Button)
+            assert str(toggle_button.label) == "Show Full Prompt"
+
+    asyncio.run(_run())
+
+
+def test_home_prompt_toggle_switches_excerpt_and_full(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_design_prompt(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            render_markdown = app.query_one(
+                "#home-render-markdown", app_module.Markdown
+            )
+            assert "line 39" not in render_markdown._markdown
+
+            await pilot.press("p")
+            await pilot.pause()
+            assert "line 39" in render_markdown._markdown
+            toggle_button = app.query_one("#home-render-toggle", app_module.Button)
+            assert str(toggle_button.label) == "Show Excerpt"
+
+            await pilot.press("p")
+            await pilot.pause()
+            assert "line 39" not in render_markdown._markdown
+            assert str(toggle_button.label) == "Show Full Prompt"
 
     asyncio.run(_run())
 
@@ -518,6 +553,50 @@ def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_escape_closes_unlock_modal(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("u")
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.UnlockSafetyScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, app_module.UnlockSafetyScreen)
+            safety_status = app.query_one("#status-safety", app_module.Static)
+            assert "Locked: read-only." in str(safety_status.render())
+
+    asyncio.run(_run())
+
+
+def test_escape_closes_action_confirm_modal(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                app_module.ActionConfirmScreen(
+                    title="Confirm action",
+                    summary="summary",
+                    command="autolab verify",
+                    cwd=repo_root,
+                    expected_writes=(),
+                )
+            )
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ActionConfirmScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, app_module.ActionConfirmScreen)
+
+    asyncio.run(_run())
+
+
 def test_mode_shortcut_switches_to_runs(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -562,6 +641,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.pause()
             hints = app.query_one("#key-hints", app_module.Static)
             assert "Enter recommended action" in str(hints.render())
+            assert "p prompt" in str(hints.render())
 
             await pilot.press("4")
             await pilot.pause()
@@ -574,6 +654,29 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             wrap_status = app.query_one("#status-console", app_module.Static)
             assert "w wrap(on)" in str(hints.render())
             assert "Console wrap: on" in str(wrap_status.render())
+
+            await pilot.press("2")
+            await pilot.pause()
+            assert "m metrics" in str(hints.render())
+
+            await pilot.press("3")
+            await pilot.pause()
+            assert "m missing-only(off)" in str(hints.render())
+
+    asyncio.run(_run())
+
+
+def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            status_running = app.query_one("#status-running", app_module.Static)
+            rendered = str(status_running.render())
+            assert "Idle | runs:" in rendered
+            assert "missing:" in rendered
 
     asyncio.run(_run())
 
@@ -597,6 +700,115 @@ def test_advanced_buttons_hidden_by_default_and_visible_after_toggle(
             app.query_one("#file-focus-experiment", app_module.Button)
             app.query_one("#file-experiment-create", app_module.Button)
             app.query_one("#file-experiment-move", app_module.Button)
+
+    asyncio.run(_run())
+
+
+def test_run_preset_advanced_row_auto_enables_checkbox(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.RunPresetScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            advanced = screen.query_one("#run-advanced", app_module.Checkbox)
+            verify = screen.query_one("#run-verify", app_module.Checkbox)
+            assert advanced.value is True
+            assert verify.disabled is False
+            await pilot.press("escape")
+            await pilot.pause()
+            assert results == [None]
+
+    asyncio.run(_run())
+
+
+def test_loop_preset_advanced_row_auto_enables_checkbox(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.LoopPresetScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("down", "down")
+            await pilot.pause()
+            advanced = screen.query_one("#loop-advanced", app_module.Checkbox)
+            max_iterations = screen.query_one("#loop-max-iterations", app_module.Input)
+            assert advanced.value is True
+            assert max_iterations.disabled is False
+            await pilot.press("escape")
+            await pilot.pause()
+            assert results == [None]
+
+    asyncio.run(_run())
+
+
+def test_run_preset_enter_submits_selected_preset(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.RunPresetScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(results) == 1
+            result = results[0]
+            assert result is not None
+            assert result.verify is True
+            assert result.auto_decision is False
+
+    asyncio.run(_run())
+
+
+def test_loop_preset_enter_submits_default_preset(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.LoopPresetScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(results) == 1
+            result = results[0]
+            assert result is not None
+            assert result.max_iterations == 2
+            assert result.auto is False
+
+    asyncio.run(_run())
+
+
+def test_human_review_enter_submits_selected_decision(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.HumanReviewDecisionScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert results == ["retry"]
 
     asyncio.run(_run())
 
@@ -847,6 +1059,57 @@ def test_experiment_move_modal_blocks_noop_destination(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_run_details_include_artifact_presence_and_selection_counts(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="extract_results")
+        runs_root = repo_root / "experiments" / "plan" / "iter1" / "runs" / "run-1"
+        runs_root.mkdir(parents=True, exist_ok=True)
+        (runs_root / "run_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-1",
+                    "status": "completed",
+                    "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            details = app.query_one("#run-details", app_module.Static)
+            rendered = str(details.render())
+            assert "Selected: 1/1" in rendered
+            assert "Manifest: OK" in rendered
+            assert "Metrics: MISS" in rendered
+
+    asyncio.run(_run())
+
+
+def test_files_context_includes_selection_and_missing_counts(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            context = app.query_one("#files-context", app_module.Static)
+            rendered = str(context.render())
+            assert "Item: " in rendered
+            assert "Missing files:" in rendered
+
+    asyncio.run(_run())
+
+
 def test_execute_action_focus_create_move_starts_expected_commands(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -987,6 +1250,40 @@ def test_home_todos_card_shows_open_tasks(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_execute_action_focus_and_move_allow_manual_ids_without_backlog(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root, stage="design")
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._show_advanced = True
+    started: list[CommandIntent] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    selections = [("e10", "iter10"), ("e10", "iter10", "in_progress")]
+
+    async def _push_screen_wait(_screen):
+        return selections.pop(0)
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._execute_action("focus_experiment"))
+    asyncio.run(app._execute_action("experiment_move"))
+
+    assert len(started) == 2
+    assert started[0].argv[:2] == ("autolab", "focus")
+    assert started[1].argv[:3] == ("autolab", "experiment", "move")
+
+
 def test_start_command_preserves_console_history(tmp_path: Path, monkeypatch) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1027,3 +1324,35 @@ def test_start_command_preserves_console_history(tmp_path: Path, monkeypatch) ->
             assert len(started) == 2
 
     asyncio.run(_run())
+
+
+def test_start_command_preserves_prior_console_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    app._console_tail.append("[12:00:00] previous line")
+    lines: list[str] = []
+    started: list[CommandIntent] = []
+    intent = CommandIntent(
+        action_id="verify_current_stage",
+        argv=("autolab", "verify"),
+        cwd=tmp_path,
+        expected_writes=(),
+        mutating=True,
+    )
+
+    class _FakeRunner:
+        def start(self, run_intent: CommandIntent) -> None:
+            started.append(run_intent)
+
+    monkeypatch.setattr(app, "_append_console", lambda text: lines.append(text))
+    monkeypatch.setattr(app, "_update_ui_chrome", lambda: None)
+    app._runner = _FakeRunner()
+
+    app._start_command(intent)
+
+    assert app._console_tail
+    assert "previous line" in app._console_tail[0]
+    assert lines[0] == "-" * 40
+    assert lines[1].startswith("starting: ")
+    assert started == [intent]

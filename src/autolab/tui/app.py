@@ -61,6 +61,8 @@ from autolab.tui.snapshot import (
 
 
 class UnlockSafetyScreen(ModalScreen[bool]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     UnlockSafetyScreen {
       align: center middle;
@@ -100,11 +102,16 @@ class UnlockSafetyScreen(ModalScreen[bool]):
     def on_mount(self) -> None:
         self.query_one("#cancel", Button).focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "unlock")
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     ActionConfirmScreen {
       align: center middle;
@@ -172,6 +179,9 @@ class ActionConfirmScreen(ModalScreen[bool]):
         self._render_details()
         self.query_one("#cancel", Button).focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
     def _render_details(self) -> None:
         details = self.query_one("#action-confirm-details", Static)
         toggle = self.query_one("#toggle-details", Button)
@@ -201,6 +211,8 @@ class ActionConfirmScreen(ModalScreen[bool]):
 
 
 class RunPresetScreen(ModalScreen[RunActionOptions | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     RunPresetScreen {
       align: center middle;
@@ -261,6 +273,20 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
         preset_list.focus()
         self._update_advanced_enabled(False)
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _selected_preset_index(self) -> int:
+        return self.query_one("#run-preset-list", ListView).index or 0
+
+    def _sync_advanced_from_preset(self) -> None:
+        if self._selected_preset_index() != 2:
+            return
+        advanced = self.query_one("#run-advanced", Checkbox)
+        if not advanced.value:
+            advanced.value = True
+        self._update_advanced_enabled(True)
+
     def _update_advanced_enabled(self, enabled: bool) -> None:
         for widget_id in (
             "#run-verify",
@@ -280,15 +306,31 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
         if event.checkbox.id == "run-agent-off" and event.checkbox.value:
             self.query_one("#run-agent-on", Checkbox).value = False
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "run-preset-list":
+            self._sync_advanced_from_preset()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "run-preset-list":
+            return
+        self._sync_advanced_from_preset()
+        self._submit()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
+        self._submit()
 
-        preset_index = self.query_one("#run-preset-list", ListView).index or 0
+    def _submit(self) -> None:
+        preset_index = self._selected_preset_index()
         use_advanced = self.query_one("#run-advanced", Checkbox).value
+        if preset_index == 2 and not use_advanced:
+            self.query_one("#run-advanced", Checkbox).value = True
+            self._update_advanced_enabled(True)
+            use_advanced = True
 
         if preset_index == 0:
             base = RunActionOptions(
@@ -299,9 +341,6 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
                 verify=True, auto_decision=False, run_agent_mode="policy"
             )
         else:
-            if not use_advanced:
-                self.notify("Enable 'Use advanced options' for this preset.")
-                return
             base = RunActionOptions(
                 verify=True, auto_decision=False, run_agent_mode="policy"
             )
@@ -330,6 +369,8 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
 
 
 class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     LoopPresetScreen {
       align: center middle;
@@ -394,6 +435,20 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
         preset_list.focus()
         self._update_advanced_enabled(False)
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _selected_preset_index(self) -> int:
+        return self.query_one("#loop-preset-list", ListView).index or 0
+
+    def _sync_advanced_from_preset(self) -> None:
+        if self._selected_preset_index() != 2:
+            return
+        advanced = self.query_one("#loop-advanced", Checkbox)
+        if not advanced.value:
+            advanced.value = True
+        self._update_advanced_enabled(True)
+
     def _update_advanced_enabled(self, enabled: bool) -> None:
         for selector, widget_type in (
             ("#loop-max-iterations", Input),
@@ -415,15 +470,31 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
         if event.checkbox.id == "loop-agent-off" and event.checkbox.value:
             self.query_one("#loop-agent-on", Checkbox).value = False
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "loop-preset-list":
+            self._sync_advanced_from_preset()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "loop-preset-list":
+            return
+        self._sync_advanced_from_preset()
+        self._submit()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
+        self._submit()
 
-        preset_index = self.query_one("#loop-preset-list", ListView).index or 0
+    def _submit(self) -> None:
+        preset_index = self._selected_preset_index()
         use_advanced = self.query_one("#loop-advanced", Checkbox).value
+        if preset_index == 2 and not use_advanced:
+            self.query_one("#loop-advanced", Checkbox).value = True
+            self._update_advanced_enabled(True)
+            use_advanced = True
 
         if preset_index == 0:
             base = LoopActionOptions(
@@ -442,9 +513,6 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
                 run_agent_mode="policy",
             )
         else:
-            if not use_advanced:
-                self.notify("Enable 'Use advanced options' for this preset.")
-                return
             base = LoopActionOptions(
                 max_iterations=3,
                 max_hours=2.0,
@@ -492,6 +560,8 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
 
 
 class HumanReviewDecisionScreen(ModalScreen[str | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     HumanReviewDecisionScreen {
       align: center middle;
@@ -543,12 +613,22 @@ class HumanReviewDecisionScreen(ModalScreen[str | None]):
         decision_list.index = 0
         decision_list.focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "human-review-list":
+            self._submit()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
+        self._submit()
+
+    def _submit(self) -> None:
         decision_list = self.query_one("#human-review-list", ListView)
         selected_index = decision_list.index
         if selected_index is None or not (0 <= selected_index < len(self._statuses)):
@@ -558,6 +638,8 @@ class HumanReviewDecisionScreen(ModalScreen[str | None]):
 
 
 class ArtifactViewerScreen(ModalScreen[str | None]):
+    BINDINGS = [("escape", "cancel", "Close")]
+
     CSS = """
     ArtifactViewerScreen {
       align: center middle;
@@ -616,11 +698,14 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
     def on_mount(self) -> None:
         self.query_one("#close", Button).focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "open-editor":
             self.dismiss("open_editor")
             return
-        self.dismiss(None)
+        self.action_cancel()
 
 
 def _is_completed_backlog_status(status: str) -> bool:
@@ -684,6 +769,8 @@ def _default_move_target(source_type: str) -> str:
 
 
 class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     FocusExperimentScreen {
       align: center middle;
@@ -729,7 +816,10 @@ class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
         with Vertical(id="focus-dialog"):
             yield Label("Focus Experiment", id="focus-title")
             yield Static(
-                "Choose a backlog experiment and confirm the target identifiers.",
+                (
+                    "Choose a backlog experiment and confirm the target identifiers. "
+                    "If backlog data is missing, enter IDs manually below."
+                ),
                 markup=False,
             )
             if self._backlog_error:
@@ -775,6 +865,9 @@ class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
             self._sync_inputs_from_selection()
         experiment_list.focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
     def _sync_inputs_from_selection(self) -> None:
         if not self._experiments:
             return
@@ -787,12 +880,12 @@ class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
         self.query_one("#focus-iteration-id", Input).value = selected.iteration_id
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if (event.list_view.id or "") == "focus-experiment-list":
+        if event.list_view.id == "focus-experiment-list":
             self._sync_inputs_from_selection()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
@@ -805,6 +898,8 @@ class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
 
 
 class ExperimentCreateScreen(ModalScreen[tuple[str, str, str] | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     ExperimentCreateScreen {
       align: center middle;
@@ -898,9 +993,12 @@ class ExperimentCreateScreen(ModalScreen[tuple[str, str, str] | None]):
         hypothesis_list.index = 0
         hypothesis_list.focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
@@ -931,6 +1029,8 @@ class ExperimentCreateScreen(ModalScreen[tuple[str, str, str] | None]):
 
 
 class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     ExperimentMoveScreen {
       align: center middle;
@@ -978,7 +1078,10 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
         with Vertical(id="experiment-move-dialog"):
             yield Label("Move Experiment", id="experiment-move-title")
             yield Static(
-                "Choose an experiment and destination lifecycle type.",
+                (
+                    "Choose an experiment and destination lifecycle type. "
+                    "If backlog data is missing, enter IDs manually below."
+                ),
                 markup=False,
             )
             if self._backlog_error:
@@ -1032,6 +1135,9 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
             self.query_one("#experiment-move-target-list", ListView).index = 0
         experiment_list.focus()
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
     def _selected_experiment(self) -> BacklogExperimentItem | None:
         if not self._experiments:
             return None
@@ -1063,12 +1169,12 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
         self._set_target(_default_move_target(selected.experiment_type))
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if (event.list_view.id or "") == "experiment-move-experiment-list":
+        if event.list_view.id == "experiment-move-experiment-list":
             self._sync_inputs_and_target()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
         if event.button.id != "continue":
             return
@@ -1239,6 +1345,12 @@ class AutolabCockpitApp(App[None]):
       height: 1fr;
     }
 
+    #home-render-buttons {
+      height: auto;
+      align-horizontal: right;
+      margin-top: 1;
+    }
+
     #artifact-content {
       width: 1fr;
     }
@@ -1274,6 +1386,7 @@ class AutolabCockpitApp(App[None]):
         ("e", "open_selected_in_editor", "Open Editor"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
+        ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
@@ -1289,6 +1402,7 @@ class AutolabCockpitApp(App[None]):
         self._console_wrap = False
         self._armed = False
         self._show_advanced = False
+        self._show_full_prompt = False
         self._mode: ViewMode = "home"
         self._snapshot: CockpitSnapshot | None = None
         self._actions: tuple[ActionSpec, ...] = list_actions()
@@ -1339,6 +1453,12 @@ class AutolabCockpitApp(App[None]):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
                         yield Markdown("", id="home-render-markdown", open_links=False)
+                    with Horizontal(id="home-render-buttons"):
+                        yield Button(
+                            "Show Full Prompt",
+                            id="home-render-toggle",
+                            variant="default",
+                        )
                 yield Static("", id="home-blocker-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
@@ -1455,6 +1575,7 @@ class AutolabCockpitApp(App[None]):
             "o open",
             "u lock",
             "x advanced",
+            "p prompt",
             "r refresh",
             "? help",
             "q quit",
@@ -1532,8 +1653,31 @@ class AutolabCockpitApp(App[None]):
         key_hints.update(self._key_hints_text())
 
         if self._running_intent is None:
-            running.update("Idle")
-            self._set_tone(running, "tone-muted")
+            snapshot = self._snapshot
+            if snapshot is None:
+                running.update("Idle")
+                self._set_tone(running, "tone-muted")
+            else:
+                stage_artifacts = snapshot.artifacts_by_stage.get(
+                    snapshot.current_stage, ()
+                )
+                missing_required = sum(1 for item in stage_artifacts if not item.exists)
+                blocker_count = (
+                    0
+                    if snapshot.primary_blocker == "none"
+                    else len(snapshot.top_blockers)
+                )
+                running.update(
+                    "Idle | "
+                    f"runs:{len(snapshot.runs)} "
+                    f"blockers:{blocker_count} "
+                    f"todos:{len(snapshot.todos)} "
+                    f"missing:{missing_required}"
+                )
+                if blocker_count or missing_required:
+                    self._set_tone(running, "tone-warning")
+                else:
+                    self._set_tone(running, "tone-success")
         else:
             command = shlex.join(self._running_intent.argv)
             running.update(f"Running: {command[:72]}")
@@ -1701,18 +1845,39 @@ class AutolabCockpitApp(App[None]):
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
+        render_toggle = self.query_one("#home-render-toggle", Button)
         render_preview = snapshot.render_preview
         if render_preview.status == "ok":
+            render_toggle.disabled = False
+            render_toggle.label = (
+                "Show Excerpt" if self._show_full_prompt else "Show Full Prompt"
+            )
+            prompt_text = (
+                render_preview.prompt_text
+                if self._show_full_prompt
+                else (render_preview.prompt_excerpt or render_preview.prompt_text)
+            )
             prompt_markdown = build_preview_markdown(
-                render_preview.prompt_text,
+                prompt_text,
                 source_path=render_preview.template_path,
                 hint="markdown",
             )
+            if (
+                not self._show_full_prompt
+                and render_preview.prompt_excerpt
+                and render_preview.prompt_excerpt != render_preview.prompt_text
+            ):
+                prompt_markdown = (
+                    f"{prompt_markdown}\n\n"
+                    "_Excerpt shown. Toggle to full prompt for complete content._"
+                )
             render_markdown.update(
                 f"**Stage:** `{render_preview.stage}`\n\n{prompt_markdown}"
             )
             self._set_tone(render_card, "tone-info")
         elif render_preview.status == "unavailable":
+            render_toggle.disabled = True
+            render_toggle.label = "Show Full Prompt"
             render_markdown.update(
                 build_preview_markdown(
                     "Render preview unavailable for this stage.",
@@ -1721,6 +1886,8 @@ class AutolabCockpitApp(App[None]):
             )
             self._set_tone(render_card, "tone-warning")
         else:
+            render_toggle.disabled = True
+            render_toggle.label = "Show Full Prompt"
             template_hint = (
                 self._display_path(render_preview.template_path)
                 if render_preview.template_path is not None
@@ -1853,18 +2020,25 @@ class AutolabCockpitApp(App[None]):
 
     def _update_run_details(self) -> None:
         run = self._selected_run()
+        snapshot = self._snapshot
         if run is None:
             details_widget = self.query_one("#run-details", Static)
             details_widget.update("Run Details\nNo run selected.")
             self._set_tone(details_widget, "tone-muted")
             return
+        selected_index = self._selected_run_index + 1
+        run_count = len(snapshot.runs) if snapshot is not None else selected_index
         details_widget = self.query_one("#run-details", Static)
         details_widget.update(
             "Run Details\n"
+            f"- Selected: {selected_index}/{run_count}\n"
             f"- Run ID: {run.run_id}\n"
             f"- Status: {run.status}\n"
             f"- Started: {run.started_at or '-'}\n"
-            f"- Completed: {run.completed_at or '-'}"
+            f"- Completed: {run.completed_at or '-'}\n"
+            f"- Manifest: {'OK' if run.manifest_path.exists() else 'MISS'}\n"
+            f"- Metrics: {'OK' if run.metrics_path.exists() else 'MISS'}\n"
+            "- Keys: Enter open manifest | Open Metrics button for metrics"
         )
         self._set_tone(details_widget, self._tone_for_run_status(run.status))
 
@@ -1940,19 +2114,22 @@ class AutolabCockpitApp(App[None]):
             return
         selected = self._selected_artifact_path()
         selected_text = self._display_path(selected) if selected else "none"
-        total_count = len(self._all_artifacts)
         visible_count = len(self._current_artifacts)
+        selected_index = min(self._selected_artifact_index + 1, visible_count)
+        total_count = len(self._all_artifacts)
         missing_count = self._missing_artifacts_count
         context_widget = self.query_one("#files-context", Static)
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
+            f"- Item: {selected_index}/{visible_count}\n"
             f"- Selected: {selected_text}\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
             f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
-            "  (unlock + confirm required)"
+            "  (unlock + confirm required)\n"
+            "- Keys: Enter open viewer"
         )
         self._set_tone(context_widget, "tone-info")
 
@@ -1960,6 +2137,13 @@ class AutolabCockpitApp(App[None]):
         help_widget = self.query_one("#help-text", Static)
         help_widget.update(
             "Autolab TUI\n"
+            "\n"
+            "Keyboard\n"
+            "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
+            "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
+            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Home: p toggle prompt excerpt/full.\n"
+            "- Modals: Esc closes or cancels.\n"
             "\n"
             "Views\n"
             "- Home: stage status, rendered prompt preview, recommended actions.\n"
@@ -2055,6 +2239,15 @@ class AutolabCockpitApp(App[None]):
         if self._snapshot is not None:
             self._populate_home_view()
             self._populate_artifact_list()
+        self._update_ui_chrome()
+
+    def action_toggle_prompt_view(self) -> None:
+        snapshot = self._snapshot
+        if snapshot is None or snapshot.render_preview.status != "ok":
+            self.notify("Rendered prompt preview is not available.")
+            return
+        self._show_full_prompt = not self._show_full_prompt
+        self._populate_home_view()
         self._update_ui_chrome()
 
     def action_refresh_snapshot(self) -> None:
@@ -2196,6 +2389,8 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
+        if button_id == "home-render-toggle":
+            self.action_toggle_prompt_view()
             return
 
         action_by_button = {
@@ -2469,11 +2664,8 @@ class AutolabCockpitApp(App[None]):
                 reason="tui manual break",
             )
         elif action_id == "focus_experiment":
-            if not snapshot.backlog_experiments:
-                self.notify(
-                    snapshot.backlog_error or "No backlog experiments available."
-                )
-                return
+            if not snapshot.backlog_experiments and snapshot.backlog_error:
+                self.notify(f"{snapshot.backlog_error} Enter IDs manually to continue.")
             selected = await self.push_screen_wait(
                 FocusExperimentScreen(
                     experiments=snapshot.backlog_experiments,
@@ -2508,11 +2700,8 @@ class AutolabCockpitApp(App[None]):
                 hypothesis_id=hypothesis_id,
             )
         elif action_id == "experiment_move":
-            if not snapshot.backlog_experiments:
-                self.notify(
-                    snapshot.backlog_error or "No backlog experiments available."
-                )
-                return
+            if not snapshot.backlog_experiments and snapshot.backlog_error:
+                self.notify(f"{snapshot.backlog_error} Enter IDs manually to continue.")
             selected = await self.push_screen_wait(
                 ExperimentMoveScreen(
                     experiments=snapshot.backlog_experiments,
