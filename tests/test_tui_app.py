@@ -456,6 +456,106 @@ def test_files_missing_filter_empty_state_when_no_missing_files(tmp_path: Path) 
     asyncio.run(_run())
 
 
+def test_files_scope_toggle_with_g_binding(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Scope: current stage" in str(context.render())
+
+            scope_button = app.query_one("#file-toggle-stage-scope", app_module.Button)
+            assert "Scope: Current Stage" in str(scope_button.label)
+
+            await pilot.press("g")
+            await pilot.pause()
+
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Scope: all stages" in str(context.render())
+            assert "Scope: All Stages" in str(scope_button.label)
+            assert app._files_scope == "all"
+
+            await pilot.press("g")
+            await pilot.pause()
+
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Scope: current stage" in str(context.render())
+            assert "Scope: Current Stage" in str(scope_button.label)
+            assert app._files_scope == "current"
+
+    asyncio.run(_run())
+
+
+def test_files_search_focus_filter_and_escape_clear(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            baseline_count = len(app._current_artifacts)
+
+            await pilot.press("/")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "artifact-search"
+
+            search = app.query_one("#artifact-search", app_module.Input)
+            search.value = "design.yaml"
+            await pilot.pause()
+
+            filtered = tuple(app._current_artifacts)
+            assert filtered
+            assert all("design.yaml" in str(item.path) for item in filtered)
+            assert len(filtered) < baseline_count
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Search: design.yaml" in str(context.render())
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert search.value == ""
+            assert app._artifact_search_query == ""
+            assert len(app._current_artifacts) == baseline_count
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Search: (none)" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_files_scope_toggle_button_updates_scope(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.click("#file-toggle-stage-scope")
+            await pilot.pause()
+            assert app._files_scope == "all"
+
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Scope: all stages" in str(context.render())
+
+            await pilot.click("#file-toggle-stage-scope")
+            await pilot.pause()
+            assert app._files_scope == "current"
+
+    asyncio.run(_run())
+
+
 def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -574,6 +674,23 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             wrap_status = app.query_one("#status-console", app_module.Static)
             assert "w wrap(on)" in str(hints.render())
             assert "Console wrap: on" in str(wrap_status.render())
+
+    asyncio.run(_run())
+
+
+def test_files_key_hints_include_scope_and_search_shortcuts(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            rendered = str(hints.render())
+            assert "g scope(current)" in rendered
+            assert "/ search" in rendered
 
     asyncio.run(_run())
 
