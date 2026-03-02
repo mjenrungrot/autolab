@@ -982,12 +982,48 @@ def _run_verification_step_detailed(
     for command_name, command in command_specs:
         if not command.strip():
             continue
+        try:
+            command_argv = shlex.split(command)
+        except ValueError as exc:
+            detail = _compact_log_text(f"verification command parse failed: {exc}")
+            _append_log(
+                repo_root,
+                f"verification command parse failed command={command_name} detail={detail}",
+            )
+            results.append(
+                {
+                    "name": command_name,
+                    "command": command,
+                    "status": "error",
+                    "returncode": None,
+                    "duration_seconds": 0.0,
+                    "detail": detail,
+                }
+            )
+            details = {
+                "stage": stage,
+                "requirements": stage_requirements,
+                "commands": results,
+            }
+            message = f"verification failed: {detail}"
+            _persist_verification_result(
+                repo_root,
+                state=state,
+                stage_requested=stage_requested,
+                stage_effective=stage,
+                passed=False,
+                message=message,
+                details=details,
+            )
+            return (False, message, details)
+        if not command_argv:
+            continue
         started = time.monotonic()
         try:
             process = subprocess.run(
-                command,
+                command_argv,
                 cwd=repo_root,
-                shell=True,
+                shell=False,
                 text=True,
                 capture_output=True,
                 check=False,
