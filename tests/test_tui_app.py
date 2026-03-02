@@ -92,7 +92,13 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
+def _write_run_manifest(
+    repo_root: Path,
+    run_id: str,
+    started_at: str,
+    *,
+    status: str = "running",
+) -> None:
     manifest_path = (
         repo_root
         / "experiments"
@@ -105,10 +111,21 @@ def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "timestamps": {"started_at": started_at},
     }
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_run_metrics(repo_root: Path, run_id: str, *, score: float = 0.9) -> None:
+    metrics_path = (
+        repo_root / "experiments" / "plan" / "iter1" / "runs" / run_id / "metrics.json"
+    )
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps({"run_id": run_id, "score": score}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 async def _click_when_visible(
@@ -155,6 +172,15 @@ def _assert_artifact_viewer_edge_to_edge_layout(app: AutolabCockpitApp) -> None:
     # Scroll region should consume the majority of the available vertical space.
     assert scroll.region.height > dialog.region.height // 2
     assert buttons.region.y >= scroll.region.y + scroll.region.height
+
+
+def _list_view_texts(app: AutolabCockpitApp, selector: str) -> tuple[str, ...]:
+    list_view = app.query_one(selector, app_module.ListView)
+    lines: list[str] = []
+    for child in list_view.children:
+        label = child.query_one(app_module.Label)
+        lines.append(str(label.render()))
+    return tuple(lines)
 
 
 def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) -> None:
@@ -386,6 +412,130 @@ def test_view_cycle_shortcuts_switch_modes(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_runs_filter_and_sort_shortcuts_update_visible_run_order(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run_old",
+            "2026-02-01T01:00:00Z",
+            status="completed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run_mid",
+            "2026-02-01T02:00:00Z",
+            status="failed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run_new",
+            "2026-02-01T03:00:00Z",
+            status="running",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            lines = _list_view_texts(app, "#run-list")
+            assert lines[0].startswith("run_new")
+
+            await pilot.press("f")  # all -> active
+            await pilot.pause()
+            lines = _list_view_texts(app, "#run-list")
+            assert len(lines) == 1
+            assert lines[0].startswith("run_new")
+            filter_status = app.query_one("#status-filter", app_module.Static)
+            assert "Runs: active" in str(filter_status.render())
+
+            await pilot.press("f")  # active -> success
+            await pilot.pause()
+            lines = _list_view_texts(app, "#run-list")
+            assert len(lines) == 1
+            assert lines[0].startswith("run_old")
+            assert "start=2026-02-01T01:00:00Z" in lines[0]
+
+            await pilot.press("f")  # success -> failed
+            await pilot.pause()
+            lines = _list_view_texts(app, "#run-list")
+            assert len(lines) == 1
+            assert lines[0].startswith("run_mid")
+            assert "start=2026-02-01T02:00:00Z" in lines[0]
+
+            await pilot.press("f")  # failed -> all
+            await pilot.pause()
+            lines = _list_view_texts(app, "#run-list")
+            assert lines[0].startswith("run_new")
+
+            await pilot.press("o")  # newest -> oldest
+            await pilot.pause()
+            lines = _list_view_texts(app, "#run-list")
+            assert lines[0].startswith("run_old")
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "o order(oldest)" in str(hints.render())
+
+    asyncio.run(_run())
+
+
+def test_runs_metrics_shortcut_opens_metrics_viewer(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_metrics", "2026-02-01T01:00:00Z")
+        _write_run_metrics(repo_root, "run_metrics", score=0.42)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("g")
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ArtifactViewerScreen)
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "metrics.json" in str(title.render())
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
+def test_files_missing_filter_shortcut_hides_present_artifacts(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        todo_path = repo_root / "docs" / "todo.md"
+        todo_path.parent.mkdir(parents=True, exist_ok=True)
+        todo_path.write_text("# todo\n", encoding="utf-8")
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            assert any(item.exists for item in app._current_artifacts)
+            assert any(not item.exists for item in app._current_artifacts)
+
+            await pilot.press("m")
+            await pilot.pause()
+            assert app._current_artifacts
+            assert all(not item.exists for item in app._current_artifacts)
+            context = app.query_one("#files-context", app_module.Static)
+            assert "Filter: missing only" in str(context.render())
+            filter_status = app.query_one("#status-filter", app_module.Static)
+            assert "Files: missing-only" in str(filter_status.render())
+
+            await pilot.press("m")
+            await pilot.pause()
+            assert any(item.exists for item in app._current_artifacts)
+
+    asyncio.run(_run())
+
+
 def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -537,6 +687,42 @@ def test_human_review_modal_composes_without_mount_error(tmp_path: Path) -> None
             )
             assert len(decision_list.children) == 3
             assert decision_list.index == 0
+
+    asyncio.run(_run())
+
+
+def test_human_review_modal_enter_submits_selected_decision(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        selections: list[str | None] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(app_module.HumanReviewDecisionScreen(), selections.append)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert selections == ["retry"]
+
+    asyncio.run(_run())
+
+
+def test_artifact_viewer_escape_closes_modal(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ArtifactViewerScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, app_module.ArtifactViewerScreen)
 
     asyncio.run(_run())
 
