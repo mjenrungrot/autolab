@@ -5,6 +5,7 @@ import re
 import shlex
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +59,15 @@ from autolab.tui.snapshot import (
     load_cockpit_snapshot,
     resolve_stage_prompt_path,
 )
+
+
+@dataclass(frozen=True)
+class QuickJumpTarget:
+    mode: ViewMode
+    label: str
+    search_text: str
+    list_id: str | None = None
+    item_index: int | None = None
 
 
 class UnlockSafetyScreen(ModalScreen[bool]):
@@ -708,6 +718,132 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
         self.action_cancel()
 
 
+class QuickJumpScreen(ModalScreen[QuickJumpTarget | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    CSS = """
+    QuickJumpScreen {
+      align: center middle;
+    }
+
+    #quick-jump-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #quick-jump-query {
+      margin-top: 1;
+      margin-bottom: 1;
+    }
+
+    #quick-jump-list {
+      height: 1fr;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #quick-jump-buttons {
+      align-horizontal: right;
+      height: auto;
+    }
+    """
+
+    def __init__(self, *, targets: tuple[QuickJumpTarget, ...]) -> None:
+        super().__init__()
+        self._targets = targets
+        self._filtered_targets: tuple[QuickJumpTarget, ...] = targets
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="quick-jump-dialog"):
+            yield Label("Quick Jump", id="quick-jump-title")
+            yield Static(
+                (
+                    "Type to filter views, runs, files, or home actions. "
+                    "Press Enter to jump."
+                ),
+                markup=False,
+            )
+            yield Input(
+                placeholder="Search (e.g., view files, run run-001)",
+                id="quick-jump-query",
+            )
+            yield ListView(id="quick-jump-list")
+            with Horizontal(id="quick-jump-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Jump", id="quick-jump-go", variant="primary")
+
+    def on_mount(self) -> None:
+        self._refresh_list(query="")
+        self.query_one("#quick-jump-query", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "quick-jump-query":
+            return
+        self._refresh_list(query=event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "quick-jump-query":
+            return
+        self._submit_selection()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "quick-jump-list":
+            return
+        self._submit_selection()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.action_cancel()
+            return
+        if event.button.id != "quick-jump-go":
+            return
+        self._submit_selection()
+
+    def _refresh_list(self, *, query: str) -> None:
+        normalized_terms = [term for term in query.lower().split() if term]
+        if not normalized_terms:
+            filtered = self._targets
+        else:
+            filtered = tuple(
+                target
+                for target in self._targets
+                if all(term in target.search_text for term in normalized_terms)
+            )
+        self._filtered_targets = filtered
+
+        list_view = self.query_one("#quick-jump-list", ListView)
+        list_view.clear()
+        button = self.query_one("#quick-jump-go", Button)
+        if not filtered:
+            list_view.append(ListItem(Label("(No matches)")))
+            list_view.index = 0
+            button.disabled = True
+            return
+
+        for target in filtered:
+            list_view.append(ListItem(Label(target.label)))
+        list_view.index = 0
+        button.disabled = False
+
+    def _submit_selection(self) -> None:
+        if not self._filtered_targets:
+            self.notify("No matching jump target.")
+            return
+        list_view = self.query_one("#quick-jump-list", ListView)
+        selected_index = list_view.index
+        if selected_index is None or not (
+            0 <= selected_index < len(self._filtered_targets)
+        ):
+            selected_index = 0
+        self.dismiss(self._filtered_targets[selected_index])
+
+
 def _is_completed_backlog_status(status: str) -> bool:
     return str(status).strip().lower() in BACKLOG_COMPLETED_STATUSES
 
@@ -1328,6 +1464,10 @@ class AutolabCockpitApp(App[None]):
       margin-bottom: 1;
     }
 
+    #help-scroll {
+      height: 1fr;
+    }
+
     #home-render-card {
       border: round $surface;
       padding: 0 1;
@@ -1381,6 +1521,7 @@ class AutolabCockpitApp(App[None]):
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
+        ("ctrl+j", "quick_jump", "Quick Jump"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
@@ -1434,7 +1575,10 @@ class AutolabCockpitApp(App[None]):
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Enter activate | o open | m mode quick | ? help",
+            (
+                "Keys: 1-5 view | [/] cycle views | Enter activate | "
+                "Ctrl+J quick jump | o open | m mode quick | ? help"
+            ),
             id="key-hints",
             classes="tone-muted",
         )
@@ -1515,7 +1659,8 @@ class AutolabCockpitApp(App[None]):
                 )
             with Vertical(id="help-view", classes="view-panel"):
                 yield Static("Help", classes="view-title")
-                yield Static("", id="help-text", markup=False)
+                with VerticalScroll(id="help-scroll"):
+                    yield Static("", id="help-text", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1572,6 +1717,7 @@ class AutolabCockpitApp(App[None]):
             "1-5 view",
             "[ / ] cycle",
             "Enter activate",
+            "Ctrl+J jump",
             "o open",
             "u lock",
             "x advanced",
@@ -1738,7 +1884,7 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "console":
             self.query_one("#console-log", RichLog).focus()
         else:
-            self.query_one("#help-text", Static).focus()
+            self.query_one("#help-scroll", VerticalScroll).focus()
 
     def _selected_run(self):
         snapshot = self._snapshot
@@ -2088,6 +2234,8 @@ class AutolabCockpitApp(App[None]):
                 "Files\n"
                 f"- Stage: {stage}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+                f"- Showing: 0/{len(self._all_artifacts)}\n"
+                f"- Missing files: {self._missing_artifacts_count}\n"
                 f"- {empty_text}"
             )
             self._set_tone(context_widget, "tone-muted")
@@ -2122,14 +2270,11 @@ class AutolabCockpitApp(App[None]):
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
-            f"- Item: {selected_index}/{visible_count}\n"
-            f"- Selected: {selected_text}\n"
+            f"- Selected: {selected_text} ({selected_index}/{visible_count})\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
-            f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
-            "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
-            "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
-            "  (unlock + confirm required)\n"
-            "- Keys: Enter open viewer"
+            f"- Showing: {visible_count}/{total_count}\n"
+            f"- Missing files: {missing_count}\n"
+            "- Keys: Enter viewer | e editor | m missing-only"
         )
         self._set_tone(context_widget, "tone-info")
 
@@ -2140,6 +2285,7 @@ class AutolabCockpitApp(App[None]):
             "\n"
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
+            "- Jump: Ctrl+J opens searchable quick jump.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
             "- Utilities: r refresh, s stop active loop, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
@@ -2162,6 +2308,7 @@ class AutolabCockpitApp(App[None]):
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- e: Open selected file in editor (Files view).\n"
+            "- Ctrl+J: Jump directly to views, runs, files, or home actions.\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -2177,6 +2324,89 @@ class AutolabCockpitApp(App[None]):
             "- Red: blocking/error"
         )
         self._set_tone(help_widget, "tone-muted")
+
+    def _build_quick_jump_targets(self) -> tuple[QuickJumpTarget, ...]:
+        targets: list[QuickJumpTarget] = []
+        for mode in self._MODE_ORDER:
+            label = f"View: {mode}"
+            targets.append(
+                QuickJumpTarget(
+                    mode=mode,
+                    label=label,
+                    search_text=f"view {mode}".lower(),
+                )
+            )
+
+        for index, action_id in enumerate(self._home_action_ids):
+            action = self._actions_by_id.get(action_id)
+            action_label = (
+                action.user_label
+                if action is not None and action.user_label
+                else (action.label if action is not None else action_id)
+            )
+            targets.append(
+                QuickJumpTarget(
+                    mode="home",
+                    list_id="home-action-list",
+                    item_index=index,
+                    label=f"Home action: {action_label}",
+                    search_text=f"home action {action_label} {action_id}".lower(),
+                )
+            )
+
+        snapshot = self._snapshot
+        if snapshot is not None:
+            for index, run in enumerate(snapshot.runs):
+                started = run.started_at or "-"
+                targets.append(
+                    QuickJumpTarget(
+                        mode="runs",
+                        list_id="run-list",
+                        item_index=index,
+                        label=f"Run: {run.run_id} [{run.status}] start={started}",
+                        search_text=f"run {run.run_id} {run.status} {started}".lower(),
+                    )
+                )
+
+        for index, artifact in enumerate(self._current_artifacts):
+            marker = "ok" if artifact.exists else "missing"
+            display_path = self._display_path(artifact.path)
+            targets.append(
+                QuickJumpTarget(
+                    mode="files",
+                    list_id="artifact-list",
+                    item_index=index,
+                    label=f"File: {display_path} [{marker}]",
+                    search_text=f"file {display_path} {marker}".lower(),
+                )
+            )
+
+        return tuple(targets)
+
+    def _apply_quick_jump_target(self, target: QuickJumpTarget) -> None:
+        self._switch_mode(target.mode)
+        if target.list_id is None or target.item_index is None:
+            return
+
+        if target.list_id == "home-action-list":
+            total_count = len(self._home_action_ids)
+        elif target.list_id == "run-list":
+            total_count = len(self._snapshot.runs) if self._snapshot is not None else 0
+        elif target.list_id == "artifact-list":
+            total_count = len(self._current_artifacts)
+        else:
+            return
+
+        if total_count <= 0:
+            return
+        selected_index = min(max(target.item_index, 0), total_count - 1)
+        self._apply_list_selection(
+            list_id=target.list_id,
+            selected_index=selected_index,
+        )
+        target_list = self.query_one(f"#{target.list_id}", ListView)
+        target_list.index = selected_index
+        target_list.focus()
 
     def _start_ui_flow(
         self,
@@ -2267,6 +2497,21 @@ class AutolabCockpitApp(App[None]):
 
     def action_stop_loop(self) -> None:
         self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+
+    def action_quick_jump(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._start_ui_flow(label="quick-jump", flow_factory=self._quick_jump)
+
+    async def _quick_jump(self) -> None:
+        targets = self._build_quick_jump_targets()
+        if not targets:
+            self.notify("Quick jump has no targets yet.")
+            return
+        selected = await self.push_screen_wait(QuickJumpScreen(targets=targets))
+        if selected is None:
+            return
+        self._apply_quick_jump_target(selected)
 
     def action_quick_open(self) -> None:
         if self._mode == "home":

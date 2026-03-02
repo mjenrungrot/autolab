@@ -632,6 +632,50 @@ def test_view_cycle_shortcuts_switch_modes(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_quick_jump_can_switch_to_files_mode(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.QuickJumpScreen)
+            await pilot.press("v", "i", "e", "w", " ", "f", "i", "l", "e", "s")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            mode_status = app.query_one("#status-mode", app_module.Static)
+            assert "Mode: files" in str(mode_status.render())
+
+    asyncio.run(_run())
+
+
+def test_quick_jump_can_select_specific_run(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_a", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run_b", "2026-02-01T02:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+            await pilot.press("r", "u", "n", " ", "r", "u", "n", "_", "a")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            mode_status = app.query_one("#status-mode", app_module.Static)
+            assert "Mode: runs" in str(mode_status.render())
+            selected_run = app._selected_run()
+            assert selected_run is not None
+            assert selected_run.run_id == "run_a"
+
+    asyncio.run(_run())
+
+
 def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -640,6 +684,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
             hints = app.query_one("#key-hints", app_module.Static)
+            assert "Ctrl+J jump" in str(hints.render())
             assert "Enter recommended action" in str(hints.render())
             assert "p prompt" in str(hints.render())
 
@@ -1104,7 +1149,7 @@ def test_files_context_includes_selection_and_missing_counts(tmp_path: Path) -> 
             await pilot.pause()
             context = app.query_one("#files-context", app_module.Static)
             rendered = str(context.render())
-            assert "Item: " in rendered
+            assert "Selected: " in rendered
             assert "Missing files:" in rendered
 
     asyncio.run(_run())
