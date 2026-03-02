@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.61
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.62
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -94,7 +94,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
 
-**Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. By default it uses `state.stage`; use `--stage <stage>` to override and `--context` to append resolved context JSON.
+**Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. It defaults to `state.stage`. Use `--stage <stage>` to override, and `--context` to append resolved context JSON.
 
 ```bash
 autolab render
@@ -102,7 +102,13 @@ autolab render --stage implementation
 autolab render --stage design --context
 ```
 
-**Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) designed to reduce first-use complexity. It starts locked (read-only), requires explicit unlock + per-action confirmation for mutating commands, auto-locks after mutating completion, and stays fail-closed on snapshot refresh errors. Run/loop actions are preset-first with optional advanced controls, and high-risk actions are hidden until advanced mode is enabled. Artifact external open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
+**Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) with render-aware guidance:
+
+- Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
+- Files supports quick-open for rendered prompt, render context, prompt template, state, and stage artifacts.
+- Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
+
+Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

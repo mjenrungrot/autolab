@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 ActionKind = Literal["view", "mutating"]
 ActionRisk = Literal["low", "medium", "high"]
 StageStatus = Literal["complete", "current", "blocked", "upcoming"]
 ViewMode = Literal["home", "runs", "files", "console", "help"]
+RenderPreviewStatus = Literal["ok", "unavailable", "error"]
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,17 @@ class VerificationSummary:
     passed: bool
     message: str
     failing_commands: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RenderPreview:
+    stage: str
+    status: RenderPreviewStatus
+    template_path: Path | None
+    prompt_text: str
+    prompt_excerpt: str
+    context_payload: dict[str, Any] = field(default_factory=dict)
+    error_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -114,6 +126,7 @@ class CockpitSnapshot:
     runs: tuple[RunItem, ...]
     todos: tuple[TodoItem, ...]
     verification: VerificationSummary | None
+    render_preview: RenderPreview
     top_blockers: tuple[str, ...]
     primary_blocker: str
     secondary_blockers: tuple[str, ...]

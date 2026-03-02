@@ -41,6 +41,7 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
 
     assert snapshot.current_stage == "design"
     assert snapshot.verification is None
+    assert snapshot.render_preview.status == "error"
     assert snapshot.runs == ()
     assert snapshot.todos == ()
     assert snapshot.top_blockers == ()
@@ -49,6 +50,54 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
     assert snapshot.recommended_actions
     assert snapshot.recommended_actions[0].action_id == "open_stage_prompt"
     assert "design" in {item.name for item in snapshot.stage_items}
+
+
+def test_snapshot_render_preview_ok_without_rendered_output_writes(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="design")
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(
+        "# Stage design\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.render_preview.status == "ok"
+    assert "stage: design" in snapshot.render_preview.prompt_text.lower()
+    assert snapshot.recommended_actions
+    assert snapshot.recommended_actions[0].action_id == "open_rendered_prompt"
+    rendered_dir = repo / ".autolab" / "prompts" / "rendered"
+    assert not (rendered_dir / "design.md").exists()
+    assert not (rendered_dir / "design.context.json").exists()
+
+
+def test_snapshot_render_preview_failure_is_nonfatal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="design")
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text("# Stage design\n", encoding="utf-8")
+
+    def _raise_render(*_args, **_kwargs):
+        raise RuntimeError("render exploded")
+
+    monkeypatch.setattr("autolab.tui.snapshot._render_stage_prompt", _raise_render)
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.current_stage == "design"
+    assert snapshot.render_preview.status == "error"
+    assert "render exploded" in snapshot.render_preview.error_message
+    assert snapshot.recommended_actions
+    assert snapshot.recommended_actions[0].action_id == "open_stage_prompt"
 
 
 def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> None:

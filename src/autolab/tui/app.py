@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -78,8 +79,8 @@ class UnlockSafetyScreen(ModalScreen[bool]):
         with Vertical(id="unlock-dialog"):
             yield Label("Unlock mutating actions?", id="unlock-title")
             yield Static(
-                "Mutating actions can update workflow state and files. "
-                "You will still get a confirmation before every mutating command.",
+                "Mutating actions can change workflow state and files.\n"
+                "Each mutating command still requires confirmation.",
                 markup=False,
             )
             with Horizontal(id="unlock-buttons"):
@@ -503,19 +504,27 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
     }
     """
 
-    def __init__(self, *, artifact_path: Path, artifact_text: str) -> None:
+    def __init__(
+        self,
+        *,
+        title: str,
+        artifact_text: str,
+        editor_path: Path | None = None,
+    ) -> None:
         super().__init__()
-        self._artifact_path = artifact_path
+        self._title = title
         self._artifact_text = artifact_text
+        self._editor_path = editor_path
 
     def compose(self) -> ComposeResult:
         with Vertical(id="artifact-dialog"):
-            yield Label(str(self._artifact_path), id="artifact-path")
+            yield Label(self._title, id="artifact-path")
             with VerticalScroll(id="artifact-scroll"):
                 yield Static(self._artifact_text, markup=False)
             with Horizontal(id="artifact-buttons"):
                 yield Button("Close", id="close")
-                yield Button("Open in $EDITOR", id="open-editor", variant="primary")
+                if self._editor_path is not None:
+                    yield Button("Open in $EDITOR", id="open-editor", variant="primary")
 
     def on_mount(self) -> None:
         self.query_one("#close", Button).focus()
@@ -528,9 +537,37 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
 
 
 class AutolabCockpitApp(App[None]):
+    _TONE_CLASSES = (
+        "tone-success",
+        "tone-info",
+        "tone-warning",
+        "tone-danger",
+        "tone-muted",
+    )
+
     CSS = """
     Screen {
       layout: vertical;
+    }
+
+    .tone-success {
+      color: $success;
+    }
+
+    .tone-info {
+      color: $accent;
+    }
+
+    .tone-warning {
+      color: $warning;
+    }
+
+    .tone-danger {
+      color: $error;
+    }
+
+    .tone-muted {
+      color: $text-muted;
     }
 
     #status-rail {
@@ -603,6 +640,7 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
+    #home-render-card,
     #home-blocker-card,
     #home-artifacts-card,
     #help-text {
@@ -672,13 +710,14 @@ class AutolabCockpitApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="status-rail"):
-            yield Static("Locked (read-only).", id="status-safety")
+            yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 switch views, ? help, Enter activate, u unlock/lock, x advanced, r refresh, s stop loop, c clear.",
+            "Keys: 1-5 view | Enter run action | u lock | x advanced | r refresh | s stop loop | c clear | ? help",
             id="key-hints",
+            classes="tone-muted",
         )
         with Horizontal(id="nav-row"):
             yield Button("1 Home", id="nav-home", variant="primary")
@@ -691,9 +730,10 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-render-card", markup=False)
                 yield Static("", id="home-blocker-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
-                yield Static("Recommended next actions", classes="section-title")
+                yield Static("Recommended Actions", classes="section-title")
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
                 yield Static("Runs", classes="view-title")
@@ -709,7 +749,9 @@ class AutolabCockpitApp(App[None]):
                 with Horizontal(id="file-buttons"):
                     yield Button("Open Viewer", id="file-open-viewer")
                     yield Button("Open Editor", id="file-open-editor")
-                    yield Button("Open Stage Prompt", id="file-open-prompt")
+                    yield Button("Open Rendered", id="file-open-rendered")
+                    yield Button("Open Context", id="file-open-context")
+                    yield Button("Open Template", id="file-open-prompt")
                     yield Button("Open State", id="file-open-state")
                 with Horizontal(id="file-advanced-buttons"):
                     yield Button(
@@ -758,6 +800,24 @@ class AutolabCockpitApp(App[None]):
         except ValueError:
             return str(path)
 
+    def _set_tone(self, widget: Static | Label, tone_class: str) -> None:
+        for class_name in self._TONE_CLASSES:
+            widget.remove_class(class_name)
+        if tone_class:
+            widget.add_class(tone_class)
+
+    def _tone_for_run_status(self, status: str) -> str:
+        normalized = str(status).strip().lower()
+        if normalized in {"completed", "synced", "pass", "success", "done"}:
+            return "tone-success"
+        if normalized in {"running", "queued", "pending", "submitted", "in_progress"}:
+            return "tone-info"
+        if normalized in {"partial", "warning", "needs_attention"}:
+            return "tone-warning"
+        if normalized in {"failed", "fail", "error", "timeout", "stopped"}:
+            return "tone-danger"
+        return "tone-muted"
+
     def _update_ui_chrome(self) -> None:
         safety = self.query_one("#status-safety", Static)
         mode = self.query_one("#status-mode", Static)
@@ -765,18 +825,22 @@ class AutolabCockpitApp(App[None]):
         running = self.query_one("#status-running", Static)
 
         safety.update(
-            "Unlocked (mutating enabled)." if self._armed else "Locked (read-only)."
+            "Unlocked: mutating enabled." if self._armed else "Locked: read-only."
         )
+        self._set_tone(safety, "tone-warning" if self._armed else "tone-success")
         mode.update(f"Mode: {self._mode}")
         advanced.update(
             "Advanced: visible" if self._show_advanced else "Advanced: hidden"
         )
+        self._set_tone(advanced, "tone-info" if self._show_advanced else "tone-muted")
 
         if self._running_intent is None:
-            running.update("")
+            running.update("Idle")
+            self._set_tone(running, "tone-muted")
         else:
             command = shlex.join(self._running_intent.argv)
             running.update(f"Running: {command[:72]}")
+            self._set_tone(running, "tone-info")
 
         self.query_one(
             "#file-advanced-buttons", Horizontal
@@ -854,15 +918,31 @@ class AutolabCockpitApp(App[None]):
         artifact_list.clear()
         artifact_list.append(ListItem(Label("(snapshot unavailable)")))
 
-        self.query_one("#home-stage-card", Static).update("Current stage: unavailable")
-        self.query_one("#home-blocker-card", Static).update(
-            "Primary blocker: snapshot refresh failed"
+        stage_widget = self.query_one("#home-stage-card", Static)
+        stage_widget.update("Stage\nUnavailable.")
+        self._set_tone(stage_widget, "tone-muted")
+
+        render_widget = self.query_one("#home-render-card", Static)
+        render_widget.update(
+            "Render Preview\nUnavailable because snapshot refresh failed."
         )
-        self.query_one("#home-artifacts-card", Static).update(
-            "Required artifacts: unavailable"
-        )
-        self.query_one("#run-details", Static).update("Run details unavailable.")
-        self.query_one("#files-context", Static).update("Files unavailable.")
+        self._set_tone(render_widget, "tone-danger")
+
+        blocker_widget = self.query_one("#home-blocker-card", Static)
+        blocker_widget.update("Blockers\nSnapshot refresh failed.")
+        self._set_tone(blocker_widget, "tone-danger")
+
+        artifacts_widget = self.query_one("#home-artifacts-card", Static)
+        artifacts_widget.update("Artifacts\nUnavailable.")
+        self._set_tone(artifacts_widget, "tone-warning")
+
+        run_widget = self.query_one("#run-details", Static)
+        run_widget.update("Run Details\nUnavailable.")
+        self._set_tone(run_widget, "tone-muted")
+
+        files_widget = self.query_one("#files-context", Static)
+        files_widget.update("Files\nUnavailable.")
+        self._set_tone(files_widget, "tone-muted")
 
     def _refresh_snapshot(self) -> bool:
         try:
@@ -888,29 +968,70 @@ class AutolabCockpitApp(App[None]):
             return
 
         stage = snapshot.current_stage
-        self.query_one("#home-stage-card", Static).update(
-            "Start here:\n"
-            f"Current stage: {stage}\n"
-            f"Attempt: {snapshot.stage_attempt}/{snapshot.max_stage_attempts}\n"
-            f"Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}",
+        stage_widget = self.query_one("#home-stage-card", Static)
+        stage_widget.update(
+            "Stage\n"
+            f"- Current: {stage}\n"
+            f"- Attempt: {snapshot.stage_attempt}/{snapshot.max_stage_attempts}\n"
+            f"- Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}"
         )
+        self._set_tone(stage_widget, "tone-info")
 
-        blocker_lines = [f"Primary blocker: {snapshot.primary_blocker}"]
+        render_widget = self.query_one("#home-render-card", Static)
+        render_preview = snapshot.render_preview
+        if render_preview.status == "ok":
+            render_widget.update(
+                "What Autolab Will Run Now\n"
+                f"- Stage: {render_preview.stage}\n\n"
+                f"{render_preview.prompt_excerpt}"
+            )
+            self._set_tone(render_widget, "tone-info")
+        elif render_preview.status == "unavailable":
+            render_widget.update(
+                "What Autolab Will Run Now\n"
+                "- Render preview unavailable for this stage."
+            )
+            self._set_tone(render_widget, "tone-warning")
+        else:
+            template_hint = (
+                self._display_path(render_preview.template_path)
+                if render_preview.template_path is not None
+                else "unknown template path"
+            )
+            render_widget.update(
+                "What Autolab Will Run Now\n"
+                "- Render preview failed.\n"
+                f"- Error: {render_preview.error_message or 'unknown render error'}\n"
+                f"- Template: {template_hint}"
+            )
+            self._set_tone(render_widget, "tone-danger")
+
+        blocker_lines = [f"- Primary: {snapshot.primary_blocker}"]
         if snapshot.secondary_blockers:
-            blocker_lines.append("Other blockers:")
+            blocker_lines.append("- Additional blockers:")
             blocker_lines.extend(f"- {entry}" for entry in snapshot.secondary_blockers)
-        self.query_one("#home-blocker-card", Static).update("\n".join(blocker_lines))
+        blocker_widget = self.query_one("#home-blocker-card", Static)
+        blocker_widget.update("Blockers\n" + "\n".join(blocker_lines))
+        self._set_tone(
+            blocker_widget,
+            "tone-success" if snapshot.primary_blocker == "none" else "tone-danger",
+        )
 
         stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
         if stage_artifacts:
             lines = [
-                f"[{'x' if item.exists else ' '}] {self._display_path(item.path)}"
+                f"- {'OK' if item.exists else 'MISS'} {self._display_path(item.path)}"
                 for item in stage_artifacts
             ]
-            artifact_text = "Required artifacts:\n" + "\n".join(lines)
+            artifact_text = "Required Artifacts\n" + "\n".join(lines)
         else:
-            artifact_text = "Required artifacts:\n- (none for this stage)"
-        self.query_one("#home-artifacts-card", Static).update(artifact_text)
+            artifact_text = "Required Artifacts\n- None for this stage."
+        artifacts_widget = self.query_one("#home-artifacts-card", Static)
+        artifacts_widget.update(artifact_text)
+        has_missing = any(not item.exists for item in stage_artifacts)
+        self._set_tone(
+            artifacts_widget, "tone-warning" if has_missing else "tone-success"
+        )
 
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
@@ -922,14 +1043,26 @@ class AutolabCockpitApp(App[None]):
             if action.advanced and not self._show_advanced:
                 continue
             label = action.user_label or action.label
-            action_list.append(ListItem(Label(f"{label} - {recommended.reason}")))
+            item_label = Label(f"{label}: {recommended.reason}")
+            item_label.add_class("tone-info")
+            action_list.append(ListItem(item_label))
             action_ids.append(action.action_id)
 
         if not action_ids:
-            action_list.append(
-                ListItem(Label("Open stage guidance - review stage instructions."))
+            fallback_action_id = (
+                "open_rendered_prompt"
+                if snapshot.render_preview.status == "ok"
+                else "open_stage_prompt"
             )
-            action_ids.append("open_stage_prompt")
+            fallback_text = (
+                "Open rendered prompt: preview what will run next."
+                if fallback_action_id == "open_rendered_prompt"
+                else "Open stage prompt template."
+            )
+            item_label = Label(fallback_text)
+            item_label.add_class("tone-info")
+            action_list.append(ListItem(item_label))
+            action_ids.append(fallback_action_id)
 
         self._home_action_ids = tuple(action_ids)
         self._home_action_index = min(
@@ -945,18 +1078,22 @@ class AutolabCockpitApp(App[None]):
             return
 
         if not snapshot.runs:
-            run_list.append(ListItem(Label("(no runs found yet)")))
+            empty_label = Label("(No runs found yet)")
+            empty_label.add_class("tone-muted")
+            run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
-            self.query_one("#run-details", Static).update(
-                "No runs available. Run one transition first to generate run artifacts."
+            details_widget = self.query_one("#run-details", Static)
+            details_widget.update(
+                "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
             )
+            self._set_tone(details_widget, "tone-muted")
             return
 
         for run in snapshot.runs:
             started = run.started_at or "-"
-            run_list.append(
-                ListItem(Label(f"{run.run_id} [{run.status}] start={started}"))
-            )
+            run_label = Label(f"{run.run_id} [{run.status}] start={started}")
+            run_label.add_class(self._tone_for_run_status(run.status))
+            run_list.append(ListItem(run_label))
         self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
         run_list.index = self._selected_run_index
         self._update_run_details()
@@ -964,15 +1101,19 @@ class AutolabCockpitApp(App[None]):
     def _update_run_details(self) -> None:
         run = self._selected_run()
         if run is None:
-            self.query_one("#run-details", Static).update("No run selected.")
+            details_widget = self.query_one("#run-details", Static)
+            details_widget.update("Run Details\nNo run selected.")
+            self._set_tone(details_widget, "tone-muted")
             return
-        self.query_one("#run-details", Static).update(
-            "Selected run:\n"
-            f"- run_id: {run.run_id}\n"
-            f"- status: {run.status}\n"
-            f"- started_at: {run.started_at or '-'}\n"
-            f"- completed_at: {run.completed_at or '-'}"
+        details_widget = self.query_one("#run-details", Static)
+        details_widget.update(
+            "Run Details\n"
+            f"- Run ID: {run.run_id}\n"
+            f"- Status: {run.status}\n"
+            f"- Started: {run.started_at or '-'}\n"
+            f"- Completed: {run.completed_at or '-'}"
         )
+        self._set_tone(details_widget, self._tone_for_run_status(run.status))
 
     def _populate_artifact_list(self) -> None:
         snapshot = self._snapshot
@@ -995,18 +1136,22 @@ class AutolabCockpitApp(App[None]):
         self._current_artifacts = tuple(merged)
 
         if not self._current_artifacts:
-            artifact_list.append(ListItem(Label("(no relevant files)")))
+            empty_label = Label("(No relevant files)")
+            empty_label.add_class("tone-muted")
+            artifact_list.append(ListItem(empty_label))
             self._selected_artifact_index = 0
-            self.query_one("#files-context", Static).update(
-                f"Stage: {stage}\nNo files detected for this stage."
+            context_widget = self.query_one("#files-context", Static)
+            context_widget.update(
+                f"Files\n- Stage: {stage}\n- No files detected for this stage."
             )
+            self._set_tone(context_widget, "tone-muted")
             return
 
         for artifact in self._current_artifacts:
-            marker = "x" if artifact.exists else " "
-            artifact_list.append(
-                ListItem(Label(f"[{marker}] {self._display_path(artifact.path)}"))
-            )
+            marker = "OK" if artifact.exists else "MISS"
+            entry = Label(f"[{marker}] {self._display_path(artifact.path)}")
+            entry.add_class("tone-success" if artifact.exists else "tone-warning")
+            artifact_list.append(ListItem(entry))
         self._selected_artifact_index = min(
             self._selected_artifact_index,
             len(self._current_artifacts) - 1,
@@ -1017,34 +1162,47 @@ class AutolabCockpitApp(App[None]):
     def _update_files_context(self) -> None:
         snapshot = self._snapshot
         if snapshot is None:
-            self.query_one("#files-context", Static).update("Files unavailable.")
+            context_widget = self.query_one("#files-context", Static)
+            context_widget.update("Files\nUnavailable.")
+            self._set_tone(context_widget, "tone-muted")
             return
         selected = self._selected_artifact_path()
         selected_text = self._display_path(selected) if selected else "none"
-        self.query_one("#files-context", Static).update(
-            "Safe actions vs mutating actions:\n"
-            "- Open Viewer/Editor/Prompt/State are view-only.\n"
-            "- Loop/Lock break are mutating and require unlock + confirm.\n"
-            f"Stage: {snapshot.current_stage}\n"
-            f"Selected file: {selected_text}"
+        context_widget = self.query_one("#files-context", Static)
+        context_widget.update(
+            "Files\n"
+            f"- Stage: {snapshot.current_stage}\n"
+            f"- Selected: {selected_text}\n"
+            "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
+            "- Mutating: Loop and Lock Break (unlock + confirm required)"
         )
+        self._set_tone(context_widget, "tone-info")
 
     def _update_help_text(self) -> None:
-        self.query_one("#help-text", Static).update(
-            "Autolab TUI v2\n"
+        help_widget = self.query_one("#help-text", Static)
+        help_widget.update(
+            "Autolab TUI\n"
             "\n"
-            "- Home: onboarding summary and recommended next actions.\n"
-            "- Runs: inspect run manifests and metrics.\n"
-            "- Files: open stage/common files quickly.\n"
-            "- Console: command output stream.\n"
+            "Views\n"
+            "- Home: stage status, rendered prompt preview, recommended actions.\n"
+            "- Runs: run manifest and metrics overview.\n"
+            "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
+            "- Console: live command output.\n"
             "\n"
-            "Safety model:\n"
+            "Safety\n"
             "- Starts locked (read-only).\n"
-            "- Unlock is required before mutating commands.\n"
+            "- Unlock before mutating commands.\n"
             "- Every mutating command requires confirmation.\n"
-            "- Mutating command completion auto-locks the cockpit.\n"
-            "- Snapshot refresh failures fail closed and force lock."
+            "- Cockpit auto-locks after mutating command completion.\n"
+            "- Snapshot refresh failures fail closed and lock actions.\n"
+            "\n"
+            "Color Cues\n"
+            "- Green: ready/success\n"
+            "- Blue: active/info\n"
+            "- Yellow: warning/attention\n"
+            "- Red: blocking/error"
         )
+        self._set_tone(help_widget, "tone-muted")
 
     def _start_ui_flow(
         self,
@@ -1184,6 +1342,8 @@ class AutolabCockpitApp(App[None]):
             "run-open-metrics": "open_selected_run_metrics",
             "file-open-viewer": "open_selected_artifact",
             "file-open-editor": "open_selected_artifact_editor",
+            "file-open-rendered": "open_rendered_prompt",
+            "file-open-context": "open_render_context",
             "file-open-prompt": "open_stage_prompt",
             "file-open-state": "open_state_history",
             "file-run-loop": "run_loop",
@@ -1235,7 +1395,7 @@ class AutolabCockpitApp(App[None]):
         summary = (
             f"Action: {action.user_label or action.label}\n"
             f"Risk: {action.risk_level}\n"
-            f"What it does: {action.help_text or action.description}"
+            f"Purpose: {action.help_text or action.description}"
         )
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
@@ -1261,21 +1421,28 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
         return True
 
-    async def _open_artifact_viewer(self, artifact_path: Path) -> None:
-        text, truncated = load_artifact_text(artifact_path)
-        if truncated:
-            text = f"{text}\n\n[viewer note] content truncated for readability."
+    async def _open_text_viewer(
+        self,
+        *,
+        title: str,
+        text: str,
+        editor_path: Path | None = None,
+    ) -> None:
         result = await self.push_screen_wait(
-            ArtifactViewerScreen(artifact_path=artifact_path, artifact_text=text)
+            ArtifactViewerScreen(
+                title=title,
+                artifact_text=text,
+                editor_path=editor_path,
+            )
         )
-        if result != "open_editor":
+        if result != "open_editor" or editor_path is None:
             return
         snapshot = self._snapshot
         if snapshot is None:
             return
         action = self._actions_by_id["open_selected_artifact_editor"]
         intent = build_open_in_editor_intent(
-            target_path=artifact_path,
+            target_path=editor_path,
             cwd=snapshot.repo_root,
         )
         if await self._confirm_action_intent(
@@ -1285,6 +1452,16 @@ class AutolabCockpitApp(App[None]):
             confirm_label="Open",
         ):
             self._start_command(intent)
+
+    async def _open_artifact_viewer(self, artifact_path: Path) -> None:
+        text, truncated = load_artifact_text(artifact_path)
+        if truncated:
+            text = f"{text}\n\n[viewer note] content truncated for readability."
+        await self._open_text_viewer(
+            title=self._display_path(artifact_path),
+            text=text,
+            editor_path=artifact_path,
+        )
 
     async def _execute_action(self, action_id: str) -> None:
         snapshot = self._snapshot
@@ -1341,6 +1518,31 @@ class AutolabCockpitApp(App[None]):
                 self.notify("No run is available yet.")
                 return
             await self._open_artifact_viewer(run.metrics_path)
+            return
+
+        if action_id == "open_rendered_prompt":
+            preview = snapshot.render_preview
+            if preview.status != "ok" or not preview.prompt_text.strip():
+                self.notify("Rendered prompt preview is not available.")
+                return
+            await self._open_text_viewer(
+                title=f"Rendered Prompt ({preview.stage})",
+                text=preview.prompt_text,
+                editor_path=preview.template_path,
+            )
+            return
+
+        if action_id == "open_render_context":
+            preview = snapshot.render_preview
+            if preview.status != "ok" or not preview.context_payload:
+                self.notify("Render context is not available.")
+                return
+            context_text = json.dumps(preview.context_payload, indent=2, sort_keys=True)
+            await self._open_text_viewer(
+                title=f"Render Context ({preview.stage})",
+                text=context_text,
+                editor_path=None,
+            )
             return
 
         if action_id == "open_stage_prompt":

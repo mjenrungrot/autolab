@@ -3614,7 +3614,7 @@ def _top_level_help_epilog() -> str:
         "Recommended onboarding flow:",
         "  autolab init -> autolab configure --check -> autolab status -> autolab run --verify",
         "",
-        "Run 'autolab COMMAND --help' for command-level details.",
+        "Use 'autolab COMMAND --help' for detailed command options.",
     ]
     return "\n".join(lines)
 
@@ -3670,7 +3670,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reset.set_defaults(handler=_cmd_reset)
 
     verify = subparsers.add_parser(
-        "verify", help="Run stage-relevant verifier checks and write a summary artifact"
+        "verify", help="Run verification checks for a stage and write a summary report"
     )
     verify.add_argument(
         "--state-file",
@@ -3680,7 +3680,7 @@ def _build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--stage",
         default=None,
-        help="Override stage for verification command resolution (default: state.stage)",
+        help="Verify a specific stage instead of state.stage.",
     )
     verify.set_defaults(handler=_cmd_verify)
 
@@ -3692,7 +3692,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     render = subparsers.add_parser(
         "render",
-        help="Render stage prompt to stdout without executing workflow transitions",
+        help="Print the resolved stage prompt without executing workflow transitions",
     )
     render.add_argument(
         "--state-file",
@@ -3702,16 +3702,16 @@ def _build_parser() -> argparse.ArgumentParser:
     render.add_argument(
         "--stage",
         default=None,
-        help="Override stage for prompt rendering (default: state.stage)",
+        help="Render a specific stage instead of state.stage.",
     )
     render.add_argument(
         "--context",
         action="store_true",
-        help="Append resolved prompt context JSON after rendered prompt text.",
+        help="Append resolved prompt context JSON after prompt text.",
     )
     render.set_defaults(handler=_cmd_render)
 
-    run = subparsers.add_parser("run", help="Run one deterministic stage transition")
+    run = subparsers.add_parser("run", help="Run one workflow stage transition")
     run.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -3721,22 +3721,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--decision",
         choices=DECISION_STAGES,
         default=None,
-        help="Manual decision target when current stage is decide_repeat",
+        help="Decision target to use when current stage is decide_repeat.",
     )
     run.add_argument(
         "--assistant",
         action="store_true",
-        help="Enable engineer-assistant task cycle mode for this run.",
+        help="Use engineer-assistant task cycle mode for this run.",
     )
     run.add_argument(
         "--auto-decision",
         action="store_true",
-        help="Allow decide_repeat to auto-select from todo/backlog when --decision is not provided.",
+        help="Let decide_repeat auto-select from todo/backlog when --decision is omitted.",
     )
     run.add_argument(
         "--verify",
         action="store_true",
-        help="Run policy-driven verification before stage evaluation in this run.",
+        help="Run policy-driven verification before stage evaluation.",
     )
     run.add_argument(
         "--strict-implementation-progress",
@@ -3756,21 +3756,21 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="run_agent_mode",
         action="store_const",
         const="force_on",
-        help="Force agent_runner invocation for eligible stages.",
+        help="Force agent_runner for eligible stages.",
     )
     run_runner_group.add_argument(
         "--no-run-agent",
         dest="run_agent_mode",
         action="store_const",
         const="force_off",
-        help="Disable agent_runner invocation even if enabled in policy.",
+        help="Disable agent_runner even when policy enables it.",
     )
     run.set_defaults(run_agent_mode="policy")
     run.set_defaults(strict_implementation_progress=True)
     run.set_defaults(handler=_cmd_run)
 
     loop = subparsers.add_parser(
-        "loop", help="Run bounded stage transitions in sequence"
+        "loop", help="Run bounded workflow transitions in sequence"
     )
     loop.add_argument(
         "--state-file",
@@ -3781,22 +3781,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-iterations",
         type=int,
         default=1,
-        help="Maximum number of run iterations to execute (must be > 0)",
+        help="Maximum transitions to execute (must be > 0).",
     )
     loop.add_argument(
         "--auto",
         action="store_true",
-        help="Enable unattended loop mode with automatic decide_repeat decisions and lock enforcement.",
+        help="Enable unattended mode with automatic decisions and lock enforcement.",
     )
     loop.add_argument(
         "--assistant",
         action="store_true",
-        help="Enable engineer-assistant task cycle mode for unattended feature delivery.",
+        help="Use engineer-assistant task cycle mode for unattended delivery.",
     )
     loop.add_argument(
         "--verify",
         action="store_true",
-        help="Run policy-driven verification before stage evaluation on each loop iteration.",
+        help="Run policy-driven verification before each stage evaluation.",
     )
     loop.add_argument(
         "--strict-implementation-progress",
@@ -3814,7 +3814,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-hours",
         type=float,
         default=DEFAULT_MAX_HOURS,
-        help="Maximum wall-clock runtime in hours for --auto mode (must be > 0).",
+        help="Maximum runtime in hours for --auto mode (must be > 0).",
     )
     loop_runner_group = loop.add_mutually_exclusive_group()
     loop_runner_group.add_argument(
@@ -3822,21 +3822,21 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="run_agent_mode",
         action="store_const",
         const="force_on",
-        help="Force agent_runner invocation for eligible stages.",
+        help="Force agent_runner for eligible stages.",
     )
     loop_runner_group.add_argument(
         "--no-run-agent",
         dest="run_agent_mode",
         action="store_const",
         const="force_off",
-        help="Disable agent_runner invocation even if enabled in policy.",
+        help="Disable agent_runner even when policy enables it.",
     )
     loop.set_defaults(run_agent_mode="policy")
     loop.set_defaults(strict_implementation_progress=True)
     loop.set_defaults(handler=_cmd_loop)
 
     tui = subparsers.add_parser(
-        "tui", help="Launch the interactive Textual inspector cockpit"
+        "tui", help="Launch the interactive Textual workflow cockpit"
     )
     tui.add_argument(
         "--state-file",
@@ -3847,7 +3847,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tail-lines",
         type=int,
         default=2000,
-        help="Maximum console lines retained in-memory (default: 2000).",
+        help="Maximum console lines kept in memory (default: 2000).",
     )
     tui.set_defaults(handler=_cmd_tui)
 

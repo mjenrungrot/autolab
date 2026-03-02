@@ -11,6 +11,10 @@ from autolab.constants import (
     STAGE_PROMPT_FILES,
     TERMINAL_STAGES,
 )
+from autolab.prompts import (
+    _render_stage_prompt,
+    _resolve_stage_prompt_path as _resolve_render_template_path,
+)
 from autolab.state import (
     _load_state,
     _normalize_state,
@@ -22,6 +26,7 @@ from autolab.todo_sync import list_open_tasks
 from autolab.tui.models import (
     ArtifactItem,
     CockpitSnapshot,
+    RenderPreview,
     RecommendedAction,
     RunItem,
     StageItem,
@@ -71,6 +76,8 @@ _COMMON_ARTIFACTS: tuple[str, ...] = (
 _TEXT_EXTENSIONS: frozenset[str] = frozenset(
     {".md", ".txt", ".json", ".yaml", ".yml", ".log", ".py", ".sh", ".toml"}
 )
+_RENDER_EXCERPT_MAX_LINES = 14
+_RENDER_EXCERPT_MAX_CHARS = 1200
 
 
 def _safe_json_load(path: Path) -> dict[str, Any] | None:
@@ -340,9 +347,102 @@ def _merge_blockers(
     return tuple(deduped[:10])
 
 
+def _build_render_excerpt(
+    text: str,
+    *,
+    max_lines: int = _RENDER_EXCERPT_MAX_LINES,
+    max_chars: int = _RENDER_EXCERPT_MAX_CHARS,
+) -> str:
+    lines = [line.rstrip() for line in text.splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return "(rendered prompt is empty)"
+
+    clipped_lines = lines[: max(1, max_lines)]
+    excerpt = "\n".join(clipped_lines)
+    truncated_by_lines = len(lines) > len(clipped_lines)
+
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars].rstrip()
+        truncated_by_lines = True
+    if truncated_by_lines:
+        excerpt = f"{excerpt}\n..."
+    return excerpt
+
+
+def _load_render_preview(
+    *,
+    repo_root: Path,
+    current_stage: str,
+    state: dict[str, Any],
+) -> RenderPreview:
+    stage_name = str(current_stage).strip()
+    if not stage_name:
+        return RenderPreview(
+            stage="",
+            status="unavailable",
+            template_path=None,
+            prompt_text="",
+            prompt_excerpt="Render preview unavailable: no stage is selected.",
+            context_payload={},
+            error_message="no stage is selected",
+        )
+
+    try:
+        template_path = _resolve_render_template_path(repo_root, stage_name)
+    except Exception as exc:
+        message = str(exc).strip() or "unable to resolve stage prompt template"
+        return RenderPreview(
+            stage=stage_name,
+            status="error",
+            template_path=None,
+            prompt_text="",
+            prompt_excerpt=f"Render preview unavailable.\n{message}",
+            context_payload={},
+            error_message=message,
+        )
+
+    state_for_render = dict(state)
+    state_for_render["stage"] = stage_name
+    try:
+        bundle = _render_stage_prompt(
+            repo_root,
+            stage=stage_name,
+            state=state_for_render,
+            template_path=template_path,
+            runner_scope=None,
+            write_outputs=False,
+        )
+    except Exception as exc:
+        message = str(exc).strip() or "render failed"
+        return RenderPreview(
+            stage=stage_name,
+            status="error",
+            template_path=template_path,
+            prompt_text="",
+            prompt_excerpt=f"Render preview failed.\n{message}",
+            context_payload={},
+            error_message=message,
+        )
+
+    return RenderPreview(
+        stage=stage_name,
+        status="ok",
+        template_path=template_path,
+        prompt_text=bundle.prompt_text,
+        prompt_excerpt=_build_render_excerpt(bundle.prompt_text),
+        context_payload=dict(bundle.context_payload),
+        error_message="",
+    )
+
+
 def _build_recommended_actions(
     *,
     current_stage: str,
+    render_preview: RenderPreview,
     verification: VerificationSummary | None,
     stage_artifacts: tuple[ArtifactItem, ...],
     blockers: tuple[str, ...],
@@ -350,13 +450,32 @@ def _build_recommended_actions(
 ) -> tuple[RecommendedAction, ...]:
     recommended: list[RecommendedAction] = []
 
-    # Onboarding-first default: stage guidance is always safe and useful.
-    recommended.append(
-        RecommendedAction(
-            action_id="open_stage_prompt",
-            reason="Start here: read what this stage expects before taking action.",
+    if render_preview.status == "ok":
+        recommended.append(
+            RecommendedAction(
+                action_id="open_rendered_prompt",
+                reason="Start here: preview the exact resolved prompt for this stage.",
+            )
         )
-    )
+        recommended.append(
+            RecommendedAction(
+                action_id="open_render_context",
+                reason="Check render context values before running commands.",
+            )
+        )
+        recommended.append(
+            RecommendedAction(
+                action_id="open_stage_prompt",
+                reason="Open the prompt template source for stage-specific edits.",
+            )
+        )
+    else:
+        recommended.append(
+            RecommendedAction(
+                action_id="open_stage_prompt",
+                reason="Start here: open stage guidance and resolve prompt issues.",
+            )
+        )
 
     missing_required = [item for item in stage_artifacts if not item.exists]
     if missing_required:
@@ -364,8 +483,7 @@ def _build_recommended_actions(
             RecommendedAction(
                 action_id="run_once",
                 reason=(
-                    f"{len(missing_required)} required file(s) are missing for "
-                    f"'{current_stage}'."
+                    f"{len(missing_required)} required file(s) are missing for stage '{current_stage}'."
                 ),
             )
         )
@@ -373,7 +491,7 @@ def _build_recommended_actions(
         recommended.append(
             RecommendedAction(
                 action_id="run_once",
-                reason="Required files look ready; proceed with one safe transition.",
+                reason="Required files look ready; run one transition.",
             )
         )
 
@@ -381,14 +499,14 @@ def _build_recommended_actions(
         recommended.append(
             RecommendedAction(
                 action_id="verify_current_stage",
-                reason="No verification result found yet for this workspace.",
+                reason="No verification result found for this workspace.",
             )
         )
     elif not verification.passed and verification.stage_effective == current_stage:
         recommended.append(
             RecommendedAction(
                 action_id="verify_current_stage",
-                reason="Verification is currently failing for this stage.",
+                reason="Verification is failing for this stage.",
             )
         )
 
@@ -396,7 +514,7 @@ def _build_recommended_actions(
         recommended.append(
             RecommendedAction(
                 action_id="open_state_history",
-                reason="Review current state and blockers before retrying.",
+                reason="Review state and blockers before retrying.",
             )
         )
 
@@ -404,7 +522,7 @@ def _build_recommended_actions(
         recommended.append(
             RecommendedAction(
                 action_id="todo_sync",
-                reason="Open todo tasks exist; sync todo state with docs.",
+                reason="Open todo tasks found; sync todo state with docs.",
             )
         )
 
@@ -415,7 +533,7 @@ def _build_recommended_actions(
             continue
         seen.add(item.action_id)
         deduped.append(item)
-    return tuple(deduped[:5])
+    return tuple(deduped[:6])
 
 
 def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
@@ -473,6 +591,11 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
             iteration_dir = None
 
     verification = _load_verification(autolab_dir)
+    render_preview = _load_render_preview(
+        repo_root=repo_root,
+        current_stage=current_stage,
+        state=state,
+    )
     stage_items = _build_stage_items(
         current_stage=current_stage,
         stage_attempt=stage_attempt,
@@ -492,6 +615,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     current_stage_artifacts = artifacts_by_stage.get(current_stage, ())
     recommended_actions = _build_recommended_actions(
         current_stage=current_stage,
+        render_preview=render_preview,
         verification=verification,
         stage_artifacts=current_stage_artifacts,
         blockers=blockers,
@@ -513,6 +637,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         runs=runs,
         todos=todos,
         verification=verification,
+        render_preview=render_preview,
         top_blockers=blockers,
         primary_blocker=primary_blocker,
         secondary_blockers=secondary_blockers,
@@ -573,7 +698,10 @@ def load_artifact_text(path: Path, *, max_chars: int = 200_000) -> tuple[str, bo
 def resolve_stage_prompt_path(
     snapshot: CockpitSnapshot, stage_name: str
 ) -> Path | None:
-    prompt_filename = STAGE_PROMPT_FILES.get(stage_name)
-    if not prompt_filename:
-        return None
-    return snapshot.autolab_dir / "prompts" / prompt_filename
+    _fallback_prompt_filename = STAGE_PROMPT_FILES.get(stage_name)
+    try:
+        return _resolve_render_template_path(snapshot.repo_root, stage_name)
+    except Exception:
+        if not _fallback_prompt_filename:
+            return None
+        return snapshot.autolab_dir / "prompts" / _fallback_prompt_filename
