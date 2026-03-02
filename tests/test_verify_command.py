@@ -9,7 +9,10 @@ from pathlib import Path
 import yaml
 
 import autolab.commands as commands_module
-from autolab.validators import _build_verification_command_specs
+from autolab.validators import (
+    _build_verification_command_specs,
+    _run_verification_step_detailed,
+)
 
 
 def _copy_scaffold(repo: Path) -> None:
@@ -475,3 +478,68 @@ def test_verification_specs_include_result_sanity_for_extract_results(
     command_names = [name for name, _command in command_specs]
     assert "run_health" in command_names
     assert "result_sanity" in command_names
+
+
+def test_verification_dry_run_iteration_placeholder_blocks_shell_injection(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy, dict)
+    policy["dry_run_command"] = (
+        "{{python_bin}} -c \"print('dry-run-ok')\" --iteration <ITERATION_ID>"
+    )
+    policy["template_fill"] = {"enabled": False}
+    policy["template_fill_by_stage"] = {}
+    policy["requirements_by_stage"] = {
+        "implementation": {
+            "tests": False,
+            "dry_run": True,
+            "schema": False,
+            "prompt_lint": False,
+            "consistency": False,
+            "env_smoke": False,
+            "docs_target_update": False,
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    for verifier in (
+        "registry_consistency.py",
+        "prompt_registry_contract.py",
+        "closed_experiment_guard.py",
+        "implementation_plan_lint.py",
+    ):
+        verifier_path = repo / ".autolab" / "verifiers" / verifier
+        if verifier_path.exists():
+            verifier_path.unlink()
+
+    state = {
+        "iteration_id": "iter1; touch autolab_poc #",
+        "experiment_id": "e1",
+        "stage": "implementation",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+
+    passed, message, details = _run_verification_step_detailed(
+        repo,
+        state,
+        stage_override="implementation",
+    )
+
+    assert passed is True, message
+    assert "verification passed" in message
+    assert (repo / "autolab_poc").exists() is False
+    commands = details.get("commands", [])
+    assert isinstance(commands, list)
+    assert commands
+    assert commands[0].get("name") == "dry_run"
