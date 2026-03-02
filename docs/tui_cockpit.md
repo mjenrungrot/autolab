@@ -1,6 +1,6 @@
 # Textual Inspector Cockpit (`autolab tui`)
 
-`autolab tui` provides a selection-first terminal cockpit for inspecting workflow state and running common commands with explicit safety checks.
+`autolab tui` is an onboarding-first Textual cockpit for inspecting workflow state and executing common commands with strict safety guards.
 
 ## Launch
 
@@ -14,61 +14,83 @@ Optional:
 autolab tui --tail-lines 2000
 ```
 
-## Layout
+## Mental Model
 
-- **Left (Navigator)**: stage list, run list, todo list.
-- **Center (Details)**: stage summary, required artifacts checklist, last verification result, top blockers, relevant files.
-- **Right (Actions)**: view + mutating action list.
-- **Bottom (Console)**: timestamped output stream for the most recent command.
+The cockpit is mode-based, not multi-pane focus-based.
 
-## Safety model
+- **Home**: Start-here summary, required artifact readiness, primary blocker, recommended next actions.
+- **Runs**: Run list plus quick open for manifest/metrics.
+- **Files**: Stage-relevant/common files with viewer/editor actions.
+- **Console**: Live output for the active command.
+- **Help**: Keymap and safety model.
 
-- Cockpit starts **disarmed** (read-only default).
-- Mutating actions are disabled until you arm with keyboard (`a`) and confirm.
-- If snapshot refresh fails, cockpit enters a fail-closed state: it clears snapshot-derived context, auto-disarms, and keeps action execution blocked until refresh succeeds.
-- Every command execution is confirmation-gated and shows:
-  - exact command
-  - cwd
-  - expected writes (best-effort)
-- After any mutating action completes, cockpit auto-disarms.
+Only one primary workspace is shown at a time to reduce UI overload for first-time users.
 
-## View actions
+## Keymap
 
-- Open selected artifact in read-only in-TUI viewer (default artifact behavior).
-- Open selected artifact in `$EDITOR` (confirmation-gated, defaults to `cursor` when `EDITOR` is unset).
-- Open selected run manifest.
-- Open selected run metrics.
-- Open current stage prompt.
-- Open state/history (`.autolab/state.json`).
+- `1` Home
+- `2` Runs
+- `3` Files
+- `4` Console
+- `5` Help
+- `?` Help
+- `Enter` Activate selection or focused button
+- `u` Unlock/lock mutating actions
+- `x` Toggle advanced actions visibility
+- `r` Refresh snapshot
+- `s` Stop active loop
+- `c` Clear console
+- `q` Quit
 
-## Mutating actions (arm + confirm required)
+## Safety Model (Strict)
 
-- Verify current stage.
-- Run one transition (form-backed options).
-- Start loop (form-backed options, stop with keyboard `s`).
-- Todo sync.
-- Lock break.
+- Cockpit starts **locked** (read-only default).
+- Mutating actions require:
+  1. explicit unlock (`u`), and
+  1. per-action confirmation.
+- After any mutating action completes, cockpit auto-locks again.
+- If snapshot refresh fails, cockpit enters fail-closed mode:
+  - clears snapshot-derived context,
+  - auto-locks,
+  - blocks mutating actions until refresh succeeds.
 
-## Run/Loop forms
+## Action UX
 
-`Run one transition` supports:
+### Decision-first confirmations
 
-- `--verify`
-- `--auto-decision`
-- `--run-agent` / `--no-run-agent`
+Confirmation dialogs show:
 
-`Start loop` supports:
+- action summary and risk level first,
+- details (`command`, `cwd`, expected writes) behind **Show Details**.
 
-- `--max-iterations`
-- `--max-hours`
-- `--auto`
-- `--verify`
-- `--run-agent` / `--no-run-agent`
+### Preset-first run flows
+
+`Run one transition` and `Start loop` use presets first, then optional advanced controls.
+
+`Run one transition` presets:
+
+- Quick safe run (recommended)
+- Run with verify
+- Advanced options
+
+`Start loop` presets:
+
+- Guided short loop (recommended)
+- Unattended loop with verify
+- Advanced options
+
+## Advanced Actions
+
+High-risk actions are intentionally de-emphasized and hidden by default.
+
+- `Start loop (advanced)`
+- `Break lock (advanced)`
+
+Reveal them with `x` (Toggle Advanced).
 
 ## Notes
 
-- The cockpit never writes repo files from view-only actions.
-- `Verify current stage` is treated as mutating because it updates verification artifacts/logs.
-- Cockpit interaction is keyboard-first: Tab/Shift+Tab changes focus, arrow keys move list selection, and Enter activates the focused list selection.
-- Stage selection is persisted by stage name across refreshes, including explicit selection of the first row.
+- External API remains unchanged: `autolab tui --state-file ... --tail-lines ...`.
+- View actions never mutate repo-tracked workflow files.
+- `Verify current stage` remains mutating because it updates verification artifacts/logs.
 - If `stdin/stdout` are not interactive TTYs, `autolab tui` exits with an error.

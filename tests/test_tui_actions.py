@@ -28,6 +28,12 @@ def test_action_catalog_contains_required_entries() -> None:
     assert verify_action.kind == "mutating"
     assert verify_action.requires_arm is True
     assert verify_action.requires_confirmation is True
+    assert verify_action.risk_level == "medium"
+    assert verify_action.user_label
+
+    run_loop = next(action for action in actions if action.action_id == "run_loop")
+    assert run_loop.advanced is True
+    assert run_loop.risk_level == "high"
 
 
 def test_build_run_intent_respects_options(tmp_path: Path) -> None:

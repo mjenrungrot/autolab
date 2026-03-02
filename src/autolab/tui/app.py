@@ -38,6 +38,7 @@ from autolab.tui.models import (
     CommandIntent,
     LoopActionOptions,
     RunActionOptions,
+    ViewMode,
 )
 from autolab.tui.runner import CommandRunner
 from autolab.tui.snapshot import (
@@ -47,14 +48,14 @@ from autolab.tui.snapshot import (
 )
 
 
-class ConfirmationScreen(ModalScreen[bool]):
+class UnlockSafetyScreen(ModalScreen[bool]):
     CSS = """
-    ConfirmationScreen {
+    UnlockSafetyScreen {
       align: center middle;
     }
 
-    #confirm-dialog {
-      width: 100;
+    #unlock-dialog {
+      width: 78;
       max-width: 96%;
       height: auto;
       border: round $accent;
@@ -62,14 +63,68 @@ class ConfirmationScreen(ModalScreen[bool]):
       padding: 1 2;
     }
 
-    #confirm-title {
+    #unlock-title {
       text-style: bold;
       margin-bottom: 1;
     }
 
-    #confirm-buttons {
+    #unlock-buttons {
       margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="unlock-dialog"):
+            yield Label("Unlock mutating actions?", id="unlock-title")
+            yield Static(
+                "Mutating actions can update workflow state and files. "
+                "You will still get a confirmation before every mutating command.",
+                markup=False,
+            )
+            with Horizontal(id="unlock-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Unlock", id="unlock", variant="warning")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "unlock")
+
+
+class ActionConfirmScreen(ModalScreen[bool]):
+    CSS = """
+    ActionConfirmScreen {
+      align: center middle;
+    }
+
+    #action-confirm-dialog {
+      width: 94;
+      max-width: 96%;
       height: auto;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #action-confirm-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #action-confirm-summary {
+      margin-bottom: 1;
+    }
+
+    #action-confirm-details {
+      height: auto;
+      border: round $surface;
+      padding: 0 1;
+    }
+
+    #action-confirm-buttons {
+      margin-top: 1;
       align-horizontal: right;
     }
     """
@@ -78,6 +133,7 @@ class ConfirmationScreen(ModalScreen[bool]):
         self,
         *,
         title: str,
+        summary: str,
         command: str,
         cwd: Path,
         expected_writes: tuple[str, ...],
@@ -85,66 +141,128 @@ class ConfirmationScreen(ModalScreen[bool]):
     ) -> None:
         super().__init__()
         self._title = title
+        self._summary = summary
         self._command = command
         self._cwd = cwd
         self._expected_writes = expected_writes
         self._confirm_label = confirm_label
+        self._show_details = False
 
     def compose(self) -> ComposeResult:
-        writes = "\n".join(f"- {entry}" for entry in self._expected_writes)
-        if not writes:
-            writes = "- (none)"
-        body = (
-            f"Command:\n{self._command}\n\n"
-            f"cwd:\n{self._cwd}\n\n"
-            f"Expected writes (best-effort):\n{writes}"
-        )
-        with Vertical(id="confirm-dialog"):
-            yield Label(self._title, id="confirm-title")
-            with VerticalScroll():
-                yield Static(body, markup=False)
-            with Horizontal(id="confirm-buttons"):
+        with Vertical(id="action-confirm-dialog"):
+            yield Label(self._title, id="action-confirm-title")
+            yield Static(self._summary, id="action-confirm-summary", markup=False)
+            yield Static("Details hidden.", id="action-confirm-details", markup=False)
+            with Horizontal(id="action-confirm-buttons"):
                 yield Button("Cancel", id="cancel")
+                yield Button("Show Details", id="toggle-details")
                 yield Button(self._confirm_label, id="confirm", variant="error")
 
     def on_mount(self) -> None:
+        self._render_details()
         self.query_one("#cancel", Button).focus()
 
+    def _render_details(self) -> None:
+        details = self.query_one("#action-confirm-details", Static)
+        toggle = self.query_one("#toggle-details", Button)
+        if not self._show_details:
+            details.update("Details hidden.")
+            toggle.label = "Show Details"
+            return
+        writes = "\n".join(f"- {entry}" for entry in self._expected_writes)
+        if not writes:
+            writes = "- (none)"
+        details.update(
+            "Command:\n"
+            f"{self._command}\n\n"
+            "cwd:\n"
+            f"{self._cwd}\n\n"
+            "Expected writes (best-effort):\n"
+            f"{writes}"
+        )
+        toggle.label = "Hide Details"
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "toggle-details":
+            self._show_details = not self._show_details
+            self._render_details()
+            return
         self.dismiss(event.button.id == "confirm")
 
 
-class RunOptionsScreen(ModalScreen[RunActionOptions | None]):
+class RunPresetScreen(ModalScreen[RunActionOptions | None]):
     CSS = """
-    RunOptionsScreen {
+    RunPresetScreen {
       align: center middle;
     }
 
-    #run-options-dialog {
-      width: 72;
+    #run-preset-dialog {
+      width: 82;
       max-width: 96%;
       height: auto;
       border: round $accent;
       background: $panel;
       padding: 1 2;
     }
+
+    #run-preset-list {
+      height: 7;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #run-preset-advanced {
+      border: round $surface;
+      padding: 0 1;
+      margin-top: 1;
+    }
+
+    #run-preset-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="run-options-dialog"):
-            yield Label("Run one transition options", id="run-options-title")
-            yield Checkbox("Enable --verify", value=True, id="run-verify")
-            yield Checkbox(
-                "Enable --auto-decision", value=False, id="run-auto-decision"
+        with Vertical(id="run-preset-dialog"):
+            yield Label("Run one transition", id="run-preset-title")
+            yield Static(
+                "Start here: choose a preset first. Advanced flags are optional.",
+                markup=False,
             )
-            yield Checkbox("Force --run-agent", value=False, id="run-agent-on")
-            yield Checkbox("Force --no-run-agent", value=False, id="run-agent-off")
-            with Horizontal(id="run-options-buttons"):
+            preset_list = ListView(id="run-preset-list")
+            preset_list.append(ListItem(Label("Quick safe run (recommended)")))
+            preset_list.append(ListItem(Label("Run with verify")))
+            preset_list.append(ListItem(Label("Advanced options")))
+            yield preset_list
+            yield Checkbox("Use advanced options", value=False, id="run-advanced")
+            with Vertical(id="run-preset-advanced"):
+                yield Checkbox("Enable verification", value=True, id="run-verify")
+                yield Checkbox("Enable auto decision", value=False, id="run-auto")
+                yield Checkbox("Force --run-agent", value=False, id="run-agent-on")
+                yield Checkbox("Force --no-run-agent", value=False, id="run-agent-off")
+            with Horizontal(id="run-preset-buttons"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Continue", id="continue", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#cancel", Button).focus()
+        preset_list = self.query_one("#run-preset-list", ListView)
+        preset_list.index = 0
+        preset_list.focus()
+        self._update_advanced_enabled(False)
+
+    def _update_advanced_enabled(self, enabled: bool) -> None:
+        for widget_id in (
+            "#run-verify",
+            "#run-auto",
+            "#run-agent-on",
+            "#run-agent-off",
+        ):
+            self.query_one(widget_id, Checkbox).disabled = not enabled
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "run-advanced":
+            self._update_advanced_enabled(event.checkbox.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -152,6 +270,30 @@ class RunOptionsScreen(ModalScreen[RunActionOptions | None]):
             return
         if event.button.id != "continue":
             return
+
+        preset_index = self.query_one("#run-preset-list", ListView).index or 0
+        use_advanced = self.query_one("#run-advanced", Checkbox).value
+
+        if preset_index == 0:
+            base = RunActionOptions(
+                verify=False, auto_decision=False, run_agent_mode="policy"
+            )
+        elif preset_index == 1:
+            base = RunActionOptions(
+                verify=True, auto_decision=False, run_agent_mode="policy"
+            )
+        else:
+            if not use_advanced:
+                self.notify("Enable 'Use advanced options' for this preset.")
+                return
+            base = RunActionOptions(
+                verify=True, auto_decision=False, run_agent_mode="policy"
+            )
+
+        if not use_advanced:
+            self.dismiss(base)
+            return
+
         force_on = self.query_one("#run-agent-on", Checkbox).value
         force_off = self.query_one("#run-agent-off", Checkbox).value
         if force_on and force_off:
@@ -162,48 +304,95 @@ class RunOptionsScreen(ModalScreen[RunActionOptions | None]):
             run_agent_mode = "force_on"
         elif force_off:
             run_agent_mode = "force_off"
+
         self.dismiss(
             RunActionOptions(
                 verify=self.query_one("#run-verify", Checkbox).value,
+                auto_decision=self.query_one("#run-auto", Checkbox).value,
                 run_agent_mode=run_agent_mode,
-                auto_decision=self.query_one("#run-auto-decision", Checkbox).value,
             )
         )
 
 
-class LoopOptionsScreen(ModalScreen[LoopActionOptions | None]):
+class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
     CSS = """
-    LoopOptionsScreen {
+    LoopPresetScreen {
       align: center middle;
     }
 
-    #loop-options-dialog {
-      width: 72;
+    #loop-preset-dialog {
+      width: 86;
       max-width: 96%;
       height: auto;
       border: round $accent;
       background: $panel;
       padding: 1 2;
     }
+
+    #loop-preset-list {
+      height: 7;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #loop-preset-advanced {
+      border: round $surface;
+      padding: 0 1;
+      margin-top: 1;
+    }
+
+    #loop-preset-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="loop-options-dialog"):
-            yield Label("Loop options", id="loop-options-title")
-            yield Input(
-                value="3", placeholder="max iterations", id="loop-max-iterations"
+        with Vertical(id="loop-preset-dialog"):
+            yield Label("Start loop", id="loop-preset-title")
+            yield Static(
+                "Start here: pick a loop style. Advanced options are optional.",
+                markup=False,
             )
-            yield Input(value="2", placeholder="max hours", id="loop-max-hours")
-            yield Checkbox("Enable --auto", value=True, id="loop-auto")
-            yield Checkbox("Enable --verify", value=True, id="loop-verify")
-            yield Checkbox("Force --run-agent", value=False, id="loop-agent-on")
-            yield Checkbox("Force --no-run-agent", value=False, id="loop-agent-off")
-            with Horizontal(id="loop-options-buttons"):
+            preset_list = ListView(id="loop-preset-list")
+            preset_list.append(ListItem(Label("Guided short loop (recommended)")))
+            preset_list.append(ListItem(Label("Unattended loop with verify")))
+            preset_list.append(ListItem(Label("Advanced options")))
+            yield preset_list
+            yield Checkbox("Use advanced options", value=False, id="loop-advanced")
+            with Vertical(id="loop-preset-advanced"):
+                yield Input(
+                    value="3", placeholder="max iterations", id="loop-max-iterations"
+                )
+                yield Input(value="2", placeholder="max hours", id="loop-max-hours")
+                yield Checkbox("Enable --auto", value=True, id="loop-auto")
+                yield Checkbox("Enable --verify", value=True, id="loop-verify")
+                yield Checkbox("Force --run-agent", value=False, id="loop-agent-on")
+                yield Checkbox("Force --no-run-agent", value=False, id="loop-agent-off")
+            with Horizontal(id="loop-preset-buttons"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Continue", id="continue", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#cancel", Button).focus()
+        preset_list = self.query_one("#loop-preset-list", ListView)
+        preset_list.index = 0
+        preset_list.focus()
+        self._update_advanced_enabled(False)
+
+    def _update_advanced_enabled(self, enabled: bool) -> None:
+        for selector, widget_type in (
+            ("#loop-max-iterations", Input),
+            ("#loop-max-hours", Input),
+            ("#loop-auto", Checkbox),
+            ("#loop-verify", Checkbox),
+            ("#loop-agent-on", Checkbox),
+            ("#loop-agent-off", Checkbox),
+        ):
+            self.query_one(selector, widget_type).disabled = not enabled
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "loop-advanced":
+            self._update_advanced_enabled(event.checkbox.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -211,6 +400,53 @@ class LoopOptionsScreen(ModalScreen[LoopActionOptions | None]):
             return
         if event.button.id != "continue":
             return
+
+        preset_index = self.query_one("#loop-preset-list", ListView).index or 0
+        use_advanced = self.query_one("#loop-advanced", Checkbox).value
+
+        if preset_index == 0:
+            base = LoopActionOptions(
+                max_iterations=2,
+                max_hours=2.0,
+                auto=False,
+                verify=True,
+                run_agent_mode="policy",
+            )
+        elif preset_index == 1:
+            base = LoopActionOptions(
+                max_iterations=3,
+                max_hours=2.0,
+                auto=True,
+                verify=True,
+                run_agent_mode="policy",
+            )
+        else:
+            if not use_advanced:
+                self.notify("Enable 'Use advanced options' for this preset.")
+                return
+            base = LoopActionOptions(
+                max_iterations=3,
+                max_hours=2.0,
+                auto=True,
+                verify=True,
+                run_agent_mode="policy",
+            )
+
+        if not use_advanced:
+            self.dismiss(base)
+            return
+
+        force_on = self.query_one("#loop-agent-on", Checkbox).value
+        force_off = self.query_one("#loop-agent-off", Checkbox).value
+        if force_on and force_off:
+            self.notify("Choose only one run-agent override.")
+            return
+        run_agent_mode = "policy"
+        if force_on:
+            run_agent_mode = "force_on"
+        elif force_off:
+            run_agent_mode = "force_off"
+
         try:
             max_iterations = int(self.query_one("#loop-max-iterations", Input).value)
             max_hours = float(self.query_one("#loop-max-hours", Input).value)
@@ -223,16 +459,7 @@ class LoopOptionsScreen(ModalScreen[LoopActionOptions | None]):
         if max_hours <= 0:
             self.notify("max hours must be > 0.")
             return
-        force_on = self.query_one("#loop-agent-on", Checkbox).value
-        force_off = self.query_one("#loop-agent-off", Checkbox).value
-        if force_on and force_off:
-            self.notify("Choose only one run-agent override.")
-            return
-        run_agent_mode = "policy"
-        if force_on:
-            run_agent_mode = "force_on"
-        elif force_off:
-            run_agent_mode = "force_off"
+
         self.dismiss(
             LoopActionOptions(
                 max_iterations=max_iterations,
@@ -306,19 +533,27 @@ class AutolabCockpitApp(App[None]):
       layout: vertical;
     }
 
-    #safety-row {
+    #status-rail {
       height: auto;
       margin: 0 1;
       padding: 0 1;
+      border: round $accent;
     }
 
-    #safety-status {
+    #status-safety {
+      width: 30;
+    }
+
+    #status-mode {
+      width: 16;
+    }
+
+    #status-advanced {
+      width: 18;
+    }
+
+    #status-running {
       width: 1fr;
-      content-align: left middle;
-    }
-
-    #running-banner {
-      width: 36;
       content-align: right middle;
     }
 
@@ -329,31 +564,26 @@ class AutolabCockpitApp(App[None]):
       color: $text-muted;
     }
 
-    #top-row {
-      height: 1fr;
+    #nav-row {
+      height: auto;
       margin: 0 1;
+      padding: 0 1;
+      border: round $surface;
     }
 
-    #nav-pane, #details-pane, #actions-pane {
+    #workspace {
+      height: 1fr;
+      margin: 1;
+    }
+
+    .view-panel {
       border: round $accent;
       padding: 0 1;
       height: 1fr;
+      display: none;
     }
 
-    #nav-pane {
-      width: 33%;
-    }
-
-    #details-pane {
-      width: 39%;
-      margin: 0 1;
-    }
-
-    #actions-pane {
-      width: 28%;
-    }
-
-    .pane-title {
+    .view-title {
       text-style: bold;
       margin-bottom: 1;
     }
@@ -364,30 +594,30 @@ class AutolabCockpitApp(App[None]):
       margin-bottom: 0;
     }
 
-    #stage-list, #run-list, #todo-list, #artifact-list, #action-list {
+    #home-action-list, #run-list, #artifact-list {
       border: round $surface;
       height: 1fr;
+      min-height: 8;
     }
 
-    #run-list, #todo-list {
-      min-height: 7;
-    }
-
-    #action-list {
-      min-height: 14;
-    }
-
-    #actions-help {
-      height: auto;
-      margin-top: 1;
-      color: $text-muted;
-    }
-
-    #console-pane {
-      height: 14;
-      margin: 1;
-      border: round $accent;
+    #run-details,
+    #files-context,
+    #home-stage-card,
+    #home-blocker-card,
+    #home-artifacts-card,
+    #help-text {
+      border: round $surface;
       padding: 0 1;
+      height: auto;
+      margin-bottom: 1;
+    }
+
+    #run-buttons,
+    #file-buttons,
+    #file-advanced-buttons {
+      height: auto;
+      align-horizontal: left;
+      margin-top: 1;
     }
 
     #console-log {
@@ -397,11 +627,18 @@ class AutolabCockpitApp(App[None]):
     """
 
     BINDINGS = [
+        ("1", "show_home", "Home"),
+        ("2", "show_runs", "Runs"),
+        ("3", "show_files", "Files"),
+        ("4", "show_console", "Console"),
+        ("5", "show_help", "Help"),
+        ("question_mark", "show_help", "Help"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
-        ("a", "toggle_arm", "Arm"),
+        ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
+        ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
         ("q", "quit", "Quit"),
@@ -413,15 +650,20 @@ class AutolabCockpitApp(App[None]):
         self._tail_lines = max(200, int(tail_lines))
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
         self._armed = False
+        self._show_advanced = False
+        self._mode: ViewMode = "home"
         self._snapshot: CockpitSnapshot | None = None
         self._actions: tuple[ActionSpec, ...] = list_actions()
-        self._selected_stage_index = 0
-        self._selected_stage_key: str | None = None
+        self._actions_by_id: dict[str, ActionSpec] = {
+            action.action_id: action for action in self._actions
+        }
+
+        self._home_action_ids: tuple[str, ...] = ()
+        self._home_action_index = 0
         self._selected_run_index = 0
-        self._selected_todo_index = 0
         self._selected_artifact_index = 0
-        self._selected_action_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
+
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
         )
@@ -429,48 +671,68 @@ class AutolabCockpitApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal(id="safety-row"):
-            yield Static("Disarmed (read-only mode).", id="safety-status")
-            yield Static("", id="running-banner")
+        with Horizontal(id="status-rail"):
+            yield Static("Locked (read-only).", id="status-safety")
+            yield Static("Mode: home", id="status-mode")
+            yield Static("Advanced: hidden", id="status-advanced")
+            yield Static("", id="status-running")
         yield Static(
-            "Keys: Tab/Shift+Tab move focus, ↑/↓ navigate lists, Enter activate, a arm, r refresh, s stop loop, c clear.",
+            "Keys: 1-5 switch views, ? help, Enter activate, u unlock/lock, x advanced, r refresh, s stop loop, c clear.",
             id="key-hints",
         )
-        with Horizontal(id="top-row"):
-            with Vertical(id="nav-pane"):
-                yield Static("Navigator", classes="pane-title")
-                yield Static("Pipeline stages", classes="section-title")
-                yield ListView(id="stage-list")
-                yield Static("Runs", classes="section-title")
+        with Horizontal(id="nav-row"):
+            yield Button("1 Home", id="nav-home", variant="primary")
+            yield Button("2 Runs", id="nav-runs")
+            yield Button("3 Files", id="nav-files")
+            yield Button("4 Console", id="nav-console")
+            yield Button("5 Help", id="nav-help")
+            yield Button("Toggle Advanced", id="toggle-advanced")
+        with Vertical(id="workspace"):
+            with Vertical(id="home-view", classes="view-panel"):
+                yield Static("Home", classes="view-title")
+                yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-blocker-card", markup=False)
+                yield Static("", id="home-artifacts-card", markup=False)
+                yield Static("Recommended next actions", classes="section-title")
+                yield ListView(id="home-action-list")
+            with Vertical(id="runs-view", classes="view-panel"):
+                yield Static("Runs", classes="view-title")
                 yield ListView(id="run-list")
-                yield Static("Todo", classes="section-title")
-                yield ListView(id="todo-list")
-            with Vertical(id="details-pane"):
-                yield Static("Details", classes="pane-title")
-                yield Static("", id="stage-summary", markup=False)
-                yield Static("", id="required-artifacts", markup=False)
-                yield Static("", id="verification-summary", markup=False)
-                yield Static("", id="blockers-summary", markup=False)
-                yield Static("Relevant files", classes="section-title")
+                yield Static("", id="run-details", markup=False)
+                with Horizontal(id="run-buttons"):
+                    yield Button("Open Manifest", id="run-open-manifest")
+                    yield Button("Open Metrics", id="run-open-metrics")
+            with Vertical(id="files-view", classes="view-panel"):
+                yield Static("Files", classes="view-title")
+                yield Static("", id="files-context", markup=False)
                 yield ListView(id="artifact-list")
-            with Vertical(id="actions-pane"):
-                yield Static("Actions", classes="pane-title")
-                yield ListView(id="action-list")
-                yield Static(
-                    "Focus this list and press Enter to run selected action.",
-                    id="actions-help",
+                with Horizontal(id="file-buttons"):
+                    yield Button("Open Viewer", id="file-open-viewer")
+                    yield Button("Open Editor", id="file-open-editor")
+                    yield Button("Open Stage Prompt", id="file-open-prompt")
+                    yield Button("Open State", id="file-open-state")
+                with Horizontal(id="file-advanced-buttons"):
+                    yield Button(
+                        "Start Loop (Advanced)", id="file-run-loop", variant="warning"
+                    )
+                    yield Button(
+                        "Break Lock (Advanced)", id="file-lock-break", variant="error"
+                    )
+            with Vertical(id="console-view", classes="view-panel"):
+                yield Static("Console", classes="view-title")
+                yield RichLog(
+                    id="console-log", markup=False, wrap=False, highlight=False
                 )
-        with Vertical(id="console-pane"):
-            yield Static("Console", classes="pane-title")
-            yield RichLog(id="console-log", markup=False, wrap=False, highlight=False)
+            with Vertical(id="help-view", classes="view-panel"):
+                yield Static("Help", classes="view-title")
+                yield Static("", id="help-text", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
         self._refresh_snapshot()
-        self._populate_action_list()
-        self._update_safety_row()
-        self._update_action_button_state()
-        self.query_one("#action-list", ListView).focus()
+        self._update_help_text()
+        self._update_ui_chrome()
+        self._switch_mode("home")
 
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
@@ -487,9 +749,6 @@ class AutolabCockpitApp(App[None]):
         for line in self._console_tail:
             log.write(line)
 
-    def _clear_list_view(self, list_view: ListView) -> None:
-        list_view.clear()
-
     def _display_path(self, path: Path) -> str:
         snapshot = self._snapshot
         if snapshot is None:
@@ -499,21 +758,67 @@ class AutolabCockpitApp(App[None]):
         except ValueError:
             return str(path)
 
-    def _selected_stage_name(self) -> str:
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.stage_items:
-            return ""
-        if self._selected_stage_key:
-            for index, item in enumerate(snapshot.stage_items):
-                if item.name != self._selected_stage_key:
-                    continue
-                self._selected_stage_index = index
-                return item.name
-        if self._selected_stage_index >= len(snapshot.stage_items):
-            self._selected_stage_index = 0
-        selected = snapshot.stage_items[self._selected_stage_index].name
-        self._selected_stage_key = selected
-        return selected
+    def _update_ui_chrome(self) -> None:
+        safety = self.query_one("#status-safety", Static)
+        mode = self.query_one("#status-mode", Static)
+        advanced = self.query_one("#status-advanced", Static)
+        running = self.query_one("#status-running", Static)
+
+        safety.update(
+            "Unlocked (mutating enabled)." if self._armed else "Locked (read-only)."
+        )
+        mode.update(f"Mode: {self._mode}")
+        advanced.update(
+            "Advanced: visible" if self._show_advanced else "Advanced: hidden"
+        )
+
+        if self._running_intent is None:
+            running.update("")
+        else:
+            command = shlex.join(self._running_intent.argv)
+            running.update(f"Running: {command[:72]}")
+
+        self.query_one(
+            "#file-advanced-buttons", Horizontal
+        ).display = self._show_advanced
+
+    def _switch_mode(self, mode: ViewMode) -> None:
+        self._mode = mode
+        panel_by_mode = {
+            "home": "#home-view",
+            "runs": "#runs-view",
+            "files": "#files-view",
+            "console": "#console-view",
+            "help": "#help-view",
+        }
+        for key, selector in panel_by_mode.items():
+            self.query_one(selector, Vertical).display = key == mode
+
+        button_by_mode = {
+            "home": "#nav-home",
+            "runs": "#nav-runs",
+            "files": "#nav-files",
+            "console": "#nav-console",
+            "help": "#nav-help",
+        }
+        for key, selector in button_by_mode.items():
+            button = self.query_one(selector, Button)
+            button.variant = "primary" if key == mode else "default"
+
+        self._update_ui_chrome()
+        self._focus_mode_default()
+
+    def _focus_mode_default(self) -> None:
+        if self._mode == "home":
+            self.query_one("#home-action-list", ListView).focus()
+        elif self._mode == "runs":
+            self.query_one("#run-list", ListView).focus()
+        elif self._mode == "files":
+            self.query_one("#artifact-list", ListView).focus()
+        elif self._mode == "console":
+            self.query_one("#console-log", RichLog).focus()
+        else:
+            self.query_one("#help-text", Static).focus()
 
     def _selected_run(self):
         snapshot = self._snapshot
@@ -530,55 +835,34 @@ class AutolabCockpitApp(App[None]):
             self._selected_artifact_index = 0
         return self._current_artifacts[self._selected_artifact_index].path
 
-    def _selected_action(self) -> ActionSpec | None:
-        if not self._actions:
-            return None
-        if self._selected_action_index >= len(self._actions):
-            self._selected_action_index = 0
-        return self._actions[self._selected_action_index]
-
-    def _resolve_stage_selection_index(
-        self, *, snapshot: CockpitSnapshot, current_index: int
-    ) -> int:
-        if not snapshot.stage_items:
-            return 0
-        if self._selected_stage_key:
-            for index, stage_item in enumerate(snapshot.stage_items):
-                if stage_item.name == self._selected_stage_key:
-                    return index
-        if 0 <= self._selected_stage_index < len(snapshot.stage_items):
-            return self._selected_stage_index
-        return current_index
-
     def _clear_snapshot_views(self) -> None:
-        self._selected_stage_index = 0
-        self._selected_stage_key = None
+        self._home_action_ids = ()
+        self._home_action_index = 0
         self._selected_run_index = 0
-        self._selected_todo_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts = ()
 
-        stage_list = self.query_one("#stage-list", ListView)
+        home_actions = self.query_one("#home-action-list", ListView)
+        home_actions.clear()
+        home_actions.append(ListItem(Label("(snapshot unavailable)")))
+
         run_list = self.query_one("#run-list", ListView)
-        todo_list = self.query_one("#todo-list", ListView)
-        artifact_list = self.query_one("#artifact-list", ListView)
-        for widget in (stage_list, run_list, todo_list, artifact_list):
-            self._clear_list_view(widget)
-        stage_list.append(ListItem(Label("(snapshot unavailable)")))
+        run_list.clear()
         run_list.append(ListItem(Label("(snapshot unavailable)")))
-        todo_list.append(ListItem(Label("(snapshot unavailable)")))
+
+        artifact_list = self.query_one("#artifact-list", ListView)
+        artifact_list.clear()
         artifact_list.append(ListItem(Label("(snapshot unavailable)")))
 
-        self.query_one("#stage-summary", Static).update("Current stage: unavailable")
-        self.query_one("#required-artifacts", Static).update(
-            "Required artifacts:\n- unavailable (snapshot refresh failed)"
+        self.query_one("#home-stage-card", Static).update("Current stage: unavailable")
+        self.query_one("#home-blocker-card", Static).update(
+            "Primary blocker: snapshot refresh failed"
         )
-        self.query_one("#verification-summary", Static).update(
-            "Last verification: unavailable"
+        self.query_one("#home-artifacts-card", Static).update(
+            "Required artifacts: unavailable"
         )
-        self.query_one("#blockers-summary", Static).update(
-            "Top blockers:\n- snapshot refresh failed"
-        )
+        self.query_one("#run-details", Static).update("Run details unavailable.")
+        self.query_one("#files-context", Static).update("Files unavailable.")
 
     def _refresh_snapshot(self) -> bool:
         try:
@@ -587,246 +871,180 @@ class AutolabCockpitApp(App[None]):
             self._snapshot = None
             self._armed = False
             self._clear_snapshot_views()
-            self._update_safety_row()
-            self._update_action_button_state()
+            self._update_ui_chrome()
             self._append_console(f"snapshot refresh failed: {exc}")
             self.notify(f"Snapshot refresh failed: {exc}")
             return False
-        self._populate_stage_list()
+
+        self._populate_home_view()
         self._populate_run_list()
-        self._populate_todo_list()
-        self._update_details()
-        self._update_action_button_state()
+        self._populate_artifact_list()
+        self._update_ui_chrome()
         return True
 
-    def _populate_stage_list(self) -> None:
+    def _populate_home_view(self) -> None:
         snapshot = self._snapshot
-        stage_list = self.query_one("#stage-list", ListView)
-        self._clear_list_view(stage_list)
         if snapshot is None:
             return
-        current_index = 0
-        for index, item in enumerate(snapshot.stage_items):
-            status_icon = {
-                "complete": "✓",
-                "current": "▶",
-                "blocked": "⚠",
-                "upcoming": "·",
-            }.get(item.status, "·")
-            label = (
-                f"{status_icon} {item.name} [{item.status}] attempts {item.attempts}"
+
+        stage = snapshot.current_stage
+        self.query_one("#home-stage-card", Static).update(
+            "Start here:\n"
+            f"Current stage: {stage}\n"
+            f"Attempt: {snapshot.stage_attempt}/{snapshot.max_stage_attempts}\n"
+            f"Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}",
+        )
+
+        blocker_lines = [f"Primary blocker: {snapshot.primary_blocker}"]
+        if snapshot.secondary_blockers:
+            blocker_lines.append("Other blockers:")
+            blocker_lines.extend(f"- {entry}" for entry in snapshot.secondary_blockers)
+        self.query_one("#home-blocker-card", Static).update("\n".join(blocker_lines))
+
+        stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
+        if stage_artifacts:
+            lines = [
+                f"[{'x' if item.exists else ' '}] {self._display_path(item.path)}"
+                for item in stage_artifacts
+            ]
+            artifact_text = "Required artifacts:\n" + "\n".join(lines)
+        else:
+            artifact_text = "Required artifacts:\n- (none for this stage)"
+        self.query_one("#home-artifacts-card", Static).update(artifact_text)
+
+        action_list = self.query_one("#home-action-list", ListView)
+        action_list.clear()
+        action_ids: list[str] = []
+        for recommended in snapshot.recommended_actions:
+            action = self._actions_by_id.get(recommended.action_id)
+            if action is None:
+                continue
+            if action.advanced and not self._show_advanced:
+                continue
+            label = action.user_label or action.label
+            action_list.append(ListItem(Label(f"{label} - {recommended.reason}")))
+            action_ids.append(action.action_id)
+
+        if not action_ids:
+            action_list.append(
+                ListItem(Label("Open stage guidance - review stage instructions."))
             )
-            stage_list.append(ListItem(Label(label)))
-            if item.is_current:
-                current_index = index
-        if snapshot.stage_items:
-            self._selected_stage_index = self._resolve_stage_selection_index(
-                snapshot=snapshot,
-                current_index=current_index,
-            )
-            self._selected_stage_index = min(
-                max(self._selected_stage_index, 0),
-                len(snapshot.stage_items) - 1,
-            )
-            self._selected_stage_key = snapshot.stage_items[
-                self._selected_stage_index
-            ].name
-            stage_list.index = self._selected_stage_index
+            action_ids.append("open_stage_prompt")
+
+        self._home_action_ids = tuple(action_ids)
+        self._home_action_index = min(
+            self._home_action_index, len(self._home_action_ids) - 1
+        )
+        action_list.index = self._home_action_index
 
     def _populate_run_list(self) -> None:
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
-        self._clear_list_view(run_list)
+        run_list.clear()
         if snapshot is None:
             return
+
         if not snapshot.runs:
-            run_list.append(ListItem(Label("(no runs found)")))
+            run_list.append(ListItem(Label("(no runs found yet)")))
             self._selected_run_index = 0
+            self.query_one("#run-details", Static).update(
+                "No runs available. Run one transition first to generate run artifacts."
+            )
             return
+
         for run in snapshot.runs:
             started = run.started_at or "-"
-            label = f"{run.run_id} [{run.status}] start={started}"
-            run_list.append(ListItem(Label(label)))
+            run_list.append(
+                ListItem(Label(f"{run.run_id} [{run.status}] start={started}"))
+            )
         self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
         run_list.index = self._selected_run_index
+        self._update_run_details()
 
-    def _populate_todo_list(self) -> None:
-        snapshot = self._snapshot
-        todo_list = self.query_one("#todo-list", ListView)
-        self._clear_list_view(todo_list)
-        if snapshot is None:
+    def _update_run_details(self) -> None:
+        run = self._selected_run()
+        if run is None:
+            self.query_one("#run-details", Static).update("No run selected.")
             return
-        if not snapshot.todos:
-            todo_list.append(ListItem(Label("(no open todo tasks)")))
-            self._selected_todo_index = 0
-            return
-        for todo in snapshot.todos:
-            task_text = todo.text.replace("\n", " ").strip()
-            if len(task_text) > 56:
-                task_text = f"{task_text[:56]}…"
-            prefix = todo.priority.lower() if todo.priority else "normal"
-            label = f"{todo.task_id} [{prefix}] {task_text}"
-            todo_list.append(ListItem(Label(label)))
-        self._selected_todo_index = min(
-            self._selected_todo_index, len(snapshot.todos) - 1
+        self.query_one("#run-details", Static).update(
+            "Selected run:\n"
+            f"- run_id: {run.run_id}\n"
+            f"- status: {run.status}\n"
+            f"- started_at: {run.started_at or '-'}\n"
+            f"- completed_at: {run.completed_at or '-'}"
         )
-        todo_list.index = self._selected_todo_index
 
     def _populate_artifact_list(self) -> None:
+        snapshot = self._snapshot
         artifact_list = self.query_one("#artifact-list", ListView)
-        self._clear_list_view(artifact_list)
+        artifact_list.clear()
+        self._current_artifacts = ()
+
+        if snapshot is None:
+            return
+
+        stage = snapshot.current_stage
+        stage_artifacts = list(snapshot.artifacts_by_stage.get(stage, ()))
+        seen: set[Path] = set()
+        merged: list[ArtifactItem] = []
+        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
+            if artifact.path in seen:
+                continue
+            seen.add(artifact.path)
+            merged.append(artifact)
+        self._current_artifacts = tuple(merged)
+
         if not self._current_artifacts:
             artifact_list.append(ListItem(Label("(no relevant files)")))
             self._selected_artifact_index = 0
+            self.query_one("#files-context", Static).update(
+                f"Stage: {stage}\nNo files detected for this stage."
+            )
             return
+
         for artifact in self._current_artifacts:
-            marker = "✓" if artifact.exists else "✗"
-            label = f"{marker} {self._display_path(artifact.path)}"
-            artifact_list.append(ListItem(Label(label)))
+            marker = "x" if artifact.exists else " "
+            artifact_list.append(
+                ListItem(Label(f"[{marker}] {self._display_path(artifact.path)}"))
+            )
         self._selected_artifact_index = min(
-            self._selected_artifact_index, len(self._current_artifacts) - 1
+            self._selected_artifact_index,
+            len(self._current_artifacts) - 1,
         )
         artifact_list.index = self._selected_artifact_index
+        self._update_files_context()
 
-    def _populate_action_list(self) -> None:
-        action_list = self.query_one("#action-list", ListView)
-        self._clear_list_view(action_list)
-        for action in self._actions:
-            prefix = "MUTATE" if action.kind == "mutating" else "VIEW"
-            label = f"[{prefix}] {action.label}"
-            action_list.append(ListItem(Label(label)))
-        if self._actions:
-            self._selected_action_index = min(
-                self._selected_action_index, len(self._actions) - 1
-            )
-            action_list.index = self._selected_action_index
-
-    def _update_details(self) -> None:
+    def _update_files_context(self) -> None:
         snapshot = self._snapshot
         if snapshot is None:
+            self.query_one("#files-context", Static).update("Files unavailable.")
             return
-        stage_name = self._selected_stage_name() or snapshot.current_stage
-        stage_summary_widget = self.query_one("#stage-summary", Static)
-        required_widget = self.query_one("#required-artifacts", Static)
-        verification_widget = self.query_one("#verification-summary", Static)
-        blockers_widget = self.query_one("#blockers-summary", Static)
-
-        stage_summary = snapshot.stage_summaries.get(
-            stage_name, "No summary available."
-        )
-        stage_summary_widget.update(
-            (
-                f"Current stage: {snapshot.current_stage} "
-                f"(attempt {snapshot.stage_attempt}/{snapshot.max_stage_attempts})\n"
-                f"Selected stage: {stage_name}\n{stage_summary}"
-            )
+        selected = self._selected_artifact_path()
+        selected_text = self._display_path(selected) if selected else "none"
+        self.query_one("#files-context", Static).update(
+            "Safe actions vs mutating actions:\n"
+            "- Open Viewer/Editor/Prompt/State are view-only.\n"
+            "- Loop/Lock break are mutating and require unlock + confirm.\n"
+            f"Stage: {snapshot.current_stage}\n"
+            f"Selected file: {selected_text}"
         )
 
-        stage_artifacts = list(snapshot.artifacts_by_stage.get(stage_name, ()))
-        seen_paths: set[Path] = set()
-        relevant: list[ArtifactItem] = []
-        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
-            if artifact.path in seen_paths:
-                continue
-            seen_paths.add(artifact.path)
-            relevant.append(artifact)
-        self._current_artifacts = tuple(relevant)
-        self._populate_artifact_list()
-
-        if stage_artifacts:
-            required_lines = [
-                f"[{'x' if item.exists else ' '}] {self._display_path(item.path)}"
-                for item in stage_artifacts
-            ]
-            required_widget.update("Required artifacts:\n" + "\n".join(required_lines))
-        else:
-            required_widget.update("Required artifacts:\n- (none for this stage)")
-
-        verification = snapshot.verification
-        if verification is None:
-            verification_widget.update("Last verification: unavailable")
-        else:
-            lines = [
-                (
-                    f"Last verification: {'PASS' if verification.passed else 'FAIL'} "
-                    f"@ {verification.generated_at or '<unknown>'}"
-                ),
-                f"Stage: {verification.stage_effective or '<unknown>'}",
-                f"Message: {verification.message or '<none>'}",
-            ]
-            if verification.failing_commands:
-                lines.append("Failing commands:")
-                lines.extend(
-                    f"- {entry}" for entry in verification.failing_commands[:4]
-                )
-            verification_widget.update("\n".join(lines))
-
-        if snapshot.top_blockers:
-            blockers_text = "Top blockers:\n" + "\n".join(
-                f"- {entry}" for entry in snapshot.top_blockers[:6]
-            )
-        else:
-            blockers_text = "Top blockers:\n- none"
-        blockers_widget.update(blockers_text)
-
-    def _update_safety_row(self) -> None:
-        status = self.query_one("#safety-status", Static)
-        if self._armed:
-            status.update("Armed: mutating commands enabled.")
-        else:
-            status.update("Disarmed (read-only mode).")
-
-    def _update_running_banner(self) -> None:
-        banner = self.query_one("#running-banner", Static)
-        if self._running_intent is None:
-            banner.update("")
-            return
-        command = shlex.join(self._running_intent.argv)
-        banner.update(f"Running: {command[:72]}")
-
-    def _update_action_button_state(self) -> None:
-        self._update_running_banner()
-
-    def _apply_list_selection(self, *, list_id: str, selected_index: int) -> None:
-        if list_id == "stage-list":
-            self._selected_stage_index = selected_index
-            snapshot = self._snapshot
-            if snapshot is not None and 0 <= self._selected_stage_index < len(
-                snapshot.stage_items
-            ):
-                self._selected_stage_key = snapshot.stage_items[
-                    self._selected_stage_index
-                ].name
-            self._update_details()
-        elif list_id == "run-list":
-            self._selected_run_index = selected_index
-        elif list_id == "todo-list":
-            self._selected_todo_index = selected_index
-        elif list_id == "artifact-list":
-            self._selected_artifact_index = selected_index
-        elif list_id == "action-list":
-            self._selected_action_index = selected_index
-            self._update_action_button_state()
-
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        selected_index = event.list_view.index
-        if selected_index is None or selected_index < 0:
-            return
-        self._apply_list_selection(
-            list_id=event.list_view.id or "",
-            selected_index=selected_index,
+    def _update_help_text(self) -> None:
+        self.query_one("#help-text", Static).update(
+            "Autolab TUI v2\n"
+            "\n"
+            "- Home: onboarding summary and recommended next actions.\n"
+            "- Runs: inspect run manifests and metrics.\n"
+            "- Files: open stage/common files quickly.\n"
+            "- Console: command output stream.\n"
+            "\n"
+            "Safety model:\n"
+            "- Starts locked (read-only).\n"
+            "- Unlock is required before mutating commands.\n"
+            "- Every mutating command requires confirmation.\n"
+            "- Mutating command completion auto-locks the cockpit.\n"
+            "- Snapshot refresh failures fail closed and force lock."
         )
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        selected_index = event.list_view.index
-        if selected_index is None or selected_index < 0:
-            selected_index = 0
-        list_id = event.list_view.id or ""
-        self._apply_list_selection(
-            list_id=list_id,
-            selected_index=selected_index,
-        )
-        self._activate_list_selection(list_id)
 
     def _start_ui_flow(
         self,
@@ -848,8 +1066,42 @@ class AutolabCockpitApp(App[None]):
             exit_on_error=False,
         )
 
-    def action_toggle_arm(self) -> None:
-        self._start_ui_flow(label="arm-toggle", flow_factory=self._toggle_arm)
+    def action_show_home(self) -> None:
+        self._switch_mode("home")
+
+    def action_show_runs(self) -> None:
+        self._switch_mode("runs")
+
+    def action_show_files(self) -> None:
+        self._switch_mode("files")
+
+    def action_show_console(self) -> None:
+        self._switch_mode("console")
+
+    def action_show_help(self) -> None:
+        self._switch_mode("help")
+
+    def action_toggle_safety_lock(self) -> None:
+        self._start_ui_flow(
+            label="toggle-safety", flow_factory=self._toggle_safety_lock
+        )
+
+    async def _toggle_safety_lock(self) -> None:
+        if self._armed:
+            self._armed = False
+            self._update_ui_chrome()
+            return
+        unlocked = await self.push_screen_wait(UnlockSafetyScreen())
+        if unlocked:
+            self._armed = True
+            self._update_ui_chrome()
+
+    def action_toggle_advanced(self) -> None:
+        self._show_advanced = not self._show_advanced
+        if self._snapshot is not None:
+            self._populate_home_view()
+            self._populate_artifact_list()
+        self._update_ui_chrome()
 
     def action_refresh_snapshot(self) -> None:
         if self._refresh_snapshot():
@@ -864,71 +1116,110 @@ class AutolabCockpitApp(App[None]):
 
     def action_activate_selection(self) -> None:
         focused = self.focused
-        if not isinstance(focused, ListView):
-            self.query_one("#action-list", ListView).focus()
+        if isinstance(focused, ListView):
+            list_id = focused.id or ""
+            selected_index = focused.index
+            if selected_index is not None and selected_index >= 0:
+                self._apply_list_selection(
+                    list_id=list_id, selected_index=selected_index
+                )
+            self._activate_list_selection(list_id)
             return
+        if isinstance(focused, Button):
+            self._handle_button_action(focused.id or "")
+            return
+        self._focus_mode_default()
 
-        selected_index = focused.index
-        if selected_index is None or selected_index < 0:
-            selected_index = 0
-        list_id = focused.id or ""
-        self._apply_list_selection(list_id=list_id, selected_index=selected_index)
+    def _apply_list_selection(self, *, list_id: str, selected_index: int) -> None:
+        if list_id == "home-action-list":
+            self._home_action_index = selected_index
+        elif list_id == "run-list":
+            self._selected_run_index = selected_index
+            self._update_run_details()
+        elif list_id == "artifact-list":
+            self._selected_artifact_index = selected_index
+            self._update_files_context()
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        index = event.list_view.index
+        if index is None or index < 0:
+            return
+        self._apply_list_selection(
+            list_id=event.list_view.id or "", selected_index=index
+        )
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        index = event.list_view.index
+        if index is None or index < 0:
+            index = 0
+        list_id = event.list_view.id or ""
+        self._apply_list_selection(list_id=list_id, selected_index=index)
         self._activate_list_selection(list_id)
 
-    def _activate_list_selection(self, list_id: str) -> None:
-        if list_id == "stage-list":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self._handle_button_action(event.button.id or "")
+
+    def _handle_button_action(self, button_id: str) -> None:
+        if button_id == "nav-home":
+            self._switch_mode("home")
+            return
+        if button_id == "nav-runs":
+            self._switch_mode("runs")
+            return
+        if button_id == "nav-files":
+            self._switch_mode("files")
+            return
+        if button_id == "nav-console":
+            self._switch_mode("console")
+            return
+        if button_id == "nav-help":
+            self._switch_mode("help")
+            return
+        if button_id == "toggle-advanced":
+            self.action_toggle_advanced()
             return
 
-        if list_id == "action-list":
-            action = self._selected_action()
-            if action is None:
-                self.notify("No action selected.")
-                return
+        action_by_button = {
+            "run-open-manifest": "open_selected_run_manifest",
+            "run-open-metrics": "open_selected_run_metrics",
+            "file-open-viewer": "open_selected_artifact",
+            "file-open-editor": "open_selected_artifact_editor",
+            "file-open-prompt": "open_stage_prompt",
+            "file-open-state": "open_state_history",
+            "file-run-loop": "run_loop",
+            "file-lock-break": "lock_break",
+        }
+        action_id = action_by_button.get(button_id)
+        if action_id:
             self._start_ui_flow(
-                label="run-action",
-                flow_factory=lambda: self._handle_action(action),
+                label=f"action:{action_id}",
+                flow_factory=lambda: self._execute_action(action_id),
             )
-            return
 
-        if list_id == "artifact-list":
-            artifact_path = self._selected_artifact_path()
-            if artifact_path is None:
-                self.notify("No artifact selected.")
+    def _activate_list_selection(self, list_id: str) -> None:
+        if list_id == "home-action-list":
+            if not self._home_action_ids:
                 return
+            index = min(self._home_action_index, len(self._home_action_ids) - 1)
+            action_id = self._home_action_ids[index]
             self._start_ui_flow(
-                label="open-artifact",
-                flow_factory=lambda: self._open_artifact_viewer(artifact_path),
+                label=f"home-action:{action_id}",
+                flow_factory=lambda: self._execute_action(action_id),
             )
             return
 
         if list_id == "run-list":
-            run = self._selected_run()
-            if run is None:
-                self.notify("No run selected.")
-                return
             self._start_ui_flow(
-                label="open-run-manifest",
-                flow_factory=lambda: self._open_artifact_viewer(run.manifest_path),
+                label="runs-open-manifest",
+                flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
             )
             return
 
-        if list_id == "todo-list":
-            self.notify("Todo list is read-only in cockpit.")
-
-    async def _confirm_command(
-        self, *, title: str, intent: CommandIntent, confirm_label: str = "Confirm"
-    ) -> bool:
-        command = shlex.join(intent.argv)
-        confirmed = await self.push_screen_wait(
-            ConfirmationScreen(
-                title=title,
-                command=command,
-                cwd=intent.cwd,
-                expected_writes=intent.expected_writes,
-                confirm_label=confirm_label,
+        if list_id == "artifact-list":
+            self._start_ui_flow(
+                label="files-open-viewer",
+                flow_factory=lambda: self._execute_action("open_selected_artifact"),
             )
-        )
-        return bool(confirmed)
 
     async def _confirm_action_intent(
         self,
@@ -940,11 +1231,35 @@ class AutolabCockpitApp(App[None]):
     ) -> bool:
         if not action.requires_confirmation:
             return True
-        return await self._confirm_command(
-            title=title,
-            intent=intent,
-            confirm_label=confirm_label,
+        command = shlex.join(intent.argv)
+        summary = (
+            f"Action: {action.user_label or action.label}\n"
+            f"Risk: {action.risk_level}\n"
+            f"What it does: {action.help_text or action.description}"
         )
+        confirmed = await self.push_screen_wait(
+            ActionConfirmScreen(
+                title=title,
+                summary=summary,
+                command=command,
+                cwd=intent.cwd,
+                expected_writes=intent.expected_writes,
+                confirm_label=confirm_label,
+            )
+        )
+        return bool(confirmed)
+
+    async def _unlock_if_needed(self, action: ActionSpec) -> bool:
+        if not action.requires_arm:
+            return True
+        if self._armed:
+            return True
+        unlocked = await self.push_screen_wait(UnlockSafetyScreen())
+        if not unlocked:
+            return False
+        self._armed = True
+        self._update_ui_chrome()
+        return True
 
     async def _open_artifact_viewer(self, artifact_path: Path) -> None:
         text, truncated = load_artifact_text(artifact_path)
@@ -958,13 +1273,120 @@ class AutolabCockpitApp(App[None]):
         snapshot = self._snapshot
         if snapshot is None:
             return
+        action = self._actions_by_id["open_selected_artifact_editor"]
         intent = build_open_in_editor_intent(
-            target_path=artifact_path, cwd=snapshot.repo_root
+            target_path=artifact_path,
+            cwd=snapshot.repo_root,
         )
-        if await self._confirm_command(
-            title="Open artifact in external editor?",
+        if await self._confirm_action_intent(
+            action=action,
+            title="Open file in external editor?",
             intent=intent,
             confirm_label="Open",
+        ):
+            self._start_command(intent)
+
+    async def _execute_action(self, action_id: str) -> None:
+        snapshot = self._snapshot
+        if snapshot is None:
+            return
+
+        action = self._actions_by_id.get(action_id)
+        if action is None:
+            self.notify(f"Unsupported action: {action_id}")
+            return
+        if action.advanced and not self._show_advanced:
+            self.notify("Enable advanced actions first (x).")
+            return
+        if not await self._unlock_if_needed(action):
+            return
+
+        if action_id == "open_selected_artifact":
+            artifact_path = self._selected_artifact_path()
+            if artifact_path is None:
+                self.notify("No file is available in this view yet.")
+                return
+            await self._open_artifact_viewer(artifact_path)
+            return
+
+        if action_id == "open_selected_artifact_editor":
+            artifact_path = self._selected_artifact_path()
+            if artifact_path is None:
+                self.notify("No file is available in this view yet.")
+                return
+            intent = build_open_in_editor_intent(
+                target_path=artifact_path,
+                cwd=snapshot.repo_root,
+            )
+            if await self._confirm_action_intent(
+                action=action,
+                title="Open selected file in external editor?",
+                intent=intent,
+                confirm_label="Open",
+            ):
+                self._start_command(intent)
+            return
+
+        if action_id == "open_selected_run_manifest":
+            run = self._selected_run()
+            if run is None:
+                self.notify("No run is available yet.")
+                return
+            await self._open_artifact_viewer(run.manifest_path)
+            return
+
+        if action_id == "open_selected_run_metrics":
+            run = self._selected_run()
+            if run is None:
+                self.notify("No run is available yet.")
+                return
+            await self._open_artifact_viewer(run.metrics_path)
+            return
+
+        if action_id == "open_stage_prompt":
+            prompt_path = resolve_stage_prompt_path(snapshot, snapshot.current_stage)
+            if prompt_path is None:
+                self.notify(f"No stage prompt found for '{snapshot.current_stage}'.")
+                return
+            await self._open_artifact_viewer(prompt_path)
+            return
+
+        if action_id == "open_state_history":
+            await self._open_artifact_viewer(snapshot.state_path)
+            return
+
+        intent: CommandIntent | None = None
+        if action_id == "verify_current_stage":
+            intent = build_verify_intent(
+                state_path=snapshot.state_path,
+                stage=snapshot.current_stage,
+            )
+        elif action_id == "run_once":
+            options = await self.push_screen_wait(RunPresetScreen())
+            if options is None:
+                return
+            intent = build_run_intent(state_path=snapshot.state_path, options=options)
+        elif action_id == "run_loop":
+            options = await self.push_screen_wait(LoopPresetScreen())
+            if options is None:
+                return
+            intent = build_loop_intent(state_path=snapshot.state_path, options=options)
+        elif action_id == "todo_sync":
+            intent = build_todo_sync_intent(state_path=snapshot.state_path)
+        elif action_id == "lock_break":
+            intent = build_lock_break_intent(
+                state_path=snapshot.state_path,
+                reason="tui manual break",
+            )
+
+        if intent is None:
+            self.notify(f"Unsupported action: {action_id}")
+            return
+
+        if await self._confirm_action_intent(
+            action=action,
+            title=f"Confirm: {action.user_label or action.label}",
+            intent=intent,
         ):
             self._start_command(intent)
 
@@ -977,13 +1399,13 @@ class AutolabCockpitApp(App[None]):
         command = shlex.join(intent.argv)
         self._append_console(f"starting: {command}")
         self._running_intent = intent
-        self._update_action_button_state()
+        self._update_ui_chrome()
         try:
             self._runner.start(intent)
         except Exception as exc:
             self._append_console(f"failed to start command: {exc}")
             self._running_intent = None
-            self._update_action_button_state()
+            self._update_ui_chrome()
 
     def _handle_runner_line(self, line: str) -> None:
         try:
@@ -1000,8 +1422,7 @@ class AutolabCockpitApp(App[None]):
             self._running_intent = None
             if intent is not None and intent.mutating:
                 self._armed = False
-            self._update_safety_row()
-            self._update_action_button_state()
+            self._update_ui_chrome()
             self._refresh_snapshot()
 
         try:
@@ -1009,132 +1430,12 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    async def _handle_action(self, action: ActionSpec) -> None:
-        snapshot = self._snapshot
-        if snapshot is None:
-            self.notify("No snapshot loaded.")
-            return
-        if action.requires_arm and not self._armed:
-            self.notify("Action is disarmed. Enable 'Arm actions' first.")
-            return
-
-        if action.action_id == "open_selected_artifact":
-            artifact_path = self._selected_artifact_path()
-            if artifact_path is None:
-                self.notify("No artifact selected.")
-                return
-            await self._open_artifact_viewer(artifact_path)
-            return
-
-        if action.action_id == "open_selected_artifact_editor":
-            artifact_path = self._selected_artifact_path()
-            if artifact_path is None:
-                self.notify("No artifact selected.")
-                return
-            intent = build_open_in_editor_intent(
-                target_path=artifact_path,
-                cwd=snapshot.repo_root,
-            )
-            if await self._confirm_action_intent(
-                action=action,
-                title="Open selected artifact in external editor?",
-                intent=intent,
-                confirm_label="Open",
-            ):
-                self._start_command(intent)
-            return
-
-        if action.action_id == "open_selected_run_manifest":
-            run = self._selected_run()
-            if run is None:
-                self.notify("No run selected.")
-                return
-            await self._open_artifact_viewer(run.manifest_path)
-            return
-
-        if action.action_id == "open_selected_run_metrics":
-            run = self._selected_run()
-            if run is None:
-                self.notify("No run selected.")
-                return
-            await self._open_artifact_viewer(run.metrics_path)
-            return
-
-        if action.action_id == "open_stage_prompt":
-            stage_name = self._selected_stage_name() or snapshot.current_stage
-            prompt_path = resolve_stage_prompt_path(snapshot, stage_name)
-            if prompt_path is None:
-                self.notify(f"No stage prompt found for '{stage_name}'.")
-                return
-            await self._open_artifact_viewer(prompt_path)
-            return
-
-        if action.action_id == "open_state_history":
-            await self._open_artifact_viewer(snapshot.state_path)
-            return
-
-        intent: CommandIntent | None = None
-        if action.action_id == "verify_current_stage":
-            stage_name = self._selected_stage_name() or snapshot.current_stage
-            intent = build_verify_intent(
-                state_path=snapshot.state_path, stage=stage_name
-            )
-        elif action.action_id == "run_once":
-            options = await self.push_screen_wait(RunOptionsScreen())
-            if options is None:
-                return
-            intent = build_run_intent(state_path=snapshot.state_path, options=options)
-        elif action.action_id == "run_loop":
-            options = await self.push_screen_wait(LoopOptionsScreen())
-            if options is None:
-                return
-            intent = build_loop_intent(state_path=snapshot.state_path, options=options)
-        elif action.action_id == "todo_sync":
-            intent = build_todo_sync_intent(state_path=snapshot.state_path)
-        elif action.action_id == "lock_break":
-            intent = build_lock_break_intent(
-                state_path=snapshot.state_path, reason="tui manual break"
-            )
-
-        if intent is None:
-            self.notify("Unsupported action.")
-            return
-        if await self._confirm_action_intent(
-            action=action,
-            title=f"Confirm: {action.label}",
-            intent=intent,
-        ):
-            self._start_command(intent)
-
-    async def _toggle_arm(self) -> None:
-        if self._armed:
-            self._armed = False
-            self._update_safety_row()
-            self._update_action_button_state()
-            return
-        pseudo_intent = CommandIntent(
-            action_id="arm_actions",
-            argv=("autolab", "tui", "--arm-actions"),
-            cwd=self._state_path.parent.parent,
-            expected_writes=(),
-            mutating=False,
-        )
-        confirmed = await self._confirm_command(
-            title="Enable mutating actions?",
-            intent=pseudo_intent,
-            confirm_label="Arm",
-        )
-        if not confirmed:
-            return
-        self._armed = True
-        self._update_safety_row()
-        self._update_action_button_state()
-
     async def _stop_loop(self) -> None:
         intent = self._running_intent
         if intent is None or intent.action_id != "run_loop":
             self.notify("No loop command is running.")
             return
+
         stop_intent = CommandIntent(
             action_id="stop_loop",
             argv=("autolab", "tui", "--stop-loop"),
@@ -1142,13 +1443,19 @@ class AutolabCockpitApp(App[None]):
             expected_writes=(),
             mutating=False,
         )
-        confirmed = await self._confirm_command(
-            title="Stop active loop?",
-            intent=stop_intent,
-            confirm_label="Stop loop",
+        confirmed = await self.push_screen_wait(
+            ActionConfirmScreen(
+                title="Stop active loop?",
+                summary="This requests a graceful interrupt for the active loop process.",
+                command=shlex.join(stop_intent.argv),
+                cwd=stop_intent.cwd,
+                expected_writes=stop_intent.expected_writes,
+                confirm_label="Stop loop",
+            )
         )
         if not confirmed:
             return
+
         if self._runner.stop():
             self._append_console("stop requested for active loop process")
         else:

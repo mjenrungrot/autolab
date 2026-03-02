@@ -44,6 +44,10 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
     assert snapshot.runs == ()
     assert snapshot.todos == ()
     assert snapshot.top_blockers == ()
+    assert snapshot.primary_blocker == "none"
+    assert snapshot.secondary_blockers == ()
+    assert snapshot.recommended_actions
+    assert snapshot.recommended_actions[0].action_id == "open_stage_prompt"
     assert "design" in {item.name for item in snapshot.stage_items}
 
 
@@ -99,6 +103,11 @@ def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> Non
     assert "verification failed: schema checks" in blocker_blob
     assert "schema_checks: review_result.json missing required keys" in blocker_blob
     assert "Resolve stale metrics evidence." in blocker_blob
+    assert snapshot.primary_blocker == snapshot.top_blockers[0]
+    assert snapshot.secondary_blockers == snapshot.top_blockers[1:4]
+    assert any(
+        item.action_id == "open_state_history" for item in snapshot.recommended_actions
+    )
 
 
 def test_snapshot_run_order_is_deterministic(tmp_path: Path) -> None:
