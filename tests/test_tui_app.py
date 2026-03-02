@@ -251,3 +251,39 @@ def test_mode_shortcut_switches_to_runs(tmp_path: Path) -> None:
             assert "Mode: runs" in str(mode_status.render())
 
     asyncio.run(_run())
+
+
+def test_run_preset_screen_composes_without_mount_error(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(app_module.RunPresetScreen())
+            await pilot.pause()
+
+            assert isinstance(app.screen, app_module.RunPresetScreen)
+            preset_list = app.screen.query_one("#run-preset-list", app_module.ListView)
+            assert len(preset_list.children) == 3
+            assert preset_list.index == 0
+
+    asyncio.run(_run())
+
+
+def test_loop_preset_screen_composes_without_mount_error(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(app_module.LoopPresetScreen())
+            await pilot.pause()
+
+            assert isinstance(app.screen, app_module.LoopPresetScreen)
+            preset_list = app.screen.query_one("#loop-preset-list", app_module.ListView)
+            assert len(preset_list.children) == 3
+            assert preset_list.index == 0
+
+    asyncio.run(_run())

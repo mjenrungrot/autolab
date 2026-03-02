@@ -234,11 +234,12 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
                 "Start here: choose a preset first. Advanced flags are optional.",
                 markup=False,
             )
-            preset_list = ListView(id="run-preset-list")
-            preset_list.append(ListItem(Label("Quick safe run (recommended)")))
-            preset_list.append(ListItem(Label("Run with verify")))
-            preset_list.append(ListItem(Label("Advanced options")))
-            yield preset_list
+            yield ListView(
+                ListItem(Label("Quick safe run (recommended)")),
+                ListItem(Label("Run with verify")),
+                ListItem(Label("Advanced options")),
+                id="run-preset-list",
+            )
             yield Checkbox("Use advanced options", value=False, id="run-advanced")
             with Vertical(id="run-preset-advanced"):
                 yield Checkbox("Enable verification", value=True, id="run-verify")
@@ -358,11 +359,12 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
                 "Start here: pick a loop style. Advanced options are optional.",
                 markup=False,
             )
-            preset_list = ListView(id="loop-preset-list")
-            preset_list.append(ListItem(Label("Guided short loop (recommended)")))
-            preset_list.append(ListItem(Label("Unattended loop with verify")))
-            preset_list.append(ListItem(Label("Advanced options")))
-            yield preset_list
+            yield ListView(
+                ListItem(Label("Guided short loop (recommended)")),
+                ListItem(Label("Unattended loop with verify")),
+                ListItem(Label("Advanced options")),
+                id="loop-preset-list",
+            )
             yield Checkbox("Use advanced options", value=False, id="loop-advanced")
             with Vertical(id="loop-preset-advanced"):
                 yield Input(
