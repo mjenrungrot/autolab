@@ -524,81 +524,128 @@ def _build_recommended_actions(
 ) -> tuple[RecommendedAction, ...]:
     recommended: list[RecommendedAction] = []
 
-    if render_preview.status == "ok":
+    if current_stage == "human_review":
         recommended.append(
             RecommendedAction(
-                action_id="open_rendered_prompt",
-                reason="Start here: preview the exact resolved prompt for this stage.",
+                action_id="resolve_human_review",
+                reason="Record pass, retry, or stop to resolve this human review gate.",
             )
         )
-        recommended.append(
-            RecommendedAction(
-                action_id="open_render_context",
-                reason="Check render context values before running commands.",
+        if render_preview.status == "ok":
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_rendered_prompt",
+                    reason="Preview the exact resolved prompt context for this stage.",
+                )
             )
-        )
-        recommended.append(
-            RecommendedAction(
-                action_id="open_stage_prompt",
-                reason="Open the prompt template source for stage-specific edits.",
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_render_context",
+                    reason="Inspect rendered token values before deciding.",
+                )
             )
-        )
-    else:
-        recommended.append(
-            RecommendedAction(
-                action_id="open_stage_prompt",
-                reason="Start here: open stage guidance and resolve prompt issues.",
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_stage_prompt",
+                    reason="Open stage guidance and decision instructions.",
+                )
             )
-        )
-
-    missing_required = [item for item in stage_artifacts if not item.exists]
-    if missing_required:
-        recommended.append(
-            RecommendedAction(
-                action_id="run_once",
-                reason=(
-                    f"{len(missing_required)} required file(s) are missing for stage '{current_stage}'."
-                ),
+        else:
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_stage_prompt",
+                    reason="Open stage guidance and decision instructions.",
+                )
             )
-        )
-    else:
-        recommended.append(
-            RecommendedAction(
-                action_id="run_once",
-                reason="Required files look ready; run one transition.",
-            )
-        )
-
-    if verification is None:
-        recommended.append(
-            RecommendedAction(
-                action_id="verify_current_stage",
-                reason="No verification result found for this workspace.",
-            )
-        )
-    elif not verification.passed and verification.stage_effective == current_stage:
-        recommended.append(
-            RecommendedAction(
-                action_id="verify_current_stage",
-                reason="Verification is failing for this stage.",
-            )
-        )
-
-    if blockers:
         recommended.append(
             RecommendedAction(
                 action_id="open_state_history",
-                reason="Review state and blockers before retrying.",
+                reason="Review recent stage transitions and blockers before deciding.",
             )
         )
+        if todos:
+            recommended.append(
+                RecommendedAction(
+                    action_id="todo_sync",
+                    reason="Open todo tasks found; sync todo state with docs.",
+                )
+            )
+    else:
+        if render_preview.status == "ok":
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_rendered_prompt",
+                    reason="Start here: preview the exact resolved prompt for this stage.",
+                )
+            )
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_render_context",
+                    reason="Check render context values before running commands.",
+                )
+            )
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_stage_prompt",
+                    reason="Open the prompt template source for stage-specific edits.",
+                )
+            )
+        else:
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_stage_prompt",
+                    reason="Start here: open stage guidance and resolve prompt issues.",
+                )
+            )
 
-    if todos:
-        recommended.append(
-            RecommendedAction(
-                action_id="todo_sync",
-                reason="Open todo tasks found; sync todo state with docs.",
+        missing_required = [item for item in stage_artifacts if not item.exists]
+        if missing_required:
+            recommended.append(
+                RecommendedAction(
+                    action_id="run_once",
+                    reason=(
+                        f"{len(missing_required)} required file(s) are missing for stage '{current_stage}'."
+                    ),
+                )
             )
-        )
+        else:
+            recommended.append(
+                RecommendedAction(
+                    action_id="run_once",
+                    reason="Required files look ready; run one transition.",
+                )
+            )
+
+        if verification is None:
+            recommended.append(
+                RecommendedAction(
+                    action_id="verify_current_stage",
+                    reason="No verification result found for this workspace.",
+                )
+            )
+        elif not verification.passed and verification.stage_effective == current_stage:
+            recommended.append(
+                RecommendedAction(
+                    action_id="verify_current_stage",
+                    reason="Verification is failing for this stage.",
+                )
+            )
+
+        if blockers:
+            recommended.append(
+                RecommendedAction(
+                    action_id="open_state_history",
+                    reason="Review state and blockers before retrying.",
+                )
+            )
+
+        if todos:
+            recommended.append(
+                RecommendedAction(
+                    action_id="todo_sync",
+                    reason="Open todo tasks found; sync todo state with docs.",
+                )
+            )
 
     deduped: list[RecommendedAction] = []
     seen: set[str] = set()

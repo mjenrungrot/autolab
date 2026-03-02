@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from autolab.tui.actions import (
     build_experiment_create_intent,
     build_experiment_move_intent,
     build_focus_intent,
+    build_human_review_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
@@ -24,6 +27,7 @@ def test_action_catalog_contains_required_entries() -> None:
     assert "open_render_context" in action_ids
     assert "verify_current_stage" in action_ids
     assert "run_once" in action_ids
+    assert "resolve_human_review" in action_ids
     assert "run_loop" in action_ids
     assert "todo_sync" in action_ids
     assert "focus_experiment" in action_ids
@@ -48,6 +52,14 @@ def test_action_catalog_contains_required_entries() -> None:
     run_loop = next(action for action in actions if action.action_id == "run_loop")
     assert run_loop.advanced is True
     assert run_loop.risk_level == "high"
+
+    human_review_action = next(
+        action for action in actions if action.action_id == "resolve_human_review"
+    )
+    assert human_review_action.kind == "mutating"
+    assert human_review_action.advanced is False
+    assert human_review_action.requires_arm is True
+    assert human_review_action.requires_confirmation is True
 
     focus_action = next(
         action for action in actions if action.action_id == "focus_experiment"
@@ -167,6 +179,22 @@ def test_build_run_intent_invalid_run_agent_mode_falls_back_to_policy(
     )
     assert "--run-agent" not in intent.argv
     assert "--no-run-agent" not in intent.argv
+
+
+def test_build_human_review_intent_validates_status(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_human_review_intent(state_path=state_path, status="retry")
+    assert intent.action_id == "resolve_human_review"
+    assert intent.argv[:3] == ("autolab", "review", "--state-file")
+    assert intent.argv[-2:] == ("--status", "retry")
+    assert ".autolab/state.json" in intent.expected_writes
+    assert ".autolab/agent_result.json" in intent.expected_writes
+    assert ".autolab/logs/orchestrator.log" in intent.expected_writes
+    assert ".autolab/backlog.yaml" in intent.expected_writes
+    assert intent.mutating is True
+
+    with pytest.raises(ValueError):
+        build_human_review_intent(state_path=state_path, status="invalid")
 
 
 def test_lock_break_and_editor_intent_invariants(tmp_path: Path, monkeypatch) -> None:

@@ -25,6 +25,12 @@ _RUN_EXPECTED_WRITES = (
     ".autolab/todo_state.json",
     "docs/todo.md",
 )
+_REVIEW_EXPECTED_WRITES = (
+    ".autolab/state.json",
+    ".autolab/agent_result.json",
+    ".autolab/logs/orchestrator.log",
+    ".autolab/backlog.yaml",
+)
 _LOOP_EXPECTED_WRITES_BASE = (
     ".autolab/state.json",
     ".autolab/logs/orchestrator.log",
@@ -166,6 +172,18 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         group="home",
         user_label="Run one transition",
         help_text="Execute one workflow transition and update state/artifacts.",
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
+        action_id="resolve_human_review",
+        label="Resolve human review",
+        description="Record a human review decision: pass, retry, or stop.",
+        kind="mutating",
+        risk_level="medium",
+        group="home",
+        user_label="Resolve human review",
+        help_text="Record human review decision (pass, retry, or stop).",
         requires_confirmation=True,
         requires_arm=True,
     ),
@@ -319,6 +337,24 @@ def build_run_intent(
         argv=tuple(argv),
         cwd=repo_root,
         expected_writes=_RUN_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_human_review_intent(*, state_path: Path, status: str) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    normalized_status = str(status).strip().lower()
+    if normalized_status not in {"pass", "retry", "stop"}:
+        raise ValueError(
+            "invalid review status: expected one of 'pass', 'retry', or 'stop'"
+        )
+    argv = _base_state_argv("review", state_path=state_path)
+    argv.extend(["--status", normalized_status])
+    return CommandIntent(
+        action_id="resolve_human_review",
+        argv=tuple(argv),
+        cwd=repo_root,
+        expected_writes=_REVIEW_EXPECTED_WRITES,
         mutating=True,
     )
 

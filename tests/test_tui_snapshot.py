@@ -159,6 +159,22 @@ def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> Non
     )
 
 
+def test_snapshot_human_review_prioritizes_resolve_action(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="human_review")
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.current_stage == "human_review"
+    assert snapshot.recommended_actions
+    assert snapshot.recommended_actions[0].action_id == "resolve_human_review"
+    action_ids = [item.action_id for item in snapshot.recommended_actions]
+    assert "open_state_history" in action_ids
+    assert "open_stage_prompt" in action_ids
+    assert "run_once" not in action_ids
+
+
 def test_snapshot_loads_backlog_items_and_marks_current_experiment(
     tmp_path: Path,
 ) -> None:

@@ -137,7 +137,7 @@ autolab lint --stage hypothesis
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
-- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; advanced actions include focus/create/move experiment steering; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
+- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review decision**: `autolab review --status=pass|retry|stop`

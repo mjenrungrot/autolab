@@ -31,6 +31,7 @@ from autolab.tui.actions import (
     build_experiment_create_intent,
     build_experiment_move_intent,
     build_focus_intent,
+    build_human_review_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
@@ -478,6 +479,72 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
                 run_agent_mode=run_agent_mode,
             )
         )
+
+
+class HumanReviewDecisionScreen(ModalScreen[str | None]):
+    CSS = """
+    HumanReviewDecisionScreen {
+      align: center middle;
+    }
+
+    #human-review-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #human-review-list {
+      height: 1fr;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #human-review-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._statuses: tuple[str, ...] = ("pass", "retry", "stop")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="human-review-dialog"):
+            yield Label("Resolve Human Review", id="human-review-title")
+            yield Static(
+                "Choose a human review decision to apply to workflow state.",
+                markup=False,
+            )
+            yield ListView(
+                ListItem(Label("pass - advance to launch")),
+                ListItem(Label("retry - return to implementation")),
+                ListItem(Label("stop - end experiment")),
+                id="human-review-list",
+            )
+            with Horizontal(id="human-review-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Continue", id="continue", variant="primary")
+
+    def on_mount(self) -> None:
+        decision_list = self.query_one("#human-review-list", ListView)
+        decision_list.index = 0
+        decision_list.focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        decision_list = self.query_one("#human-review-list", ListView)
+        selected_index = decision_list.index
+        if selected_index is None or not (0 <= selected_index < len(self._statuses)):
+            self.notify("Select a decision.")
+            return
+        self.dismiss(self._statuses[selected_index])
 
 
 class ArtifactViewerScreen(ModalScreen[str | None]):
@@ -2120,6 +2187,19 @@ class AutolabCockpitApp(App[None]):
             if options is None:
                 return
             intent = build_run_intent(state_path=snapshot.state_path, options=options)
+        elif action_id == "resolve_human_review":
+            if snapshot.current_stage != "human_review":
+                self.notify(
+                    "Human review can only be resolved in 'human_review' stage."
+                )
+                return
+            selected_status = await self.push_screen_wait(HumanReviewDecisionScreen())
+            if selected_status is None:
+                return
+            intent = build_human_review_intent(
+                state_path=snapshot.state_path,
+                status=selected_status,
+            )
         elif action_id == "run_loop":
             options = await self.push_screen_wait(LoopPresetScreen())
             if options is None:
