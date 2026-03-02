@@ -2280,17 +2280,18 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     if args.auto:
         print("auto: true")
         print(f"max_hours: {max_hours}")
-        lock_ok, lock_msg = _acquire_lock(
-            lock_path,
-            state_file=state_path,
-            command=" ".join(sys.argv),
-            stale_seconds=LOCK_STALE_SECONDS,
-        )
-        if not lock_ok:
-            print(f"autolab loop: ERROR {lock_msg}", file=sys.stderr)
-            return 1
-        lock_acquired = True
-        _append_log(repo_root, f"auto loop lock acquired: {lock_msg}")
+    lock_ok, lock_msg = _acquire_lock(
+        lock_path,
+        state_file=state_path,
+        command=" ".join(sys.argv),
+        stale_seconds=LOCK_STALE_SECONDS,
+    )
+    if not lock_ok:
+        print(f"autolab loop: ERROR {lock_msg}", file=sys.stderr)
+        return 1
+    lock_acquired = True
+    _append_log(repo_root, f"loop lock acquired: {lock_msg}")
+    if args.auto:
         _guardrail_cfg = _load_guardrail_config(repo_root)
         _max_consecutive_errors = _guardrail_cfg.max_consecutive_errors
         _error_backoff_base = _guardrail_cfg.error_backoff_base_seconds
@@ -2463,8 +2464,8 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     f"autolab loop: WARN failed to write overnight summary: {exc}",
                     file=sys.stderr,
                 )
-            if lock_acquired:
-                _release_lock(lock_path)
+        if lock_acquired:
+            _release_lock(lock_path)
 
 
 # ---------------------------------------------------------------------------
@@ -2635,68 +2636,85 @@ def _cmd_lock(args: argparse.Namespace) -> int:
 def _cmd_skip(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
-    try:
-        state = _load_state(state_path)
-    except RuntimeError as exc:
-        print(f"autolab skip: ERROR {exc}", file=sys.stderr)
-        return 1
-
-    current_stage = str(state.get("stage", "")).strip()
-    target_stage = args.stage
-    reason = args.reason
-
-    if current_stage in TERMINAL_STAGES:
-        print(
-            f"autolab skip: ERROR current stage '{current_stage}' is terminal; cannot skip",
-            file=sys.stderr,
-        )
-        return 1
-
-    if target_stage in TERMINAL_STAGES:
-        print(
-            f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Validate forward-only skip within ACTIVE_STAGES (includes decide_repeat)
-    ordered_stages = list(ACTIVE_STAGES)
-    if "decide_repeat" not in ordered_stages:
-        ordered_stages.append("decide_repeat")
-    if current_stage not in ordered_stages:
-        print(
-            f"autolab skip: ERROR current stage '{current_stage}' is not skippable",
-            file=sys.stderr,
-        )
-        return 1
-    if target_stage not in ordered_stages:
-        print(
-            f"autolab skip: ERROR target stage '{target_stage}' is not a valid skip target",
-            file=sys.stderr,
-        )
-        return 1
-    current_idx = ordered_stages.index(current_stage)
-    target_idx = ordered_stages.index(target_stage)
-    if target_idx <= current_idx:
-        print(
-            f"autolab skip: ERROR can only skip forward (current={current_stage}, target={target_stage})",
-            file=sys.stderr,
-        )
-        return 1
-
-    state["stage"] = target_stage
-    state["stage_attempt"] = 0
-    _append_state_history(
-        state,
-        stage_before=current_stage,
-        stage_after=target_stage,
-        status="manual_skip",
-        summary=f"manual skip from {current_stage} to {target_stage}: {reason}",
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    lock_path = autolab_dir / "lock"
+    lock_ok, lock_msg = _acquire_lock(
+        lock_path,
+        state_file=state_path,
+        command=" ".join(sys.argv),
+        stale_seconds=LOCK_STALE_SECONDS,
     )
-    _write_json(state_path, state)
-    _append_log(repo_root, f"skip: {current_stage} -> {target_stage} reason={reason}")
-    print(f"autolab skip: {current_stage} -> {target_stage}")
-    return 0
+    if not lock_ok:
+        print(f"autolab skip: ERROR {lock_msg}", file=sys.stderr)
+        return 1
+
+    try:
+        try:
+            state = _load_state(state_path)
+        except RuntimeError as exc:
+            print(f"autolab skip: ERROR {exc}", file=sys.stderr)
+            return 1
+
+        current_stage = str(state.get("stage", "")).strip()
+        target_stage = args.stage
+        reason = args.reason
+
+        if current_stage in TERMINAL_STAGES:
+            print(
+                f"autolab skip: ERROR current stage '{current_stage}' is terminal; cannot skip",
+                file=sys.stderr,
+            )
+            return 1
+
+        if target_stage in TERMINAL_STAGES:
+            print(
+                f"autolab skip: ERROR cannot skip to terminal stage '{target_stage}'",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Validate forward-only skip within ACTIVE_STAGES (includes decide_repeat)
+        ordered_stages = list(ACTIVE_STAGES)
+        if "decide_repeat" not in ordered_stages:
+            ordered_stages.append("decide_repeat")
+        if current_stage not in ordered_stages:
+            print(
+                f"autolab skip: ERROR current stage '{current_stage}' is not skippable",
+                file=sys.stderr,
+            )
+            return 1
+        if target_stage not in ordered_stages:
+            print(
+                f"autolab skip: ERROR target stage '{target_stage}' is not a valid skip target",
+                file=sys.stderr,
+            )
+            return 1
+        current_idx = ordered_stages.index(current_stage)
+        target_idx = ordered_stages.index(target_stage)
+        if target_idx <= current_idx:
+            print(
+                f"autolab skip: ERROR can only skip forward (current={current_stage}, target={target_stage})",
+                file=sys.stderr,
+            )
+            return 1
+
+        state["stage"] = target_stage
+        state["stage_attempt"] = 0
+        _append_state_history(
+            state,
+            stage_before=current_stage,
+            stage_after=target_stage,
+            status="manual_skip",
+            summary=f"manual skip from {current_stage} to {target_stage}: {reason}",
+        )
+        _write_json(state_path, state)
+        _append_log(
+            repo_root, f"skip: {current_stage} -> {target_stage} reason={reason}"
+        )
+        print(f"autolab skip: {current_stage} -> {target_stage}")
+        return 0
+    finally:
+        _release_lock(lock_path)
 
 
 # ---------------------------------------------------------------------------

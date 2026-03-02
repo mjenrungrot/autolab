@@ -288,6 +288,63 @@ def test_run_fails_when_active_lock_exists(tmp_path: Path) -> None:
     assert lock_path.exists()
 
 
+def test_loop_without_auto_fails_when_active_lock_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    lock_path = _write_lock(repo, state_path=state_path, command="autolab run")
+
+    exit_code = commands_module.main(
+        [
+            "loop",
+            "--state-file",
+            str(state_path),
+            "--max-iterations",
+            "1",
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 1
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["stage"] == "design"
+    assert state["stage_attempt"] == 0
+    assert lock_path.exists()
+
+
+def test_skip_fails_when_active_lock_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    lock_path = _write_lock(repo, state_path=state_path, command="autolab run")
+
+    exit_code = commands_module.main(
+        [
+            "skip",
+            "--state-file",
+            str(state_path),
+            "--stage",
+            "implementation",
+            "--reason",
+            "test",
+        ]
+    )
+
+    assert exit_code == 1
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["stage"] == "design"
+    assert state["stage_attempt"] == 0
+    assert lock_path.exists()
+
+
 def test_run_heartbeats_lock_during_long_execution(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
