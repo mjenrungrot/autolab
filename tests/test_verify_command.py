@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -282,6 +283,68 @@ def test_run_fails_when_active_lock_exists(tmp_path: Path) -> None:
     assert state["stage"] == "design"
     assert state["stage_attempt"] == 0
     assert lock_path.exists()
+
+
+def test_run_heartbeats_lock_during_long_execution(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+
+    heartbeat_calls = 0
+    original_heartbeat_lock = commands_module._heartbeat_lock
+
+    def _counting_heartbeat(lock_path: Path) -> None:
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+        original_heartbeat_lock(lock_path)
+
+    def _slow_run_once(
+        _state_path: Path,
+        _decision: str | None,
+        *,
+        run_agent_mode: str = "policy",
+        verify_before_evaluate: bool = False,
+        assistant: bool = False,
+        auto_mode: bool = False,
+        auto_decision: bool = False,
+        strict_implementation_progress: bool = True,
+    ) -> commands_module.RunOutcome:
+        del (
+            run_agent_mode,
+            verify_before_evaluate,
+            assistant,
+            auto_mode,
+            auto_decision,
+            strict_implementation_progress,
+        )
+        time.sleep(0.05)
+        return commands_module.RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="design",
+            stage_after="design",
+            message="ok",
+        )
+
+    monkeypatch.setattr(commands_module, "_heartbeat_lock", _counting_heartbeat)
+    monkeypatch.setattr(commands_module, "_run_once", _slow_run_once)
+    monkeypatch.setattr(commands_module, "RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+
+    exit_code = commands_module.main(
+        [
+            "run",
+            "--state-file",
+            str(state_path),
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 0
+    assert heartbeat_calls >= 3
 
 
 def test_run_blocks_on_stage_readiness_when_run_id_missing(tmp_path: Path) -> None:
