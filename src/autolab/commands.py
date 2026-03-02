@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 import importlib.metadata as importlib_metadata
 import importlib.resources as importlib_resources
@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,7 @@ SKILL_INSTALL_ROOT_BY_PROVIDER = {
     "claude": ".claude",
 }
 VERIFICATION_SUMMARY_RETENTION_LIMIT = 200
+RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Getting started", ("init", "configure", "status", "docs", "explain")),
@@ -315,6 +317,30 @@ def _run_once(
         auto_mode=auto_mode,
         strict_implementation_progress=strict_implementation_progress,
     )
+
+
+@contextmanager
+def _periodic_run_lock_heartbeat(lock_path: Path):
+    """Keep run lock heartbeat fresh while a single run execution is active."""
+    stop_event = threading.Event()
+
+    def _heartbeat_loop() -> None:
+        while not stop_event.wait(RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS):
+            _heartbeat_lock(lock_path)
+
+    _heartbeat_lock(lock_path)
+    heartbeat_thread = threading.Thread(
+        target=_heartbeat_loop,
+        name="autolab-run-lock-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        heartbeat_thread.join(timeout=RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS + 1.0)
+        _heartbeat_lock(lock_path)
 
 
 # ---------------------------------------------------------------------------
@@ -2147,53 +2173,54 @@ def _cmd_run(args: argparse.Namespace) -> int:
     lock_acquired = True
 
     try:
-        _append_log(repo_root, f"run lock acquired: {lock_msg}")
-        baseline_snapshot = _collect_change_snapshot(repo_root)
-        outcome = _run_once(
-            state_path,
-            args.decision,
-            run_agent_mode=run_agent_mode,
-            verify_before_evaluate=bool(getattr(args, "verify", False)),
-            assistant=assistant_mode,
-            auto_mode=False,
-            auto_decision=bool(getattr(args, "auto_decision", False)),
-            strict_implementation_progress=bool(
-                getattr(args, "strict_implementation_progress", True)
-            ),
-        )
-        commit_outcome = _prepare_standard_commit_outcome(
-            repo_root,
-            outcome,
-            baseline_snapshot,
-            assistant=assistant_mode,
-            strict_implementation_progress=bool(
-                getattr(args, "strict_implementation_progress", True)
-            ),
-        )
-        commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
-        print("autolab run")
-        print(f"state_file: {state_path}")
-        print(f"run_agent_mode: {run_agent_mode}")
-        print(f"assistant: {bool(getattr(args, 'assistant', False))}")
-        print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
-        print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
-        print(f"stage_before: {outcome.stage_before}")
-        print(f"stage_after: {outcome.stage_after}")
-        print(f"transitioned: {outcome.transitioned}")
-        print(f"message: {outcome.message}")
-        print(commit_summary)
-        if outcome.exit_code != 0:
-            print(f"autolab run: ERROR {outcome.message}", file=sys.stderr)
+        with _periodic_run_lock_heartbeat(lock_path):
+            _append_log(repo_root, f"run lock acquired: {lock_msg}")
+            baseline_snapshot = _collect_change_snapshot(repo_root)
+            outcome = _run_once(
+                state_path,
+                args.decision,
+                run_agent_mode=run_agent_mode,
+                verify_before_evaluate=bool(getattr(args, "verify", False)),
+                assistant=assistant_mode,
+                auto_mode=False,
+                auto_decision=bool(getattr(args, "auto_decision", False)),
+                strict_implementation_progress=bool(
+                    getattr(args, "strict_implementation_progress", True)
+                ),
+            )
+            commit_outcome = _prepare_standard_commit_outcome(
+                repo_root,
+                outcome,
+                baseline_snapshot,
+                assistant=assistant_mode,
+                strict_implementation_progress=bool(
+                    getattr(args, "strict_implementation_progress", True)
+                ),
+            )
+            commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
+            print("autolab run")
+            print(f"state_file: {state_path}")
+            print(f"run_agent_mode: {run_agent_mode}")
+            print(f"assistant: {bool(getattr(args, 'assistant', False))}")
+            print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
+            print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
+            print(f"stage_before: {outcome.stage_before}")
+            print(f"stage_after: {outcome.stage_after}")
+            print(f"transitioned: {outcome.transitioned}")
+            print(f"message: {outcome.message}")
+            print(commit_summary)
+            if outcome.exit_code != 0:
+                print(f"autolab run: ERROR {outcome.message}", file=sys.stderr)
 
-            # Phase 7a: manual mode hint
-            stage = outcome.stage_before
-            prompt_file = STAGE_PROMPT_FILES.get(stage)
-            if prompt_file:
-                print(
-                    f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage."
-                )
+                # Phase 7a: manual mode hint
+                stage = outcome.stage_before
+                prompt_file = STAGE_PROMPT_FILES.get(stage)
+                if prompt_file:
+                    print(
+                        f"\nHint: Follow instructions in .autolab/prompts/{prompt_file} to complete the '{stage}' stage."
+                    )
 
-        return outcome.exit_code
+            return outcome.exit_code
     finally:
         if lock_acquired:
             _release_lock(lock_path)
