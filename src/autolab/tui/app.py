@@ -1209,6 +1209,10 @@ class AutolabCockpitApp(App[None]):
       min-height: 8;
     }
 
+    #artifact-search {
+      margin-bottom: 1;
+    }
+
     #run-details,
     #files-context,
     #home-stage-card,
@@ -1271,6 +1275,9 @@ class AutolabCockpitApp(App[None]):
         ("enter", "activate_selection", "Activate"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
+        ("g", "toggle_file_stage_scope", "Files Scope"),
+        ("slash", "focus_file_search", "Files Search"),
+        ("escape", "clear_file_search", "Clear Search"),
         ("e", "open_selected_in_editor", "Open Editor"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
@@ -1302,8 +1309,11 @@ class AutolabCockpitApp(App[None]):
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
+        self._artifact_stage_labels: dict[Path, tuple[str, ...]] = {}
         self._missing_artifacts_count = 0
         self._files_missing_only = False
+        self._files_scope = "current"
+        self._artifact_search_query = ""
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1354,6 +1364,11 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="files-view", classes="view-panel"):
                 yield Static("Files", classes="view-title")
                 yield Static("", id="files-context", markup=False)
+                yield Input(
+                    value="",
+                    placeholder="Search files (press / to focus, Esc to clear)",
+                    id="artifact-search",
+                )
                 yield ListView(id="artifact-list")
                 with Horizontal(id="file-buttons"):
                     yield Button("Open Viewer", id="file-open-viewer")
@@ -1362,6 +1377,7 @@ class AutolabCockpitApp(App[None]):
                     yield Button("Open Context", id="file-open-context")
                     yield Button("Open Template", id="file-open-prompt")
                     yield Button("Open State", id="file-open-state")
+                    yield Button("Scope: Current Stage", id="file-toggle-stage-scope")
                     yield Button("Filter: All", id="file-toggle-missing-filter")
                 with Horizontal(id="file-advanced-buttons"):
                     yield Button(
@@ -1470,6 +1486,11 @@ class AutolabCockpitApp(App[None]):
             parts.append("e editor")
             filter_state = "on" if self._files_missing_only else "off"
             parts.append(f"m missing-only({filter_state})")
+            scope_state = "all" if self._files_scope == "all" else "current"
+            parts.append(f"g scope({scope_state})")
+            parts.append("/ search")
+            if self._artifact_search_query:
+                parts.append("Esc clear search")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
@@ -1542,6 +1563,13 @@ class AutolabCockpitApp(App[None]):
         self.query_one(
             "#file-advanced-buttons", Horizontal
         ).display = self._show_advanced
+        scope_button = self.query_one("#file-toggle-stage-scope", Button)
+        scope_button.label = (
+            "Scope: All Stages"
+            if self._files_scope == "all"
+            else "Scope: Current Stage"
+        )
+        scope_button.variant = "primary" if self._files_scope == "all" else "default"
         filter_button = self.query_one("#file-toggle-missing-filter", Button)
         filter_button.label = (
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
@@ -1618,6 +1646,7 @@ class AutolabCockpitApp(App[None]):
         self._selected_artifact_index = 0
         self._current_artifacts = ()
         self._all_artifacts = ()
+        self._artifact_stage_labels = {}
         self._missing_artifacts_count = 0
 
         home_actions = self.query_one("#home-action-list", ListView)
@@ -1874,37 +1903,81 @@ class AutolabCockpitApp(App[None]):
         artifact_list.clear()
         self._current_artifacts = ()
         self._all_artifacts = ()
+        self._artifact_stage_labels = {}
         self._missing_artifacts_count = 0
 
         if snapshot is None:
             return
 
         stage = snapshot.current_stage
-        stage_artifacts = list(snapshot.artifacts_by_stage.get(stage, ()))
+        stage_artifact_entries: list[tuple[ArtifactItem, str]] = []
+        if self._files_scope == "all":
+            for stage_name, artifacts in snapshot.artifacts_by_stage.items():
+                stage_artifact_entries.extend(
+                    (artifact, stage_name) for artifact in artifacts
+                )
+        else:
+            stage_artifact_entries.extend(
+                (artifact, stage)
+                for artifact in snapshot.artifacts_by_stage.get(stage, ())
+            )
+
         seen: set[Path] = set()
+        stage_labels_by_path: dict[Path, set[str]] = {}
         merged: list[ArtifactItem] = []
-        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
+        for artifact, stage_name in stage_artifact_entries:
+            labels = stage_labels_by_path.setdefault(artifact.path, set())
+            labels.add(stage_name)
             if artifact.path in seen:
                 continue
             seen.add(artifact.path)
             merged.append(artifact)
+
+        for artifact in snapshot.common_artifacts:
+            labels = stage_labels_by_path.setdefault(artifact.path, set())
+            labels.add("common")
+            if artifact.path in seen:
+                continue
+            seen.add(artifact.path)
+            merged.append(artifact)
+
+        self._artifact_stage_labels = {
+            path: tuple(sorted(labels, key=lambda entry: (entry == "common", entry)))
+            for path, labels in stage_labels_by_path.items()
+        }
         self._all_artifacts = tuple(merged)
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
+        visible_artifacts: tuple[ArtifactItem, ...]
         if self._files_missing_only:
-            self._current_artifacts = tuple(
+            visible_artifacts = tuple(
                 artifact for artifact in self._all_artifacts if not artifact.exists
             )
         else:
-            self._current_artifacts = self._all_artifacts
+            visible_artifacts = self._all_artifacts
+        if self._artifact_search_query:
+            search_query = self._artifact_search_query.casefold()
+            visible_artifacts = tuple(
+                artifact
+                for artifact in visible_artifacts
+                if search_query in self._display_path(artifact.path).casefold()
+            )
+        self._current_artifacts = visible_artifacts
 
         if not self._current_artifacts:
-            empty_text = (
-                "(No missing files for this stage)"
-                if self._files_missing_only
-                else "(No relevant files)"
-            )
+            if self._artifact_search_query and self._files_missing_only:
+                empty_text = "(No missing files match search query)"
+            elif self._artifact_search_query:
+                empty_text = "(No files match search query)"
+            elif self._files_missing_only:
+                empty_text = (
+                    "(No missing files in selected scope)"
+                    if self._files_scope == "all"
+                    else "(No missing files for this stage)"
+                )
+            else:
+                empty_text = "(No relevant files)"
             empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
@@ -1913,7 +1986,9 @@ class AutolabCockpitApp(App[None]):
             context_widget.update(
                 "Files\n"
                 f"- Stage: {stage}\n"
+                f"- Scope: {'all stages' if self._files_scope == 'all' else 'current stage'}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+                f"- Search: {self._artifact_search_query or '(none)'}\n"
                 f"- {empty_text}"
             )
             self._set_tone(context_widget, "tone-muted")
@@ -1921,7 +1996,14 @@ class AutolabCockpitApp(App[None]):
 
         for artifact in self._current_artifacts:
             marker = "OK" if artifact.exists else "MISS"
-            entry = Label(f"[{marker}] {self._display_path(artifact.path)}")
+            display_path = self._display_path(artifact.path)
+            if self._files_scope == "all":
+                sources = self._artifact_stage_labels.get(artifact.path, ())
+                source_label = ", ".join(sources) if sources else "-"
+                entry_text = f"[{marker}] {display_path} ({source_label})"
+            else:
+                entry_text = f"[{marker}] {display_path}"
+            entry = Label(entry_text)
             entry.add_class("tone-success" if artifact.exists else "tone-warning")
             artifact_list.append(ListItem(entry))
         self._selected_artifact_index = min(
@@ -1940,6 +2022,11 @@ class AutolabCockpitApp(App[None]):
             return
         selected = self._selected_artifact_path()
         selected_text = self._display_path(selected) if selected else "none"
+        selected_sources = (
+            ", ".join(self._artifact_stage_labels.get(selected, ()))
+            if selected
+            else "-"
+        )
         total_count = len(self._all_artifacts)
         visible_count = len(self._current_artifacts)
         missing_count = self._missing_artifacts_count
@@ -1947,8 +2034,11 @@ class AutolabCockpitApp(App[None]):
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
+            f"- Scope: {'all stages' if self._files_scope == 'all' else 'current stage'}\n"
             f"- Selected: {selected_text}\n"
+            f"- Selected source: {selected_sources}\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+            f"- Search: {self._artifact_search_query or '(none)'}\n"
             f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
@@ -1977,6 +2067,8 @@ class AutolabCockpitApp(App[None]):
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
+            "- g: Toggle Files scope (current stage vs all stages).\n"
+            "- /: Focus Files search; Esc clears current Files search.\n"
             "- e: Open selected file in editor (Files view).\n"
             "\n"
             "Safety\n"
@@ -2129,6 +2221,40 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
+    def action_toggle_file_stage_scope(self) -> None:
+        if self._mode != "files":
+            self.notify("File scope toggle is available in Files view (3).")
+            return
+        self._files_scope = "all" if self._files_scope == "current" else "current"
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
+    def action_focus_file_search(self) -> None:
+        if self._mode != "files":
+            self.notify("File search is available in Files view (3).")
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        search_input = self.query_one("#artifact-search", Input)
+        search_input.focus()
+        search_input.cursor_position = len(search_input.value)
+
+    def action_clear_file_search(self) -> None:
+        if self._mode != "files" or isinstance(self.screen, ModalScreen):
+            return
+        search_input = self.query_one("#artifact-search", Input)
+        if not search_input.value and not self._artifact_search_query:
+            if isinstance(self.focused, Input):
+                self.query_one("#artifact-list", ListView).focus()
+            return
+        search_input.value = ""
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        if isinstance(self.focused, Input):
+            self.query_one("#artifact-list", ListView).focus()
+        self._update_ui_chrome()
+
     def action_activate_selection(self) -> None:
         focused = self.focused
         if isinstance(focused, ListView):
@@ -2164,6 +2290,14 @@ class AutolabCockpitApp(App[None]):
             list_id=event.list_view.id or "", selected_index=index
         )
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if (event.input.id or "") != "artifact-search":
+            return
+        self._artifact_search_query = event.value.strip()
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         index = event.list_view.index
         if index is None or index < 0:
@@ -2193,6 +2327,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "toggle-advanced":
             self.action_toggle_advanced()
+            return
+        if button_id == "file-toggle-stage-scope":
+            self.action_toggle_file_stage_scope()
             return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
