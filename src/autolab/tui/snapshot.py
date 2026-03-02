@@ -22,6 +22,7 @@ from autolab.todo_sync import list_open_tasks
 from autolab.tui.models import (
     ArtifactItem,
     CockpitSnapshot,
+    RecommendedAction,
     RunItem,
     StageItem,
     TodoItem,
@@ -339,6 +340,84 @@ def _merge_blockers(
     return tuple(deduped[:10])
 
 
+def _build_recommended_actions(
+    *,
+    current_stage: str,
+    verification: VerificationSummary | None,
+    stage_artifacts: tuple[ArtifactItem, ...],
+    blockers: tuple[str, ...],
+    todos: tuple[TodoItem, ...],
+) -> tuple[RecommendedAction, ...]:
+    recommended: list[RecommendedAction] = []
+
+    # Onboarding-first default: stage guidance is always safe and useful.
+    recommended.append(
+        RecommendedAction(
+            action_id="open_stage_prompt",
+            reason="Start here: read what this stage expects before taking action.",
+        )
+    )
+
+    missing_required = [item for item in stage_artifacts if not item.exists]
+    if missing_required:
+        recommended.append(
+            RecommendedAction(
+                action_id="run_once",
+                reason=(
+                    f"{len(missing_required)} required file(s) are missing for "
+                    f"'{current_stage}'."
+                ),
+            )
+        )
+    else:
+        recommended.append(
+            RecommendedAction(
+                action_id="run_once",
+                reason="Required files look ready; proceed with one safe transition.",
+            )
+        )
+
+    if verification is None:
+        recommended.append(
+            RecommendedAction(
+                action_id="verify_current_stage",
+                reason="No verification result found yet for this workspace.",
+            )
+        )
+    elif not verification.passed and verification.stage_effective == current_stage:
+        recommended.append(
+            RecommendedAction(
+                action_id="verify_current_stage",
+                reason="Verification is currently failing for this stage.",
+            )
+        )
+
+    if blockers:
+        recommended.append(
+            RecommendedAction(
+                action_id="open_state_history",
+                reason="Review current state and blockers before retrying.",
+            )
+        )
+
+    if todos:
+        recommended.append(
+            RecommendedAction(
+                action_id="todo_sync",
+                reason="Open todo tasks exist; sync todo state with docs.",
+            )
+        )
+
+    deduped: list[RecommendedAction] = []
+    seen: set[str] = set()
+    for item in recommended:
+        if item.action_id in seen:
+            continue
+        seen.add(item.action_id)
+        deduped.append(item)
+    return tuple(deduped[:5])
+
+
 def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     resolved_state_path = state_path.expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_state_path)
@@ -410,6 +489,16 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         last_run_id=last_run_id,
     )
     common_artifacts = _build_common_artifacts(repo_root, iteration_dir)
+    current_stage_artifacts = artifacts_by_stage.get(current_stage, ())
+    recommended_actions = _build_recommended_actions(
+        current_stage=current_stage,
+        verification=verification,
+        stage_artifacts=current_stage_artifacts,
+        blockers=blockers,
+        todos=todos,
+    )
+    primary_blocker = blockers[0] if blockers else "none"
+    secondary_blockers = blockers[1:4] if blockers else ()
 
     return CockpitSnapshot(
         repo_root=repo_root,
@@ -425,6 +514,9 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         todos=todos,
         verification=verification,
         top_blockers=blockers,
+        primary_blocker=primary_blocker,
+        secondary_blockers=secondary_blockers,
+        recommended_actions=recommended_actions,
         stage_summaries=dict(_STAGE_SUMMARY),
         artifacts_by_stage=artifacts_by_stage,
         common_artifacts=common_artifacts,

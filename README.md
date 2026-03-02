@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.59
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.60
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -102,7 +102,7 @@ autolab render --stage implementation
 autolab render --stage design --context
 ```
 
-**Interactive cockpit.** `autolab tui` launches a simplified keyboard-first Textual inspector with read-only-by-default navigation, confirmation-gated command execution, and an arm/disarm safety flow for mutating actions. Snapshot refresh is fail-closed: on refresh failure, cockpit disarms and blocks action execution until a successful refresh. Verify is treated as mutating and still requires arm + confirm. Artifact external open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
+**Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) designed to reduce first-use complexity. It starts locked (read-only), requires explicit unlock + per-action confirmation for mutating commands, auto-locks after mutating completion, and stays fail-closed on snapshot refresh errors. Run/loop actions are preset-first with optional advanced controls, and high-risk actions are hidden until advanced mode is enabled. Artifact external open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

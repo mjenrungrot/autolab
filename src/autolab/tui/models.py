@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Literal
 
 ActionKind = Literal["view", "mutating"]
+ActionRisk = Literal["low", "medium", "high"]
 StageStatus = Literal["complete", "current", "blocked", "upcoming"]
+ViewMode = Literal["home", "runs", "files", "console", "help"]
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,11 @@ class ActionSpec:
     label: str
     description: str
     kind: ActionKind
+    risk_level: ActionRisk = "low"
+    group: str = "general"
+    user_label: str = ""
+    help_text: str = ""
+    advanced: bool = False
     requires_confirmation: bool = False
     requires_arm: bool = False
 
@@ -88,6 +95,12 @@ class CommandIntent:
 
 
 @dataclass(frozen=True)
+class RecommendedAction:
+    action_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class CockpitSnapshot:
     repo_root: Path
     state_path: Path
@@ -102,6 +115,9 @@ class CockpitSnapshot:
     todos: tuple[TodoItem, ...]
     verification: VerificationSummary | None
     top_blockers: tuple[str, ...]
+    primary_blocker: str
+    secondary_blockers: tuple[str, ...]
+    recommended_actions: tuple[RecommendedAction, ...] = ()
     stage_summaries: dict[str, str] = field(default_factory=dict)
     artifacts_by_stage: dict[str, tuple[ArtifactItem, ...]] = field(
         default_factory=dict
