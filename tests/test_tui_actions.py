@@ -17,11 +17,19 @@ from autolab.tui.models import LoopActionOptions, RunActionOptions
 def test_action_catalog_contains_required_entries() -> None:
     actions = list_actions()
     action_ids = {action.action_id for action in actions}
+    assert "open_rendered_prompt" in action_ids
+    assert "open_render_context" in action_ids
     assert "verify_current_stage" in action_ids
     assert "run_once" in action_ids
     assert "run_loop" in action_ids
     assert "todo_sync" in action_ids
     assert "open_selected_artifact" in action_ids
+    rendered_action = next(
+        action for action in actions if action.action_id == "open_rendered_prompt"
+    )
+    assert rendered_action.kind == "view"
+    assert rendered_action.requires_arm is False
+    assert rendered_action.requires_confirmation is False
     verify_action = next(
         action for action in actions if action.action_id == "verify_current_stage"
     )

@@ -166,6 +166,46 @@ def test_home_enter_opens_viewer_modal_and_closes(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_home_shows_render_preview_card(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            render_card = app.query_one("#home-render-card", app_module.Static)
+            render_text = str(render_card.render())
+            assert "What Autolab Will Run Now" in render_text
+            assert "Stage: design" in render_text
+
+    asyncio.run(_run())
+
+
+def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.click("#file-open-rendered")
+            await pilot.pause()
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "Rendered Prompt (design)" in str(title.render())
+            assert await _click_when_visible(pilot, "#close") is True
+
+            await pilot.click("#file-open-context")
+            await pilot.pause()
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "Render Context (design)" in str(title.render())
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
 def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -177,7 +217,7 @@ def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
             assert await _click_when_visible(pilot, "#cancel") is True
             await pilot.pause()
             safety_status = app.query_one("#status-safety", app_module.Static)
-            assert "Locked (read-only)." in str(safety_status.render())
+            assert "Locked: read-only." in str(safety_status.render())
 
     asyncio.run(_run())
 

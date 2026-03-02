@@ -18,9 +18,9 @@ autolab tui --tail-lines 2000
 
 The cockpit is mode-based, not multi-pane focus-based.
 
-- **Home**: Start-here summary, required artifact readiness, primary blocker, recommended next actions.
+- **Home**: Stage summary, rendered prompt preview ("what will run now"), blockers, required artifacts, recommended actions.
 - **Runs**: Run list plus quick open for manifest/metrics.
-- **Files**: Stage-relevant/common files with viewer/editor actions.
+- **Files**: Stage/common files plus quick open for rendered prompt, render context, and prompt template.
 - **Console**: Live output for the active command.
 - **Help**: Keymap and safety model.
 
@@ -60,7 +60,7 @@ Only one primary workspace is shown at a time to reduce UI overload for first-ti
 
 Confirmation dialogs show:
 
-- action summary and risk level first,
+- action, risk level, and purpose first,
 - details (`command`, `cwd`, expected writes) behind **Show Details**.
 
 ### Preset-first run flows
@@ -93,4 +93,6 @@ Reveal them with `x` (Toggle Advanced).
 - External API remains unchanged: `autolab tui --state-file ... --tail-lines ...`.
 - View actions never mutate repo-tracked workflow files.
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
+- Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.
+- Semantic colors are intentionally restrained: success/info/warning/error cues improve scanability without changing behavior.
 - If `stdin/stdout` are not interactive TTYs, `autolab tui` exits with an error.
