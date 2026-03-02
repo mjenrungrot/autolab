@@ -656,8 +656,12 @@ def is_text_artifact(path: Path) -> bool:
     return bool(guessed and guessed.startswith("text/"))
 
 
-def load_artifact_text(path: Path, *, max_chars: int = 200_000) -> tuple[str, bool]:
-    if max_chars <= 0:
+def load_artifact_text(
+    path: Path,
+    *,
+    max_chars: int | None = None,
+) -> tuple[str, bool]:
+    if max_chars is not None and max_chars <= 0:
         max_chars = 1
     if not path.exists():
         return ("File does not exist.", False)
@@ -673,19 +677,23 @@ def load_artifact_text(path: Path, *, max_chars: int = 200_000) -> tuple[str, bo
 
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
-            text = handle.read(max_chars + 1)
+            if max_chars is None:
+                text = handle.read()
+            else:
+                text = handle.read(max_chars + 1)
     except OSError as exc:
         return (f"Unable to read file: {exc}", False)
 
-    truncated = len(text) > max_chars
-    if truncated:
+    truncated = False
+    if max_chars is not None and len(text) > max_chars:
+        truncated = True
         text = text[:max_chars]
 
     if path.suffix.lower() == ".json":
         try:
             payload = json.loads(text)
             text = json.dumps(payload, indent=2, sort_keys=True)
-            if len(text) > max_chars:
+            if max_chars is not None and len(text) > max_chars:
                 truncated = True
                 text = text[:max_chars]
         except Exception:

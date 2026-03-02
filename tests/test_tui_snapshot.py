@@ -281,3 +281,13 @@ def test_load_artifact_text_non_positive_max_chars_defaults_to_one(
     rendered_text, truncated = load_artifact_text(text_path, max_chars=0)
     assert truncated is True
     assert rendered_text.startswith("a")
+
+
+def test_load_artifact_text_without_max_chars_reads_full_content(
+    tmp_path: Path,
+) -> None:
+    text_path = tmp_path / "full.txt"
+    text_path.write_text("abcdef", encoding="utf-8")
+    rendered_text, truncated = load_artifact_text(text_path)
+    assert rendered_text == "abcdef"
+    assert truncated is False
