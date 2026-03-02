@@ -8,7 +8,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
-from textual.app import App, ComposeResult
+from textual import events
+from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
@@ -110,7 +111,11 @@ class UnlockSafetyScreen(ModalScreen[bool]):
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("enter", "confirm", "Confirm"),
+        ("d", "toggle_details", "Toggle Details"),
+    ]
 
     CSS = """
     ActionConfirmScreen {
@@ -132,6 +137,11 @@ class ActionConfirmScreen(ModalScreen[bool]):
 
     #action-confirm-summary {
       margin-bottom: 1;
+    }
+
+    #action-confirm-hint {
+      margin-bottom: 1;
+      color: $text-muted;
     }
 
     #action-confirm-details {
@@ -169,6 +179,11 @@ class ActionConfirmScreen(ModalScreen[bool]):
         with Vertical(id="action-confirm-dialog"):
             yield Label(self._title, id="action-confirm-title")
             yield Static(self._summary, id="action-confirm-summary", markup=False)
+            yield Static(
+                "Keys: Enter confirm | d toggle details | Esc cancel",
+                id="action-confirm-hint",
+                markup=False,
+            )
             yield Static("Details hidden.", id="action-confirm-details", markup=False)
             with Horizontal(id="action-confirm-buttons"):
                 yield Button("Cancel", id="cancel")
@@ -181,6 +196,13 @@ class ActionConfirmScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_toggle_details(self) -> None:
+        self._show_details = not self._show_details
+        self._render_details()
 
     def _render_details(self) -> None:
         details = self.query_one("#action-confirm-details", Static)
@@ -204,10 +226,21 @@ class ActionConfirmScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "toggle-details":
-            self._show_details = not self._show_details
-            self._render_details()
+            self.action_toggle_details()
             return
-        self.dismiss(event.button.id == "confirm")
+        if event.button.id == "confirm":
+            self.action_confirm()
+            return
+        self.dismiss(False)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            self.action_confirm()
+            return
+        if event.key == "d":
+            event.stop()
+            self.action_toggle_details()
 
 
 class RunPresetScreen(ModalScreen[RunActionOptions | None]):
@@ -1363,6 +1396,21 @@ class AutolabCockpitApp(App[None]):
       margin-top: 1;
     }
 
+    #files-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #artifact-filter-label {
+      width: 12;
+      color: $text-muted;
+    }
+
+    #artifact-filter-input {
+      width: 1fr;
+    }
+
     #console-log {
       height: 1fr;
       border: round $surface;
@@ -1378,9 +1426,11 @@ class AutolabCockpitApp(App[None]):
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
+        ("ctrl+k", "command_palette", "Commands"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
+        ("slash", "focus_files_filter", "Filter Files"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
@@ -1418,6 +1468,7 @@ class AutolabCockpitApp(App[None]):
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
         self._missing_artifacts_count = 0
         self._files_missing_only = False
+        self._artifact_filter_query = ""
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1474,6 +1525,16 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="files-view", classes="view-panel"):
                 yield Static("Files", classes="view-title")
                 yield Static("", id="files-context", markup=False)
+                with Horizontal(id="files-filter-row"):
+                    yield Static(
+                        "Name Filter", id="artifact-filter-label", markup=False
+                    )
+                    yield Input(
+                        value=self._artifact_filter_query,
+                        placeholder="Type to filter files by path...",
+                        id="artifact-filter-input",
+                    )
+                    yield Button("Clear", id="artifact-filter-clear")
                 yield ListView(id="artifact-list")
                 with Horizontal(id="file-buttons"):
                     yield Button("Open Viewer", id="file-open-viewer")
@@ -1576,6 +1637,7 @@ class AutolabCockpitApp(App[None]):
             "u lock",
             "x advanced",
             "p prompt",
+            "ctrl+k commands",
             "r refresh",
             "? help",
             "q quit",
@@ -1591,6 +1653,8 @@ class AutolabCockpitApp(App[None]):
             parts.append("e editor")
             filter_state = "on" if self._files_missing_only else "off"
             parts.append(f"m missing-only({filter_state})")
+            name_filter_state = "on" if self._artifact_filter_query else "off"
+            parts.append(f"/ name-filter({name_filter_state})")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
@@ -1691,6 +1755,8 @@ class AutolabCockpitApp(App[None]):
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
         )
         filter_button.variant = "primary" if self._files_missing_only else "default"
+        clear_button = self.query_one("#artifact-filter-clear", Button)
+        clear_button.disabled = not bool(self._artifact_filter_query)
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -2066,19 +2132,34 @@ class AutolabCockpitApp(App[None]):
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
+        visible_artifacts: tuple[ArtifactItem, ...]
         if self._files_missing_only:
-            self._current_artifacts = tuple(
+            visible_artifacts = tuple(
                 artifact for artifact in self._all_artifacts if not artifact.exists
             )
         else:
-            self._current_artifacts = self._all_artifacts
+            visible_artifacts = self._all_artifacts
+        query = self._artifact_filter_query.strip().lower()
+        if query:
+            self._current_artifacts = tuple(
+                artifact
+                for artifact in visible_artifacts
+                if query in self._display_path(artifact.path).lower()
+            )
+        else:
+            self._current_artifacts = visible_artifacts
 
         if not self._current_artifacts:
-            empty_text = (
-                "(No missing files for this stage)"
-                if self._files_missing_only
-                else "(No relevant files)"
-            )
+            if query:
+                empty_text = (
+                    f"(No files match name filter: {self._artifact_filter_query})"
+                )
+            else:
+                empty_text = (
+                    "(No missing files for this stage)"
+                    if self._files_missing_only
+                    else "(No relevant files)"
+                )
             empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
@@ -2088,6 +2169,7 @@ class AutolabCockpitApp(App[None]):
                 "Files\n"
                 f"- Stage: {stage}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+                f"- Name filter: {self._artifact_filter_query or 'none'}\n"
                 f"- {empty_text}"
             )
             self._set_tone(context_widget, "tone-muted")
@@ -2125,11 +2207,13 @@ class AutolabCockpitApp(App[None]):
             f"- Item: {selected_index}/{visible_count}\n"
             f"- Selected: {selected_text}\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+            f"- Name filter: {self._artifact_filter_query or 'none'}\n"
+            f"- Missing files: {missing_count}\n"
             f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
             "  (unlock + confirm required)\n"
-            "- Keys: Enter open viewer"
+            "- Keys: Enter open viewer | / focus name filter"
         )
         self._set_tone(context_widget, "tone-info")
 
@@ -2162,6 +2246,8 @@ class AutolabCockpitApp(App[None]):
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- e: Open selected file in editor (Files view).\n"
+            "- /: Focus files name filter (Files view).\n"
+            "- Ctrl+k: Open command palette.\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -2197,6 +2283,123 @@ class AutolabCockpitApp(App[None]):
             group="tui-ui-flows",
             exit_on_error=False,
         )
+
+    def get_system_commands(self, screen) -> list[SystemCommand]:
+        commands = list(super().get_system_commands(screen))
+        commands.extend(
+            [
+                SystemCommand(
+                    "Go to Home view",
+                    "Switch to Home stage overview.",
+                    self.action_show_home,
+                ),
+                SystemCommand(
+                    "Go to Runs view",
+                    "Switch to Runs list and details.",
+                    self.action_show_runs,
+                ),
+                SystemCommand(
+                    "Go to Files view",
+                    "Switch to Files list and artifact tools.",
+                    self.action_show_files,
+                ),
+                SystemCommand(
+                    "Go to Console view",
+                    "Switch to live command output.",
+                    self.action_show_console,
+                ),
+                SystemCommand(
+                    "Go to Help view",
+                    "Open keymap and safety guidance.",
+                    self.action_show_help,
+                ),
+                SystemCommand(
+                    "Refresh snapshot",
+                    "Reload state, runs, and artifact status.",
+                    self.action_refresh_snapshot,
+                ),
+                SystemCommand(
+                    "Toggle advanced actions",
+                    "Show or hide advanced actions.",
+                    self.action_toggle_advanced,
+                ),
+                SystemCommand(
+                    "Toggle safety lock",
+                    "Lock or unlock mutating actions.",
+                    self.action_toggle_safety_lock,
+                ),
+            ]
+        )
+        if self._mode in {"home", "runs", "files"}:
+            commands.append(
+                SystemCommand(
+                    "Quick open selected item",
+                    "Run the primary open action for this view.",
+                    self.action_quick_open,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Run mode quick action",
+                    "Run the secondary quick action for this view.",
+                    self.action_quick_secondary,
+                )
+            )
+        if self._mode == "home" and self._home_action_ids:
+            index = min(self._home_action_index, len(self._home_action_ids) - 1)
+            action_id = self._home_action_ids[index]
+            action = self._actions_by_id.get(action_id)
+            if action is not None:
+                label = action.user_label or action.label
+                commands.append(
+                    SystemCommand(
+                        f"Run selected recommended action: {label}",
+                        "Execute the selected action from Home recommendations.",
+                        self.action_activate_selection,
+                    )
+                )
+        if self._mode == "files":
+            commands.append(
+                SystemCommand(
+                    "Focus Files Name Filter",
+                    "Focus the files name filter input.",
+                    self.action_focus_files_filter,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Toggle Files Missing-only Filter",
+                    "Switch between all files and only missing files.",
+                    self.action_toggle_missing_only_filter,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Open selected file in editor",
+                    "Open the selected artifact in your external editor.",
+                    self.action_open_selected_in_editor,
+                )
+            )
+            if self._artifact_filter_query:
+                commands.append(
+                    SystemCommand(
+                        "Clear Files Name Filter",
+                        "Reset the file name filter query.",
+                        self.action_clear_files_filter,
+                    )
+                )
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
+            commands.append(
+                SystemCommand(
+                    "Stop active loop",
+                    "Request a graceful stop for the active loop command.",
+                    self.action_stop_loop,
+                )
+            )
+        return commands
 
     def action_show_home(self) -> None:
         self._switch_mode("home")
@@ -2322,6 +2525,26 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
+    def action_focus_files_filter(self) -> None:
+        if self._mode != "files":
+            self.notify("Files name filter is available in Files view (3).")
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        filter_input = self.query_one("#artifact-filter-input", Input)
+        filter_input.focus()
+        filter_input.cursor_position = len(filter_input.value)
+
+    def action_clear_files_filter(self) -> None:
+        if not self._artifact_filter_query:
+            return
+        self._artifact_filter_query = ""
+        filter_input = self.query_one("#artifact-filter-input", Input)
+        filter_input.value = ""
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
     def action_activate_selection(self) -> None:
         focused = self.focused
         if isinstance(focused, ListView):
@@ -2368,6 +2591,19 @@ class AutolabCockpitApp(App[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self._handle_button_action(event.button.id or "")
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "artifact-filter-input":
+            return
+        self._artifact_filter_query = event.value.strip()
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "artifact-filter-input":
+            return
+        self.query_one("#artifact-list", ListView).focus()
+
     def _handle_button_action(self, button_id: str) -> None:
         if button_id == "nav-home":
             self._switch_mode("home")
@@ -2386,6 +2622,10 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "toggle-advanced":
             self.action_toggle_advanced()
+            return
+        if button_id == "artifact-filter-clear":
+            self.action_clear_files_filter()
+            self.action_focus_files_filter()
             return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
