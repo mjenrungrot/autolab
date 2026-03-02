@@ -45,6 +45,23 @@ _LOCK_BREAK_EXPECTED_WRITES = (
     ".autolab/lock",
     ".autolab/logs/orchestrator.log",
 )
+_FOCUS_EXPECTED_WRITES = (
+    ".autolab/state.json",
+    ".autolab/agent_result.json",
+    ".autolab/todo_state.json",
+    ".autolab/todo_focus.json",
+    "docs/todo.md",
+    ".autolab/logs/orchestrator.log",
+)
+_EXPERIMENT_BASE_EXPECTED_WRITES = (
+    ".autolab/state.json",
+    ".autolab/agent_result.json",
+    ".autolab/backlog.yaml",
+    ".autolab/todo_state.json",
+    ".autolab/todo_focus.json",
+    "docs/todo.md",
+    ".autolab/logs/orchestrator.log",
+)
 
 ACTION_CATALOG: tuple[ActionSpec, ...] = (
     ActionSpec(
@@ -190,6 +207,45 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         requires_confirmation=True,
         requires_arm=True,
     ),
+    ActionSpec(
+        action_id="focus_experiment",
+        label="Focus experiment",
+        description="Retarget workflow focus to a backlog experiment/iteration.",
+        kind="mutating",
+        risk_level="medium",
+        group="advanced",
+        user_label="Focus experiment (advanced)",
+        help_text="Run autolab focus to retarget state and sync steering artifacts.",
+        advanced=True,
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
+        action_id="experiment_create",
+        label="Create experiment",
+        description="Create a new plan experiment and iteration skeleton.",
+        kind="mutating",
+        risk_level="high",
+        group="advanced",
+        user_label="Create experiment (advanced)",
+        help_text="Run autolab experiment create and append a backlog experiment entry.",
+        advanced=True,
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
+        action_id="experiment_move",
+        label="Move experiment",
+        description="Move an experiment across plan/in_progress/done lifecycle types.",
+        kind="mutating",
+        risk_level="high",
+        group="advanced",
+        user_label="Move experiment (advanced)",
+        help_text="Run autolab experiment move to update backlog type and iteration path.",
+        advanced=True,
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
 )
 
 
@@ -214,6 +270,17 @@ def _apply_run_agent_mode(argv: list[str], run_agent_mode: str) -> None:
 
 def _base_state_argv(*subcommands: str, state_path: Path) -> list[str]:
     return ["autolab", *subcommands, "--state-file", str(state_path)]
+
+
+def _dedupe_preserve_order(entries: list[str]) -> tuple[str, ...]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry in seen:
+            continue
+        seen.add(entry)
+        deduped.append(entry)
+    return tuple(deduped)
 
 
 def build_verify_intent(
@@ -305,6 +372,97 @@ def build_lock_break_intent(*, state_path: Path, reason: str) -> CommandIntent:
         argv=tuple(argv),
         cwd=repo_root,
         expected_writes=_LOCK_BREAK_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_focus_intent(
+    *,
+    state_path: Path,
+    experiment_id: str = "",
+    iteration_id: str = "",
+) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    argv = _base_state_argv("focus", state_path=state_path)
+    normalized_iteration_id = str(iteration_id).strip()
+    normalized_experiment_id = str(experiment_id).strip()
+    if normalized_iteration_id:
+        argv.extend(["--iteration-id", normalized_iteration_id])
+    if normalized_experiment_id:
+        argv.extend(["--experiment-id", normalized_experiment_id])
+    return CommandIntent(
+        action_id="focus_experiment",
+        argv=tuple(argv),
+        cwd=repo_root,
+        expected_writes=_FOCUS_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_experiment_create_intent(
+    *,
+    state_path: Path,
+    experiment_id: str,
+    iteration_id: str,
+    hypothesis_id: str = "",
+) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    normalized_experiment_id = str(experiment_id).strip()
+    normalized_iteration_id = str(iteration_id).strip()
+    normalized_hypothesis_id = str(hypothesis_id).strip()
+    argv = _base_state_argv("experiment", "create", state_path=state_path)
+    argv.extend(["--experiment-id", normalized_experiment_id])
+    argv.extend(["--iteration-id", normalized_iteration_id])
+    if normalized_hypothesis_id:
+        argv.extend(["--hypothesis-id", normalized_hypothesis_id])
+    expected_writes = _dedupe_preserve_order(
+        [
+            *_EXPERIMENT_BASE_EXPECTED_WRITES,
+            f"experiments/plan/{normalized_iteration_id}",
+        ]
+    )
+    return CommandIntent(
+        action_id="experiment_create",
+        argv=tuple(argv),
+        cwd=repo_root,
+        expected_writes=expected_writes,
+        mutating=True,
+    )
+
+
+def build_experiment_move_intent(
+    *,
+    state_path: Path,
+    to_type: str,
+    experiment_id: str = "",
+    iteration_id: str = "",
+) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    normalized_to = str(to_type).strip()
+    normalized_experiment_id = str(experiment_id).strip()
+    normalized_iteration_id = str(iteration_id).strip()
+    argv = _base_state_argv("experiment", "move", state_path=state_path)
+    if normalized_iteration_id:
+        argv.extend(["--iteration-id", normalized_iteration_id])
+    if normalized_experiment_id:
+        argv.extend(["--experiment-id", normalized_experiment_id])
+    argv.extend(["--to", normalized_to])
+    expected_writes = _dedupe_preserve_order(
+        [
+            *_EXPERIMENT_BASE_EXPECTED_WRITES,
+            ".autolab/*.json",
+            (
+                f"experiments/{normalized_to}/{normalized_iteration_id}"
+                if normalized_to and normalized_iteration_id
+                else "experiments/*/<iteration_id>"
+            ),
+        ]
+    )
+    return CommandIntent(
+        action_id="experiment_move",
+        argv=tuple(argv),
+        cwd=repo_root,
+        expected_writes=expected_writes,
         mutating=True,
     )
 

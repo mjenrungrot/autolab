@@ -159,6 +159,68 @@ def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> Non
     )
 
 
+def test_snapshot_loads_backlog_items_and_marks_current_experiment(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="design")
+    backlog_path = repo / ".autolab" / "backlog.yaml"
+    backlog_path.parent.mkdir(parents=True, exist_ok=True)
+    backlog_path.write_text(
+        (
+            "hypotheses:\n"
+            "  - id: h1\n"
+            "    status: open\n"
+            "    title: Baseline hypothesis\n"
+            "  - id: h2\n"
+            "    status: completed\n"
+            "    title: Completed hypothesis\n"
+            "experiments:\n"
+            "  - id: e1\n"
+            "    hypothesis_id: h1\n"
+            "    status: open\n"
+            "    type: plan\n"
+            "    iteration_id: iter1\n"
+            "  - id: e2\n"
+            "    hypothesis_id: h2\n"
+            "    status: completed\n"
+            "    type: done\n"
+            "    iteration_id: iter2\n"
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.backlog_error == ""
+    assert len(snapshot.backlog_experiments) == 2
+    assert snapshot.backlog_experiments[0].experiment_id == "e1"
+    assert snapshot.backlog_experiments[0].is_current is True
+    assert snapshot.backlog_experiments[1].is_current is False
+    assert len(snapshot.backlog_hypotheses) == 2
+    assert snapshot.backlog_hypotheses[0].hypothesis_id == "h1"
+    assert snapshot.backlog_hypotheses[0].is_completed is False
+    assert snapshot.backlog_hypotheses[1].hypothesis_id == "h2"
+    assert snapshot.backlog_hypotheses[1].is_completed is True
+
+
+def test_snapshot_backlog_parse_failure_is_nonfatal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="design")
+    backlog_path = repo / ".autolab" / "backlog.yaml"
+    backlog_path.parent.mkdir(parents=True, exist_ok=True)
+    backlog_path.write_text("hypotheses: [broken\n", encoding="utf-8")
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.current_stage == "design"
+    assert snapshot.backlog_experiments == ()
+    assert snapshot.backlog_hypotheses == ()
+    assert "backlog file could not be parsed" in snapshot.backlog_error
+
+
 def test_snapshot_run_order_is_deterministic(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"

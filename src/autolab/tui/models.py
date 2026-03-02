@@ -47,6 +47,24 @@ class ArtifactItem:
 
 
 @dataclass(frozen=True)
+class BacklogExperimentItem:
+    experiment_id: str
+    iteration_id: str
+    hypothesis_id: str
+    experiment_type: str
+    status: str
+    is_current: bool
+
+
+@dataclass(frozen=True)
+class BacklogHypothesisItem:
+    hypothesis_id: str
+    title: str
+    status: str
+    is_completed: bool
+
+
+@dataclass(frozen=True)
 class VerificationSummary:
     generated_at: str
     stage_effective: str
@@ -130,6 +148,9 @@ class CockpitSnapshot:
     top_blockers: tuple[str, ...]
     primary_blocker: str
     secondary_blockers: tuple[str, ...]
+    backlog_experiments: tuple[BacklogExperimentItem, ...] = ()
+    backlog_hypotheses: tuple[BacklogHypothesisItem, ...] = ()
+    backlog_error: str = ""
     recommended_actions: tuple[RecommendedAction, ...] = ()
     stage_summaries: dict[str, str] = field(default_factory=dict)
     artifacts_by_stage: dict[str, tuple[ArtifactItem, ...]] = field(

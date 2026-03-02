@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -25,7 +26,11 @@ from textual.widgets import (
     Static,
 )
 
+from autolab.constants import BACKLOG_COMPLETED_STATUSES, EXPERIMENT_TYPES
 from autolab.tui.actions import (
+    build_experiment_create_intent,
+    build_experiment_move_intent,
+    build_focus_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
@@ -37,6 +42,8 @@ from autolab.tui.actions import (
 from autolab.tui.models import (
     ActionSpec,
     ArtifactItem,
+    BacklogExperimentItem,
+    BacklogHypothesisItem,
     CockpitSnapshot,
     CommandIntent,
     LoopActionOptions,
@@ -540,6 +547,482 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def _is_completed_backlog_status(status: str) -> bool:
+    return str(status).strip().lower() in BACKLOG_COMPLETED_STATUSES
+
+
+def _default_experiment_index(
+    experiments: tuple[BacklogExperimentItem, ...],
+) -> int:
+    if not experiments:
+        return 0
+    for index, item in enumerate(experiments):
+        if item.is_current:
+            return index
+    for index, item in enumerate(experiments):
+        if not _is_completed_backlog_status(item.status):
+            return index
+    return 0
+
+
+def _next_suggested_ids(
+    experiments: tuple[BacklogExperimentItem, ...],
+) -> tuple[str, str]:
+    max_suffix = 0
+    used_experiment_ids: set[str] = set()
+    used_iteration_ids: set[str] = set()
+    for item in experiments:
+        experiment_id = str(item.experiment_id).strip()
+        iteration_id = str(item.iteration_id).strip()
+        if experiment_id:
+            used_experiment_ids.add(experiment_id)
+        if iteration_id:
+            used_iteration_ids.add(iteration_id)
+
+        experiment_match = re.fullmatch(r"e(\d+)", experiment_id)
+        if experiment_match:
+            max_suffix = max(max_suffix, int(experiment_match.group(1)))
+        iteration_match = re.fullmatch(r"iter(\d+)", iteration_id)
+        if iteration_match:
+            max_suffix = max(max_suffix, int(iteration_match.group(1)))
+
+    candidate = max_suffix + 1
+    while True:
+        experiment_id = f"e{candidate}"
+        iteration_id = f"iter{candidate}"
+        if (
+            experiment_id not in used_experiment_ids
+            and iteration_id not in used_iteration_ids
+        ):
+            return (experiment_id, iteration_id)
+        candidate += 1
+
+
+def _default_move_target(source_type: str) -> str:
+    normalized = str(source_type).strip().lower()
+    if normalized == "plan":
+        return "in_progress"
+    if normalized == "in_progress":
+        return "done"
+    return "plan"
+
+
+class FocusExperimentScreen(ModalScreen[tuple[str, str] | None]):
+    CSS = """
+    FocusExperimentScreen {
+      align: center middle;
+    }
+
+    #focus-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #focus-experiment-list {
+      height: 1fr;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #focus-inputs {
+      border: round $surface;
+      padding: 0 1;
+      margin-bottom: 1;
+    }
+
+    #focus-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        experiments: tuple[BacklogExperimentItem, ...],
+        backlog_error: str,
+    ) -> None:
+        super().__init__()
+        self._experiments = experiments
+        self._backlog_error = str(backlog_error).strip()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="focus-dialog"):
+            yield Label("Focus Experiment", id="focus-title")
+            yield Static(
+                "Choose a backlog experiment and confirm the target identifiers.",
+                markup=False,
+            )
+            if self._backlog_error:
+                yield Static(
+                    f"Backlog warning: {self._backlog_error}",
+                    id="focus-backlog-warning",
+                    markup=False,
+                )
+            experiment_items: list[ListItem] = []
+            if self._experiments:
+                for item in self._experiments:
+                    marker = "*" if item.is_current else " "
+                    experiment_items.append(
+                        ListItem(
+                            Label(
+                                (
+                                    f"[{marker}] {item.experiment_id} "
+                                    f"(iter={item.iteration_id}, "
+                                    f"type={item.experiment_type or '-'}, "
+                                    f"status={item.status or '-'})"
+                                )
+                            )
+                        )
+                    )
+            else:
+                experiment_items.append(
+                    ListItem(Label("(No backlog experiments found)"))
+                )
+            yield ListView(*experiment_items, id="focus-experiment-list")
+            with Vertical(id="focus-inputs"):
+                yield Label("Experiment ID")
+                yield Input(value="", id="focus-experiment-id")
+                yield Label("Iteration ID")
+                yield Input(value="", id="focus-iteration-id")
+            with Horizontal(id="focus-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Continue", id="continue", variant="primary")
+
+    def on_mount(self) -> None:
+        experiment_list = self.query_one("#focus-experiment-list", ListView)
+        if self._experiments:
+            experiment_list.index = _default_experiment_index(self._experiments)
+            self._sync_inputs_from_selection()
+        experiment_list.focus()
+
+    def _sync_inputs_from_selection(self) -> None:
+        if not self._experiments:
+            return
+        experiment_list = self.query_one("#focus-experiment-list", ListView)
+        index = experiment_list.index
+        if index is None or index < 0 or index >= len(self._experiments):
+            return
+        selected = self._experiments[index]
+        self.query_one("#focus-experiment-id", Input).value = selected.experiment_id
+        self.query_one("#focus-iteration-id", Input).value = selected.iteration_id
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if (event.list_view.id or "") == "focus-experiment-list":
+            self._sync_inputs_from_selection()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        experiment_id = self.query_one("#focus-experiment-id", Input).value.strip()
+        iteration_id = self.query_one("#focus-iteration-id", Input).value.strip()
+        if not experiment_id and not iteration_id:
+            self.notify("Set experiment_id and/or iteration_id.")
+            return
+        self.dismiss((experiment_id, iteration_id))
+
+
+class ExperimentCreateScreen(ModalScreen[tuple[str, str, str] | None]):
+    CSS = """
+    ExperimentCreateScreen {
+      align: center middle;
+    }
+
+    #experiment-create-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #experiment-create-hypothesis-list {
+      height: 1fr;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #experiment-create-inputs {
+      border: round $surface;
+      padding: 0 1;
+      margin-bottom: 1;
+    }
+
+    #experiment-create-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        experiments: tuple[BacklogExperimentItem, ...],
+        hypotheses: tuple[BacklogHypothesisItem, ...],
+    ) -> None:
+        super().__init__()
+        self._experiments = experiments
+        self._open_hypotheses = tuple(
+            item for item in hypotheses if item.hypothesis_id and not item.is_completed
+        )
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="experiment-create-dialog"):
+            yield Label("Create Experiment", id="experiment-create-title")
+            yield Static(
+                (
+                    "Pick an open hypothesis and confirm IDs. "
+                    "Suggested IDs are editable before submit."
+                ),
+                markup=False,
+            )
+            hypothesis_items: list[ListItem] = []
+            if self._open_hypotheses:
+                for item in self._open_hypotheses:
+                    hypothesis_items.append(
+                        ListItem(
+                            Label(
+                                (
+                                    f"{item.hypothesis_id} "
+                                    f"(status={item.status or '-'}) "
+                                    f"{item.title or ''}".strip()
+                                )
+                            )
+                        )
+                    )
+            else:
+                hypothesis_items.append(ListItem(Label("(No open hypotheses found)")))
+            yield ListView(*hypothesis_items, id="experiment-create-hypothesis-list")
+            with Vertical(id="experiment-create-inputs"):
+                yield Label("Experiment ID")
+                yield Input(value="", id="experiment-create-experiment-id")
+                yield Label("Iteration ID")
+                yield Input(value="", id="experiment-create-iteration-id")
+            with Horizontal(id="experiment-create-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Continue", id="continue", variant="primary")
+
+    def on_mount(self) -> None:
+        suggestion_experiment_id, suggestion_iteration_id = _next_suggested_ids(
+            self._experiments
+        )
+        self.query_one(
+            "#experiment-create-experiment-id", Input
+        ).value = suggestion_experiment_id
+        self.query_one(
+            "#experiment-create-iteration-id", Input
+        ).value = suggestion_iteration_id
+        hypothesis_list = self.query_one("#experiment-create-hypothesis-list", ListView)
+        hypothesis_list.index = 0
+        hypothesis_list.focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        experiment_id = self.query_one(
+            "#experiment-create-experiment-id", Input
+        ).value.strip()
+        iteration_id = self.query_one(
+            "#experiment-create-iteration-id", Input
+        ).value.strip()
+        if not experiment_id:
+            self.notify("experiment_id is required.")
+            return
+        if not iteration_id:
+            self.notify("iteration_id is required.")
+            return
+
+        hypothesis_id = ""
+        if self._open_hypotheses:
+            hypothesis_list = self.query_one(
+                "#experiment-create-hypothesis-list", ListView
+            )
+            selected_index = hypothesis_list.index
+            if selected_index is not None and 0 <= selected_index < len(
+                self._open_hypotheses
+            ):
+                hypothesis_id = self._open_hypotheses[selected_index].hypothesis_id
+        self.dismiss((experiment_id, iteration_id, hypothesis_id))
+
+
+class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
+    CSS = """
+    ExperimentMoveScreen {
+      align: center middle;
+    }
+
+    #experiment-move-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #experiment-move-experiment-list,
+    #experiment-move-target-list {
+      height: 1fr;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #experiment-move-inputs {
+      border: round $surface;
+      padding: 0 1;
+      margin-bottom: 1;
+    }
+
+    #experiment-move-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        experiments: tuple[BacklogExperimentItem, ...],
+        backlog_error: str,
+    ) -> None:
+        super().__init__()
+        self._experiments = experiments
+        self._backlog_error = str(backlog_error).strip()
+        self._targets: tuple[str, ...] = tuple(EXPERIMENT_TYPES)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="experiment-move-dialog"):
+            yield Label("Move Experiment", id="experiment-move-title")
+            yield Static(
+                "Choose an experiment and destination lifecycle type.",
+                markup=False,
+            )
+            if self._backlog_error:
+                yield Static(
+                    f"Backlog warning: {self._backlog_error}",
+                    id="experiment-move-backlog-warning",
+                    markup=False,
+                )
+            experiment_items: list[ListItem] = []
+            if self._experiments:
+                for item in self._experiments:
+                    marker = "*" if item.is_current else " "
+                    experiment_items.append(
+                        ListItem(
+                            Label(
+                                (
+                                    f"[{marker}] {item.experiment_id} "
+                                    f"(iter={item.iteration_id}, "
+                                    f"type={item.experiment_type or '-'}, "
+                                    f"status={item.status or '-'})"
+                                )
+                            )
+                        )
+                    )
+            else:
+                experiment_items.append(
+                    ListItem(Label("(No backlog experiments found)"))
+                )
+            yield ListView(*experiment_items, id="experiment-move-experiment-list")
+
+            with Vertical(id="experiment-move-inputs"):
+                yield Label("Experiment ID")
+                yield Input(value="", id="experiment-move-experiment-id")
+                yield Label("Iteration ID")
+                yield Input(value="", id="experiment-move-iteration-id")
+
+            yield Label("Destination Type")
+            target_items = [ListItem(Label(target)) for target in self._targets]
+            yield ListView(*target_items, id="experiment-move-target-list")
+
+            with Horizontal(id="experiment-move-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Continue", id="continue", variant="primary")
+
+    def on_mount(self) -> None:
+        experiment_list = self.query_one("#experiment-move-experiment-list", ListView)
+        if self._experiments:
+            experiment_list.index = _default_experiment_index(self._experiments)
+            self._sync_inputs_and_target()
+        else:
+            self.query_one("#experiment-move-target-list", ListView).index = 0
+        experiment_list.focus()
+
+    def _selected_experiment(self) -> BacklogExperimentItem | None:
+        if not self._experiments:
+            return None
+        experiment_list = self.query_one("#experiment-move-experiment-list", ListView)
+        index = experiment_list.index
+        if index is None or index < 0 or index >= len(self._experiments):
+            return None
+        return self._experiments[index]
+
+    def _set_target(self, value: str) -> None:
+        target_list = self.query_one("#experiment-move-target-list", ListView)
+        normalized = str(value).strip().lower()
+        try:
+            target_index = self._targets.index(normalized)
+        except ValueError:
+            target_index = 0
+        target_list.index = target_index
+
+    def _sync_inputs_and_target(self) -> None:
+        selected = self._selected_experiment()
+        if selected is None:
+            return
+        self.query_one(
+            "#experiment-move-experiment-id", Input
+        ).value = selected.experiment_id
+        self.query_one(
+            "#experiment-move-iteration-id", Input
+        ).value = selected.iteration_id
+        self._set_target(_default_move_target(selected.experiment_type))
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if (event.list_view.id or "") == "experiment-move-experiment-list":
+            self._sync_inputs_and_target()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        experiment_id = self.query_one("#experiment-move-experiment-id", Input).value
+        experiment_id = experiment_id.strip()
+        iteration_id = self.query_one("#experiment-move-iteration-id", Input).value
+        iteration_id = iteration_id.strip()
+        if not experiment_id and not iteration_id:
+            self.notify("Set experiment_id and/or iteration_id.")
+            return
+        target_list = self.query_one("#experiment-move-target-list", ListView)
+        target_index = target_list.index
+        if target_index is None or not (0 <= target_index < len(self._targets)):
+            self.notify("Select a destination type.")
+            return
+        target_type = self._targets[target_index]
+        matching = [
+            item
+            for item in self._experiments
+            if item.experiment_id == experiment_id and item.iteration_id == iteration_id
+        ]
+        if (
+            len(matching) == 1
+            and matching[0].experiment_type.strip().lower() == target_type
+        ):
+            self.notify("Destination type matches source type.")
+            return
+        self.dismiss((experiment_id, iteration_id, target_type))
+
+
 class AutolabCockpitApp(App[None]):
     _TONE_CLASSES = (
         "tone-success",
@@ -786,6 +1269,21 @@ class AutolabCockpitApp(App[None]):
                     )
                     yield Button(
                         "Break Lock (Advanced)", id="file-lock-break", variant="error"
+                    )
+                    yield Button(
+                        "Focus (Advanced)",
+                        id="file-focus-experiment",
+                        variant="default",
+                    )
+                    yield Button(
+                        "Experiment Create (Advanced)",
+                        id="file-experiment-create",
+                        variant="default",
+                    )
+                    yield Button(
+                        "Experiment Move (Advanced)",
+                        id="file-experiment-move",
+                        variant="default",
                     )
             with Vertical(id="console-view", classes="view-panel"):
                 yield Static("Console", classes="view-title")
@@ -1213,7 +1711,8 @@ class AutolabCockpitApp(App[None]):
             f"- Stage: {snapshot.current_stage}\n"
             f"- Selected: {selected_text}\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
-            "- Mutating: Loop and Lock Break (unlock + confirm required)"
+            "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
+            "  (unlock + confirm required)"
         )
         self._set_tone(context_widget, "tone-info")
 
@@ -1226,6 +1725,7 @@ class AutolabCockpitApp(App[None]):
             "- Home: stage status, rendered prompt preview, recommended actions.\n"
             "- Runs: run manifest and metrics overview.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
+            "- Files advanced: focus experiment, create experiment, move experiment.\n"
             "- Console: live command output.\n"
             "\n"
             "Safety\n"
@@ -1387,6 +1887,9 @@ class AutolabCockpitApp(App[None]):
             "file-open-state": "open_state_history",
             "file-run-loop": "run_loop",
             "file-lock-break": "lock_break",
+            "file-focus-experiment": "focus_experiment",
+            "file-experiment-create": "experiment_create",
+            "file-experiment-move": "experiment_move",
         }
         action_id = action_by_button.get(button_id)
         if action_id:
@@ -1629,6 +2132,66 @@ class AutolabCockpitApp(App[None]):
             intent = build_lock_break_intent(
                 state_path=snapshot.state_path,
                 reason="tui manual break",
+            )
+        elif action_id == "focus_experiment":
+            if not snapshot.backlog_experiments:
+                self.notify(
+                    snapshot.backlog_error or "No backlog experiments available."
+                )
+                return
+            selected = await self.push_screen_wait(
+                FocusExperimentScreen(
+                    experiments=snapshot.backlog_experiments,
+                    backlog_error=snapshot.backlog_error,
+                )
+            )
+            if selected is None:
+                return
+            experiment_id, iteration_id = selected
+            intent = build_focus_intent(
+                state_path=snapshot.state_path,
+                experiment_id=experiment_id,
+                iteration_id=iteration_id,
+            )
+        elif action_id == "experiment_create":
+            if not snapshot.backlog_hypotheses and snapshot.backlog_error:
+                self.notify(snapshot.backlog_error)
+                return
+            selected = await self.push_screen_wait(
+                ExperimentCreateScreen(
+                    experiments=snapshot.backlog_experiments,
+                    hypotheses=snapshot.backlog_hypotheses,
+                )
+            )
+            if selected is None:
+                return
+            experiment_id, iteration_id, hypothesis_id = selected
+            intent = build_experiment_create_intent(
+                state_path=snapshot.state_path,
+                experiment_id=experiment_id,
+                iteration_id=iteration_id,
+                hypothesis_id=hypothesis_id,
+            )
+        elif action_id == "experiment_move":
+            if not snapshot.backlog_experiments:
+                self.notify(
+                    snapshot.backlog_error or "No backlog experiments available."
+                )
+                return
+            selected = await self.push_screen_wait(
+                ExperimentMoveScreen(
+                    experiments=snapshot.backlog_experiments,
+                    backlog_error=snapshot.backlog_error,
+                )
+            )
+            if selected is None:
+                return
+            experiment_id, iteration_id, target_type = selected
+            intent = build_experiment_move_intent(
+                state_path=snapshot.state_path,
+                to_type=target_type,
+                experiment_id=experiment_id,
+                iteration_id=iteration_id,
             )
 
         if intent is None:
