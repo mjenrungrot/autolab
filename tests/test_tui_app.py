@@ -18,11 +18,11 @@ from autolab.tui.models import (
 from autolab.tui.snapshot import load_cockpit_snapshot
 
 
-def _write_state_file(repo_root: Path) -> Path:
+def _write_state_file(repo_root: Path, *, stage: str = "design") -> Path:
     payload = {
         "iteration_id": "iter1",
         "experiment_id": "e1",
-        "stage": "design",
+        "stage": stage,
         "stage_attempt": 0,
         "last_run_id": "",
         "sync_status": "completed",
@@ -33,9 +33,9 @@ def _write_state_file(repo_root: Path) -> Path:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path = repo_root / ".autolab" / "prompts" / f"stage_{stage}.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_path.write_text("# Stage design\n", encoding="utf-8")
+    prompt_path.write_text(f"# Stage {stage}\n", encoding="utf-8")
 
     return state_path
 
@@ -376,6 +376,27 @@ def test_loop_preset_screen_composes_without_mount_error(tmp_path: Path) -> None
     asyncio.run(_run())
 
 
+def test_human_review_modal_composes_without_mount_error(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(app_module.HumanReviewDecisionScreen())
+            await pilot.pause()
+
+            assert isinstance(app.screen, app_module.HumanReviewDecisionScreen)
+            _assert_fullscreen_modal_dialog(app, "#human-review-dialog")
+            decision_list = app.screen.query_one(
+                "#human-review-list", app_module.ListView
+            )
+            assert len(decision_list.children) == 3
+            assert decision_list.index == 0
+
+    asyncio.run(_run())
+
+
 def test_action_confirm_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -554,3 +575,63 @@ def test_execute_action_focus_create_move_starts_expected_commands(
     assert started[0].argv[:2] == ("autolab", "focus")
     assert started[1].argv[:3] == ("autolab", "experiment", "create")
     assert started[2].argv[:3] == ("autolab", "experiment", "move")
+
+
+def test_execute_action_resolve_human_review_starts_review_command(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root, stage="human_review")
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    started: list[CommandIntent] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    async def _push_screen_wait(_screen):
+        return "retry"
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._execute_action("resolve_human_review"))
+
+    assert len(started) == 1
+    intent = started[0]
+    assert intent.argv[:3] == ("autolab", "review", "--state-file")
+    assert intent.argv[-2:] == ("--status", "retry")
+
+
+def test_execute_action_resolve_human_review_guards_non_human_stage(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root, stage="design")
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    started: list[CommandIntent] = []
+    notices: list[str] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _push_screen_wait(_screen):
+        raise AssertionError("human review modal should not open outside human_review")
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+    monkeypatch.setattr(
+        app, "notify", lambda message, *args, **kwargs: notices.append(str(message))
+    )
+
+    asyncio.run(app._execute_action("resolve_human_review"))
+
+    assert started == []
+    assert any("Human review can only be resolved" in item for item in notices)

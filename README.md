@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.69
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.70
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -105,6 +105,7 @@ autolab render --stage design --context
 **Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) with render-aware guidance:
 
 - Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
+- Home can resolve `human_review` directly (`pass|retry|stop`) using the same unlock + confirm flow as other mutating actions.
 - Files supports quick-open for rendered prompt, render context, prompt template, state, and stage artifacts.
 - Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.

@@ -19,6 +19,7 @@ autolab tui --tail-lines 2000
 The cockpit is mode-based, not multi-pane focus-based.
 
 - **Home**: Stage summary, full rendered prompt preview ("what will run now") in a scrollable card, blockers, required artifacts, recommended actions.
+  - When stage is `human_review`, Home includes a guided `Resolve human review` action (`pass|retry|stop`) with the same unlock/confirm safety model as other mutating actions.
 - **Runs**: Run list plus quick open for manifest/metrics.
 - **Files**: Stage/common files plus quick open for rendered prompt, render context, and prompt template, all in a rich markdown viewer.
   - Advanced actions in Files include backlog steering flows (`focus`, `experiment create`, `experiment move`) via picker modals.
@@ -97,6 +98,7 @@ Reveal them with `x` (Toggle Advanced).
 - External API remains unchanged: `autolab tui --state-file ... --tail-lines ...`.
 - View actions never mutate repo-tracked workflow files.
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
+- Human review decisions (`pass|retry|stop`) can be applied from Home; TUI executes `autolab review --status=<...>` behind the same confirmation flow.
 - Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.
 - Preview modals render content as markdown. Markdown files are rendered directly; JSON/YAML/TOML/log/text are rendered as fenced code blocks.
 - Backlog steering modals use backlog picker-first UX with editable IDs before submit.
