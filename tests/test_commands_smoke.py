@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import autolab.commands as commands_module
+import pytest
 from autolab.update import UpdateResult
 
 
@@ -189,7 +190,46 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "policy" in help_text
     assert "update" in help_text
     assert "report" in help_text
+    assert "Record a human review decision" in help_text
     assert "Recommended onboarding flow:" in help_text
+
+
+def test_review_subcommand_help_uses_human_review_terminology(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["review", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--status {pass,retry,stop}" in captured.out
+    assert "Human review decision:" in captured.out
+
+
+def test_status_human_review_banner_mentions_human_review_decision(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["stage"] = "human_review"
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    assert commands_module.main(["status", "--state-file", str(state_path)]) == 0
+    captured = capsys.readouterr()
+    assert "*** HUMAN REVIEW REQUIRED ***" in captured.out
+    assert "record the human review decision" in captured.out
 
 
 def test_packaged_golden_iteration_fixture_contract() -> None:

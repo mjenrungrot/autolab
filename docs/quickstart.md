@@ -140,7 +140,7 @@ autolab lint --stage hypothesis
 - **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
-- **Human review**: `autolab review --status=pass`
+- **Human review decision**: `autolab review --status=pass|retry|stop`
 - **Retarget state focus**: `autolab focus --experiment-id e1`
 - **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
 - **Move lifecycle type**: `autolab experiment move --experiment-id e1 --to in_progress`
