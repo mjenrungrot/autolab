@@ -340,6 +340,22 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_home_stage_card_shows_pipeline_progress(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            stage_card = app.query_one("#home-stage-card", app_module.Static)
+            rendered = str(stage_card.render())
+            assert "Progress:" in rendered
+            assert "Pipeline:" in rendered
+            assert "[>] design" in rendered
+
+    asyncio.run(_run())
+
+
 def test_home_prompt_toggle_switches_excerpt_and_full(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -465,6 +481,89 @@ def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None
             after_artifacts = tuple(app._current_artifacts)
             assert after_artifacts
             assert all(not item.exists for item in after_artifacts)
+
+    asyncio.run(_run())
+
+
+def test_runs_filter_focus_and_query_updates_visible_runs(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_alpha", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run_beta", "2026-02-01T02:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+
+            run_filter = app.query_one("#run-filter-input", app_module.Input)
+            assert app.focused is run_filter
+            run_filter.value = "run_beta"
+            await pilot.pause()
+
+            assert len(app._current_runs) == 1
+            assert app._current_runs[0].run_id == "run_beta"
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels = _list_item_label_texts(run_list)
+            assert labels == ["run_beta  start=2026-02-01T02:00:00Z"]
+            run_details = app.query_one("#run-details", app_module.Static)
+            assert "Filter: run_beta" in str(run_details.render())
+
+    asyncio.run(_run())
+
+
+def test_files_filter_focus_and_query_updates_visible_files(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+
+            file_filter = app.query_one("#file-filter-input", app_module.Input)
+            assert app.focused is file_filter
+            file_filter.value = "state.json"
+            await pilot.pause()
+
+            assert app._current_artifacts
+            assert all(
+                "state.json" in str(item.path) for item in app._current_artifacts
+            )
+            context = app.query_one("#files-context", app_module.Static)
+            assert "Search: state.json" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_files_filter_input_blocks_mode_quick_toggle_while_typing(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+
+            file_filter = app.query_one("#file-filter-input", app_module.Input)
+            assert app.focused is file_filter
+            await pilot.press("m")
+            await pilot.pause()
+            assert app._files_missing_only is False
+            assert file_filter.value.endswith("m")
+            mode_status = app.query_one("#status-mode", app_module.Static)
+            assert "Mode: files" in str(mode_status.render())
 
     asyncio.run(_run())
 
@@ -1356,3 +1455,28 @@ def test_start_command_preserves_prior_console_output(
     assert lines[0] == "-" * 40
     assert lines[1].startswith("starting: ")
     assert started == [intent]
+
+
+def test_open_artifact_viewer_truncates_large_text_previews(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    artifact_path = repo_root / "docs" / "large.log"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("A" * 260_000, encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_open_text_viewer(**kwargs) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app, "_open_text_viewer", _fake_open_text_viewer)
+
+    asyncio.run(app._open_artifact_viewer(artifact_path))
+
+    rendered_text = str(captured["text"])
+    assert "[preview truncated to 200,000 chars]" in rendered_text
+    assert "... [truncated]" in rendered_text
+    assert captured["editor_path"] == artifact_path
