@@ -92,7 +92,13 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
+def _write_run_manifest(
+    repo_root: Path,
+    run_id: str,
+    started_at: str,
+    *,
+    status: str = "running",
+) -> None:
     manifest_path = (
         repo_root
         / "experiments"
@@ -105,7 +111,7 @@ def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "timestamps": {"started_at": started_at},
     }
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -491,6 +497,156 @@ def test_files_missing_filter_empty_state_when_no_missing_files(tmp_path: Path) 
     asyncio.run(_run())
 
 
+def test_runs_filter_and_sort_cycle_with_keyboard(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-old-running",
+            "2026-02-01T01:00:00Z",
+            status="running",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-mid-failed",
+            "2026-02-01T02:00:00Z",
+            status="failed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-new-completed",
+            "2026-02-01T03:00:00Z",
+            status="completed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("01. run-new-completed")
+
+            await pilot.press("f")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert labels == [
+                "01. run-old-running (status=running) start=2026-02-01T01:00:00Z"
+            ]
+
+            await pilot.press("f")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert labels == [
+                "01. run-new-completed (status=completed) start=2026-02-01T03:00:00Z"
+            ]
+
+            await pilot.press("f", "f")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("01. run-new-completed")
+
+            await pilot.press("t")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("01. run-old-running")
+
+    asyncio.run(_run())
+
+
+def test_runs_query_filter_modal_applies_and_clears(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_alpha", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run_beta", "2026-02-01T02:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            await pilot.press("/")
+            await pilot.pause()
+            query_input = app.screen.query_one("#filter-query-input", app_module.Input)
+            query_input.value = "beta"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels = _list_item_label_texts(run_list)
+            assert labels == [
+                "01. run_beta (status=running) start=2026-02-01T02:00:00Z"
+            ]
+
+            details = app.query_one("#run-details", app_module.Static)
+            assert "- Query: beta" in str(details.render())
+            query_button = app.query_one("#run-edit-query", app_module.Button)
+            assert str(query_button.label) == "Query: beta"
+
+            await pilot.click("#run-edit-query")
+            await pilot.pause()
+            assert await _click_when_visible(pilot, "#clear") is True
+            assert await _click_when_visible(pilot, "#apply") is True
+
+            labels = _list_item_label_texts(run_list)
+            assert len(labels) == 2
+            query_button = app.query_one("#run-edit-query", app_module.Button)
+            assert str(query_button.label) == "Query: none"
+
+    asyncio.run(_run())
+
+
+def test_files_query_filter_composes_with_missing_only(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+        assert stage_artifacts
+        existing_artifact = stage_artifacts[0].path
+        existing_artifact.parent.mkdir(parents=True, exist_ok=True)
+        existing_artifact.write_text("entrypoint: train.py\n", encoding="utf-8")
+        existing_name = existing_artifact.name
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.press("/")
+            await pilot.pause()
+            query_input = app.screen.query_one("#filter-query-input", app_module.Input)
+            query_input.value = existing_name
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app._current_artifacts
+            assert all(
+                existing_name in item.path.name for item in app._current_artifacts
+            )
+
+            await pilot.press("m")
+            await pilot.pause()
+            labels = _list_item_label_texts(
+                app.query_one("#artifact-list", app_module.ListView)
+            )
+            assert labels == ["(No files match current query)"]
+
+            await pilot.press("/")
+            await pilot.pause()
+            assert await _click_when_visible(pilot, "#clear") is True
+            assert await _click_when_visible(pilot, "#apply") is True
+
+            assert app._current_artifacts
+            assert all(not item.exists for item in app._current_artifacts)
+
+    asyncio.run(_run())
+
+
 def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -593,6 +749,40 @@ def test_escape_closes_action_confirm_modal(tmp_path: Path) -> None:
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, app_module.ActionConfirmScreen)
+
+    asyncio.run(_run())
+
+
+def test_action_confirm_details_show_expected_write_statuses(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        existing = repo_root / "exists.txt"
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_text("ok\n", encoding="utf-8")
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                app_module.ActionConfirmScreen(
+                    title="Confirm action",
+                    summary="summary",
+                    command="autolab verify",
+                    cwd=repo_root,
+                    expected_writes=("exists.txt", "missing.txt", ".autolab/*.json"),
+                )
+            )
+            await pilot.pause()
+
+            details = app.screen.query_one("#action-confirm-details", app_module.Static)
+            assert "Expected writes: total=3" in str(details.render())
+            await pilot.press("d")
+            await pilot.pause()
+            rendered = str(details.render())
+            assert "[OK] exists.txt" in rendered
+            assert "[MISS] missing.txt" in rendered
+            assert "[GLOB " in rendered
 
     asyncio.run(_run())
 
@@ -1105,7 +1295,7 @@ def test_files_context_includes_selection_and_missing_counts(tmp_path: Path) -> 
             context = app.query_one("#files-context", app_module.Static)
             rendered = str(context.render())
             assert "Item: " in rendered
-            assert "Missing files:" in rendered
+            assert "missing:" in rendered
 
     asyncio.run(_run())
 
