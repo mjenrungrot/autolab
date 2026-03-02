@@ -407,27 +407,29 @@ def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
-        # Ensure at least one visible "OK" artifact while other artifacts stay missing.
-        design_path = repo_root / "experiments" / "plan" / "iter1" / "design.yaml"
-        design_path.parent.mkdir(parents=True, exist_ok=True)
-        design_path.write_text("entrypoint: train.py\n", encoding="utf-8")
+        snapshot = load_cockpit_snapshot(state_path)
+        stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+        assert stage_artifacts
+        # Materialize exactly one expected artifact so both present and missing entries exist.
+        known_existing = stage_artifacts[0].path
+        known_existing.parent.mkdir(parents=True, exist_ok=True)
+        known_existing.write_text("entrypoint: train.py\n", encoding="utf-8")
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
             await pilot.press("3")
             await pilot.pause()
 
-            artifact_list = app.query_one("#artifact-list", app_module.ListView)
-            before_entries = _list_item_label_texts(artifact_list)
-            assert any(entry.startswith("[OK]") for entry in before_entries)
-            assert any(entry.startswith("[MISS]") for entry in before_entries)
+            before_artifacts = tuple(app._current_artifacts)
+            assert any(item.exists for item in before_artifacts)
+            assert any(not item.exists for item in before_artifacts)
 
             await pilot.press("m")
             await pilot.pause()
 
-            after_entries = _list_item_label_texts(artifact_list)
-            assert after_entries
-            assert all(entry.startswith("[MISS]") for entry in after_entries)
+            after_artifacts = tuple(app._current_artifacts)
+            assert after_artifacts
+            assert all(not item.exists for item in after_artifacts)
 
     asyncio.run(_run())
 
