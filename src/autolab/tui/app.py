@@ -4,13 +4,14 @@ import json
 import re
 import shlex
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -1207,6 +1208,7 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
 
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _AUTO_REFRESH_INTERVAL_SECONDS = 15.0
     _TONE_CLASSES = (
         "tone-success",
         "tone-info",
@@ -1261,6 +1263,10 @@ class AutolabCockpitApp(App[None]):
 
     #status-selection {
       width: 24;
+    }
+
+    #status-auto-refresh {
+      width: 19;
     }
 
     #status-console {
@@ -1318,6 +1324,7 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
+    #home-stage-flow-card,
     #home-blocker-card,
     #home-artifacts-card,
     #home-todos-card,
@@ -1378,6 +1385,7 @@ class AutolabCockpitApp(App[None]):
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
+        ("ctrl+k", "command_palette", "Palette"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
@@ -1389,6 +1397,7 @@ class AutolabCockpitApp(App[None]):
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
+        ("a", "toggle_auto_refresh", "Auto Refresh"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -1409,6 +1418,8 @@ class AutolabCockpitApp(App[None]):
         self._actions_by_id: dict[str, ActionSpec] = {
             action.action_id: action for action in self._actions
         }
+        self._auto_refresh_enabled = False
+        self._auto_refresh_timer: Timer | None = None
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
@@ -1431,6 +1442,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Selection: -", id="status-selection")
+            yield Static("Auto refresh: off", id="status-auto-refresh")
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
@@ -1449,6 +1461,7 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-stage-flow-card", markup=False)
                 with Vertical(id="home-render-card"):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
@@ -1519,6 +1532,12 @@ class AutolabCockpitApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._auto_refresh_timer = self.set_interval(
+            self._AUTO_REFRESH_INTERVAL_SECONDS,
+            self._on_auto_refresh_tick,
+            pause=True,
+            name="cockpit-auto-refresh",
+        )
         self._refresh_snapshot()
         self._update_help_text()
         self._update_ui_chrome()
@@ -1568,6 +1587,7 @@ class AutolabCockpitApp(App[None]):
 
     def _key_hints_text(self) -> str:
         wrap_state = "on" if self._console_wrap else "off"
+        auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         parts = [
             "1-5 view",
             "[ / ] cycle",
@@ -1576,6 +1596,7 @@ class AutolabCockpitApp(App[None]):
             "u lock",
             "x advanced",
             "p prompt",
+            f"a auto-refresh({auto_refresh_state})",
             "r refresh",
             "? help",
             "q quit",
@@ -1627,6 +1648,7 @@ class AutolabCockpitApp(App[None]):
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
         selection = self.query_one("#status-selection", Static)
+        auto_refresh = self.query_one("#status-auto-refresh", Static)
         console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
         key_hints = self.query_one("#key-hints", Static)
@@ -1647,6 +1669,12 @@ class AutolabCockpitApp(App[None]):
             "tone-info"
             if "0/0" not in selection_label and "n/a" not in selection_label
             else "tone-muted",
+        )
+        auto_refresh.update(
+            "Auto refresh: on" if self._auto_refresh_enabled else "Auto refresh: off"
+        )
+        self._set_tone(
+            auto_refresh, "tone-info" if self._auto_refresh_enabled else "tone-muted"
         )
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
@@ -1779,6 +1807,9 @@ class AutolabCockpitApp(App[None]):
         stage_widget = self.query_one("#home-stage-card", Static)
         stage_widget.update("Stage\nUnavailable.")
         self._set_tone(stage_widget, "tone-muted")
+        stage_flow_widget = self.query_one("#home-stage-flow-card", Static)
+        stage_flow_widget.update("Stage Flow\nUnavailable.")
+        self._set_tone(stage_flow_widget, "tone-muted")
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -1842,6 +1873,24 @@ class AutolabCockpitApp(App[None]):
             f"- Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}"
         )
         self._set_tone(stage_widget, "tone-info")
+
+        flow_lines = [
+            f"- {item.name}: {item.status}"
+            + (f" (attempts {item.attempts})" if item.is_current else "")
+            for item in snapshot.stage_items
+        ]
+        stage_flow_widget = self.query_one("#home-stage-flow-card", Static)
+        stage_flow_widget.update("Stage Flow\n" + "\n".join(flow_lines))
+        current_stage_item = next(
+            (item for item in snapshot.stage_items if item.is_current),
+            None,
+        )
+        self._set_tone(
+            stage_flow_widget,
+            "tone-warning"
+            if current_stage_item is not None and current_stage_item.status == "blocked"
+            else "tone-info",
+        )
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -2141,7 +2190,7 @@ class AutolabCockpitApp(App[None]):
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, a auto-refresh toggle, s stop active loop, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2157,6 +2206,8 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
+            "- Ctrl+P: command palette with cockpit actions.\n"
+            "- a: toggle periodic snapshot auto-refresh.\n"
             "- w: toggle console line wrapping.\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
@@ -2197,6 +2248,107 @@ class AutolabCockpitApp(App[None]):
             group="tui-ui-flows",
             exit_on_error=False,
         )
+
+    def _start_action_flow(self, action_id: str, *, source: str) -> None:
+        self._start_ui_flow(
+            label=f"{source}:{action_id}",
+            flow_factory=lambda action_id=action_id: self._execute_action(action_id),
+        )
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        yield from super().get_system_commands(screen)
+
+        for mode in self._MODE_ORDER:
+            mode_label = mode.title()
+            yield SystemCommand(
+                f"View: {mode_label}",
+                f"Switch to the {mode_label} panel.",
+                lambda mode=mode: self._switch_mode(mode),
+            )
+
+        auto_refresh_label = (
+            "Auto Refresh: Disable"
+            if self._auto_refresh_enabled
+            else "Auto Refresh: Enable"
+        )
+        yield SystemCommand(
+            auto_refresh_label,
+            (
+                "Toggle periodic snapshot refresh "
+                f"({int(self._AUTO_REFRESH_INTERVAL_SECONDS)}s interval)."
+            ),
+            self.action_toggle_auto_refresh,
+        )
+        yield SystemCommand(
+            "Snapshot: Refresh Now",
+            "Reload cockpit snapshot immediately.",
+            self.action_refresh_snapshot,
+        )
+        yield SystemCommand(
+            "Safety: Toggle Lock",
+            "Toggle mutating actions lock with confirmation prompt when unlocking.",
+            self.action_toggle_safety_lock,
+        )
+        yield SystemCommand(
+            "Advanced: Toggle Visibility",
+            "Show or hide advanced mutating actions.",
+            self.action_toggle_advanced,
+        )
+        yield SystemCommand(
+            "Prompt: Toggle Excerpt/Full",
+            "Toggle between rendered prompt excerpt and full content on Home view.",
+            self.action_toggle_prompt_view,
+        )
+
+        if self._mode == "console":
+            yield SystemCommand(
+                "Console: Toggle Wrap",
+                "Toggle line wrapping in console output.",
+                self.action_toggle_console_wrap,
+            )
+            yield SystemCommand(
+                "Console: Clear",
+                "Clear console output panel.",
+                self.action_clear_console,
+            )
+        elif self._mode == "files":
+            yield SystemCommand(
+                "Files: Toggle Missing-Only Filter",
+                "Show only missing files or all files.",
+                self.action_toggle_missing_only_filter,
+            )
+
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
+            yield SystemCommand(
+                "Loop: Stop Active Loop",
+                "Request a graceful interrupt for the running loop command.",
+                self.action_stop_loop,
+            )
+
+        if self._snapshot is None:
+            return
+
+        reason_by_action = {
+            item.action_id: item.reason for item in self._snapshot.recommended_actions
+        }
+        for action_id in self._home_action_ids:
+            action = self._actions_by_id.get(action_id)
+            if action is None:
+                continue
+            label = action.user_label or action.label
+            reason = reason_by_action.get(action_id) or (
+                action.help_text or action.description
+            )
+            yield SystemCommand(
+                f"Action: {label}",
+                reason,
+                lambda action_id=action_id: self._start_action_flow(
+                    action_id, source="palette"
+                ),
+            )
 
     def action_show_home(self) -> None:
         self._switch_mode("home")
@@ -2253,6 +2405,29 @@ class AutolabCockpitApp(App[None]):
     def action_refresh_snapshot(self) -> None:
         if self._refresh_snapshot():
             self._append_console("snapshot refreshed")
+
+    def action_toggle_auto_refresh(self) -> None:
+        self._auto_refresh_enabled = not self._auto_refresh_enabled
+        timer = self._auto_refresh_timer
+        if timer is not None:
+            if self._auto_refresh_enabled:
+                timer.resume()
+            else:
+                timer.pause()
+        state = "enabled" if self._auto_refresh_enabled else "disabled"
+        self._append_console(
+            f"auto-refresh {state} ({int(self._AUTO_REFRESH_INTERVAL_SECONDS)}s)"
+        )
+        self._update_ui_chrome()
+
+    def _on_auto_refresh_tick(self) -> None:
+        if not self._auto_refresh_enabled:
+            return
+        if self._running_intent is not None:
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._refresh_snapshot()
 
     def action_clear_console(self) -> None:
         self._console_tail.clear()

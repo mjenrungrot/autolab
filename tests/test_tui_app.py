@@ -666,6 +666,110 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_command_palette_includes_cockpit_commands(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            commands = tuple(app.get_system_commands(app.screen))
+            titles = {command.title for command in commands}
+            assert "View: Home" in titles
+            assert "View: Runs" in titles
+            assert "Snapshot: Refresh Now" in titles
+            assert "Auto Refresh: Enable" in titles
+            assert any(title.startswith("Action: ") for title in titles)
+
+            await pilot.press("3")
+            await pilot.pause()
+            commands = tuple(app.get_system_commands(app.screen))
+            titles = {command.title for command in commands}
+            assert "Files: Toggle Missing-Only Filter" in titles
+
+    asyncio.run(_run())
+
+
+def test_auto_refresh_toggle_updates_status_and_hints(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            status = app.query_one("#status-auto-refresh", app_module.Static)
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "Auto refresh: off" in str(status.render())
+            assert "a auto-refresh(off)" in str(hints.render())
+
+            await pilot.press("a")
+            await pilot.pause()
+            assert "Auto refresh: on" in str(status.render())
+            assert "a auto-refresh(on)" in str(hints.render())
+
+            await pilot.press("a")
+            await pilot.pause()
+            assert "Auto refresh: off" in str(status.render())
+            assert "a auto-refresh(off)" in str(hints.render())
+
+    asyncio.run(_run())
+
+
+def test_auto_refresh_tick_respects_running_and_modal_guards(
+    tmp_path: Path, monkeypatch
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        refresh_calls: list[bool] = []
+        monkeypatch.setattr(
+            app, "_refresh_snapshot", lambda: refresh_calls.append(True)
+        )
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            refresh_calls.clear()
+            app._auto_refresh_enabled = True
+
+            app._on_auto_refresh_tick()
+            assert len(refresh_calls) == 1
+
+            app._running_intent = CommandIntent(
+                action_id="run_once",
+                argv=("autolab", "run"),
+                cwd=repo_root,
+                expected_writes=(),
+                mutating=True,
+            )
+            app._on_auto_refresh_tick()
+            assert len(refresh_calls) == 1
+            app._running_intent = None
+
+            app.push_screen(app_module.UnlockSafetyScreen())
+            await pilot.pause()
+            app._on_auto_refresh_tick()
+            assert len(refresh_calls) == 1
+
+    asyncio.run(_run())
+
+
+def test_home_stage_flow_card_shows_stage_statuses(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="design")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            stage_flow = app.query_one("#home-stage-flow-card", app_module.Static)
+            rendered = str(stage_flow.render())
+            assert "Stage Flow" in rendered
+            assert "- design: current" in rendered
+            assert "- launch: upcoming" in rendered
+
+    asyncio.run(_run())
+
+
 def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1105,7 +1209,8 @@ def test_files_context_includes_selection_and_missing_counts(tmp_path: Path) -> 
             context = app.query_one("#files-context", app_module.Static)
             rendered = str(context.render())
             assert "Item: " in rendered
-            assert "Missing files:" in rendered
+            assert "Showing: " in rendered
+            assert "(missing: " in rendered
 
     asyncio.run(_run())
 
