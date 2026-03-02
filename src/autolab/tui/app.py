@@ -59,9 +59,8 @@ class UnlockSafetyScreen(ModalScreen[bool]):
     }
 
     #unlock-dialog {
-      width: 78;
-      max-width: 96%;
-      height: auto;
+      width: 100%;
+      height: 100%;
       border: round $accent;
       background: $panel;
       padding: 1 2;
@@ -104,9 +103,8 @@ class ActionConfirmScreen(ModalScreen[bool]):
     }
 
     #action-confirm-dialog {
-      width: 94;
-      max-width: 96%;
-      height: auto;
+      width: 100%;
+      height: 100%;
       border: round $accent;
       background: $panel;
       padding: 1 2;
@@ -201,9 +199,8 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
     }
 
     #run-preset-dialog {
-      width: 82;
-      max-width: 96%;
-      height: auto;
+      width: 100%;
+      height: 100%;
       border: round $accent;
       background: $panel;
       padding: 1 2;
@@ -326,9 +323,8 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
     }
 
     #loop-preset-dialog {
-      width: 86;
-      max-width: 96%;
-      height: auto;
+      width: 100%;
+      height: 100%;
       border: round $accent;
       background: $panel;
       padding: 1 2;
@@ -484,9 +480,8 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
     }
 
     #artifact-dialog {
-      width: 160;
-      max-width: 98%;
-      height: 90%;
+      width: 100%;
+      height: 100%;
       border: round $accent;
       background: $panel;
       padding: 1;

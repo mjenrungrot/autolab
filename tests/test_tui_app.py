@@ -53,6 +53,16 @@ async def _click_when_visible(
     return False
 
 
+def _assert_fullscreen_modal_dialog(app: AutolabCockpitApp, selector: str) -> None:
+    dialog = app.screen.query_one(selector)
+    region = dialog.region
+    screen_size = app.screen.size
+    assert region.x == 0
+    assert region.y == 0
+    assert region.width == screen_size.width
+    assert region.height == screen_size.height
+
+
 def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) -> None:
     app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
     app._armed = True
@@ -161,6 +171,8 @@ def test_home_enter_opens_viewer_modal_and_closes(tmp_path: Path) -> None:
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
             await pilot.press("enter")
+            await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())
@@ -201,6 +213,7 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
 
             await pilot.click("#file-open-rendered")
             await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Rendered Prompt (design)" in str(title.render())
             rendered_content = app.screen.query_one(
@@ -211,6 +224,7 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
 
             await pilot.click("#file-open-context")
             await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Render Context (design)" in str(title.render())
             context_content = app.screen.query_one(
@@ -230,6 +244,8 @@ def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
             await pilot.press("u")
+            await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#unlock-dialog")
             assert await _click_when_visible(pilot, "#cancel") is True
             await pilot.pause()
             safety_status = app.query_one("#status-safety", app_module.Static)
@@ -264,6 +280,7 @@ def test_run_preset_screen_composes_without_mount_error(tmp_path: Path) -> None:
             await pilot.pause()
 
             assert isinstance(app.screen, app_module.RunPresetScreen)
+            _assert_fullscreen_modal_dialog(app, "#run-preset-dialog")
             preset_list = app.screen.query_one("#run-preset-list", app_module.ListView)
             assert len(preset_list.children) == 3
             assert preset_list.index == 0
@@ -282,8 +299,34 @@ def test_loop_preset_screen_composes_without_mount_error(tmp_path: Path) -> None
             await pilot.pause()
 
             assert isinstance(app.screen, app_module.LoopPresetScreen)
+            _assert_fullscreen_modal_dialog(app, "#loop-preset-dialog")
             preset_list = app.screen.query_one("#loop-preset-list", app_module.ListView)
             assert len(preset_list.children) == 3
             assert preset_list.index == 0
+
+    asyncio.run(_run())
+
+
+def test_action_confirm_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                app_module.ActionConfirmScreen(
+                    title="Confirm action",
+                    summary="Run verification for the current stage.",
+                    command="autolab verify",
+                    cwd=repo_root,
+                    expected_writes=(".autolab/logs/verify.log",),
+                )
+            )
+            await pilot.pause()
+
+            assert isinstance(app.screen, app_module.ActionConfirmScreen)
+            _assert_fullscreen_modal_dialog(app, "#action-confirm-dialog")
+            assert await _click_when_visible(pilot, "#cancel") is True
 
     asyncio.run(_run())
