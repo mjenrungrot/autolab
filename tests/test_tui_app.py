@@ -88,6 +88,24 @@ def _assert_fullscreen_modal_dialog(app: AutolabCockpitApp, selector: str) -> No
     assert region.height == screen_size.height
 
 
+def _assert_artifact_viewer_edge_to_edge_layout(app: AutolabCockpitApp) -> None:
+    dialog = app.screen.query_one("#artifact-dialog")
+    title = app.screen.query_one("#artifact-path")
+    scroll = app.screen.query_one("#artifact-scroll")
+    buttons = app.screen.query_one("#artifact-buttons")
+
+    # No dialog border/padding inset: content starts at dialog origin.
+    assert title.region.x == dialog.region.x
+    assert title.region.y == dialog.region.y
+
+    # Button bar should stay compact rather than expanding as a flex row.
+    assert buttons.region.height <= 3
+
+    # Scroll region should consume the majority of the available vertical space.
+    assert scroll.region.height > dialog.region.height // 2
+    assert buttons.region.y >= scroll.region.y + scroll.region.height
+
+
 def test_refresh_snapshot_failure_is_fail_closed(tmp_path: Path, monkeypatch) -> None:
     app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
     app._armed = True
@@ -198,6 +216,7 @@ def test_home_enter_opens_viewer_modal_and_closes(tmp_path: Path) -> None:
             await pilot.press("enter")
             await pilot.pause()
             _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            _assert_artifact_viewer_edge_to_edge_layout(app)
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())
@@ -239,6 +258,7 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             await pilot.click("#file-open-rendered")
             await pilot.pause()
             _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            _assert_artifact_viewer_edge_to_edge_layout(app)
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Rendered Prompt (design)" in str(title.render())
             rendered_content = app.screen.query_one(
@@ -250,6 +270,7 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             await pilot.click("#file-open-context")
             await pilot.pause()
             _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            _assert_artifact_viewer_edge_to_edge_layout(app)
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Render Context (design)" in str(title.render())
             context_content = app.screen.query_one(

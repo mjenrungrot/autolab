@@ -489,9 +489,7 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
     #artifact-dialog {
       width: 100%;
       height: 100%;
-      border: round $accent;
       background: $panel;
-      padding: 1;
     }
 
     #artifact-path {
@@ -506,6 +504,7 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
     }
 
     #artifact-buttons {
+      height: auto;
       margin-top: 1;
       align-horizontal: right;
     }
