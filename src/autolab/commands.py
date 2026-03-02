@@ -38,7 +38,7 @@ from autolab.constants import (
     TERMINAL_STAGES,
 )
 from autolab.registry import load_registry, StageSpec
-from autolab.models import RunOutcome, StateError
+from autolab.models import RunOutcome, StageCheckError, StateError
 from autolab.config import (
     _load_guardrail_config,
     _load_meaningful_change_config,
@@ -94,7 +94,11 @@ from autolab.utils import (
     _utc_now,
     _write_json,
 )
-from autolab.prompts import _default_stage_prompt_text
+from autolab.prompts import (
+    _default_stage_prompt_text,
+    _render_stage_prompt,
+    _resolve_stage_prompt_path,
+)
 from autolab.validators import _run_verification_step_detailed
 from autolab.slurm_job_list import (
     append_entry_idempotent,
@@ -118,7 +122,17 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Getting started", ("init", "configure", "status", "docs", "explain")),
     (
         "Run workflow",
-        ("run", "loop", "tui", "verify", "verify-golden", "lint", "review", "skip"),
+        (
+            "run",
+            "loop",
+            "tui",
+            "render",
+            "verify",
+            "verify-golden",
+            "lint",
+            "review",
+            "skip",
+        ),
     ),
     ("Backlog steering", ("focus", "todo", "experiment")),
     ("Safety and policy", ("policy", "guardrails", "lock", "unlock")),
@@ -2062,6 +2076,56 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    raw_stage = getattr(args, "stage", None)
+    stage_override = str(raw_stage).strip() if raw_stage is not None else None
+    if not stage_override:
+        stage_override = None
+
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab render: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    stage = stage_override or str(state.get("stage", "")).strip()
+    if not stage:
+        print("autolab render: ERROR unable to determine stage", file=sys.stderr)
+        return 1
+
+    state_for_render = dict(state)
+    state_for_render["stage"] = stage
+
+    try:
+        template_path = _resolve_stage_prompt_path(repo_root, stage)
+        bundle = _render_stage_prompt(
+            repo_root,
+            stage=stage,
+            state=state_for_render,
+            template_path=template_path,
+            runner_scope=None,
+            write_outputs=False,
+        )
+    except StageCheckError as exc:
+        print(f"autolab render: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    rendered_text = bundle.prompt_text
+    if rendered_text:
+        sys.stdout.write(rendered_text)
+    if not rendered_text.endswith("\n"):
+        sys.stdout.write("\n")
+
+    if bool(getattr(args, "context", False)):
+        sys.stdout.write("\n----- AUTOLAB CONTEXT JSON -----\n")
+        sys.stdout.write(json.dumps(bundle.context_payload, indent=2))
+        sys.stdout.write("\n")
+
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -3623,6 +3687,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run verifiers against bundled golden iteration fixtures",
     )
     verify_golden.set_defaults(handler=_cmd_verify_golden)
+
+    render = subparsers.add_parser(
+        "render",
+        help="Render stage prompt to stdout without executing workflow transitions",
+    )
+    render.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    render.add_argument(
+        "--stage",
+        default=None,
+        help="Override stage for prompt rendering (default: state.stage)",
+    )
+    render.add_argument(
+        "--context",
+        action="store_true",
+        help="Append resolved prompt context JSON after rendered prompt text.",
+    )
+    render.set_defaults(handler=_cmd_render)
 
     run = subparsers.add_parser("run", help="Run one deterministic stage transition")
     run.add_argument(
