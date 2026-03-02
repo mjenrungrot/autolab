@@ -296,6 +296,22 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_home_shows_stage_pipeline_card(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            pipeline = app.query_one("#home-stage-pipeline", app_module.Static)
+            rendered = str(pipeline.render())
+            assert "Stage Pipeline" in rendered
+            assert "design (attempts 0/3)" in rendered
+            assert "hypothesis" in rendered
+
+    asyncio.run(_run())
+
+
 def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -329,6 +345,41 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             )
             assert context_content._markdown.startswith("```json\n")
             assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
+def test_bindings_include_palette_and_vim_navigation_shortcuts() -> None:
+    assert any(
+        binding[0] == "slash" and binding[1] == "command_palette"
+        for binding in AutolabCockpitApp.BINDINGS
+    )
+    assert any(
+        binding[0] == "j" and binding[1] == "move_selection_down"
+        for binding in AutolabCockpitApp.BINDINGS
+    )
+    assert any(
+        binding[0] == "k" and binding[1] == "move_selection_up"
+        for binding in AutolabCockpitApp.BINDINGS
+    )
+
+
+def test_get_system_commands_includes_contextual_entries(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_a", "2026-02-01T01:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            commands = list(app.get_system_commands(app.screen))
+            titles = {command.title for command in commands}
+            assert "Go to Runs view" in titles
+            assert "Refresh snapshot" in titles
+            assert any(title.startswith("Run recommended action:") for title in titles)
+            assert any(title.startswith("Open run manifest:") for title in titles)
+            assert any(title.startswith("Open selected file:") for title in titles)
 
     asyncio.run(_run())
 
@@ -799,6 +850,33 @@ def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) ->
             await pilot.pause()
             selection = app.query_one("#status-selection", app_module.Static)
             assert "Runs: 2/2" in str(selection.render())
+
+    asyncio.run(_run())
+
+
+def test_j_and_k_shortcuts_move_list_selection(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run_a", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run_b", "2026-02-01T02:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 1/2" in str(selection.render())
+
+            await pilot.press("j")
+            await pilot.pause()
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 2/2" in str(selection.render())
+
+            await pilot.press("k")
+            await pilot.pause()
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 1/2" in str(selection.render())
 
     asyncio.run(_run())
 
