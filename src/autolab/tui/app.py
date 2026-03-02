@@ -48,6 +48,7 @@ from autolab.tui.models import (
     CockpitSnapshot,
     CommandIntent,
     LoopActionOptions,
+    RunItem,
     RunActionOptions,
     ViewMode,
 )
@@ -1157,6 +1158,10 @@ class AutolabCockpitApp(App[None]):
       width: 24;
     }
 
+    #status-filter {
+      width: 22;
+    }
+
     #status-console {
       width: 16;
     }
@@ -1171,6 +1176,24 @@ class AutolabCockpitApp(App[None]):
       margin: 0 1 1 1;
       padding: 0 1;
       color: $text-muted;
+    }
+
+    #list-filter-row {
+      height: auto;
+      margin: 0 1 1 1;
+      padding: 0 1;
+      border: round $surface;
+      align-vertical: middle;
+      display: none;
+    }
+
+    #list-filter-label {
+      width: auto;
+      margin-right: 1;
+    }
+
+    #list-filter-input {
+      width: 1fr;
     }
 
     #nav-row {
@@ -1269,6 +1292,8 @@ class AutolabCockpitApp(App[None]):
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
+        ("slash", "focus_list_filter", "Filter"),
+        ("escape", "clear_list_filter", "Clear Filter"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
@@ -1298,12 +1323,14 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
         self._missing_artifacts_count = 0
         self._files_missing_only = False
+        self._list_filter_query = ""
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1317,13 +1344,23 @@ class AutolabCockpitApp(App[None]):
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Selection: -", id="status-selection")
+            yield Static("Filter: off", id="status-filter")
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Enter activate | o open | m mode quick | ? help",
+            "Keys: 1-5 view | [ and ] cycle views | Enter activate | / filter | o open | m mode quick | ? help",
             id="key-hints",
             classes="tone-muted",
         )
+        with Horizontal(id="list-filter-row"):
+            yield Static(
+                "Filter actions:", id="list-filter-label", classes="tone-muted"
+            )
+            yield Input(
+                value="",
+                placeholder="Type to filter the current list",
+                id="list-filter-input",
+            )
         with Horizontal(id="nav-row"):
             yield Button("1 Home", id="nav-home", variant="primary")
             yield Button("2 Runs", id="nav-runs")
@@ -1446,12 +1483,38 @@ class AutolabCockpitApp(App[None]):
             return "tone-danger"
         return "tone-muted"
 
+    def _mode_supports_list_filter(self) -> bool:
+        return self._mode in {"home", "runs", "files"}
+
+    def _normalized_list_filter(self) -> str:
+        return self._list_filter_query.strip().lower()
+
+    def _apply_list_filter(self, query: str) -> None:
+        normalized = str(query)
+        if normalized == self._list_filter_query:
+            return
+        self._list_filter_query = normalized
+        if self._snapshot is not None:
+            self._populate_home_view()
+            self._populate_run_list()
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
+    def _matches_list_filter(self, *values: str) -> bool:
+        query = self._normalized_list_filter()
+        if not query:
+            return True
+        haystack = " ".join(str(value) for value in values).lower()
+        return query in haystack
+
     def _key_hints_text(self) -> str:
         wrap_state = "on" if self._console_wrap else "off"
         parts = [
             "1-5 view",
-            "[ / ] cycle",
+            "[ and ] cycle",
             "Enter activate",
+            "/ filter",
+            "Esc clear filter",
             "o open",
             "u lock",
             "x advanced",
@@ -1486,7 +1549,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1506,9 +1569,13 @@ class AutolabCockpitApp(App[None]):
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
         selection = self.query_one("#status-selection", Static)
+        filter_status = self.query_one("#status-filter", Static)
         console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
         key_hints = self.query_one("#key-hints", Static)
+        filter_row = self.query_one("#list-filter-row", Horizontal)
+        filter_label = self.query_one("#list-filter-label", Static)
+        filter_input = self.query_one("#list-filter-input", Input)
 
         safety.update(
             "Unlocked: mutating enabled." if self._armed else "Locked: read-only."
@@ -1527,6 +1594,18 @@ class AutolabCockpitApp(App[None]):
             if "0/0" not in selection_label and "n/a" not in selection_label
             else "tone-muted",
         )
+        if self._mode_supports_list_filter():
+            query = self._normalized_list_filter()
+            if query:
+                compact = query if len(query) <= 16 else f"{query[:13]}..."
+                filter_status.update(f"Filter: {compact}")
+                self._set_tone(filter_status, "tone-info")
+            else:
+                filter_status.update("Filter: off")
+                self._set_tone(filter_status, "tone-muted")
+        else:
+            filter_status.update("Filter: n/a")
+            self._set_tone(filter_status, "tone-muted")
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
         key_hints.update(self._key_hints_text())
@@ -1547,6 +1626,15 @@ class AutolabCockpitApp(App[None]):
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
         )
         filter_button.variant = "primary" if self._files_missing_only else "default"
+
+        supports_filter = self._mode_supports_list_filter()
+        filter_row.display = supports_filter
+        if supports_filter:
+            noun_by_mode = {"home": "actions", "runs": "runs", "files": "files"}
+            filter_label.update(f"Filter {noun_by_mode[self._mode]}:")
+            filter_input.placeholder = (
+                f"Type to filter {noun_by_mode[self._mode]} (Esc clears)"
+            )
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -1597,12 +1685,11 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#help-text", Static).focus()
 
     def _selected_run(self):
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.runs:
+        if not self._visible_runs:
             return None
-        if self._selected_run_index >= len(snapshot.runs):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return snapshot.runs[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1614,6 +1701,7 @@ class AutolabCockpitApp(App[None]):
     def _clear_snapshot_views(self) -> None:
         self._home_action_ids = ()
         self._home_action_index = 0
+        self._visible_runs = ()
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts = ()
@@ -1789,6 +1877,7 @@ class AutolabCockpitApp(App[None]):
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
         action_ids: list[str] = []
+        filter_query = self._normalized_list_filter()
         for recommended in snapshot.recommended_actions:
             action = self._actions_by_id.get(recommended.action_id)
             if action is None:
@@ -1796,28 +1885,43 @@ class AutolabCockpitApp(App[None]):
             if action.advanced and not self._show_advanced:
                 continue
             label = action.user_label or action.label
-            item_label = Label(f"{label}: {recommended.reason}")
+            item_text = f"{label}: {recommended.reason}"
+            if filter_query and filter_query not in item_text.lower():
+                continue
+            item_label = Label(item_text)
             item_label.add_class("tone-info")
             action_list.append(ListItem(item_label))
             action_ids.append(action.action_id)
 
         if not action_ids:
-            fallback_action_id = (
-                "open_rendered_prompt"
-                if snapshot.render_preview.status == "ok"
-                else "open_stage_prompt"
-            )
-            fallback_text = (
-                "Open rendered prompt: preview what will run next."
-                if fallback_action_id == "open_rendered_prompt"
-                else "Open stage prompt template."
-            )
-            item_label = Label(fallback_text)
-            item_label.add_class("tone-info")
-            action_list.append(ListItem(item_label))
-            action_ids.append(fallback_action_id)
+            if filter_query:
+                empty_label = Label(
+                    f"(No recommended actions match '{self._list_filter_query.strip()}')"
+                )
+                empty_label.add_class("tone-muted")
+                action_list.append(ListItem(empty_label))
+            else:
+                fallback_action_id = (
+                    "open_rendered_prompt"
+                    if snapshot.render_preview.status == "ok"
+                    else "open_stage_prompt"
+                )
+                fallback_text = (
+                    "Open rendered prompt: preview what will run next."
+                    if fallback_action_id == "open_rendered_prompt"
+                    else "Open stage prompt template."
+                )
+                item_label = Label(fallback_text)
+                item_label.add_class("tone-info")
+                action_list.append(ListItem(item_label))
+                action_ids.append(fallback_action_id)
 
         self._home_action_ids = tuple(action_ids)
+        if not self._home_action_ids:
+            self._home_action_index = 0
+            action_list.index = 0
+            return
+
         self._home_action_index = min(
             self._home_action_index, len(self._home_action_ids) - 1
         )
@@ -1827,6 +1931,7 @@ class AutolabCockpitApp(App[None]):
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
+        self._visible_runs = ()
         if snapshot is None:
             return
 
@@ -1842,12 +1947,39 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in snapshot.runs:
+        self._visible_runs = tuple(
+            run
+            for run in snapshot.runs
+            if self._matches_list_filter(
+                run.run_id,
+                run.status,
+                run.started_at,
+                run.completed_at,
+            )
+        )
+
+        if not self._visible_runs:
+            empty_label = Label(
+                f"(No runs match '{self._list_filter_query.strip()}')"
+                if self._normalized_list_filter()
+                else "(No runs found yet)"
+            )
+            empty_label.add_class("tone-muted")
+            run_list.append(ListItem(empty_label))
+            self._selected_run_index = 0
+            details_widget = self.query_one("#run-details", Static)
+            details_widget.update("Run Details\nNo runs match the active filter.")
+            self._set_tone(details_widget, "tone-muted")
+            return
+
+        for run in self._visible_runs:
             started = run.started_at or "-"
             run_label = Label(f"{run.run_id} [{run.status}] start={started}")
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
+        self._selected_run_index = min(
+            self._selected_run_index, len(self._visible_runs) - 1
+        )
         run_list.index = self._selected_run_index
         self._update_run_details()
 
@@ -1892,28 +2024,38 @@ class AutolabCockpitApp(App[None]):
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
-        if self._files_missing_only:
-            self._current_artifacts = tuple(
-                artifact for artifact in self._all_artifacts if not artifact.exists
-            )
-        else:
-            self._current_artifacts = self._all_artifacts
+        visible_candidates = (
+            tuple(artifact for artifact in self._all_artifacts if not artifact.exists)
+            if self._files_missing_only
+            else self._all_artifacts
+        )
+        self._current_artifacts = tuple(
+            artifact
+            for artifact in visible_candidates
+            if self._matches_list_filter(self._display_path(artifact.path))
+        )
 
         if not self._current_artifacts:
-            empty_text = (
-                "(No missing files for this stage)"
-                if self._files_missing_only
-                else "(No relevant files)"
-            )
+            if self._normalized_list_filter():
+                empty_text = f"(No files match '{self._list_filter_query.strip()}')"
+            elif self._files_missing_only:
+                empty_text = "(No missing files for this stage)"
+            else:
+                empty_text = "(No relevant files)"
             empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
             self._selected_artifact_index = 0
+            filter_description = (
+                "missing only" if self._files_missing_only else "all files"
+            )
+            if self._normalized_list_filter():
+                filter_description += f", text={self._list_filter_query.strip()!r}"
             context_widget = self.query_one("#files-context", Static)
             context_widget.update(
                 "Files\n"
                 f"- Stage: {stage}\n"
-                f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+                f"- Filter: {filter_description}\n"
                 f"- {empty_text}"
             )
             self._set_tone(context_widget, "tone-muted")
@@ -1943,12 +2085,17 @@ class AutolabCockpitApp(App[None]):
         total_count = len(self._all_artifacts)
         visible_count = len(self._current_artifacts)
         missing_count = self._missing_artifacts_count
+        filter_mode = "missing only" if self._files_missing_only else "all files"
+        filter_query = self._list_filter_query.strip()
+        filter_text = (
+            f"{filter_mode}, text={filter_query!r}" if filter_query else filter_mode
+        )
         context_widget = self.query_one("#files-context", Static)
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
             f"- Selected: {selected_text}\n"
-            f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
+            f"- Filter: {filter_text}\n"
             f"- Showing: {visible_count}/{total_count} (missing: {missing_count})\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
@@ -1973,6 +2120,8 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
+            "- /: focus list filter (Home/Runs/Files).\n"
+            "- Esc: clear active list filter.\n"
             "- w: toggle console line wrapping.\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
@@ -2120,6 +2269,29 @@ class AutolabCockpitApp(App[None]):
             flow_factory=lambda: self._execute_action("open_selected_artifact_editor"),
         )
 
+    def action_focus_list_filter(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        if not self._mode_supports_list_filter():
+            self.notify("List filter is available in Home, Runs, and Files views.")
+            return
+        filter_input = self.query_one("#list-filter-input", Input)
+        filter_input.focus()
+        filter_input.cursor_position = len(filter_input.value)
+
+    def action_clear_list_filter(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        if not self._mode_supports_list_filter():
+            return
+        had_query = bool(self._normalized_list_filter())
+        filter_input = self.query_one("#list-filter-input", Input)
+        if filter_input.value:
+            filter_input.value = ""
+        if had_query:
+            self._apply_list_filter("")
+        self._focus_mode_default()
+
     def action_toggle_missing_only_filter(self) -> None:
         if self._mode != "files":
             self.notify("Missing-only filter is available in Files view (3).")
@@ -2171,6 +2343,11 @@ class AutolabCockpitApp(App[None]):
         list_id = event.list_view.id or ""
         self._apply_list_selection(list_id=list_id, selected_index=index)
         self._activate_list_selection(list_id)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if (event.input.id or "") != "list-filter-input":
+            return
+        self._apply_list_filter(event.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self._handle_button_action(event.button.id or "")
