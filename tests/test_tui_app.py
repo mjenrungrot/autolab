@@ -129,6 +129,12 @@ async def _click_when_visible(
     return False
 
 
+async def _type_text(pilot, text: str) -> None:
+    for character in text:
+        await pilot.press(character)
+        await pilot.pause()
+
+
 def _assert_fullscreen_modal_dialog(app: AutolabCockpitApp, selector: str) -> None:
     dialog = app.screen.query_one(selector)
     region = dialog.region
@@ -452,6 +458,106 @@ def test_files_missing_filter_empty_state_when_no_missing_files(tmp_path: Path) 
             assert entries == ["(No missing files for this stage)"]
             context = app.query_one("#files-context", app_module.Static)
             assert "(No missing files for this stage)" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_home_list_filter_shows_empty_state_and_esc_clears(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "list-filter-input"
+
+            await _type_text(pilot, "zzzz")
+            await pilot.pause()
+
+            action_list = app.query_one("#home-action-list", app_module.ListView)
+            entries = _list_item_label_texts(action_list)
+            assert entries == ["(No recommended actions match 'zzzz')"]
+            assert app._home_action_ids == ()
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            status_filter = app.query_one("#status-filter", app_module.Static)
+            assert "Filter: off" in str(status_filter.render())
+            assert app._home_action_ids
+
+    asyncio.run(_run())
+
+
+def test_runs_list_filter_shortcuts_reduce_and_restore_visible_runs(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "alpha", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "beta", "2026-02-01T02:00:00Z")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            assert len(app._visible_runs) == 2
+
+            await pilot.press("/")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "list-filter-input"
+            await _type_text(pilot, "beta")
+            await pilot.pause()
+
+            assert len(app._visible_runs) == 1
+            assert app._visible_runs[0].run_id == "beta"
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 1/1" in str(selection.render())
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(app._visible_runs) == 2
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 1/2" in str(selection.render())
+
+    asyncio.run(_run())
+
+
+def test_files_list_filter_updates_context_summary(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.press("/")
+            await pilot.pause()
+            await _type_text(pilot, "state.json")
+            await pilot.pause()
+
+            context = app.query_one("#files-context", app_module.Static)
+            rendered = str(context.render())
+            assert "- Filter: all files, text='state.json'" in rendered
+            assert app._current_artifacts
+            assert all(
+                "state.json" in item.path.as_posix() for item in app._current_artifacts
+            )
+
+            await pilot.press("escape")
+            await pilot.pause()
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Filter: all files" in str(context.render())
 
     asyncio.run(_run())
 
