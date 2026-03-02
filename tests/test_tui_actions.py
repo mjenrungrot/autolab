@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from autolab.tui.actions import (
+    build_experiment_create_intent,
+    build_experiment_move_intent,
+    build_focus_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
@@ -23,6 +26,9 @@ def test_action_catalog_contains_required_entries() -> None:
     assert "run_once" in action_ids
     assert "run_loop" in action_ids
     assert "todo_sync" in action_ids
+    assert "focus_experiment" in action_ids
+    assert "experiment_create" in action_ids
+    assert "experiment_move" in action_ids
     assert "open_selected_artifact" in action_ids
     rendered_action = next(
         action for action in actions if action.action_id == "open_rendered_prompt"
@@ -42,6 +48,30 @@ def test_action_catalog_contains_required_entries() -> None:
     run_loop = next(action for action in actions if action.action_id == "run_loop")
     assert run_loop.advanced is True
     assert run_loop.risk_level == "high"
+
+    focus_action = next(
+        action for action in actions if action.action_id == "focus_experiment"
+    )
+    assert focus_action.kind == "mutating"
+    assert focus_action.advanced is True
+    assert focus_action.requires_arm is True
+    assert focus_action.requires_confirmation is True
+
+    experiment_create_action = next(
+        action for action in actions if action.action_id == "experiment_create"
+    )
+    assert experiment_create_action.kind == "mutating"
+    assert experiment_create_action.advanced is True
+    assert experiment_create_action.requires_arm is True
+    assert experiment_create_action.requires_confirmation is True
+
+    experiment_move_action = next(
+        action for action in actions if action.action_id == "experiment_move"
+    )
+    assert experiment_move_action.kind == "mutating"
+    assert experiment_move_action.advanced is True
+    assert experiment_move_action.requires_arm is True
+    assert experiment_move_action.requires_confirmation is True
 
 
 def test_build_run_intent_respects_options(tmp_path: Path) -> None:
@@ -162,3 +192,77 @@ def test_lock_break_and_editor_intent_invariants(tmp_path: Path, monkeypatch) ->
     )
     assert editor_action.requires_confirmation is True
     assert editor_action.requires_arm is False
+
+
+def test_build_focus_intent_respects_optional_identifiers(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_focus_intent(
+        state_path=state_path,
+        experiment_id="e10",
+        iteration_id="iter10",
+    )
+    assert intent.action_id == "focus_experiment"
+    assert intent.argv[:3] == ("autolab", "focus", "--state-file")
+    assert "--experiment-id" in intent.argv
+    assert "--iteration-id" in intent.argv
+    assert intent.mutating is True
+    assert ".autolab/state.json" in intent.expected_writes
+
+    no_ids = build_focus_intent(state_path=state_path)
+    assert "--experiment-id" not in no_ids.argv
+    assert "--iteration-id" not in no_ids.argv
+
+
+def test_build_experiment_create_intent_includes_optional_hypothesis(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    with_hypothesis = build_experiment_create_intent(
+        state_path=state_path,
+        experiment_id="e2",
+        iteration_id="iter2",
+        hypothesis_id="h7",
+    )
+    assert with_hypothesis.action_id == "experiment_create"
+    assert with_hypothesis.argv[:4] == (
+        "autolab",
+        "experiment",
+        "create",
+        "--state-file",
+    )
+    assert "--experiment-id" in with_hypothesis.argv
+    assert "--iteration-id" in with_hypothesis.argv
+    assert with_hypothesis.argv[-2:] == ("--hypothesis-id", "h7")
+    assert "experiments/plan/iter2" in with_hypothesis.expected_writes
+
+    without_hypothesis = build_experiment_create_intent(
+        state_path=state_path,
+        experiment_id="e3",
+        iteration_id="iter3",
+        hypothesis_id="",
+    )
+    assert "--hypothesis-id" not in without_hypothesis.argv
+
+
+def test_build_experiment_move_intent_includes_required_target_type(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    intent = build_experiment_move_intent(
+        state_path=state_path,
+        to_type="in_progress",
+        experiment_id="e1",
+        iteration_id="iter1",
+    )
+    assert intent.action_id == "experiment_move"
+    assert intent.argv[:4] == (
+        "autolab",
+        "experiment",
+        "move",
+        "--state-file",
+    )
+    assert "--experiment-id" in intent.argv
+    assert "--iteration-id" in intent.argv
+    assert intent.argv[-2:] == ("--to", "in_progress")
+    assert "experiments/in_progress/iter1" in intent.expected_writes
+    assert ".autolab/backlog.yaml" in intent.expected_writes

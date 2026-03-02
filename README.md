@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.67
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.1.68
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -106,9 +106,10 @@ autolab render --stage design --context
 
 - Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
 - Files supports quick-open for rendered prompt, render context, prompt template, state, and stage artifacts.
+- Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
 
-Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
+Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk and backlog-steering actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 

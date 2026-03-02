@@ -21,6 +21,7 @@ The cockpit is mode-based, not multi-pane focus-based.
 - **Home**: Stage summary, full rendered prompt preview ("what will run now") in a scrollable card, blockers, required artifacts, recommended actions.
 - **Runs**: Run list plus quick open for manifest/metrics.
 - **Files**: Stage/common files plus quick open for rendered prompt, render context, and prompt template, all in a rich markdown viewer.
+  - Advanced actions in Files include backlog steering flows (`focus`, `experiment create`, `experiment move`) via picker modals.
 - **Console**: Live output for the active command.
 - **Help**: Keymap and safety model.
 
@@ -85,6 +86,9 @@ High-risk actions are intentionally de-emphasized and hidden by default.
 
 - `Start loop (advanced)`
 - `Break lock (advanced)`
+- `Focus experiment (advanced)`
+- `Create experiment (advanced)`
+- `Move experiment (advanced)`
 
 Reveal them with `x` (Toggle Advanced).
 
@@ -95,6 +99,7 @@ Reveal them with `x` (Toggle Advanced).
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
 - Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.
 - Preview modals render content as markdown. Markdown files are rendered directly; JSON/YAML/TOML/log/text are rendered as fenced code blocks.
+- Backlog steering modals use backlog picker-first UX with editable IDs before submit.
 - All cockpit modals use fullscreen dialog geometry with framed content (border/background/padding) for readability.
 - File/viewer previews default to full content (no size cap). Use external editor when you need native tooling for very large artifacts.
 - Semantic colors are intentionally restrained: success/info/warning/error cues improve scanability without changing behavior.

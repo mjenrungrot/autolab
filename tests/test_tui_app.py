@@ -10,7 +10,12 @@ pytest.importorskip("textual")
 
 from autolab.tui import app as app_module
 from autolab.tui.app import AutolabCockpitApp
-from autolab.tui.models import CommandIntent
+from autolab.tui.models import (
+    BacklogExperimentItem,
+    BacklogHypothesisItem,
+    CommandIntent,
+)
+from autolab.tui.snapshot import load_cockpit_snapshot
 
 
 def _write_state_file(repo_root: Path) -> Path:
@@ -33,6 +38,26 @@ def _write_state_file(repo_root: Path) -> Path:
     prompt_path.write_text("# Stage design\n", encoding="utf-8")
 
     return state_path
+
+
+def _write_backlog_file(repo_root: Path) -> None:
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    backlog_path.parent.mkdir(parents=True, exist_ok=True)
+    backlog_path.write_text(
+        (
+            "hypotheses:\n"
+            "  - id: h1\n"
+            "    status: open\n"
+            "    title: Hypothesis one\n"
+            "experiments:\n"
+            "  - id: e1\n"
+            "    hypothesis_id: h1\n"
+            "    status: open\n"
+            "    type: plan\n"
+            "    iteration_id: iter1\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 async def _click_when_visible(
@@ -269,6 +294,29 @@ def test_mode_shortcut_switches_to_runs(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_advanced_buttons_hidden_by_default_and_visible_after_toggle(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            advanced_row = app.query_one(
+                "#file-advanced-buttons", app_module.Horizontal
+            )
+            assert advanced_row.display is False
+            await pilot.press("x")
+            await pilot.pause()
+            assert advanced_row.display is True
+            app.query_one("#file-focus-experiment", app_module.Button)
+            app.query_one("#file-experiment-create", app_module.Button)
+            app.query_one("#file-experiment-move", app_module.Button)
+
+    asyncio.run(_run())
+
+
 def test_run_preset_screen_composes_without_mount_error(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -330,3 +378,158 @@ def test_action_confirm_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
             assert await _click_when_visible(pilot, "#cancel") is True
 
     asyncio.run(_run())
+
+
+def test_focus_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.FocusExperimentScreen(
+            experiments=(
+                BacklogExperimentItem(
+                    experiment_id="e1",
+                    iteration_id="iter1",
+                    hypothesis_id="h1",
+                    experiment_type="plan",
+                    status="open",
+                    is_current=True,
+                ),
+            ),
+            backlog_error="",
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(screen)
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.FocusExperimentScreen)
+            _assert_fullscreen_modal_dialog(app, "#focus-dialog")
+            assert await _click_when_visible(pilot, "#cancel") is True
+
+    asyncio.run(_run())
+
+
+def test_experiment_create_modal_prefills_suggested_ids(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.ExperimentCreateScreen(
+            experiments=(
+                BacklogExperimentItem(
+                    experiment_id="e1",
+                    iteration_id="iter1",
+                    hypothesis_id="h1",
+                    experiment_type="plan",
+                    status="open",
+                    is_current=True,
+                ),
+            ),
+            hypotheses=(
+                BacklogHypothesisItem(
+                    hypothesis_id="h1",
+                    title="Hypothesis one",
+                    status="open",
+                    is_completed=False,
+                ),
+            ),
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(screen)
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ExperimentCreateScreen)
+            _assert_fullscreen_modal_dialog(app, "#experiment-create-dialog")
+            experiment_id = app.screen.query_one(
+                "#experiment-create-experiment-id", app_module.Input
+            )
+            iteration_id = app.screen.query_one(
+                "#experiment-create-iteration-id", app_module.Input
+            )
+            assert experiment_id.value == "e2"
+            assert iteration_id.value == "iter2"
+            assert await _click_when_visible(pilot, "#cancel") is True
+
+    asyncio.run(_run())
+
+
+def test_experiment_move_modal_blocks_noop_destination(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        notices: list[str] = []
+        screen = app_module.ExperimentMoveScreen(
+            experiments=(
+                BacklogExperimentItem(
+                    experiment_id="e1",
+                    iteration_id="iter1",
+                    hypothesis_id="h1",
+                    experiment_type="plan",
+                    status="open",
+                    is_current=True,
+                ),
+            ),
+            backlog_error="",
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(screen)
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ExperimentMoveScreen)
+            _assert_fullscreen_modal_dialog(app, "#experiment-move-dialog")
+            target_list = app.screen.query_one(
+                "#experiment-move-target-list", app_module.ListView
+            )
+            target_list.index = 0
+            app.screen.notify = lambda message, *args, **kwargs: notices.append(
+                str(message)
+            )
+            await pilot.click("#continue")
+            await pilot.pause()
+            assert notices
+            assert "Destination type matches source type." in notices[-1]
+            assert await _click_when_visible(pilot, "#cancel") is True
+
+    asyncio.run(_run())
+
+
+def test_execute_action_focus_create_move_starts_expected_commands(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    _write_backlog_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._show_advanced = True
+    started: list[CommandIntent] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    selections = [
+        ("e1", "iter1"),
+        ("e2", "iter2", "h1"),
+        ("e1", "iter1", "in_progress"),
+    ]
+
+    async def _push_screen_wait(_screen):
+        return selections.pop(0)
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._execute_action("focus_experiment"))
+    asyncio.run(app._execute_action("experiment_create"))
+    asyncio.run(app._execute_action("experiment_move"))
+
+    assert len(started) == 3
+    assert started[0].argv[:2] == ("autolab", "focus")
+    assert started[1].argv[:3] == ("autolab", "experiment", "create")
+    assert started[2].argv[:3] == ("autolab", "experiment", "move")

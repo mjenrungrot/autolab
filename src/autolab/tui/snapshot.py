@@ -16,6 +16,7 @@ from autolab.prompts import (
     _resolve_stage_prompt_path as _resolve_render_template_path,
 )
 from autolab.state import (
+    _load_backlog_yaml,
     _load_state,
     _normalize_state,
     _resolve_autolab_dir,
@@ -23,8 +24,11 @@ from autolab.state import (
     _resolve_repo_root,
 )
 from autolab.todo_sync import list_open_tasks
+from autolab.utils import _is_backlog_status_completed
 from autolab.tui.models import (
     ArtifactItem,
+    BacklogExperimentItem,
+    BacklogHypothesisItem,
     CockpitSnapshot,
     RenderPreview,
     RecommendedAction,
@@ -308,6 +312,76 @@ def _load_review_blockers(iteration_dir: Path | None) -> tuple[str, ...]:
         if text:
             blockers.append(text)
     return tuple(blockers)
+
+
+def _load_backlog_items(
+    *,
+    repo_root: Path,
+    current_iteration_id: str,
+    current_experiment_id: str,
+) -> tuple[tuple[BacklogExperimentItem, ...], tuple[BacklogHypothesisItem, ...], str]:
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    payload, load_error = _load_backlog_yaml(backlog_path)
+    if payload is None:
+        return ((), (), load_error)
+
+    errors: list[str] = []
+
+    experiments_raw = payload.get("experiments")
+    experiment_items: list[BacklogExperimentItem] = []
+    if not isinstance(experiments_raw, list):
+        errors.append("backlog experiments list is missing")
+    else:
+        for raw in experiments_raw:
+            if not isinstance(raw, dict):
+                continue
+            experiment_id = str(raw.get("id", "")).strip()
+            iteration_id = str(raw.get("iteration_id", "")).strip()
+            hypothesis_id = str(raw.get("hypothesis_id", "")).strip()
+            experiment_type = str(raw.get("type", "")).strip()
+            status = str(raw.get("status", "")).strip()
+            is_current = (
+                bool(experiment_id)
+                and bool(iteration_id)
+                and experiment_id == current_experiment_id
+                and iteration_id == current_iteration_id
+            )
+            experiment_items.append(
+                BacklogExperimentItem(
+                    experiment_id=experiment_id,
+                    iteration_id=iteration_id,
+                    hypothesis_id=hypothesis_id,
+                    experiment_type=experiment_type,
+                    status=status,
+                    is_current=is_current,
+                )
+            )
+
+    hypotheses_raw = payload.get("hypotheses")
+    hypothesis_items: list[BacklogHypothesisItem] = []
+    if not isinstance(hypotheses_raw, list):
+        errors.append("backlog hypotheses list is missing")
+    else:
+        for raw in hypotheses_raw:
+            if not isinstance(raw, dict):
+                continue
+            hypothesis_id = str(raw.get("id", "")).strip()
+            title = str(raw.get("title", "")).strip()
+            status = str(raw.get("status", "")).strip()
+            hypothesis_items.append(
+                BacklogHypothesisItem(
+                    hypothesis_id=hypothesis_id,
+                    title=title,
+                    status=status,
+                    is_completed=_is_backlog_status_completed(status),
+                )
+            )
+
+    return (
+        tuple(experiment_items),
+        tuple(hypothesis_items),
+        "; ".join(errors),
+    )
 
 
 def _build_common_artifacts(
@@ -611,6 +685,11 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         iteration_dir=iteration_dir,
         last_run_id=last_run_id,
     )
+    backlog_experiments, backlog_hypotheses, backlog_error = _load_backlog_items(
+        repo_root=repo_root,
+        current_iteration_id=iteration_id,
+        current_experiment_id=experiment_id,
+    )
     common_artifacts = _build_common_artifacts(repo_root, iteration_dir)
     current_stage_artifacts = artifacts_by_stage.get(current_stage, ())
     recommended_actions = _build_recommended_actions(
@@ -641,6 +720,9 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         top_blockers=blockers,
         primary_blocker=primary_blocker,
         secondary_blockers=secondary_blockers,
+        backlog_experiments=backlog_experiments,
+        backlog_hypotheses=backlog_hypotheses,
+        backlog_error=backlog_error,
         recommended_actions=recommended_actions,
         stage_summaries=dict(_STAGE_SUMMARY),
         artifacts_by_stage=artifacts_by_stage,
