@@ -1473,7 +1473,10 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
-        if self._running_intent is not None and self._running_intent.action_id == "run_loop":
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
             parts.append("s stop loop")
         return "Keys: " + " | ".join(parts)
 
