@@ -456,6 +456,96 @@ def test_files_missing_filter_empty_state_when_no_missing_files(tmp_path: Path) 
     asyncio.run(_run())
 
 
+def test_runs_filter_shortcuts_focus_and_clear(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_files(repo_root, run_id="run-001")
+        _write_run_files(repo_root, run_id="eval-002")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            await pilot.press("/")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "run-filter"
+
+            run_filter = app.query_one("#run-filter", app_module.Input)
+            run_filter.value = "eval-002"
+            await pilot.pause()
+            assert len(app._current_runs) == 1
+            assert app._current_runs[0].run_id == "eval-002"
+            selection = app.query_one("#status-selection", app_module.Static)
+            assert "Runs: 1/1" in str(selection.render())
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert run_filter.value == ""
+            assert len(app._current_runs) == 2
+
+    asyncio.run(_run())
+
+
+def test_files_search_filter_shortcuts_focus_and_clear(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _materialize_all_current_stage_artifacts(state_path)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.press("/")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "artifact-filter"
+
+            artifact_filter = app.query_one("#artifact-filter", app_module.Input)
+            artifact_filter.value = "todo_state.json"
+            await pilot.pause()
+            assert len(app._current_artifacts) == 1
+            assert app._current_artifacts[0].path.name == "todo_state.json"
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Search: todo_state.json" in str(context.render())
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert artifact_filter.value == ""
+            assert len(app._current_artifacts) > 1
+
+    asyncio.run(_run())
+
+
+def test_command_palette_includes_core_cockpit_commands(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            commands = tuple(app.get_system_commands(app.screen))
+            command_titles = {command.title for command in commands}
+            assert {
+                "Go to Home view",
+                "Go to Runs view",
+                "Go to Files view",
+                "Go to Console view",
+                "Go to Help view",
+                "Refresh snapshot",
+                "Focus mode filter",
+                "Clear mode filter",
+            }.issubset(command_titles)
+
+    asyncio.run(_run())
+
+
 def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
