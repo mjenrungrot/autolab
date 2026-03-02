@@ -771,7 +771,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
     # Phase 7b: human_review banner
     if state.get("stage") == "human_review":
         print("\n*** HUMAN REVIEW REQUIRED ***")
-        print("Run `autolab review --status=pass|retry|stop` to record your decision.")
+        print(
+            "Run `autolab review --status=pass|retry|stop` to record the human review decision."
+        )
 
     # --- Lock status ---
     lock_path = autolab_dir / "lock"
@@ -2522,11 +2524,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
     if status == "pass":
         state["stage"] = "launch"
         state["stage_attempt"] = 0
-        message = "review decision: pass — advancing to launch"
+        message = "human review decision: pass — advancing to launch"
     elif status == "retry":
         state["stage"] = "implementation"
         state["stage_attempt"] = 0
-        message = "review decision: retry — returning to implementation"
+        message = "human review decision: retry — returning to implementation"
     elif status == "stop":
         state["stage"] = "stop"
         state["stage_attempt"] = 0
@@ -2539,7 +2541,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 str(state.get("experiment_id", "")).strip(),
             )
         )
-        message = f"review decision: stop — experiment ended"
+        message = "human review decision: stop — experiment ended"
         if completed:
             message = f"{message}; {completion_summary}"
     else:
@@ -4068,9 +4070,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report.set_defaults(handler=_cmd_report)
 
     # Phase 6b: review subcommand
-    review = subparsers.add_parser(
-        "review", help="Record a TA/instructor review decision"
-    )
+    review = subparsers.add_parser("review", help="Record a human review decision")
     review.add_argument(
         "--state-file",
         default=".autolab/state.json",
@@ -4080,7 +4080,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--status",
         required=True,
         choices=("pass", "retry", "stop"),
-        help="Review decision: pass (continue), retry (back to implementation), stop (end experiment)",
+        help="Human review decision: pass (continue to launch), retry (back to implementation), stop (end experiment)",
     )
     review.set_defaults(handler=_cmd_review)
 
