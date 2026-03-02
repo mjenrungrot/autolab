@@ -185,6 +185,7 @@ _EXPORTS_BY_MODULE: dict[str, tuple[str, ...]] = {
     "autolab.run_standard": ("_handle_stage_failure", "_run_once_standard"),
     "autolab.run_assistant": ("_assistant_target_stage", "_run_once_assistant"),
     "autolab.commands": (
+        "_cmd_experiment_create",
         "_cmd_experiment_move",
         "_cmd_focus",
         "_build_parser",
