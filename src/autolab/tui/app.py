@@ -48,6 +48,7 @@ from autolab.tui.models import (
     CockpitSnapshot,
     CommandIntent,
     LoopActionOptions,
+    RunItem,
     RunActionOptions,
     ViewMode,
 )
@@ -280,13 +281,7 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
         if event.checkbox.id == "run-agent-off" and event.checkbox.value:
             self.query_one("#run-agent-on", Checkbox).value = False
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel":
-            self.dismiss(None)
-            return
-        if event.button.id != "continue":
-            return
-
+    def _submit(self) -> None:
         preset_index = self.query_one("#run-preset-list", ListView).index or 0
         use_advanced = self.query_one("#run-advanced", Checkbox).value
 
@@ -327,6 +322,21 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
                 run_agent_mode=run_agent_mode,
             )
         )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        self._submit()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if (event.list_view.id or "") == "run-preset-list":
+            self._submit()
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
 
 
 class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
@@ -415,13 +425,7 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
         if event.checkbox.id == "loop-agent-off" and event.checkbox.value:
             self.query_one("#loop-agent-on", Checkbox).value = False
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel":
-            self.dismiss(None)
-            return
-        if event.button.id != "continue":
-            return
-
+    def _submit(self) -> None:
         preset_index = self.query_one("#loop-preset-list", ListView).index or 0
         use_advanced = self.query_one("#loop-advanced", Checkbox).value
 
@@ -490,6 +494,21 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
             )
         )
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        self._submit()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if (event.list_view.id or "") == "loop-preset-list":
+            self._submit()
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
 
 class HumanReviewDecisionScreen(ModalScreen[str | None]):
     CSS = """
@@ -556,6 +575,17 @@ class HumanReviewDecisionScreen(ModalScreen[str | None]):
             return
         self.dismiss(self._statuses[selected_index])
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if (event.list_view.id or "") != "human-review-list":
+            return
+        selected_index = event.list_view.index
+        if selected_index is None or not (0 <= selected_index < len(self._statuses)):
+            return
+        self.dismiss(self._statuses[selected_index])
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
 
 class ArtifactViewerScreen(ModalScreen[str | None]):
     CSS = """
@@ -614,12 +644,15 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
                     yield Button("Open in $EDITOR", id="open-editor", variant="primary")
 
     def on_mount(self) -> None:
-        self.query_one("#close", Button).focus()
+        self.query_one("#artifact-scroll", VerticalScroll).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "open-editor":
             self.dismiss("open_editor")
             return
+        self.dismiss(None)
+
+    def key_escape(self) -> None:
         self.dismiss(None)
 
 
@@ -1101,6 +1134,12 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
 
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _RUN_FILTER_ORDER: tuple[str, ...] = ("all", "active", "success", "failed")
+    _RUN_STATUS_BUCKETS: dict[str, tuple[str, ...]] = {
+        "active": ("running", "queued", "pending", "submitted", "in_progress"),
+        "success": ("completed", "synced", "pass", "success", "done"),
+        "failed": ("failed", "fail", "error", "timeout", "stopped"),
+    }
     _TONE_CLASSES = (
         "tone-success",
         "tone-info",
@@ -1154,7 +1193,11 @@ class AutolabCockpitApp(App[None]):
     }
 
     #status-selection {
-      width: 24;
+      width: 16;
+    }
+
+    #status-filter {
+      width: 26;
     }
 
     #status-console {
@@ -1275,6 +1318,11 @@ class AutolabCockpitApp(App[None]):
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
+        ("v", "open_selected_run_manifest", "Run Manifest"),
+        ("g", "open_selected_run_metrics", "Run Metrics"),
+        ("f", "cycle_runs_filter", "Run Filter"),
+        ("o", "toggle_runs_sort", "Run Order"),
+        ("m", "toggle_missing_files", "Missing Files"),
         ("q", "quit", "Quit"),
     ]
 
@@ -1297,6 +1345,10 @@ class AutolabCockpitApp(App[None]):
         self._home_action_index = 0
         self._selected_run_index = 0
         self._selected_artifact_index = 0
+        self._runs_filter = "all"
+        self._runs_oldest_first = False
+        self._files_missing_only = False
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
 
         self._runner = CommandRunner(
@@ -1311,6 +1363,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Selection: -", id="status-selection")
+            yield Static("Filters: -", id="status-filter")
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
@@ -1441,6 +1494,8 @@ class AutolabCockpitApp(App[None]):
 
     def _key_hints_text(self) -> str:
         wrap_state = "on" if self._console_wrap else "off"
+        run_order = "oldest" if self._runs_oldest_first else "newest"
+        missing_state = "on" if self._files_missing_only else "off"
         parts = [
             "1-5 view",
             "[ / ] cycle",
@@ -1456,8 +1511,12 @@ class AutolabCockpitApp(App[None]):
             parts.append("c clear")
         elif self._mode == "runs":
             parts.append("Enter manifest")
+            parts.append("g metrics")
+            parts.append(f"f filter({self._runs_filter})")
+            parts.append(f"o order({run_order})")
         elif self._mode == "files":
             parts.append("Enter viewer")
+            parts.append(f"m missing({missing_state})")
         elif self._mode == "home":
             parts.append("Enter recommended action")
         if (
@@ -1473,7 +1532,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1493,6 +1552,7 @@ class AutolabCockpitApp(App[None]):
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
         selection = self.query_one("#status-selection", Static)
+        filter_status = self.query_one("#status-filter", Static)
         console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
         key_hints = self.query_one("#key-hints", Static)
@@ -1514,6 +1574,27 @@ class AutolabCockpitApp(App[None]):
             if "0/0" not in selection_label and "n/a" not in selection_label
             else "tone-muted",
         )
+
+        if self._mode == "runs":
+            run_order = "oldest" if self._runs_oldest_first else "newest"
+            filter_status.update(f"Runs: {self._runs_filter} | {run_order}")
+            self._set_tone(
+                filter_status,
+                "tone-info"
+                if self._runs_filter != "all" or self._runs_oldest_first
+                else "tone-muted",
+            )
+        elif self._mode == "files":
+            filter_status.update(
+                "Files: missing-only" if self._files_missing_only else "Files: all"
+            )
+            self._set_tone(
+                filter_status, "tone-info" if self._files_missing_only else "tone-muted"
+            )
+        else:
+            filter_status.update("Filters: -")
+            self._set_tone(filter_status, "tone-muted")
+
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
         key_hints.update(self._key_hints_text())
@@ -1579,12 +1660,11 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#help-text", Static).focus()
 
     def _selected_run(self):
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.runs:
+        if not self._visible_runs:
             return None
-        if self._selected_run_index >= len(snapshot.runs):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return snapshot.runs[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1598,6 +1678,7 @@ class AutolabCockpitApp(App[None]):
         self._home_action_index = 0
         self._selected_run_index = 0
         self._selected_artifact_index = 0
+        self._visible_runs = ()
         self._current_artifacts = ()
 
         home_actions = self.query_one("#home-action-list", ListView)
@@ -1663,6 +1744,13 @@ class AutolabCockpitApp(App[None]):
         self._populate_artifact_list()
         self._update_ui_chrome()
         return True
+
+    def _run_matches_filter(self, run: RunItem) -> bool:
+        if self._runs_filter == "all":
+            return True
+        normalized = str(run.status).strip().lower()
+        allowed = self._RUN_STATUS_BUCKETS.get(self._runs_filter, ())
+        return normalized in allowed
 
     def _populate_home_view(self) -> None:
         snapshot = self._snapshot
@@ -1807,27 +1895,41 @@ class AutolabCockpitApp(App[None]):
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
+        self._visible_runs = ()
         if snapshot is None:
             return
 
-        if not snapshot.runs:
+        runs = [run for run in snapshot.runs if self._run_matches_filter(run)]
+        if self._runs_oldest_first:
+            runs.reverse()
+        self._visible_runs = tuple(runs)
+
+        if not self._visible_runs:
             empty_label = Label("(No runs found yet)")
             empty_label.add_class("tone-muted")
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
             details_widget = self.query_one("#run-details", Static)
-            details_widget.update(
-                "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
-            )
+            if snapshot.runs and self._runs_filter != "all":
+                details_widget.update(
+                    "Run Details\nNo runs match the active filter.\nPress f to cycle filters."
+                )
+            else:
+                details_widget.update(
+                    "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
+                )
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in snapshot.runs:
+        for run in self._visible_runs:
             started = run.started_at or "-"
             run_label = Label(f"{run.run_id} [{run.status}] start={started}")
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
+        self._selected_run_index = min(
+            self._selected_run_index,
+            len(self._visible_runs) - 1,
+        )
         run_list.index = self._selected_run_index
         self._update_run_details()
 
@@ -1866,18 +1968,33 @@ class AutolabCockpitApp(App[None]):
                 continue
             seen.add(artifact.path)
             merged.append(artifact)
-        self._current_artifacts = tuple(merged)
+        visible = [
+            artifact
+            for artifact in merged
+            if not self._files_missing_only or not artifact.exists
+        ]
+        self._current_artifacts = tuple(visible)
 
         if not self._current_artifacts:
-            empty_label = Label("(No relevant files)")
+            if self._files_missing_only and merged:
+                empty_text = "(No missing files in current scope)"
+            else:
+                empty_text = "(No relevant files)"
+            empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
             self._selected_artifact_index = 0
             context_widget = self.query_one("#files-context", Static)
-            context_widget.update(
-                f"Files\n- Stage: {stage}\n- No files detected for this stage."
-            )
-            self._set_tone(context_widget, "tone-muted")
+            if self._files_missing_only and merged:
+                context_widget.update(
+                    f"Files\n- Stage: {stage}\n- Filter: missing only\n- No missing files found."
+                )
+                self._set_tone(context_widget, "tone-success")
+            else:
+                context_widget.update(
+                    f"Files\n- Stage: {stage}\n- Filter: {'missing only' if self._files_missing_only else 'all'}\n- No files detected for this stage."
+                )
+                self._set_tone(context_widget, "tone-muted")
             return
 
         for artifact in self._current_artifacts:
@@ -1905,6 +2022,7 @@ class AutolabCockpitApp(App[None]):
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
+            f"- Filter: {'missing only' if self._files_missing_only else 'all'}\n"
             f"- Selected: {selected_text}\n"
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
@@ -1929,6 +2047,8 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
+            "- Runs: v opens manifest, g opens metrics, f cycles filter, o toggles order.\n"
+            "- Files: m toggles missing-only filter.\n"
             "- w: toggle console line wrapping.\n"
             "\n"
             "Safety\n"
@@ -2022,6 +2142,71 @@ class AutolabCockpitApp(App[None]):
             return
         self._console_wrap = not self._console_wrap
         self.query_one("#console-log", RichLog).wrap = self._console_wrap
+        self._update_ui_chrome()
+
+    def action_open_selected_run_manifest(self) -> None:
+        if (
+            self._mode != "runs"
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, Input)
+        ):
+            return
+        self._start_ui_flow(
+            label="runs-open-manifest-shortcut",
+            flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
+        )
+
+    def action_open_selected_run_metrics(self) -> None:
+        if (
+            self._mode != "runs"
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, Input)
+        ):
+            return
+        self._start_ui_flow(
+            label="runs-open-metrics-shortcut",
+            flow_factory=lambda: self._execute_action("open_selected_run_metrics"),
+        )
+
+    def action_cycle_runs_filter(self) -> None:
+        if (
+            self._mode != "runs"
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, Input)
+        ):
+            return
+        try:
+            current_index = self._RUN_FILTER_ORDER.index(self._runs_filter)
+        except ValueError:
+            current_index = 0
+        next_index = (current_index + 1) % len(self._RUN_FILTER_ORDER)
+        self._runs_filter = self._RUN_FILTER_ORDER[next_index]
+        if self._snapshot is not None:
+            self._populate_run_list()
+        self._update_ui_chrome()
+
+    def action_toggle_runs_sort(self) -> None:
+        if (
+            self._mode != "runs"
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, Input)
+        ):
+            return
+        self._runs_oldest_first = not self._runs_oldest_first
+        if self._snapshot is not None:
+            self._populate_run_list()
+        self._update_ui_chrome()
+
+    def action_toggle_missing_files(self) -> None:
+        if (
+            self._mode != "files"
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, Input)
+        ):
+            return
+        self._files_missing_only = not self._files_missing_only
+        if self._snapshot is not None:
+            self._populate_artifact_list()
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
