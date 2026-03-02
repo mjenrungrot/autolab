@@ -10,6 +10,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -19,6 +20,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Markdown,
     RichLog,
     Static,
 )
@@ -41,6 +43,7 @@ from autolab.tui.models import (
     RunActionOptions,
     ViewMode,
 )
+from autolab.tui.preview_render import PreviewRenderHint, build_preview_markdown
 from autolab.tui.runner import CommandRunner
 from autolab.tui.snapshot import (
     load_artifact_text,
@@ -508,19 +511,23 @@ class ArtifactViewerScreen(ModalScreen[str | None]):
         self,
         *,
         title: str,
-        artifact_text: str,
+        artifact_markdown: str,
         editor_path: Path | None = None,
     ) -> None:
         super().__init__()
         self._title = title
-        self._artifact_text = artifact_text
+        self._artifact_markdown = artifact_markdown
         self._editor_path = editor_path
 
     def compose(self) -> ComposeResult:
         with Vertical(id="artifact-dialog"):
             yield Label(self._title, id="artifact-path")
             with VerticalScroll(id="artifact-scroll"):
-                yield Static(self._artifact_text, markup=False)
+                yield Markdown(
+                    self._artifact_markdown,
+                    id="artifact-content",
+                    open_links=False,
+                )
             with Horizontal(id="artifact-buttons"):
                 yield Button("Close", id="close")
                 if self._editor_path is not None:
@@ -640,7 +647,6 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
-    #home-render-card,
     #home-blocker-card,
     #home-artifacts-card,
     #help-text {
@@ -648,6 +654,27 @@ class AutolabCockpitApp(App[None]):
       padding: 0 1;
       height: auto;
       margin-bottom: 1;
+    }
+
+    #home-render-card {
+      border: round $surface;
+      padding: 0 1;
+      height: 18;
+      min-height: 12;
+      margin-bottom: 1;
+    }
+
+    #home-render-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #home-render-scroll {
+      height: 1fr;
+    }
+
+    #artifact-content {
+      width: 1fr;
     }
 
     #run-buttons,
@@ -730,7 +757,10 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
-                yield Static("", id="home-render-card", markup=False)
+                with Vertical(id="home-render-card"):
+                    yield Static("What Autolab Will Run Now", id="home-render-title")
+                    with VerticalScroll(id="home-render-scroll"):
+                        yield Markdown("", id="home-render-markdown", open_links=False)
                 yield Static("", id="home-blocker-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
@@ -800,7 +830,7 @@ class AutolabCockpitApp(App[None]):
         except ValueError:
             return str(path)
 
-    def _set_tone(self, widget: Static | Label, tone_class: str) -> None:
+    def _set_tone(self, widget: Widget, tone_class: str) -> None:
         for class_name in self._TONE_CLASSES:
             widget.remove_class(class_name)
         if tone_class:
@@ -922,11 +952,15 @@ class AutolabCockpitApp(App[None]):
         stage_widget.update("Stage\nUnavailable.")
         self._set_tone(stage_widget, "tone-muted")
 
-        render_widget = self.query_one("#home-render-card", Static)
-        render_widget.update(
-            "Render Preview\nUnavailable because snapshot refresh failed."
+        render_card = self.query_one("#home-render-card", Vertical)
+        render_markdown = self.query_one("#home-render-markdown", Markdown)
+        render_markdown.update(
+            build_preview_markdown(
+                "Render preview unavailable because snapshot refresh failed.",
+                hint="text",
+            )
         )
-        self._set_tone(render_widget, "tone-danger")
+        self._set_tone(render_card, "tone-danger")
 
         blocker_widget = self.query_one("#home-blocker-card", Static)
         blocker_widget.update("Blockers\nSnapshot refresh failed.")
@@ -977,34 +1011,42 @@ class AutolabCockpitApp(App[None]):
         )
         self._set_tone(stage_widget, "tone-info")
 
-        render_widget = self.query_one("#home-render-card", Static)
+        render_card = self.query_one("#home-render-card", Vertical)
+        render_markdown = self.query_one("#home-render-markdown", Markdown)
         render_preview = snapshot.render_preview
         if render_preview.status == "ok":
-            render_widget.update(
-                "What Autolab Will Run Now\n"
-                f"- Stage: {render_preview.stage}\n\n"
-                f"{render_preview.prompt_excerpt}"
+            prompt_markdown = build_preview_markdown(
+                render_preview.prompt_text,
+                source_path=render_preview.template_path,
+                hint="markdown",
             )
-            self._set_tone(render_widget, "tone-info")
+            render_markdown.update(
+                f"**Stage:** `{render_preview.stage}`\n\n{prompt_markdown}"
+            )
+            self._set_tone(render_card, "tone-info")
         elif render_preview.status == "unavailable":
-            render_widget.update(
-                "What Autolab Will Run Now\n"
-                "- Render preview unavailable for this stage."
+            render_markdown.update(
+                build_preview_markdown(
+                    "Render preview unavailable for this stage.",
+                    hint="text",
+                )
             )
-            self._set_tone(render_widget, "tone-warning")
+            self._set_tone(render_card, "tone-warning")
         else:
             template_hint = (
                 self._display_path(render_preview.template_path)
                 if render_preview.template_path is not None
                 else "unknown template path"
             )
-            render_widget.update(
-                "What Autolab Will Run Now\n"
-                "- Render preview failed.\n"
-                f"- Error: {render_preview.error_message or 'unknown render error'}\n"
-                f"- Template: {template_hint}"
+            render_markdown.update(
+                build_preview_markdown(
+                    "Render preview failed.\n"
+                    f"Error: {render_preview.error_message or 'unknown render error'}\n"
+                    f"Template: {template_hint}",
+                    hint="text",
+                )
             )
-            self._set_tone(render_widget, "tone-danger")
+            self._set_tone(render_card, "tone-danger")
 
         blocker_lines = [f"- Primary: {snapshot.primary_blocker}"]
         if snapshot.secondary_blockers:
@@ -1427,11 +1469,18 @@ class AutolabCockpitApp(App[None]):
         title: str,
         text: str,
         editor_path: Path | None = None,
+        source_path: Path | None = None,
+        render_hint: PreviewRenderHint = "auto",
     ) -> None:
+        artifact_markdown = build_preview_markdown(
+            text,
+            source_path=source_path,
+            hint=render_hint,
+        )
         result = await self.push_screen_wait(
             ArtifactViewerScreen(
                 title=title,
-                artifact_text=text,
+                artifact_markdown=artifact_markdown,
                 editor_path=editor_path,
             )
         )
@@ -1454,13 +1503,13 @@ class AutolabCockpitApp(App[None]):
             self._start_command(intent)
 
     async def _open_artifact_viewer(self, artifact_path: Path) -> None:
-        text, truncated = load_artifact_text(artifact_path)
-        if truncated:
-            text = f"{text}\n\n[viewer note] content truncated for readability."
+        text, _truncated = load_artifact_text(artifact_path, max_chars=None)
         await self._open_text_viewer(
             title=self._display_path(artifact_path),
             text=text,
             editor_path=artifact_path,
+            source_path=artifact_path,
+            render_hint="auto",
         )
 
     async def _execute_action(self, action_id: str) -> None:
@@ -1529,6 +1578,8 @@ class AutolabCockpitApp(App[None]):
                 title=f"Rendered Prompt ({preview.stage})",
                 text=preview.prompt_text,
                 editor_path=preview.template_path,
+                source_path=preview.template_path,
+                render_hint="markdown",
             )
             return
 
@@ -1542,6 +1593,8 @@ class AutolabCockpitApp(App[None]):
                 title=f"Render Context ({preview.stage})",
                 text=context_text,
                 editor_path=None,
+                source_path=None,
+                render_hint="json",
             )
             return
 

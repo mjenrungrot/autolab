@@ -170,13 +170,21 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
+        prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
+        prompt_path.write_text(
+            "# Stage design\n\n" + "\n".join(f"line {index}" for index in range(1, 26)),
+            encoding="utf-8",
+        )
         app = AutolabCockpitApp(state_path=state_path)
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
-            render_card = app.query_one("#home-render-card", app_module.Static)
-            render_text = str(render_card.render())
-            assert "What Autolab Will Run Now" in render_text
-            assert "Stage: design" in render_text
+            title = app.query_one("#home-render-title", app_module.Static)
+            assert "What Autolab Will Run Now" in str(title.render())
+            render_markdown = app.query_one(
+                "#home-render-markdown", app_module.Markdown
+            )
+            assert "**Stage:** `design`" in render_markdown._markdown
+            assert "line 25" in render_markdown._markdown
 
     asyncio.run(_run())
 
@@ -195,12 +203,20 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
             await pilot.pause()
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Rendered Prompt (design)" in str(title.render())
+            rendered_content = app.screen.query_one(
+                "#artifact-content", app_module.Markdown
+            )
+            assert "# Stage design" in rendered_content._markdown
             assert await _click_when_visible(pilot, "#close") is True
 
             await pilot.click("#file-open-context")
             await pilot.pause()
             title = app.screen.query_one("#artifact-path", app_module.Label)
             assert "Render Context (design)" in str(title.render())
+            context_content = app.screen.query_one(
+                "#artifact-content", app_module.Markdown
+            )
+            assert context_content._markdown.startswith("```json\n")
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())
