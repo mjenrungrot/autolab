@@ -95,6 +95,7 @@ Reveal them with `x` (Toggle Advanced).
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
 - Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.
 - Preview modals render content as markdown. Markdown files are rendered directly; JSON/YAML/TOML/log/text are rendered as fenced code blocks.
+- All cockpit modals use fullscreen dialog geometry with framed content (border/background/padding) for readability.
 - File/viewer previews default to full content (no size cap). Use external editor when you need native tooling for very large artifacts.
 - Semantic colors are intentionally restrained: success/info/warning/error cues improve scanability without changing behavior.
 - If `stdin/stdout` are not interactive TTYs, `autolab tui` exits with an error.
