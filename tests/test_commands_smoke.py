@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -96,6 +99,77 @@ def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
     )
 
 
+def test_console_script_contract_points_to_main_entrypoint() -> None:
+    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    pyproject = _load_toml(pyproject_path)
+    scripts = pyproject.get("project", {}).get("scripts", {})
+    assert isinstance(scripts, dict)
+    assert scripts.get("autolab") == "autolab.__main__:main"
+
+
+def test_installed_console_script_can_run_render(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    venv_dir = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    bin_dir = venv_dir / ("Scripts" if os.name == "nt" else "bin")
+    python_bin = bin_dir / "python"
+    autolab_bin = bin_dir / "autolab"
+    if os.name == "nt":
+        autolab_bin = bin_dir / "autolab.exe"
+
+    install_result = subprocess.run(
+        [str(python_bin), "-m", "pip", "install", "--no-deps", "-e", str(repo_root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert install_result.returncode == 0, install_result.stderr
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state_path = workspace / ".autolab" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "iteration_id": "iter1",
+                "experiment_id": "e1",
+                "stage": "implementation",
+                "stage_attempt": 0,
+                "last_run_id": "",
+                "pending_run_id": "",
+                "sync_status": "na",
+                "max_stage_attempts": 3,
+                "max_total_iterations": 20,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(
+        "# Stage: implementation\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [str(autolab_bin), "render", "--state-file", str(state_path)],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "stage: implementation" in result.stdout.lower()
+
+
 def test_top_level_help_groups_commands_for_onboarding() -> None:
     help_text = commands_module._build_parser().format_help()
     assert "positional arguments:" in help_text
@@ -110,6 +184,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "run" in help_text
     assert "loop" in help_text
     assert "tui" in help_text
+    assert "render" in help_text
     assert "todo" in help_text
     assert "policy" in help_text
     assert "update" in help_text

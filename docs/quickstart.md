@@ -21,7 +21,7 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 ## Command map (grouped)
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -101,6 +101,14 @@ Stage prompts live in `.autolab/prompts/stage_*.md`. Each prompt:
 Edit prompts to match your project's domain (e.g., specific metric names, compute constraints, code structure).
 
 Shared prompt fragments in `.autolab/prompts/shared/` are included via `{{shared:filename.md}}`.
+
+Preview the resolved prompt for the current state or a specific stage without running transitions:
+
+```bash
+autolab render
+autolab render --stage implementation
+autolab render --stage design --context
+```
 
 ## Step 4: Run your first stage
 

@@ -994,6 +994,7 @@ def _render_stage_prompt(
     state: dict[str, Any],
     template_path: Path,
     runner_scope: dict[str, Any] | None = None,
+    write_outputs: bool = True,
 ) -> RenderedPromptBundle:
     registry = load_registry(repo_root)
 
@@ -1096,10 +1097,11 @@ def _render_stage_prompt(
         )
 
     rendered_dir = repo_root / ".autolab" / "prompts" / "rendered"
-    rendered_dir.mkdir(parents=True, exist_ok=True)
     rendered_path = rendered_dir / f"{stage}.md"
     context_path = rendered_dir / f"{stage}.context.json"
-    rendered_path.write_text(rendered_text, encoding="utf-8")
+    if write_outputs:
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        rendered_path.write_text(rendered_text, encoding="utf-8")
 
     context_payload = {
         **context_payload,
@@ -1107,7 +1109,8 @@ def _render_stage_prompt(
         "rendered_prompt_path": str(rendered_path),
         "rendered_context_path": str(context_path),
     }
-    _write_json(context_path, context_payload)
+    if write_outputs:
+        _write_json(context_path, context_payload)
 
     return RenderedPromptBundle(
         template_path=template_path,
