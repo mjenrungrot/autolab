@@ -208,6 +208,35 @@ def test_review_subcommand_help_uses_human_review_terminology(
     assert "Human review decision:" in captured.out
 
 
+def test_experiment_subcommand_help_includes_create(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["experiment", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "create" in captured.out
+    assert "move" in captured.out
+
+
+def test_experiment_create_help_shows_required_flags(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["experiment", "create", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--experiment-id EXPERIMENT_ID" in captured.out
+    assert "--iteration-id ITERATION_ID" in captured.out
+    assert "--hypothesis-id HYPOTHESIS_ID" in captured.out
+
+
 def test_status_human_review_banner_mentions_human_review_decision(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

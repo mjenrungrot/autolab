@@ -597,6 +597,98 @@ def _resolve_backlog_target_entry(
     return (payload, matches[0], "")
 
 
+def _resolve_create_hypothesis_id(
+    backlog_payload: dict[str, Any], *, hypothesis_id: str
+) -> tuple[str, str]:
+    hypotheses = backlog_payload.get("hypotheses")
+    if not isinstance(hypotheses, list):
+        return ("", "backlog hypotheses list is missing")
+
+    requested_hypothesis_id = _normalize_space(hypothesis_id)
+    if requested_hypothesis_id:
+        matches = [
+            entry
+            for entry in hypotheses
+            if isinstance(entry, dict)
+            and _normalize_space(str(entry.get("id", ""))) == requested_hypothesis_id
+        ]
+        if not matches:
+            return (
+                "",
+                f"backlog hypothesis '{requested_hypothesis_id}' was not found",
+            )
+        if len(matches) > 1:
+            return (
+                "",
+                f"backlog hypothesis id '{requested_hypothesis_id}' is duplicated",
+            )
+        matched_entry = matches[0]
+        status = _normalize_space(str(matched_entry.get("status", ""))).lower()
+        if _is_backlog_status_completed(status):
+            return (
+                "",
+                (
+                    f"backlog hypothesis '{requested_hypothesis_id}' is completed "
+                    f"(status='{status or 'completed'}')"
+                ),
+            )
+        return (requested_hypothesis_id, "")
+
+    for entry in hypotheses:
+        if not isinstance(entry, dict):
+            continue
+        resolved_hypothesis_id = _normalize_space(str(entry.get("id", "")))
+        if not resolved_hypothesis_id:
+            continue
+        status = _normalize_space(str(entry.get("status", ""))).lower()
+        if _is_backlog_status_completed(status):
+            continue
+        return (resolved_hypothesis_id, "")
+
+    return (
+        "",
+        "no open hypothesis available in backlog; set --hypothesis-id to a non-completed hypothesis",
+    )
+
+
+def _validate_experiment_create_uniqueness(
+    repo_root: Path,
+    backlog_payload: dict[str, Any],
+    *,
+    experiment_id: str,
+    iteration_id: str,
+) -> str:
+    experiments = backlog_payload.get("experiments")
+    if not isinstance(experiments, list):
+        return "backlog experiments list is missing"
+
+    for entry in experiments:
+        if not isinstance(entry, dict):
+            continue
+        entry_experiment_id = _normalize_space(str(entry.get("id", "")))
+        if entry_experiment_id == experiment_id:
+            return f"backlog experiment '{experiment_id}' already exists"
+
+    for entry in experiments:
+        if not isinstance(entry, dict):
+            continue
+        entry_iteration_id = _normalize_space(str(entry.get("iteration_id", "")))
+        if entry_iteration_id != iteration_id:
+            continue
+        existing_experiment = _normalize_space(str(entry.get("id", ""))) or "<unknown>"
+        return (
+            f"backlog iteration_id '{iteration_id}' already exists "
+            f"(experiment_id='{existing_experiment}')"
+        )
+
+    for experiment_type in EXPERIMENT_TYPES:
+        candidate = repo_root / "experiments" / experiment_type / iteration_id
+        if candidate.exists():
+            return f"iteration directory already exists: {candidate}"
+
+    return ""
+
+
 def _is_entry_completed(entry: dict[str, Any]) -> bool:
     experiment_type = _normalize_experiment_type(entry.get("type"))
     if experiment_type == "done":
@@ -1147,6 +1239,159 @@ def _cmd_todo(args: argparse.Namespace) -> int:
 
     print(f"autolab todo: ERROR unknown action '{action}'", file=sys.stderr)
     return 2
+
+
+def _cmd_experiment_create(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    autolab_dir = _resolve_autolab_dir(state_path, repo_root)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab experiment create: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    lock_error = _ensure_no_active_lock(autolab_dir / "lock")
+    if lock_error:
+        print(f"autolab experiment create: ERROR {lock_error}", file=sys.stderr)
+        return 1
+
+    experiment_id = _normalize_space(str(getattr(args, "experiment_id", "")))
+    iteration_id = _normalize_space(str(getattr(args, "iteration_id", "")))
+    requested_hypothesis_id = _normalize_space(str(getattr(args, "hypothesis_id", "")))
+
+    id_error = _validate_target_identifiers(iteration_id, experiment_id)
+    if id_error:
+        print(f"autolab experiment create: ERROR {id_error}", file=sys.stderr)
+        return 1
+
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    backlog_payload, load_error = _load_backlog_yaml(backlog_path)
+    if backlog_payload is None:
+        print(f"autolab experiment create: ERROR {load_error}", file=sys.stderr)
+        return 1
+    if not isinstance(backlog_payload.get("hypotheses"), list):
+        print(
+            "autolab experiment create: ERROR backlog hypotheses list is missing",
+            file=sys.stderr,
+        )
+        return 1
+    experiments = backlog_payload.get("experiments")
+    if not isinstance(experiments, list):
+        print(
+            "autolab experiment create: ERROR backlog experiments list is missing",
+            file=sys.stderr,
+        )
+        return 1
+
+    resolved_hypothesis_id, hypothesis_error = _resolve_create_hypothesis_id(
+        backlog_payload,
+        hypothesis_id=requested_hypothesis_id,
+    )
+    if hypothesis_error:
+        print(f"autolab experiment create: ERROR {hypothesis_error}", file=sys.stderr)
+        return 1
+
+    uniqueness_error = _validate_experiment_create_uniqueness(
+        repo_root,
+        backlog_payload,
+        experiment_id=experiment_id,
+        iteration_id=iteration_id,
+    )
+    if uniqueness_error:
+        print(f"autolab experiment create: ERROR {uniqueness_error}", file=sys.stderr)
+        return 1
+
+    created_entries: list[Path] = []
+    iteration_dir = repo_root / "experiments" / "plan" / iteration_id
+    backlog_changed = False
+    new_entry = {
+        "id": experiment_id,
+        "hypothesis_id": resolved_hypothesis_id,
+        "status": "open",
+        "type": "plan",
+        "iteration_id": iteration_id,
+    }
+    experiments.append(new_entry)
+    try:
+        _ensure_iteration_skeleton(
+            repo_root,
+            iteration_id,
+            created_entries,
+            experiment_type="plan",
+        )
+        backlog_changed, backlog_write_error = _write_backlog_yaml(
+            backlog_path,
+            backlog_payload,
+        )
+        if backlog_write_error:
+            raise RuntimeError(backlog_write_error)
+        if not backlog_changed:
+            raise RuntimeError("backlog update produced no changes")
+    except Exception as exc:
+        rollback_notes: list[str] = []
+        try:
+            experiments.remove(new_entry)
+        except ValueError:
+            pass
+        if iteration_dir.exists():
+            try:
+                shutil.rmtree(iteration_dir)
+            except Exception as rollback_exc:
+                rollback_notes.append(f"iteration rollback failed: {rollback_exc}")
+        detail = str(exc)
+        if rollback_notes:
+            detail = f"{detail}; {' | '.join(rollback_notes)}"
+        print(f"autolab experiment create: ERROR {detail}", file=sys.stderr)
+        return 1
+
+    stage_before = _normalize_space(str(state.get("stage", "")))
+    summary = (
+        f"manual experiment create: experiment_id='{experiment_id}' "
+        f"iteration_id='{iteration_id}' hypothesis_id='{resolved_hypothesis_id}' type=plan"
+    )
+    _append_state_history(
+        state,
+        stage_before=stage_before,
+        stage_after=stage_before,
+        status="manual_experiment_create",
+        summary=summary,
+    )
+    _write_json(state_path, state)
+    todo_changed, todo_message = _safe_todo_pre_sync(repo_root, state)
+    changed_files = [
+        state_path,
+        backlog_path,
+        iteration_dir,
+        *created_entries,
+        *todo_changed,
+    ]
+    result_summary = summary if not todo_message else f"{summary}; {todo_message}"
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=result_summary,
+        changed_files=changed_files,
+    )
+    _append_log(
+        repo_root,
+        (
+            f"experiment create: {experiment_id} iteration={iteration_id} "
+            f"hypothesis={resolved_hypothesis_id} type=plan created={len(created_entries)}"
+        ),
+    )
+
+    print("autolab experiment create")
+    print(f"state_file: {state_path}")
+    print(f"experiment_id: {experiment_id}")
+    print(f"hypothesis_id: {resolved_hypothesis_id}")
+    print(f"iteration_id: {iteration_id}")
+    print("type: plan")
+    print(f"iteration_dir: {iteration_dir}")
+    print(f"created_entries: {len(created_entries)}")
+    print(f"backlog_changed: {backlog_changed}")
+    print(f"changed_files: {len({str(path) for path in changed_files})}")
+    return 0
 
 
 def _cmd_experiment_move(args: argparse.Namespace) -> int:
@@ -4133,6 +4378,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "experiment", help="Experiment lifecycle management commands"
     )
     experiment_subparsers = experiment.add_subparsers(dest="experiment_command")
+
+    experiment_create = experiment_subparsers.add_parser(
+        "create",
+        help="Create a new plan experiment and iteration skeleton",
+    )
+    experiment_create.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    experiment_create.add_argument(
+        "--experiment-id",
+        required=True,
+        help="New experiment_id for backlog and state steering",
+    )
+    experiment_create.add_argument(
+        "--iteration-id",
+        required=True,
+        help="New iteration_id for experiments/plan/<iteration_id>",
+    )
+    experiment_create.add_argument(
+        "--hypothesis-id",
+        default="",
+        help="Optional backlog hypothesis_id (defaults to first non-completed hypothesis).",
+    )
+    experiment_create.set_defaults(handler=_cmd_experiment_create)
 
     experiment_move = experiment_subparsers.add_parser(
         "move",

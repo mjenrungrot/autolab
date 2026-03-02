@@ -22,7 +22,7 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
 - **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
-- **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment move`.
+- **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
 
@@ -143,6 +143,7 @@ autolab lint --stage hypothesis
 - **Human review decision**: `autolab review --status=pass|retry|stop`
 - **Retarget state focus**: `autolab focus --experiment-id e1`
 - **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
+- **Create a new experiment**: `autolab experiment create --experiment-id e2 --iteration-id iter2`
 - **Move lifecycle type**: `autolab experiment move --experiment-id e1 --to in_progress`
 
 ## File structure reference

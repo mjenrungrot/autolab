@@ -577,6 +577,414 @@ def test_todo_sync_reconciles_manual_markdown(tmp_path: Path) -> None:
     assert any(task.get("text") == "Manual follow-up task" for task in tasks)
 
 
+def test_experiment_create_appends_backlog_and_keeps_state_focus(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(
+        repo,
+        iteration_id="iter_active",
+        experiment_id="e_active",
+        stage="implementation",
+        stage_attempt=3,
+    )
+    _write_backlog(
+        repo,
+        experiments=[
+            {
+                "id": "e1",
+                "hypothesis_id": "h1",
+                "status": "open",
+                "type": "plan",
+                "iteration_id": "iter1",
+            }
+        ],
+    )
+    _mk_iteration_dir(repo, "plan", "iter1")
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter2",
+        ]
+    )
+
+    assert exit_code == 0
+    backlog = _read_backlog(repo)
+    created_entries = [entry for entry in backlog["experiments"] if entry["id"] == "e2"]
+    assert len(created_entries) == 1
+    created_entry = created_entries[0]
+    assert created_entry["hypothesis_id"] == "h1"
+    assert created_entry["status"] == "open"
+    assert created_entry["type"] == "plan"
+    assert created_entry["iteration_id"] == "iter2"
+
+    iteration_dir = repo / "experiments" / "plan" / "iter2"
+    assert (iteration_dir / "hypothesis.md").exists()
+    assert (iteration_dir / "design.yaml").exists()
+    assert (iteration_dir / "implementation_plan.md").exists()
+
+    state = _read_state(state_path)
+    assert state["iteration_id"] == "iter_active"
+    assert state["experiment_id"] == "e_active"
+    assert state["stage"] == "implementation"
+    assert state["stage_attempt"] == 3
+    assert any(
+        entry.get("status") == "manual_experiment_create"
+        for entry in state.get("history", [])
+    )
+
+
+def test_experiment_create_auto_selects_first_open_hypothesis(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    backlog = {
+        "hypotheses": [
+            {
+                "id": "h_done",
+                "status": "completed",
+                "title": "done",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            },
+            {
+                "id": "h2",
+                "status": "open",
+                "title": "open 1",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            },
+            {
+                "id": "h3",
+                "status": "open",
+                "title": "open 2",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            },
+        ],
+        "experiments": [],
+    }
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8"
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e_new",
+            "--iteration-id",
+            "iter_new",
+        ]
+    )
+
+    assert exit_code == 0
+    updated = _read_backlog(repo)
+    entry = next(item for item in updated["experiments"] if item["id"] == "e_new")
+    assert entry["hypothesis_id"] == "h2"
+
+
+def test_experiment_create_accepts_explicit_hypothesis_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    backlog = {
+        "hypotheses": [
+            {
+                "id": "h1",
+                "status": "open",
+                "title": "hyp 1",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            },
+            {
+                "id": "h2",
+                "status": "open",
+                "title": "hyp 2",
+                "success_metric": "accuracy",
+                "target_delta": 0.2,
+            },
+        ],
+        "experiments": [],
+    }
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8"
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e_explicit",
+            "--iteration-id",
+            "iter_explicit",
+            "--hypothesis-id",
+            "h2",
+        ]
+    )
+
+    assert exit_code == 0
+    updated = _read_backlog(repo)
+    entry = next(item for item in updated["experiments"] if item["id"] == "e_explicit")
+    assert entry["hypothesis_id"] == "h2"
+
+
+def test_experiment_create_fails_on_duplicate_experiment_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(
+        repo,
+        experiments=[
+            {
+                "id": "e1",
+                "hypothesis_id": "h1",
+                "status": "open",
+                "type": "plan",
+                "iteration_id": "iter1",
+            }
+        ],
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e1",
+            "--iteration-id",
+            "iter2",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_on_duplicate_iteration_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(
+        repo,
+        experiments=[
+            {
+                "id": "e1",
+                "hypothesis_id": "h1",
+                "status": "open",
+                "type": "plan",
+                "iteration_id": "iter_shared",
+            }
+        ],
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter_shared",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_when_iteration_directory_exists_in_other_type(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo, experiments=[])
+    _mk_iteration_dir(repo, "in_progress", "iter_existing")
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter_existing",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_on_invalid_identifier(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo, experiments=[])
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter invalid",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_for_unknown_hypothesis_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo, experiments=[])
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter2",
+            "--hypothesis-id",
+            "missing_hypothesis",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_when_no_open_hypothesis_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    backlog = {
+        "hypotheses": [
+            {
+                "id": "h1",
+                "status": "completed",
+                "title": "done",
+                "success_metric": "accuracy",
+                "target_delta": 0.1,
+            }
+        ],
+        "experiments": [],
+    }
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8"
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter2",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_fails_when_lock_is_active(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo, experiments=[])
+    _write_lock(repo)
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter2",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_experiment_create_backlog_write_failure_rolls_back_iteration_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo, experiments=[])
+
+    monkeypatch.setattr(
+        commands_module,
+        "_write_backlog_yaml",
+        lambda *args, **kwargs: (False, "simulated write failure"),
+    )
+
+    exit_code = commands_module.main(
+        [
+            "experiment",
+            "create",
+            "--state-file",
+            str(state_path),
+            "--experiment-id",
+            "e2",
+            "--iteration-id",
+            "iter2",
+        ]
+    )
+
+    assert exit_code == 1
+    assert not (repo / "experiments" / "plan" / "iter2").exists()
+    backlog = _read_backlog(repo)
+    assert all(entry["id"] != "e2" for entry in backlog["experiments"])
+
+
 def test_experiment_move_plan_to_in_progress_moves_and_rewrites_paths(
     tmp_path: Path,
 ) -> None:
