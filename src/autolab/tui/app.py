@@ -4,13 +4,13 @@ import json
 import re
 import shlex
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -1212,6 +1212,7 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
+    #home-stage-pipeline,
     #home-blocker-card,
     #home-artifacts-card,
     #home-todos-card,
@@ -1263,9 +1264,12 @@ class AutolabCockpitApp(App[None]):
         ("3", "show_files", "Files"),
         ("4", "show_console", "Console"),
         ("5", "show_help", "Help"),
+        ("slash", "command_palette", "Commands"),
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
+        ("j", "move_selection_down", "Down"),
+        ("k", "move_selection_up", "Up"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
@@ -1295,6 +1299,7 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._visible_runs = ()
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
@@ -1314,7 +1319,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Enter activate | u lock | x advanced | r refresh | ? help",
+            "Keys: 1-5 view | [] cycle views | j/k move | Enter activate | / commands | u lock | x advanced | r refresh | ? help",
             id="key-hints",
             classes="tone-muted",
         )
@@ -1329,6 +1334,7 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-stage-pipeline", markup=False)
                 with Vertical(id="home-render-card"):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
@@ -1443,8 +1449,10 @@ class AutolabCockpitApp(App[None]):
         wrap_state = "on" if self._console_wrap else "off"
         parts = [
             "1-5 view",
-            "[ / ] cycle",
+            "[] cycle",
+            "j/k move",
             "Enter activate",
+            "/ commands",
             "u lock",
             "x advanced",
             "r refresh",
@@ -1473,7 +1481,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1579,12 +1587,11 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#help-text", Static).focus()
 
     def _selected_run(self):
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.runs:
+        if not self._visible_runs:
             return None
-        if self._selected_run_index >= len(snapshot.runs):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return snapshot.runs[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1596,6 +1603,7 @@ class AutolabCockpitApp(App[None]):
     def _clear_snapshot_views(self) -> None:
         self._home_action_ids = ()
         self._home_action_index = 0
+        self._visible_runs = ()
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts = ()
@@ -1615,6 +1623,10 @@ class AutolabCockpitApp(App[None]):
         stage_widget = self.query_one("#home-stage-card", Static)
         stage_widget.update("Stage\nUnavailable.")
         self._set_tone(stage_widget, "tone-muted")
+
+        stage_pipeline_widget = self.query_one("#home-stage-pipeline", Static)
+        stage_pipeline_widget.update("Stage Pipeline\nUnavailable.")
+        self._set_tone(stage_pipeline_widget, "tone-muted")
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -1678,6 +1690,34 @@ class AutolabCockpitApp(App[None]):
             f"- Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}"
         )
         self._set_tone(stage_widget, "tone-info")
+
+        stage_pipeline_widget = self.query_one("#home-stage-pipeline", Static)
+        pipeline_lines = ["Stage Pipeline"]
+        current_stage_status = "upcoming"
+        marker_by_status = {
+            "complete": "DONE",
+            "current": "NOW",
+            "blocked": "BLOCKED",
+            "upcoming": "NEXT",
+        }
+        for item in snapshot.stage_items:
+            marker = marker_by_status.get(item.status, "NEXT")
+            attempts_suffix = (
+                f" (attempts {item.attempts})" if item.attempts != "-" else ""
+            )
+            pipeline_lines.append(f"- {marker:<7} {item.name}{attempts_suffix}")
+            if item.is_current:
+                current_stage_status = item.status
+        stage_pipeline_widget.update("\n".join(pipeline_lines))
+        self._set_tone(
+            stage_pipeline_widget,
+            {
+                "complete": "tone-success",
+                "current": "tone-info",
+                "blocked": "tone-danger",
+                "upcoming": "tone-muted",
+            }.get(current_stage_status, "tone-muted"),
+        )
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -1807,6 +1847,7 @@ class AutolabCockpitApp(App[None]):
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
+        self._visible_runs = ()
         if snapshot is None:
             return
 
@@ -1822,12 +1863,15 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in snapshot.runs:
+        self._visible_runs = snapshot.runs
+        for run in self._visible_runs:
             started = run.started_at or "-"
             run_label = Label(f"{run.run_id} [{run.status}] start={started}")
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
+        self._selected_run_index = min(
+            self._selected_run_index, len(self._visible_runs) - 1
+        )
         run_list.index = self._selected_run_index
         self._update_run_details()
 
@@ -1927,7 +1971,9 @@ class AutolabCockpitApp(App[None]):
             "\n"
             "Keys\n"
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
+            "- /: open command palette for quick actions and navigation.\n"
             "- [ and ]: cycle views.\n"
+            "- j / k: move selection down/up in the current list view.\n"
             "- Enter: activate selected list item.\n"
             "- w: toggle console line wrapping.\n"
             "\n"
@@ -1966,6 +2012,127 @@ class AutolabCockpitApp(App[None]):
             exit_on_error=False,
         )
 
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Go to Home view",
+            "Show stage status and recommended actions.",
+            self.action_show_home,
+        )
+        yield SystemCommand(
+            "Go to Runs view",
+            "Inspect run manifests and metrics summaries.",
+            self.action_show_runs,
+        )
+        yield SystemCommand(
+            "Go to Files view",
+            "Browse stage artifacts and related files.",
+            self.action_show_files,
+        )
+        yield SystemCommand(
+            "Go to Console view",
+            "Inspect live command output and logs.",
+            self.action_show_console,
+        )
+        yield SystemCommand(
+            "Refresh snapshot",
+            "Reload state, runs, files, and recommended actions.",
+            self.action_refresh_snapshot,
+        )
+        yield SystemCommand(
+            "Toggle advanced actions",
+            "Show or hide advanced mutating actions.",
+            self.action_toggle_advanced,
+        )
+        yield SystemCommand(
+            "Toggle safety lock",
+            "Lock or unlock mutating commands.",
+            self.action_toggle_safety_lock,
+        )
+        yield SystemCommand(
+            "Clear console",
+            "Clear the console output buffer.",
+            self.action_clear_console,
+        )
+        yield SystemCommand(
+            "Toggle console wrapping",
+            "Switch line wrapping for console output.",
+            self.action_toggle_console_wrap,
+        )
+
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
+            yield SystemCommand(
+                "Stop active loop",
+                "Request a graceful interrupt for the active loop process.",
+                self.action_stop_loop,
+            )
+
+        if self._mode == "home" and self._home_action_ids:
+            index = min(self._home_action_index, len(self._home_action_ids) - 1)
+            action_id = self._home_action_ids[index]
+            action = self._actions_by_id.get(action_id)
+            if action is not None:
+                title = f"Run recommended action: {action.user_label or action.label}"
+                help_text = action.help_text or action.description
+                yield SystemCommand(
+                    title,
+                    help_text,
+                    lambda selected_action_id=action_id: self._start_ui_flow(
+                        label=f"palette-home:{selected_action_id}",
+                        flow_factory=lambda action_id=selected_action_id: (
+                            self._execute_action(action_id)
+                        ),
+                    ),
+                )
+
+        selected_run = self._selected_run()
+        if selected_run is not None:
+            yield SystemCommand(
+                f"Open run manifest: {selected_run.run_id}",
+                "Open selected run manifest in read-only viewer.",
+                lambda: self._start_ui_flow(
+                    label="palette-open-run-manifest",
+                    flow_factory=lambda: self._execute_action(
+                        "open_selected_run_manifest"
+                    ),
+                ),
+            )
+            yield SystemCommand(
+                f"Open run metrics: {selected_run.run_id}",
+                "Open selected run metrics in read-only viewer.",
+                lambda: self._start_ui_flow(
+                    label="palette-open-run-metrics",
+                    flow_factory=lambda: self._execute_action(
+                        "open_selected_run_metrics"
+                    ),
+                ),
+            )
+
+        selected_artifact = self._selected_artifact_path()
+        if selected_artifact is not None:
+            artifact_label = self._display_path(selected_artifact)
+            yield SystemCommand(
+                f"Open selected file: {artifact_label}",
+                "Open selected artifact in read-only viewer.",
+                lambda: self._start_ui_flow(
+                    label="palette-open-artifact",
+                    flow_factory=lambda: self._execute_action("open_selected_artifact"),
+                ),
+            )
+            yield SystemCommand(
+                f"Open selected file in editor: {artifact_label}",
+                "Launch selected artifact in your external editor.",
+                lambda: self._start_ui_flow(
+                    label="palette-open-artifact-editor",
+                    flow_factory=lambda: self._execute_action(
+                        "open_selected_artifact_editor"
+                    ),
+                ),
+            )
+
     def action_show_home(self) -> None:
         self._switch_mode("home")
 
@@ -1980,6 +2147,35 @@ class AutolabCockpitApp(App[None]):
 
     def action_show_help(self) -> None:
         self._switch_mode("help")
+
+    def action_move_selection_up(self) -> None:
+        self._move_selection(-1)
+
+    def action_move_selection_down(self) -> None:
+        self._move_selection(1)
+
+    def _move_selection(self, direction: int) -> None:
+        if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
+            return
+        target_selector = {
+            "home": "#home-action-list",
+            "runs": "#run-list",
+            "files": "#artifact-list",
+        }.get(self._mode)
+        if target_selector is None:
+            return
+        list_view = self.query_one(target_selector, ListView)
+        total = len(list_view.children)
+        if total <= 0:
+            return
+        current = list_view.index if list_view.index is not None else 0
+        next_index = min(max(current + direction, 0), total - 1)
+        list_view.index = next_index
+        self._apply_list_selection(
+            list_id=list_view.id or "",
+            selected_index=next_index,
+        )
+        list_view.focus()
 
     def action_show_previous_view(self) -> None:
         self._cycle_mode(-1)
