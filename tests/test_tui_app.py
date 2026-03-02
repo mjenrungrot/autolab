@@ -92,7 +92,13 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
+def _write_run_manifest(
+    repo_root: Path,
+    run_id: str,
+    started_at: str,
+    *,
+    status: str = "running",
+) -> None:
     manifest_path = (
         repo_root
         / "experiments"
@@ -105,7 +111,7 @@ def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "timestamps": {"started_at": started_at},
     }
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -332,6 +338,29 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_home_action_details_updates_with_selection(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            details = app.query_one("#home-action-details-card", app_module.Static)
+            first_render = str(details.render())
+            assert "Action Details" in first_render
+            assert "- Why now:" in first_render
+
+            action_list = app.query_one("#home-action-list", app_module.ListView)
+            if len(action_list.children) > 1:
+                await pilot.press("down")
+                await pilot.pause()
+                second_render = str(details.render())
+                assert second_render != first_render
+                assert "- Action:" in second_render
+
+    asyncio.run(_run())
+
+
 def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -399,6 +428,47 @@ def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
             await pilot.pause()
             context = app.query_one("#files-context", app_module.Static)
             assert "- Filter: all files" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_files_source_filter_cycles_with_f_binding(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            assert app._files_source_filter == "all"
+            assert app._current_artifacts
+            assert any(item.source == "stage" for item in app._current_artifacts)
+            assert any(item.source == "common" for item in app._current_artifacts)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._files_source_filter == "stage"
+            assert app._current_artifacts
+            assert all(item.source == "stage" for item in app._current_artifacts)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._files_source_filter == "common"
+            assert app._current_artifacts
+            assert all(item.source == "common" for item in app._current_artifacts)
+
+            source_button = app.query_one(
+                "#file-toggle-source-filter", app_module.Button
+            )
+            assert "Source: Common" in str(source_button.label)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._files_source_filter == "all"
+            assert any(item.source == "stage" for item in app._current_artifacts)
+            assert any(item.source == "common" for item in app._current_artifacts)
 
     asyncio.run(_run())
 
@@ -529,6 +599,74 @@ def test_mode_shortcut_switches_to_runs(tmp_path: Path) -> None:
             await pilot.pause()
             mode_status = app.query_one("#status-mode", app_module.Static)
             assert "Mode: runs" in str(mode_status.render())
+
+    asyncio.run(_run())
+
+
+def test_runs_status_filter_cycles_with_f_binding(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run_active",
+            "2026-02-01T01:00:00Z",
+            status="running",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run_attention",
+            "2026-02-01T02:00:00Z",
+            status="failed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run_finished",
+            "2026-02-01T03:00:00Z",
+            status="completed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            assert len(app._current_runs) == 3
+            status_button = app.query_one(
+                "#run-toggle-status-filter", app_module.Button
+            )
+            assert "Status: All" in str(status_button.label)
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._runs_status_filter == "active"
+            assert len(app._current_runs) == 1
+            assert all(
+                str(run.status).strip().lower() == "running"
+                for run in app._current_runs
+            )
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._runs_status_filter == "attention"
+            assert len(app._current_runs) == 1
+            assert all(
+                str(run.status).strip().lower() == "failed" for run in app._current_runs
+            )
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._runs_status_filter == "finished"
+            assert len(app._current_runs) == 1
+            assert all(
+                str(run.status).strip().lower() == "completed"
+                for run in app._current_runs
+            )
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._runs_status_filter == "all"
+            assert len(app._current_runs) == 3
 
     asyncio.run(_run())
 
