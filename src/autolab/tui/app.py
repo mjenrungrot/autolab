@@ -273,6 +273,12 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if event.checkbox.id == "run-advanced":
             self._update_advanced_enabled(event.checkbox.value)
+            return
+        if event.checkbox.id == "run-agent-on" and event.checkbox.value:
+            self.query_one("#run-agent-off", Checkbox).value = False
+            return
+        if event.checkbox.id == "run-agent-off" and event.checkbox.value:
+            self.query_one("#run-agent-on", Checkbox).value = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -307,8 +313,7 @@ class RunPresetScreen(ModalScreen[RunActionOptions | None]):
         force_on = self.query_one("#run-agent-on", Checkbox).value
         force_off = self.query_one("#run-agent-off", Checkbox).value
         if force_on and force_off:
-            self.notify("Choose only one run-agent override.")
-            return
+            force_off = False
         run_agent_mode = "policy"
         if force_on:
             run_agent_mode = "force_on"
@@ -403,6 +408,12 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if event.checkbox.id == "loop-advanced":
             self._update_advanced_enabled(event.checkbox.value)
+            return
+        if event.checkbox.id == "loop-agent-on" and event.checkbox.value:
+            self.query_one("#loop-agent-off", Checkbox).value = False
+            return
+        if event.checkbox.id == "loop-agent-off" and event.checkbox.value:
+            self.query_one("#loop-agent-on", Checkbox).value = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -449,8 +460,7 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
         force_on = self.query_one("#loop-agent-on", Checkbox).value
         force_off = self.query_one("#loop-agent-off", Checkbox).value
         if force_on and force_off:
-            self.notify("Choose only one run-agent override.")
-            return
+            force_off = False
         run_agent_mode = "policy"
         if force_on:
             run_agent_mode = "force_on"
@@ -1090,6 +1100,7 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
 
 
 class AutolabCockpitApp(App[None]):
+    _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
     _TONE_CLASSES = (
         "tone-success",
         "tone-info",
@@ -1139,7 +1150,15 @@ class AutolabCockpitApp(App[None]):
     }
 
     #status-advanced {
-      width: 18;
+      width: 17;
+    }
+
+    #status-selection {
+      width: 24;
+    }
+
+    #status-console {
+      width: 16;
     }
 
     #status-running {
@@ -1195,6 +1214,7 @@ class AutolabCockpitApp(App[None]):
     #home-stage-card,
     #home-blocker-card,
     #home-artifacts-card,
+    #home-todos-card,
     #help-text {
       border: round $surface;
       padding: 0 1;
@@ -1243,6 +1263,8 @@ class AutolabCockpitApp(App[None]):
         ("3", "show_files", "Files"),
         ("4", "show_console", "Console"),
         ("5", "show_help", "Help"),
+        ("left_square_bracket", "show_previous_view", "Prev View"),
+        ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Prev"),
@@ -1252,6 +1274,7 @@ class AutolabCockpitApp(App[None]):
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
+        ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
     ]
 
@@ -1260,6 +1283,7 @@ class AutolabCockpitApp(App[None]):
         self._state_path = state_path.expanduser().resolve()
         self._tail_lines = max(200, int(tail_lines))
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
+        self._console_wrap = False
         self._armed = False
         self._show_advanced = False
         self._mode: ViewMode = "home"
@@ -1286,9 +1310,11 @@ class AutolabCockpitApp(App[None]):
             yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
+            yield Static("Selection: -", id="status-selection")
+            yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | Enter run action | u lock | x advanced | r refresh | s stop loop | c clear | ? help",
+            "Keys: 1-5 view | [/] cycle views | Enter activate | u lock | x advanced | r refresh | ? help",
             id="key-hints",
             classes="tone-muted",
         )
@@ -1309,6 +1335,7 @@ class AutolabCockpitApp(App[None]):
                         yield Markdown("", id="home-render-markdown", open_links=False)
                 yield Static("", id="home-blocker-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
+                yield Static("", id="home-todos-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
@@ -1354,7 +1381,10 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="console-view", classes="view-panel"):
                 yield Static("Console", classes="view-title")
                 yield RichLog(
-                    id="console-log", markup=False, wrap=False, highlight=False
+                    id="console-log",
+                    markup=False,
+                    wrap=self._console_wrap,
+                    highlight=False,
                 )
             with Vertical(id="help-view", classes="view-panel"):
                 yield Static("Help", classes="view-title")
@@ -1409,11 +1439,63 @@ class AutolabCockpitApp(App[None]):
             return "tone-danger"
         return "tone-muted"
 
+    def _key_hints_text(self) -> str:
+        wrap_state = "on" if self._console_wrap else "off"
+        parts = [
+            "1-5 view",
+            "[ / ] cycle",
+            "Enter activate",
+            "u lock",
+            "x advanced",
+            "r refresh",
+            "? help",
+            "q quit",
+        ]
+        if self._mode == "console":
+            parts.append(f"w wrap({wrap_state})")
+            parts.append("c clear")
+        elif self._mode == "runs":
+            parts.append("Enter manifest")
+        elif self._mode == "files":
+            parts.append("Enter viewer")
+        elif self._mode == "home":
+            parts.append("Enter recommended action")
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
+            parts.append("s stop loop")
+        return "Keys: " + " | ".join(parts)
+
+    def _selection_status_label(self) -> str:
+        if self._mode == "home":
+            total = len(self._home_action_ids)
+            index = self._home_action_index
+            prefix = "Actions"
+        elif self._mode == "runs":
+            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            index = self._selected_run_index
+            prefix = "Runs"
+        elif self._mode == "files":
+            total = len(self._current_artifacts)
+            index = self._selected_artifact_index
+            prefix = "Files"
+        else:
+            return "Selection: n/a"
+
+        if total <= 0:
+            return f"{prefix}: 0/0"
+        position = min(max(index, 0), total - 1) + 1
+        return f"{prefix}: {position}/{total}"
+
     def _update_ui_chrome(self) -> None:
         safety = self.query_one("#status-safety", Static)
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
+        selection = self.query_one("#status-selection", Static)
+        console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
+        key_hints = self.query_one("#key-hints", Static)
 
         safety.update(
             "Unlocked: mutating enabled." if self._armed else "Locked: read-only."
@@ -1424,6 +1506,17 @@ class AutolabCockpitApp(App[None]):
             "Advanced: visible" if self._show_advanced else "Advanced: hidden"
         )
         self._set_tone(advanced, "tone-info" if self._show_advanced else "tone-muted")
+        selection_label = self._selection_status_label()
+        selection.update(selection_label)
+        self._set_tone(
+            selection,
+            "tone-info"
+            if "0/0" not in selection_label and "n/a" not in selection_label
+            else "tone-muted",
+        )
+        console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
+        self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
+        key_hints.update(self._key_hints_text())
 
         if self._running_intent is None:
             running.update("Idle")
@@ -1436,6 +1529,16 @@ class AutolabCockpitApp(App[None]):
         self.query_one(
             "#file-advanced-buttons", Horizontal
         ).display = self._show_advanced
+
+    def _cycle_mode(self, direction: int) -> None:
+        if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
+            return
+        try:
+            current_index = self._MODE_ORDER.index(self._mode)
+        except ValueError:
+            current_index = 0
+        next_index = (current_index + direction) % len(self._MODE_ORDER)
+        self._switch_mode(self._MODE_ORDER[next_index])
 
     def _switch_mode(self, mode: ViewMode) -> None:
         self._mode = mode
@@ -1530,6 +1633,10 @@ class AutolabCockpitApp(App[None]):
         artifacts_widget = self.query_one("#home-artifacts-card", Static)
         artifacts_widget.update("Artifacts\nUnavailable.")
         self._set_tone(artifacts_widget, "tone-warning")
+
+        todos_widget = self.query_one("#home-todos-card", Static)
+        todos_widget.update("Open Tasks\nUnavailable.")
+        self._set_tone(todos_widget, "tone-muted")
 
         run_widget = self.query_one("#run-details", Static)
         run_widget.update("Run Details\nUnavailable.")
@@ -1635,6 +1742,29 @@ class AutolabCockpitApp(App[None]):
         self._set_tone(
             artifacts_widget, "tone-warning" if has_missing else "tone-success"
         )
+
+        todos_widget = self.query_one("#home-todos-card", Static)
+        if snapshot.todos:
+            todo_lines: list[str] = []
+            for item in snapshot.todos[:5]:
+                priority = str(item.priority).strip().lower() or "unspecified"
+                stage_hint = str(item.stage).strip().lower() or "unknown"
+                summary = (
+                    str(item.text).strip() or str(item.task_id).strip() or "(empty)"
+                )
+                todo_lines.append(f"- [{priority}] ({stage_hint}) {summary}")
+            extra = len(snapshot.todos) - len(todo_lines)
+            if extra > 0:
+                todo_lines.append(f"- ... and {extra} more")
+            todos_widget.update("Open Tasks\n" + "\n".join(todo_lines))
+            urgent = any(
+                str(item.priority).strip().lower() in {"critical", "high"}
+                for item in snapshot.todos
+            )
+            self._set_tone(todos_widget, "tone-warning" if urgent else "tone-info")
+        else:
+            todos_widget.update("Open Tasks\n- None detected.")
+            self._set_tone(todos_widget, "tone-success")
 
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
@@ -1789,10 +1919,17 @@ class AutolabCockpitApp(App[None]):
             "\n"
             "Views\n"
             "- Home: stage status, rendered prompt preview, recommended actions.\n"
+            "- Home: open tasks card highlights active todo priorities.\n"
             "- Runs: run manifest and metrics overview.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
             "- Files advanced: focus experiment, create experiment, move experiment.\n"
             "- Console: live command output.\n"
+            "\n"
+            "Keys\n"
+            "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
+            "- [ and ]: cycle views.\n"
+            "- Enter: activate selected list item.\n"
+            "- w: toggle console line wrapping.\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -1844,6 +1981,12 @@ class AutolabCockpitApp(App[None]):
     def action_show_help(self) -> None:
         self._switch_mode("help")
 
+    def action_show_previous_view(self) -> None:
+        self._cycle_mode(-1)
+
+    def action_show_next_view(self) -> None:
+        self._cycle_mode(1)
+
     def action_toggle_safety_lock(self) -> None:
         self._start_ui_flow(
             label="toggle-safety", flow_factory=self._toggle_safety_lock
@@ -1874,6 +2017,13 @@ class AutolabCockpitApp(App[None]):
         self._console_tail.clear()
         self._render_console_tail()
 
+    def action_toggle_console_wrap(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._console_wrap = not self._console_wrap
+        self.query_one("#console-log", RichLog).wrap = self._console_wrap
+        self._update_ui_chrome()
+
     def action_stop_loop(self) -> None:
         self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
 
@@ -1902,6 +2052,7 @@ class AutolabCockpitApp(App[None]):
         elif list_id == "artifact-list":
             self._selected_artifact_index = selected_index
             self._update_files_context()
+        self._update_ui_chrome()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         index = event.list_view.index
@@ -2288,8 +2439,8 @@ class AutolabCockpitApp(App[None]):
         if self._running_intent is not None:
             self.notify("A command is already running.")
             return
-        self._console_tail.clear()
-        self._render_console_tail()
+        if self._console_tail:
+            self._append_console("-" * 40)
         command = shlex.join(intent.argv)
         self._append_console(f"starting: {command}")
         self._running_intent = intent
