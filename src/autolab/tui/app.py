@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 
 from textual import events
@@ -62,6 +64,22 @@ from autolab.tui.snapshot import (
 )
 
 
+@dataclass
+class CommandHistoryItem:
+    intent: CommandIntent
+    command: str
+    started_at: float
+    started_at_text: str
+    finished_at: float | None = None
+    exit_code: int | None = None
+    stopped: bool = False
+
+
+_COMMAND_HISTORY_MAX = 25
+_AUTO_REFRESH_INTERVAL_SECONDS = 5.0
+_ARTIFACT_PREVIEW_MAX_CHARS = 12_000
+
+
 class UnlockSafetyScreen(ModalScreen[bool]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
@@ -109,6 +127,139 @@ class UnlockSafetyScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "unlock")
+
+
+class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
+    BINDINGS = [
+        ("escape", "cancel", "Close"),
+        ("enter", "replay", "Replay"),
+        ("r", "replay", "Replay"),
+    ]
+
+    CSS = """
+    CommandHistoryScreen {
+      align: center middle;
+    }
+
+    #command-history-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #command-history-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #command-history-list {
+      border: round $surface;
+      height: 1fr;
+      min-height: 8;
+    }
+
+    #command-history-detail {
+      margin-top: 1;
+      color: $text-muted;
+    }
+
+    #command-history-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, history: tuple[CommandHistoryItem, ...]) -> None:
+        super().__init__()
+        self._history = history
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-dialog"):
+            yield Label("Command History", id="command-history-title")
+            yield ListView(id="command-history-list")
+            yield Static("", id="command-history-detail", markup=False)
+            with Horizontal(id="command-history-buttons"):
+                yield Button("Close", id="command-history-close")
+                yield Button(
+                    "Replay selected", id="command-history-replay", variant="warning"
+                )
+
+    def on_mount(self) -> None:
+        if not self._history:
+            self.dismiss(None)
+            return
+        list_view = self.query_one("#command-history-list", ListView)
+        list_view.clear()
+        for item in self._history:
+            list_view.append(ListItem(Label(self._format_history_line(item))))
+        list_view.index = 0
+        list_view.focus()
+        self._update_detail()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_replay(self) -> None:
+        self.dismiss(self._selected_item())
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "command-history-close":
+            self.dismiss(None)
+            return
+        if event.button.id == "command-history-replay":
+            self.dismiss(self._selected_item())
+            return
+
+    @staticmethod
+    def _format_status(item: CommandHistoryItem) -> str:
+        if item.exit_code is None and item.finished_at is None:
+            return "running"
+        if item.exit_code is None:
+            return "pending"
+        if item.exit_code == 0:
+            return "ok"
+        if item.stopped:
+            return "stopped"
+        return "fail"
+
+    @staticmethod
+    def _format_duration(item: CommandHistoryItem) -> str:
+        if item.finished_at is None:
+            return "-"
+        return f"{item.finished_at - item.started_at:.1f}s"
+
+    def _format_history_line(self, item: CommandHistoryItem) -> str:
+        status = self._format_status(item)
+        duration = self._format_duration(item)
+        return f"[{item.started_at_text}] {status:7} {duration:>7} | {item.command}"
+
+    def _selected_item(self) -> CommandHistoryItem | None:
+        list_view = self.query_one("#command-history-list", ListView)
+        if not self._history:
+            return None
+        index = list_view.index
+        if index is None or index < 0 or index >= len(self._history):
+            return None
+        return self._history[index]
+
+    def _update_detail(self) -> None:
+        item = self._selected_item()
+        detail = self.query_one("#command-history-detail", Static)
+        if item is None:
+            detail.update("")
+            return
+        detail.update(
+            f"{item.command}\n"
+            f"Started: {item.started_at_text}\n"
+            f"Exit: {item.exit_code if item.exit_code is not None else '-'}\n"
+            f"Stopped: {'yes' if item.stopped else 'no'}"
+        )
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        del event
+        self._update_detail()
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
@@ -1300,12 +1451,22 @@ class AutolabCockpitApp(App[None]):
       width: 17;
     }
 
+    #status-autorefresh {
+      width: 18;
+      content-align: right middle;
+    }
+
     #status-selection {
       width: 24;
     }
 
     #status-console {
       width: 16;
+    }
+
+    #status-command {
+      width: 42;
+      content-align: right middle;
     }
 
     #status-running {
@@ -1373,6 +1534,7 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
+    #home-stage-list,
     #home-blocker-card,
     #home-artifacts-card,
     #home-todos-card,
@@ -1434,6 +1596,21 @@ class AutolabCockpitApp(App[None]):
       width: 1fr;
     }
 
+    #run-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #run-filter-label {
+      width: 12;
+      color: $text-muted;
+    }
+
+    #run-filter-input {
+      width: 1fr;
+    }
+
     #console-log {
       height: 1fr;
       border: round $surface;
@@ -1446,6 +1623,7 @@ class AutolabCockpitApp(App[None]):
         ("3", "show_files", "Files"),
         ("4", "show_console", "Console"),
         ("5", "show_help", "Help"),
+        ("h", "show_command_history", "History"),
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
@@ -1454,15 +1632,19 @@ class AutolabCockpitApp(App[None]):
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
         ("slash", "focus_files_filter", "Filter Files"),
-        ("f", "focus_run_filter", "Filter Runs"),
+        ("f", "focus_mode_filter", "Filter"),
+        ("home", "list_first", "List Start"),
+        ("end", "list_last", "List End"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
+        ("R", "rerun_last_command", "Rerun Last"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("y", "cycle_run_sort_order", "Sort Runs"),
         ("x", "toggle_advanced", "Advanced"),
+        ("a", "toggle_auto_refresh", "Auto Refresh"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
@@ -1476,6 +1658,7 @@ class AutolabCockpitApp(App[None]):
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
         self._console_wrap = False
         self._armed = False
+        self._run_status_filter = ""
         self._show_advanced = False
         self._show_full_prompt = False
         self._mode: ViewMode = "home"
@@ -1489,20 +1672,31 @@ class AutolabCockpitApp(App[None]):
         self._home_action_index = 0
         self._selected_run_index = 0
         self._selected_artifact_index = 0
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
         self._missing_artifacts_count = 0
         self._files_missing_only = False
         self._artifact_filter_query = ""
-        self._run_filter_query = ""
-        self._run_status_filter = "all"
-        self._run_sort_newest_first = True
-        self._run_items: tuple[RunItem, ...] = ()
+        self._last_command_label: str | None = None
+        self._last_command_exit_code: int | None = None
+        self._last_command_duration: float | None = None
+        self._running_command_started_at: float | None = None
+        self._last_command_intent: CommandIntent | None = None
+        self._artifact_preview_max_chars: int = _ARTIFACT_PREVIEW_MAX_CHARS
+        self._command_history: deque[CommandHistoryItem] = deque(maxlen=_COMMAND_HISTORY_MAX)
+        self._active_history_item: CommandHistoryItem | None = None
+        self._auto_refresh_enabled = False
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
         )
         self._running_intent: CommandIntent | None = None
+        self._running_started_at: float | None = None
+        self._running_command_label: str = ""
+        self._last_command_exit_code: int | None = None
+        self._last_command_elapsed: str = ""
+        self._last_command_label: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1510,11 +1704,13 @@ class AutolabCockpitApp(App[None]):
             yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
+            yield Static("Auto-refresh: off", id="status-autorefresh")
             yield Static("Selection: -", id="status-selection")
             yield Static("Console wrap: off", id="status-console")
+            yield Static("Command: n/a", id="status-command")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Enter activate | o open | m mode quick | ? help",
+            "Keys: 1-5 view | [/] cycle views | Home/End list | Enter activate | o open | m mode quick | ? help",
             id="key-hints",
             classes="tone-muted",
         )
@@ -1529,6 +1725,7 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-stage-list", markup=False)
                 with Vertical(id="home-render-card"):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
@@ -1546,16 +1743,14 @@ class AutolabCockpitApp(App[None]):
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
                 yield Static("Runs", classes="view-title")
-                with Horizontal(id="runs-filter-row"):
-                    yield Static("Runs Filter", id="run-filter-label", markup=False)
-                    yield Button("Status: all", id="run-filter-status")
+                with Horizontal(id="run-filter-row"):
+                    yield Static("Filter", id="run-filter-label", markup=False)
                     yield Input(
-                        value=self._run_filter_query,
-                        placeholder="Filter by id/status/job...",
+                        value=self._run_status_filter,
+                        placeholder="Filter runs by status/id/stage...",
                         id="run-filter-input",
                     )
                     yield Button("Clear", id="run-filter-clear")
-                    yield Button("Sort: newest", id="run-sort-order")
                 yield ListView(id="run-list")
                 yield Static("", id="run-details", markup=False)
                 with Horizontal(id="run-buttons"):
@@ -1623,9 +1818,35 @@ class AutolabCockpitApp(App[None]):
         self._update_help_text()
         self._update_ui_chrome()
         self._switch_mode("home")
+        self.set_interval(_AUTO_REFRESH_INTERVAL_SECONDS, self._run_auto_refresh)
 
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
+
+    def _shorten_command(self, command: str, *, max_len: int) -> str:
+        if len(command) <= max_len:
+            return command
+        if max_len <= 4:
+            return command[:max_len]
+        return f"{command[: max_len - 3]}..."
+
+    def _running_elapsed_label(self) -> str:
+        if self._running_started_at is None:
+            return "00:00"
+        elapsed_seconds = max(0, int(time.perf_counter() - self._running_started_at))
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _last_command_summary(self) -> str:
+        if self._last_command_exit_code is None:
+            return ""
+        return (
+            f"last: {self._last_command_label} | exit={self._last_command_exit_code}"
+            f" | {self._last_command_elapsed}"
+        )
 
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
@@ -1666,18 +1887,36 @@ class AutolabCockpitApp(App[None]):
             return "tone-danger"
         return "tone-muted"
 
+    def _stage_timeline_icon(self, status: str) -> str:
+        normalized = str(status).strip().lower()
+        if normalized == "complete":
+            return "[ok]"
+        if normalized == "current":
+            return "[->]"
+        if normalized == "blocked":
+            return "[!]"
+        if normalized == "upcoming":
+            return "[  ]"
+        return "[??]"
+
     def _key_hints_text(self) -> str:
+        auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
         parts = [
             "1-5 view",
             "[ / ] cycle",
             "Enter activate",
+            "Home/End list",
+            "h history",
             "o open",
+            f"a auto-refresh({auto_refresh_state})",
             "u lock",
             "x advanced",
             "p prompt",
             "ctrl+k commands",
+            "f filter",
             "r refresh",
+            "R rerun",
             "? help",
             "q quit",
         ]
@@ -1687,16 +1926,8 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "runs":
             parts.append("Enter manifest")
             parts.append("m metrics")
-            run_filter_state = (
-                "on"
-                if self._run_filter_query or self._run_status_filter != "all"
-                else "off"
-            )
-            sort_state = "newest" if self._run_sort_newest_first else "oldest"
-            parts.append(f"f filter({run_filter_state})")
-            parts.append(f"y sort({sort_state})")
-            if self._run_status_filter != "all":
-                parts.append(f"filter={self._run_status_filter}")
+            filter_state = "on" if self._run_status_filter else "off"
+            parts.append(f"/ status-filter({filter_state})")
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
@@ -1707,6 +1938,7 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
+            parts.append("R rerun last command")
         if (
             self._running_intent is not None
             and self._running_intent.action_id == "run_loop"
@@ -1720,7 +1952,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._run_items)
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1735,12 +1967,21 @@ class AutolabCockpitApp(App[None]):
         position = min(max(index, 0), total - 1) + 1
         return f"{prefix}: {position}/{total}"
 
+    def _action_label(self, action_id: str) -> str:
+        action = self._actions_by_id.get(action_id)
+        if action is not None and action.user_label:
+            return action.user_label
+        label = action_id.replace("_", " ").replace("-", " ").strip()
+        return label or "command"
+
     def _update_ui_chrome(self) -> None:
         safety = self.query_one("#status-safety", Static)
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
+        auto_refresh = self.query_one("#status-autorefresh", Static)
         selection = self.query_one("#status-selection", Static)
         console = self.query_one("#status-console", Static)
+        command_status = self.query_one("#status-command", Static)
         running = self.query_one("#status-running", Static)
         key_hints = self.query_one("#key-hints", Static)
 
@@ -1753,6 +1994,12 @@ class AutolabCockpitApp(App[None]):
             "Advanced: visible" if self._show_advanced else "Advanced: hidden"
         )
         self._set_tone(advanced, "tone-info" if self._show_advanced else "tone-muted")
+        auto_refresh.update(
+            f"Auto-refresh: {'on' if self._auto_refresh_enabled else 'off'}"
+        )
+        self._set_tone(
+            auto_refresh, "tone-info" if self._auto_refresh_enabled else "tone-muted"
+        )
         selection_label = self._selection_status_label()
         selection.update(selection_label)
         self._set_tone(
@@ -1764,12 +2011,46 @@ class AutolabCockpitApp(App[None]):
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
         key_hints.update(self._key_hints_text())
+        if self._running_intent is not None:
+            elapsed: str = ""
+            if self._running_command_started_at is not None:
+                elapsed = f" ({time.monotonic() - self._running_command_started_at:.1f}s)"
+            command_status.update(
+                f"Command: {self._action_label(self._running_intent.action_id)}{elapsed}"
+            )
+            self._set_tone(command_status, "tone-info")
+        elif self._last_command_label is None:
+            command_status.update("Command: n/a")
+            self._set_tone(command_status, "tone-muted")
+        else:
+            last_exit = (
+                f" exit:{self._last_command_exit_code}"
+                if self._last_command_exit_code is not None
+                else ""
+            )
+            duration = (
+                f"{self._last_command_duration:.1f}s"
+                if self._last_command_duration is not None
+                else "n/a"
+            )
+            command_status.update(
+                f"Last: {self._last_command_label} |{last_exit} | {duration}"
+            )
+            last_tone = (
+                "tone-success"
+                if self._last_command_exit_code == 0
+                else "tone-danger"
+            )
+            self._set_tone(command_status, last_tone)
 
         if self._running_intent is None:
             snapshot = self._snapshot
+            last_summary = self._last_command_summary()
             if snapshot is None:
                 running.update("Idle")
                 self._set_tone(running, "tone-muted")
+                if last_summary:
+                    running.update(f"Idle | {last_summary}")
             else:
                 stage_artifacts = snapshot.artifacts_by_stage.get(
                     snapshot.current_stage, ()
@@ -1780,20 +2061,27 @@ class AutolabCockpitApp(App[None]):
                     if snapshot.primary_blocker == "none"
                     else len(snapshot.top_blockers)
                 )
-                running.update(
+                status = (
                     "Idle | "
                     f"runs:{len(snapshot.runs)} "
                     f"blockers:{blocker_count} "
                     f"todos:{len(snapshot.todos)} "
                     f"missing:{missing_required}"
                 )
+                if last_summary:
+                    status = f"{status} | {last_summary}"
+                running.update(status)
                 if blocker_count or missing_required:
                     self._set_tone(running, "tone-warning")
                 else:
                     self._set_tone(running, "tone-success")
         else:
-            command = shlex.join(self._running_intent.argv)
-            running.update(f"Running: {command[:72]}")
+            command = self._running_command_label or shlex.join(self._running_intent.argv)
+            running.update(
+                "Running "
+                f"({self._running_elapsed_label()}) | "
+                f"{self._shorten_command(command, max_len=72)}"
+            )
             self._set_tone(running, "tone-info")
 
         self.query_one(
@@ -1806,20 +2094,17 @@ class AutolabCockpitApp(App[None]):
         filter_button.variant = "primary" if self._files_missing_only else "default"
         clear_button = self.query_one("#artifact-filter-clear", Button)
         clear_button.disabled = not bool(self._artifact_filter_query)
-        run_filter_status_button = self.query_one("#run-filter-status", Button)
-        run_filter_status_button.label = (
-            f"Status: {self._run_status_filter}"
-            if self._run_status_filter in self._RUN_FILTER_PRESETS
-            else "Status: all"
-        )
-        run_filter_clear_button = self.query_one("#run-filter-clear", Button)
-        run_filter_clear_button.disabled = (
-            not bool(self._run_filter_query) and self._run_status_filter == "all"
-        )
-        run_sort_button = self.query_one("#run-sort-order", Button)
-        run_sort_button.label = (
-            "Sort: newest" if self._run_sort_newest_first else "Sort: oldest"
-        )
+        run_clear_button = self.query_one("#run-filter-clear", Button)
+        run_clear_button.disabled = not bool(self._run_status_filter)
+
+    def _run_auto_refresh(self) -> None:
+        if not self._auto_refresh_enabled:
+            return
+        if self._running_intent is not None:
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._refresh_snapshot()
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -1869,55 +2154,12 @@ class AutolabCockpitApp(App[None]):
         else:
             self.query_one("#help-text", Static).focus()
 
-    def _run_status_bucket(self, status: str) -> str:
-        normalized = str(status).strip().lower()
-        if normalized in {"running", "queued", "pending", "submitted", "in_progress"}:
-            return "running"
-        if normalized in {"completed", "synced", "pass", "success", "done"}:
-            return "completed"
-        if normalized in {"failed", "fail", "error", "timeout", "stopped"}:
-            return "failed"
-        return "other"
-
-    def _run_filter_presets(self) -> tuple[str, ...]:
-        return self._RUN_FILTER_PRESETS
-
-    def _run_sort_key(self, run: RunItem) -> tuple[str, str]:
-        return (run.started_at or "", run.run_id)
-
-    def _run_items_for_display(self) -> tuple[RunItem, ...]:
-        snapshot = self._snapshot
-        if snapshot is None:
-            return ()
-        query = self._run_filter_query.strip().lower()
-        items = list(snapshot.runs)
-        if self._run_status_filter != "all":
-            items = [
-                item
-                for item in items
-                if self._run_status_bucket(item.status) == self._run_status_filter
-            ]
-        if query:
-            items = [
-                item
-                for item in items
-                if query
-                in (
-                    f"{item.run_id} {item.status} {item.host_mode} {item.job_id}".lower()
-                )
-            ]
-        items.sort(key=self._run_sort_key, reverse=self._run_sort_newest_first)
-        result = tuple(items)
-        self._run_items = result
-        return result
-
     def _selected_run(self):
-        run_items = self._run_items_for_display()
-        if not run_items:
+        if not self._visible_runs:
             return None
-        if self._selected_run_index >= len(run_items):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return run_items[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1931,7 +2173,7 @@ class AutolabCockpitApp(App[None]):
         self._home_action_index = 0
         self._selected_run_index = 0
         self._selected_artifact_index = 0
-        self._run_items = ()
+        self._visible_runs = ()
         self._current_artifacts = ()
         self._all_artifacts = ()
         self._missing_artifacts_count = 0
@@ -1951,6 +2193,10 @@ class AutolabCockpitApp(App[None]):
         stage_widget = self.query_one("#home-stage-card", Static)
         stage_widget.update("Stage\nUnavailable.")
         self._set_tone(stage_widget, "tone-muted")
+
+        stage_list_widget = self.query_one("#home-stage-list", Static)
+        stage_list_widget.update("Stage timeline\nUnavailable.")
+        self._set_tone(stage_list_widget, "tone-muted")
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -2014,6 +2260,22 @@ class AutolabCockpitApp(App[None]):
             f"- Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}"
         )
         self._set_tone(stage_widget, "tone-info")
+
+        stage_list_widget = self.query_one("#home-stage-list", Static)
+        stage_lines = ["Stage Timeline"]
+        status_markers = {
+            "complete": "[done]",
+            "current": "[next]",
+            "blocked": "[wait]",
+            "upcoming": "[todo]",
+        }
+        for item in snapshot.stage_items:
+            stage_name = str(item.name).strip()
+            attempts = f" ({item.attempts})" if item.attempts else ""
+            marker = status_markers.get(item.status, "[     ]")
+            stage_lines.append(f"{marker} {stage_name}{attempts} [{item.status}]")
+        stage_list_widget.update("\n".join(stage_lines))
+        self._set_tone(stage_list_widget, "tone-info")
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -2169,6 +2431,7 @@ class AutolabCockpitApp(App[None]):
         if snapshot is None:
             self._run_items = ()
             return
+        filter_query = self._run_status_filter.strip().lower()
 
         runs = self._run_items_for_display()
         if not runs:
@@ -2190,6 +2453,7 @@ class AutolabCockpitApp(App[None]):
                 )
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
+            self._visible_runs = ()
             details_widget = self.query_one("#run-details", Static)
             details_widget.update(
                 "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
@@ -2199,19 +2463,91 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in runs:
+        filtered_runs = []
+        for run in snapshot.runs:
+            if filter_query:
+                haystack = " ".join(
+                    [
+                        str(run.run_id),
+                        str(run.status),
+                        str(run.host_mode),
+                        str(run.job_id),
+                        str(run.sync_status),
+                        str(run.started_at),
+                        str(run.completed_at),
+                    ]
+                ).lower()
+                if filter_query not in haystack:
+                    continue
+            filtered_runs.append(run)
+
+        self._visible_runs = tuple(filtered_runs)
+        if not self._visible_runs:
+            empty_label = Label(f"(No runs match status filter: {self._run_status_filter})")
+            empty_label.add_class("tone-muted")
+            run_list.append(ListItem(empty_label))
+            self._selected_run_index = 0
+            details_widget = self.query_one("#run-details", Static)
+            details_widget.update(
+                "Run Details\nNo runs match the active filter.\n"
+                "Use / and clear to show all runs."
+            )
+            self._set_tone(details_widget, "tone-muted")
+            return
+
+        run_total = len(self._visible_runs)
+        for position, run in enumerate(self._visible_runs, start=1):
             started = run.started_at or "-"
             slurm_suffix = ""
             if run.host_mode == "slurm":
                 slurm_suffix = f" job={run.job_id or '-'}"
             run_label = Label(
-                f"{run.run_id} [{run.status}] ({run.host_mode}{slurm_suffix}) start={started}"
+                f"{position:>2}/{run_total} {run.run_id} [{run.status}] ({run.host_mode}{slurm_suffix}) start={started}"
             )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(runs) - 1)
+        self._selected_run_index = min(self._selected_run_index, len(self._visible_runs) - 1)
         run_list.index = self._selected_run_index
         self._update_run_details()
+
+    def _parse_run_timestamp(self, raw_value: str) -> datetime | None:
+        raw = str(raw_value).strip()
+        if not raw:
+            return None
+        normalized = raw.replace(" ", "T")
+        normalized = normalized.replace("Z", "+00:00")
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+        ):
+            try:
+                return datetime.strptime(normalized, fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+    def _run_duration_text(self, run: RunItem) -> str:
+        if not run.started_at:
+            return "-"
+        started = self._parse_run_timestamp(run.started_at)
+        if started is None:
+            return "-"
+
+        ended = self._parse_run_timestamp(run.completed_at or "")
+        if ended is None and run.completed_at:
+            return "-"
+        if ended is None:
+            now = datetime.now(started.tzinfo) if started.tzinfo is not None else datetime.now()
+            ended = now
+        elapsed = (ended - started).total_seconds()
+        return f"{elapsed:.1f}s"
 
     def _update_run_details(self) -> None:
         run = self._selected_run()
@@ -2220,12 +2556,19 @@ class AutolabCockpitApp(App[None]):
             details_widget.update("Run Details\nNo run selected.")
             self._set_tone(details_widget, "tone-muted")
             return
+        completion = "finished" if _is_completed_backlog_status(run.status) else "active"
+        run_duration = self._run_duration_text(run)
         selected_index = self._selected_run_index + 1
-        run_count = len(self._run_items)
+        run_count = len(self._visible_runs)
+        total_count = len(snapshot.runs) if snapshot is not None else run_count
         details_widget = self.query_one("#run-details", Static)
         details_widget.update(
             "Run Details\n"
             f"- Selected: {selected_index}/{run_count}\n"
+            f"- Total runs: {total_count}\n"
+            f"- Filter: {self._run_status_filter or 'none'}\n"
+            f"- Completion: {completion}\n"
+            f"- Duration: {run_duration}\n"
             f"- Run ID: {run.run_id}\n"
             f"- Status: {run.status}\n"
             f"- Host mode: {run.host_mode}\n"
@@ -2309,9 +2652,12 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(context_widget, "tone-muted")
             return
 
-        for artifact in self._current_artifacts:
+        artifact_total = len(self._current_artifacts)
+        for position, artifact in enumerate(self._current_artifacts, start=1):
             marker = "OK" if artifact.exists else "MISS"
-            entry = Label(f"[{marker}] {self._display_path(artifact.path)}")
+            entry = Label(
+                f"{position:>2}/{artifact_total} [{marker}] {self._display_path(artifact.path)}"
+            )
             entry.add_class("tone-success" if artifact.exists else "tone-warning")
             artifact_list.append(ListItem(entry))
         self._selected_artifact_index = min(
@@ -2358,15 +2704,19 @@ class AutolabCockpitApp(App[None]):
             "\n"
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
+            "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
+            "- Filters: f (or / in files/runs) focuses active filter input.\n"
+            "- History: R reruns the last command after confirmation.\n"
+            "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
             "Views\n"
-            "- Home: stage status, rendered prompt preview, recommended actions.\n"
+            "- Home: stage status, stage timeline, rendered prompt preview, recommended actions.\n"
             "- Home: open tasks card highlights active todo priorities.\n"
-            "- Runs: run manifest/metrics overview, status/text filtering, and sort order.\n"
+            "- Runs: run manifest and metrics overview with optional run filtering.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
             "- Files advanced: focus experiment, create experiment, move experiment.\n"
             "- Console: live command output.\n"
@@ -2382,7 +2732,7 @@ class AutolabCockpitApp(App[None]):
             "- f: Focus runs filter in Runs view.\n"
             "- y: Toggle run sort order newest/oldest.\n"
             "- e: Open selected file in editor (Files view).\n"
-            "- /: Focus files name filter (Files view).\n"
+            "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
             "\n"
             "Safety\n"
@@ -2396,7 +2746,8 @@ class AutolabCockpitApp(App[None]):
             "- Green: ready/success\n"
             "- Blue: active/info\n"
             "- Yellow: warning/attention\n"
-            "- Red: blocking/error"
+            "- Red: blocking/error\n"
+            "- Command: last action result is shown in status rail."
         )
         self._set_tone(help_widget, "tone-muted")
 
@@ -2460,6 +2811,11 @@ class AutolabCockpitApp(App[None]):
                     self.action_toggle_advanced,
                 ),
                 SystemCommand(
+                    "Toggle auto-refresh",
+                    "Enable or disable automatic periodic snapshot refresh.",
+                    self.action_toggle_auto_refresh,
+                ),
+                SystemCommand(
                     "Toggle safety lock",
                     "Lock or unlock mutating actions.",
                     self.action_toggle_safety_lock,
@@ -2481,6 +2837,22 @@ class AutolabCockpitApp(App[None]):
                     self.action_quick_secondary,
                 )
             )
+        if self._last_command_intent is not None:
+            commands.append(
+                SystemCommand(
+                    "Rerun last command",
+                    "Re-run the most recently started command.",
+                    self.action_rerun_last_command,
+                )
+            )
+        if self._command_history:
+            commands.append(
+                SystemCommand(
+                    "Show command history",
+                    "Review recent commands and replay one.",
+                    self.action_show_command_history,
+                )
+            )
         if self._mode == "home" and self._home_action_ids:
             index = min(self._home_action_index, len(self._home_action_ids) - 1)
             action_id = self._home_action_ids[index]
@@ -2492,6 +2864,22 @@ class AutolabCockpitApp(App[None]):
                         f"Run selected recommended action: {label}",
                         "Execute the selected action from Home recommendations.",
                         self.action_activate_selection,
+                )
+            )
+        if self._mode == "runs":
+            commands.append(
+                SystemCommand(
+                    "Focus Runs Status Filter",
+                    "Focus the runs filter input.",
+                    self.action_focus_mode_filter,
+                )
+            )
+            if self._run_status_filter:
+                commands.append(
+                    SystemCommand(
+                        "Clear Runs Status Filter",
+                        "Reset the runs filter query.",
+                        self.action_clear_runs_filter,
                     )
                 )
         if self._mode == "files":
@@ -2499,7 +2887,7 @@ class AutolabCockpitApp(App[None]):
                 SystemCommand(
                     "Focus Files Name Filter",
                     "Focus the files name filter input.",
-                    self.action_focus_files_filter,
+                    self.action_focus_mode_filter,
                 )
             )
             commands.append(
@@ -2610,6 +2998,12 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
+    def action_toggle_auto_refresh(self) -> None:
+        self._auto_refresh_enabled = not self._auto_refresh_enabled
+        state = "enabled" if self._auto_refresh_enabled else "disabled"
+        self._append_console(f"auto-refresh {state}")
+        self._update_ui_chrome()
+
     def action_toggle_prompt_view(self) -> None:
         snapshot = self._snapshot
         if snapshot is None or snapshot.render_preview.status != "ok":
@@ -2692,14 +3086,30 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_focus_files_filter(self) -> None:
-        if self._mode != "files":
-            self.notify("Files name filter is available in Files view (3).")
-            return
         if isinstance(self.screen, ModalScreen):
             return
-        filter_input = self.query_one("#artifact-filter-input", Input)
+        if self._mode == "files":
+            filter_input = self.query_one("#artifact-filter-input", Input)
+        elif self._mode == "runs":
+            filter_input = self.query_one("#run-filter-input", Input)
+        else:
+            self.notify("Filter input is available in Runs and Files views.")
+            return
         filter_input.focus()
         filter_input.cursor_position = len(filter_input.value)
+
+    def action_clear_runs_filter(self) -> None:
+        if self._mode != "runs":
+            self.notify("Run status filter is available in Runs view (2).")
+            return
+        if not self._run_status_filter:
+            return
+        self._run_status_filter = ""
+        filter_input = self.query_one("#run-filter-input", Input)
+        filter_input.value = ""
+        if self._snapshot is not None:
+            self._populate_run_list()
+        self._update_ui_chrome()
 
     def action_clear_files_filter(self) -> None:
         if not self._artifact_filter_query:
@@ -2711,51 +3121,137 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
-    def action_focus_run_filter(self) -> None:
-        if self._mode != "runs":
-            self.notify("Run text filter is available in Runs view (2).")
-            return
-        if isinstance(self.screen, ModalScreen):
-            return
-        filter_input = self.query_one("#run-filter-input", Input)
-        filter_input.focus()
-        filter_input.cursor_position = len(filter_input.value)
+    def action_focus_mode_filter(self) -> None:
+        self.action_focus_files_filter()
 
-    def action_cycle_run_status_filter(self) -> None:
-        if self._mode != "runs":
-            self._notify_only_runs_mode("run status")
+    def action_list_first(self) -> None:
+        if self._mode == "home":
+            if not self._home_action_ids:
+                return
+            self._home_action_index = 0
+            list_view = self.query_one("#home-action-list", ListView)
+            self._apply_list_selection(
+                list_id="home-action-list", selected_index=0
+            )
+            list_view.index = 0
+            list_view.focus()
             return
-        presets = self._run_filter_presets()
-        if self._run_status_filter not in presets:
-            self._run_status_filter = "all"
-        current_index = presets.index(self._run_status_filter)
-        self._run_status_filter = presets[(current_index + 1) % len(presets)]
-        if self._snapshot is not None:
-            self._populate_run_list()
-        self._update_ui_chrome()
-
-    def action_clear_run_filter(self) -> None:
-        if not self._run_filter_query and self._run_status_filter == "all":
+        if self._mode == "runs":
+            if not self._visible_runs:
+                return
+            self._selected_run_index = 0
+            list_view = self.query_one("#run-list", ListView)
+            self._apply_list_selection(list_id="run-list", selected_index=0)
+            list_view.index = 0
+            list_view.focus()
             return
-        self._run_filter_query = ""
-        self._run_status_filter = "all"
-        run_filter_input = self.query_one("#run-filter-input", Input)
-        run_filter_input.value = ""
-        if self._snapshot is not None:
-            self._populate_run_list()
-        self._update_ui_chrome()
+        if self._mode == "files":
+            if not self._current_artifacts:
+                return
+            self._selected_artifact_index = 0
+            list_view = self.query_one("#artifact-list", ListView)
+            self._apply_list_selection(
+                list_id="artifact-list", selected_index=0
+            )
+            list_view.index = 0
+            list_view.focus()
 
-    def action_cycle_run_sort_order(self) -> None:
-        if self._mode != "runs":
-            self.notify("Run sorting is available in Runs view (2).")
+    def action_list_last(self) -> None:
+        if self._mode == "home":
+            if not self._home_action_ids:
+                return
+            index = len(self._home_action_ids) - 1
+            list_view = self.query_one("#home-action-list", ListView)
+            self._home_action_index = index
+            self._apply_list_selection(
+                list_id="home-action-list", selected_index=index
+            )
+            list_view.index = index
+            list_view.focus()
             return
-        self._run_sort_newest_first = not self._run_sort_newest_first
-        if self._snapshot is not None:
-            self._populate_run_list()
-        self._update_ui_chrome()
+        if self._mode == "runs":
+            if not self._visible_runs:
+                return
+            index = len(self._visible_runs) - 1
+            list_view = self.query_one("#run-list", ListView)
+            self._selected_run_index = index
+            self._apply_list_selection(list_id="run-list", selected_index=index)
+            list_view.index = index
+            list_view.focus()
+            return
+        if self._mode == "files":
+            if not self._current_artifacts:
+                return
+            index = len(self._current_artifacts) - 1
+            list_view = self.query_one("#artifact-list", ListView)
+            self._selected_artifact_index = index
+            self._apply_list_selection(
+                list_id="artifact-list", selected_index=index
+            )
+            list_view.index = index
+            list_view.focus()
 
-    def _notify_only_runs_mode(self, feature_name: str) -> None:
-        self.notify(f"{feature_name.title()} is available in Runs view (2).")
+    def action_show_command_history(self) -> None:
+        self._start_ui_flow(
+            label="command-history",
+            flow_factory=self._open_command_history,
+        )
+
+    async def _open_command_history(self) -> None:
+        if not self._command_history:
+            self.notify("No command history available yet.")
+            return
+        selected = await self.push_screen_wait(
+            CommandHistoryScreen(history=tuple(self._command_history))
+        )
+        if selected is None:
+            return
+        await self._replay_command_intent(
+            intent=selected.intent,
+            title=f"Re-run: {selected.intent.action_id}",
+            confirm_label="Re-run",
+        )
+
+    async def _replay_command_intent(
+        self,
+        *,
+        intent: CommandIntent,
+        title: str,
+        confirm_label: str,
+    ) -> None:
+        action = self._actions_by_id.get(intent.action_id)
+        if action is None:
+            self._start_command(intent)
+            return
+        if not await self._unlock_if_needed(action):
+            return
+        if await self._confirm_action_intent(
+            action=action,
+            title=title,
+            intent=intent,
+            confirm_label=confirm_label,
+        ):
+            self._start_command(intent)
+
+    def action_rerun_last_command(self) -> None:
+        self._start_ui_flow(label="rerun-last", flow_factory=self._rerun_last_command)
+
+    async def _rerun_last_command(self) -> None:
+        if self._last_command_intent is None:
+            self.notify("No previous command to rerun.")
+            return
+        last_intent = self._last_command_intent
+        action = self._actions_by_id.get(last_intent.action_id)
+        action_name = (
+            (action.user_label or action.label)
+            if action is not None
+            else last_intent.action_id
+        )
+        await self._replay_command_intent(
+            intent=last_intent,
+            title=f"Re-run: {action_name}",
+            confirm_label="Re-run",
+        )
 
     def action_activate_selection(self) -> None:
         focused = self.focused
@@ -2804,24 +3300,25 @@ class AutolabCockpitApp(App[None]):
         self._handle_button_action(event.button.id or "")
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "artifact-filter-input":
-            if event.input.id == "run-filter-input":
-                self._run_filter_query = event.value.strip()
-                if self._snapshot is not None:
-                    self._populate_run_list()
-                self._update_ui_chrome()
+        if event.input.id == "artifact-filter-input":
+            self._artifact_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_artifact_list()
+        elif event.input.id == "run-filter-input":
+            self._run_status_filter = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_run_list()
+        else:
             return
-        self._artifact_filter_query = event.value.strip()
-        if self._snapshot is not None:
-            self._populate_artifact_list()
         self._update_ui_chrome()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "artifact-filter-input":
-            if event.input.id == "run-filter-input":
-                self.query_one("#run-list", ListView).focus()
+        if event.input.id == "artifact-filter-input":
+            self.query_one("#artifact-list", ListView).focus()
+        elif event.input.id == "run-filter-input":
+            self.query_one("#run-list", ListView).focus()
+        else:
             return
-        self.query_one("#artifact-list", ListView).focus()
 
     def _handle_button_action(self, button_id: str) -> None:
         if button_id == "nav-home":
@@ -2846,17 +3343,11 @@ class AutolabCockpitApp(App[None]):
             self.action_clear_files_filter()
             self.action_focus_files_filter()
             return
+        if button_id == "run-filter-clear":
+            self.action_clear_runs_filter()
+            return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
-            return
-        if button_id == "run-filter-status":
-            self.action_cycle_run_status_filter()
-            return
-        if button_id == "run-filter-clear":
-            self.action_clear_run_filter()
-            return
-        if button_id == "run-sort-order":
-            self.action_cycle_run_sort_order()
             return
         if button_id == "home-render-toggle":
             self.action_toggle_prompt_view()
@@ -2989,9 +3480,15 @@ class AutolabCockpitApp(App[None]):
             self._start_command(intent)
 
     async def _open_artifact_viewer(self, artifact_path: Path) -> None:
-        text, _truncated = load_artifact_text(artifact_path, max_chars=None)
+        text, truncated = load_artifact_text(
+            artifact_path, max_chars=self._artifact_preview_max_chars
+        )
+        if truncated:
+            title = f"{self._display_path(artifact_path)} [truncated]"
+        else:
+            title = self._display_path(artifact_path)
         await self._open_text_viewer(
-            title=self._display_path(artifact_path),
+            title=title,
             text=text,
             editor_path=artifact_path,
             source_path=artifact_path,
@@ -3205,31 +3702,76 @@ class AutolabCockpitApp(App[None]):
         if self._console_tail:
             self._append_console("-" * 40)
         command = shlex.join(intent.argv)
+        started_at = time.monotonic()
+        history_item = CommandHistoryItem(
+            intent=intent,
+            command=command,
+            started_at=started_at,
+            started_at_text=self._timestamp(),
+        )
+        self._command_history.appendleft(history_item)
         self._append_console(f"starting: {command}")
+        self._last_command_label = self._action_label(intent.action_id)
+        self._last_command_exit_code = None
+        self._last_command_duration = None
         self._running_intent = intent
+        self._running_command_started_at = started_at
+        self._active_history_item = history_item
+        self._last_command_intent = intent
         self._update_ui_chrome()
         try:
             self._runner.start(intent)
         except Exception as exc:
+            history_item.exit_code = 1
+            history_item.finished_at = time.monotonic()
             self._append_console(f"failed to start command: {exc}")
             self._running_intent = None
+            self._running_command_started_at = None
+            self._active_history_item = None
             self._update_ui_chrome()
+            return
 
     def _handle_runner_line(self, line: str) -> None:
         try:
             self.call_from_thread(self._append_console, line)
+            self.call_from_thread(self._update_ui_chrome)
         except Exception:
             pass
 
     def _handle_runner_done(self, return_code: int, stopped: bool) -> None:
         def _finish() -> None:
             intent = self._running_intent
+            if self._active_history_item is None:
+                history_item = None
+                for item in self._command_history:
+                    if (
+                        item.intent == intent
+                        and item.finished_at is None
+                        and item.exit_code is None
+                    ):
+                        history_item = item
+                        break
+                self._active_history_item = history_item
             if stopped:
                 self._append_console("process interrupted")
             self._append_console(f"process exit code: {return_code}")
+            if self._active_history_item is not None and intent is not None:
+                self._active_history_item.finished_at = time.monotonic()
+                self._active_history_item.exit_code = return_code
+                self._active_history_item.stopped = stopped
             self._running_intent = None
+            if self._running_command_started_at is not None:
+                end_time = time.monotonic()
+                self._last_command_duration = end_time - self._running_command_started_at
+            else:
+                self._last_command_duration = None
+            self._running_command_started_at = None
+            self._last_command_exit_code = return_code
+            if self._last_command_label is None and intent is not None:
+                self._last_command_label = self._action_label(intent.action_id)
             if intent is not None and intent.mutating:
                 self._armed = False
+            self._active_history_item = None
             self._update_ui_chrome()
             self._refresh_snapshot()
 
