@@ -99,6 +99,7 @@ def _write_run_manifest(
     *,
     host_mode: str = "local",
     job_id: str = "",
+    status: str = "running",
     sync_status: str = "",
 ) -> None:
     manifest_path = (
@@ -113,7 +114,7 @@ def _write_run_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "host_mode": host_mode,
         "timestamps": {"started_at": started_at},
     }
@@ -186,6 +187,10 @@ def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
         label = item.query_one(app_module.Label)
         labels.append(str(label.render()))
     return labels
+
+
+def _run_ids_from_list_items(list_view: app_module.ListView) -> list[str]:
+    return [entry.split(" ")[0] for entry in _list_item_label_texts(list_view)]
 
 
 def _system_command_titles(app: AutolabCockpitApp) -> set[str]:
@@ -606,6 +611,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.press("3")
             await pilot.pause()
             files_titles = _system_command_titles(app)
+            assert "Focus next missing file" in files_titles
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
 
@@ -615,6 +621,11 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Cycle run sort order" in run_titles
 
     asyncio.run(_run())
 
@@ -782,10 +793,122 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.press("2")
             await pilot.pause()
             assert "m metrics" in str(hints.render())
+            assert "v sort(recent)" in str(hints.render())
 
             await pilot.press("3")
             await pilot.pause()
             assert "m missing-only(off)" in str(hints.render())
+            if app._missing_artifacts_count:
+                assert "n next missing" in str(hints.render())
+
+    asyncio.run(_run())
+
+
+def test_run_sort_cycle_cycles_runs_and_updates_status_hint(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-old",
+            "2026-03-01T10:00:00Z",
+            status="completed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-mid",
+            "2026-03-01T11:00:00Z",
+            status="failed",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-new",
+            "2026-03-01T12:00:00Z",
+            status="running",
+            host_mode="local",
+        )
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            run_list = app.query_one("#run-list", app_module.ListView)
+            assert _run_ids_from_list_items(run_list) == ["run-new", "run-mid", "run-old"]
+
+            await pilot.press("v")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "v sort(oldest)" in str(hints.render())
+            assert _run_ids_from_list_items(run_list) == ["run-old", "run-mid", "run-new"]
+
+            await pilot.press("v")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "v sort(status)" in str(hints.render())
+            assert _run_ids_from_list_items(run_list) == ["run-new", "run-old", "run-mid"]
+
+    asyncio.run(_run())
+
+
+def test_focus_next_missing_shortcuts_cycles_within_visible_file_list(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        artifact_candidates = list(snapshot.artifacts_by_stage.get(snapshot.current_stage, ())) + list(
+            snapshot.common_artifacts
+        )
+        if len(artifact_candidates) < 2:
+            pytest.skip("not enough artifacts to test next-missing navigation")
+        _materialize_all_current_stage_artifacts(state_path)
+        for artifact in artifact_candidates[1:]:
+            if artifact.path.exists():
+                artifact.path.unlink()
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            app._selected_artifact_index = 0
+            app.query_one("#artifact-list", app_module.ListView).index = 0
+            assert app._current_artifacts[0].exists
+
+            await pilot.press("n")
+            await pilot.pause()
+            first_jump = app._selected_artifact_index
+            assert not app._current_artifacts[first_jump].exists
+
+            missing_count = sum(1 for item in app._current_artifacts if not item.exists)
+            if missing_count > 1:
+                await pilot.press("n")
+                await pilot.pause()
+                second_jump = app._selected_artifact_index
+                assert second_jump != first_jump
+                assert not app._current_artifacts[second_jump].exists
+
+    asyncio.run(_run())
+
+
+def test_refresh_timestamp_updates_status_rail_on_snapshot_refresh(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app._last_snapshot_refreshed_at = None
+            app._update_ui_chrome()
+            refresh = app.query_one("#status-refresh", app_module.Static)
+            assert "n/a" in str(refresh.render())
+
+            await pilot.press("r")
+            await pilot.pause()
+
+            refresh = app.query_one("#status-refresh", app_module.Static)
+            assert "n/a" not in str(refresh.render())
+            assert "Refresh:" in str(refresh.render())
 
     asyncio.run(_run())
 
