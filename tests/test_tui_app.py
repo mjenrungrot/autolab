@@ -300,7 +300,7 @@ def test_runner_done_auto_locks_after_mutating_command(
     assert app._armed is False
     assert app._running_intent is None
     assert refreshed == [True]
-    assert "process exit code: 0" in logs
+    assert "command finished: autolab verify | exit=0" in logs[0]
 
 
 def test_refresh_snapshot_repeated_keys_no_crash(tmp_path: Path) -> None:
@@ -801,6 +801,24 @@ def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
             rendered = str(status_running.render())
             assert "Idle | runs:" in rendered
             assert "missing:" in rendered
+
+    asyncio.run(_run())
+
+
+def test_home_shows_workflow_timeline_card(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            timeline = app.query_one("#home-stage-timeline", app_module.Static)
+            rendered = str(timeline.render())
+            assert "Workflow Timeline" in rendered
+            assert ">" in rendered
+            assert "[->]" in rendered
+            assert "design" in rendered
+            assert "blocked" not in rendered
 
     asyncio.run(_run())
 
