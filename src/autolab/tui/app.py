@@ -1826,6 +1826,20 @@ class AutolabCockpitApp(App[None]):
       content-align: right middle;
     }
 
+    #runs-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #run-filter-label,
+    #run-filter-status,
+    #run-filter-input,
+    #run-filter-clear,
+    #run-sort-order {
+      margin-right: 1;
+    }
+
     #key-hints {
       height: auto;
       margin: 0 1 1 1;
@@ -1961,7 +1975,8 @@ class AutolabCockpitApp(App[None]):
       color: $text-muted;
     }
 
-    #artifact-filter-input {
+    #artifact-filter-input,
+    #run-filter-input {
       width: 1fr;
     }
 
@@ -3014,6 +3029,20 @@ class AutolabCockpitApp(App[None]):
                     f"(No runs match status filter: {self._run_status_filter})"
                 )
             empty_label.add_class("tone-muted")
+            if snapshot.runs:
+                status_text = (
+                    f" with status={self._run_status_filter}"
+                    if self._run_status_filter != "all"
+                    else ""
+                )
+                query_text = (
+                    f" and query={self._run_filter_query!r}"
+                    if self._run_filter_query
+                    else ""
+                )
+                empty_label.update(
+                    f"(No runs match current filter{status_text}{query_text})"
+                )
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
             self._visible_runs = ()
@@ -3021,6 +3050,8 @@ class AutolabCockpitApp(App[None]):
             details_widget.update(
                 "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
             )
+            if snapshot.runs:
+                details_widget.update("Run Details\nNo runs match current filter.")
             self._set_tone(details_widget, "tone-muted")
             return
 
