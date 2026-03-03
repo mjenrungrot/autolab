@@ -790,6 +790,96 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_system_commands_include_stop_active_command_for_any_running_command(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._running_intent = CommandIntent(
+        action_id="run_once",
+        argv=("autolab", "run", "--state-file", str(state_path)),
+        cwd=repo_root,
+        expected_writes=(),
+        mutating=False,
+    )
+
+    commands = _system_command_titles(app)
+    assert "Stop active command" in commands
+    assert "Stop active loop" not in commands
+
+
+def test_system_commands_include_stop_loop_for_loop_run(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._running_intent = CommandIntent(
+        action_id="run_loop",
+        argv=("autolab", "tui", "--loop", "--state-file", str(state_path)),
+        cwd=repo_root,
+        expected_writes=(),
+        mutating=True,
+    )
+
+    commands = _system_command_titles(app)
+    assert "Stop active command" in commands
+    assert "Stop active loop" in commands
+
+
+def test_action_next_missing_artifact_cycles_missing_items(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            initial_index = app._selected_artifact_index
+            assert initial_index == 0
+            await pilot.press("n")
+            await pilot.pause()
+
+            assert app._selected_artifact_index != initial_index
+            assert app._selected_artifact_index >= 1
+
+    asyncio.run(_run())
+
+
+def test_execute_action_open_verification_result_opens_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    verification_path = repo_root / ".autolab" / "verification_result.json"
+    verification_payload = {
+        "generated_at": "2026-02-01T02:00:00Z",
+        "stage_effective": "design",
+        "passed": True,
+        "message": "verification passed",
+        "details": {"commands": [{"name": "smoke", "status": "pass"}]},
+    }
+    verification_path.parent.mkdir(parents=True, exist_ok=True)
+    verification_path.write_text(
+        json.dumps(verification_payload, indent=2) + "\n", encoding="utf-8"
+    )
+
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    opened: list[Path] = []
+
+    async def _open_artifact(path: Path) -> None:
+        opened.append(path)
+
+    monkeypatch.setattr(app, "_open_artifact_viewer", _open_artifact)
+
+    asyncio.run(app._execute_action("open_verification_result"))
+    assert opened == [app._snapshot.autolab_dir / "verification_result.json"]
+
+
 def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
