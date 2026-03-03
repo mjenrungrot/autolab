@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,7 @@ def _write_run_manifest(
     *,
     host_mode: str = "local",
     job_id: str = "",
+    status: str = "running",
     sync_status: str = "",
 ) -> None:
     manifest_path = (
@@ -113,7 +115,7 @@ def _write_run_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "host_mode": host_mode,
         "timestamps": {"started_at": started_at},
     }
@@ -188,6 +190,10 @@ def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
     return labels
 
 
+def _run_ids_from_list_items(list_view: app_module.ListView) -> list[str]:
+    return [entry.split(" ")[0] for entry in _list_item_label_texts(list_view)]
+
+
 def _system_command_titles(app: AutolabCockpitApp) -> set[str]:
     return {command.title for command in app.get_system_commands(app.screen)}
 
@@ -208,6 +214,36 @@ def _write_run_files(repo_root: Path, *, run_id: str = "run-001") -> None:
         encoding="utf-8",
     )
     (run_dir / "metrics.json").write_text('{"loss": 0.1}\n', encoding="utf-8")
+
+
+def _write_run_manifest_with_status(
+    repo_root: Path,
+    *,
+    run_id: str,
+    started_at: str,
+    status: str,
+    host_mode: str = "local",
+    job_id: str = "",
+) -> None:
+    run_dir = (
+        repo_root
+        / "experiments"
+        / "plan"
+        / "iter1"
+        / "runs"
+        / run_id
+        / "run_manifest.json"
+    )
+    payload = {
+        "run_id": run_id,
+        "status": status,
+        "host_mode": host_mode,
+        "timestamps": {"started_at": started_at},
+    }
+    if job_id:
+        payload["job_id"] = job_id
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _materialize_all_current_stage_artifacts(state_path: Path) -> None:
@@ -300,7 +336,7 @@ def test_runner_done_auto_locks_after_mutating_command(
     assert app._armed is False
     assert app._running_intent is None
     assert refreshed == [True]
-    assert "process exit code: 0" in logs
+    assert "command finished: autolab verify | exit=0" in logs[0]
 
 
 def test_refresh_snapshot_repeated_keys_no_crash(tmp_path: Path) -> None:
@@ -354,6 +390,22 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
             assert "line 39" not in render_markdown._markdown
             toggle_button = app.query_one("#home-render-toggle", app_module.Button)
             assert str(toggle_button.label) == "Show Full Prompt"
+
+    asyncio.run(_run())
+
+
+def test_home_stage_timeline_displays_progress_for_current_iteration(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            stage_list = app.query_one("#home-stage-list", app_module.Static)
+            rendered = str(stage_list.render())
+            assert "Stage Timeline" in rendered
+            assert "[current]" in rendered
+            assert "implementation" in rendered.lower()
 
     asyncio.run(_run())
 
@@ -426,6 +478,39 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_artifact_viewer_truncates_long_text_with_indicator(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_design_prompt(repo_root, lines=5)
+        prompt_path = (
+            repo_root / ".autolab" / "prompts" / "stage_design.md"
+        )
+        prompt_path.write_text(
+            "line\n".join(f"line {idx}" for idx in range(1, 201)),
+            encoding="utf-8",
+        )
+
+        app = AutolabCockpitApp(state_path=state_path)
+        app._artifact_preview_max_chars = 90
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.click("#file-open-prompt")
+            await pilot.pause()
+
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert " [truncated]" in str(title.render())
+            content = app.screen.query_one("#artifact-content", app_module.Markdown)
+            assert "... [truncated]" in content._markdown
+            assert "line 100" not in content._markdown
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
 def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -452,6 +537,61 @@ def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
             await pilot.pause()
             context = app.query_one("#files-context", app_module.Static)
             assert "- Filter: all files" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage = snapshot.current_stage
+        stage_paths = {item.path for item in snapshot.artifacts_by_stage.get(stage, ())}
+        common_paths = {item.path for item in snapshot.common_artifacts}
+        all_paths = stage_paths | common_paths
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(all)" in str(hints.render())
+            assert "Source: All" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == all_paths
+
+            await pilot.press("f")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(stage)" in str(hints.render())
+            assert "Source: Stage" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == stage_paths
+
+            await pilot.click("#file-cycle-source-scope")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(common)" in str(hints.render())
+            assert "Source: Common" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == common_paths
+
+            await pilot.press("f")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            assert "Source: All" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == all_paths
 
     asyncio.run(_run())
 
@@ -490,6 +630,33 @@ def test_files_name_filter_slash_focuses_input_and_clear_restores_list(
             assert len(restored_entries) > len(filtered_entries)
             context = app.query_one("#files-context", app_module.Static)
             assert "- Name filter: none" in str(context.render())
+
+    asyncio.run(_run())
+
+
+def test_f_focuses_active_filter_in_runs_and_files(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "run-filter-input"
+
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "artifact-filter-input"
 
     asyncio.run(_run())
 
@@ -591,6 +758,61 @@ def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_runs_view_v_key_opens_selected_run_manifest(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_files(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        dispatched: list[str] = []
+
+        async def _fake_execute(action_id: str) -> None:
+            dispatched.append(action_id)
+
+        app._execute_action = _fake_execute  # type: ignore[method-assign]
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+
+        assert dispatched == ["open_selected_run_manifest"]
+
+    asyncio.run(_run())
+
+
+def test_files_view_n_key_jumps_to_next_missing_artifact(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+        assert stage_artifacts
+        stage_artifacts[0].path.parent.mkdir(parents=True, exist_ok=True)
+        stage_artifacts[0].path.write_text("seed", encoding="utf-8")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            app._selected_artifact_index = 0
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            artifact_list.index = 0
+            app._update_files_context()
+            app._update_ui_chrome()
+
+            if all(item.exists for item in app._current_artifacts):
+                # The fixture is expected to include missing artifacts.
+                pytest.fail("Expected at least one missing artifact in files list.")
+            await pilot.press("n")
+            await pilot.pause()
+            assert app._current_artifacts[app._selected_artifact_index].exists is False
+
+    asyncio.run(_run())
+
+
 def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -600,15 +822,36 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             home_titles = _system_command_titles(app)
             assert "Go to Files view" in home_titles
+            assert "Show command history" not in home_titles
             assert "Quick open selected item" in home_titles
+            assert "Show command history" in home_titles
             assert "Focus Files Name Filter" not in home_titles
+
+            app._command_history.appendleft(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                )
+            )
+            assert "Show command history" in _system_command_titles(app)
 
             await pilot.press("3")
             await pilot.pause()
             files_titles = _system_command_titles(app)
+            assert "Focus next missing file" in files_titles
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
-            assert "Cycle Files Source Filter" in files_titles
+            assert "Show command history" in files_titles
 
             await pilot.press("/")
             await pilot.pause()
@@ -616,6 +859,144 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Cycle run sort order" in run_titles
+
+    asyncio.run(_run())
+
+
+def test_system_commands_are_contextual_for_runs_filter(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        (repo_root / "experiments" / "plan" / "iter1" / "runs" / "run-1").mkdir(
+            parents=True, exist_ok=True
+        )
+        run_1 = (
+            repo_root
+            / "experiments"
+            / "plan"
+            / "iter1"
+            / "runs"
+            / "run-1"
+            / "run_manifest.json"
+        )
+        (repo_root / "experiments" / "plan" / "iter1" / "runs" / "run-2").mkdir(
+            parents=True, exist_ok=True
+        )
+        run_2 = (
+            repo_root
+            / "experiments"
+            / "plan"
+            / "iter1"
+            / "runs"
+            / "run-2"
+            / "run_manifest.json"
+        )
+        run_1.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-1",
+                    "status": "running",
+                    "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        run_2.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-2",
+                    "status": "completed",
+                    "timestamps": {"started_at": "2026-02-01T02:00:00Z"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Status Filter" in run_titles
+            assert "Clear Runs Status Filter" not in run_titles
+
+            await pilot.press("/")
+            await pilot.type("running")
+            await pilot.pause()
+            filtered_titles = _system_command_titles(app)
+            assert "Clear Runs Status Filter" in filtered_titles
+
+    asyncio.run(_run())
+
+
+def test_runs_view_filter_input_reduces_list_and_clear_restores_all_runs(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        run_list_root = repo_root / "experiments" / "plan" / "iter1" / "runs"
+        run_list_root.mkdir(parents=True, exist_ok=True)
+
+        (run_list_root / "run-completed" / "run_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-completed",
+                    "status": "completed",
+                    "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (run_list_root / "run-running" / "run_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "run-running",
+                    "status": "running",
+                    "timestamps": {"started_at": "2026-02-01T02:00:00Z"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            before_labels = _list_item_label_texts(run_list)
+            assert len(before_labels) == 2
+
+            await pilot.press("/")
+            await pilot.type("completed")
+            await pilot.pause()
+            filtered_labels = _list_item_label_texts(run_list)
+            assert len(filtered_labels) == 1
+            assert "run-completed" in filtered_labels[0]
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            after_labels = _list_item_label_texts(run_list)
+            assert len(after_labels) == 2
+
+            details = app.query_one("#run-details", app_module.Static)
+            rendered = str(details.render())
+            assert "Filter: none" in rendered
 
     asyncio.run(_run())
 
@@ -879,6 +1260,8 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.pause()
             hints = app.query_one("#key-hints", app_module.Static)
             assert "Enter recommended action" in str(hints.render())
+            assert "h history" in str(hints.render())
+            assert "a auto-refresh(off)" in str(hints.render())
             assert "p prompt" in str(hints.render())
 
             await pilot.press("4")
@@ -896,12 +1279,182 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.press("2")
             await pilot.pause()
             assert "m metrics" in str(hints.render())
+            assert "v manifest" in str(hints.render())
 
             await pilot.press("3")
             await pilot.pause()
             assert "m missing-only(off)" in str(hints.render())
+            assert "Home/End list" in str(hints.render())
 
     asyncio.run(_run())
+
+
+def test_auto_refresh_binding_toggles_indicator_and_interval_refresh(tmp_path: Path, monkeypatch) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        refreshes: list[str] = []
+
+        monkeypatch.setattr(app, "_refresh_snapshot", lambda: refreshes.append("refresh"))
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            status = app.query_one("#status-autorefresh", app_module.Static)
+            assert "Auto-refresh: off" in str(status.render())
+
+            await pilot.press("a")
+            await pilot.pause()
+            assert "auto-refresh enabled" in app._console_tail[-1]
+            assert "Auto-refresh: on" in str(status.render())
+
+            app._run_auto_refresh()
+            assert refreshes == ["refresh"]
+
+            app._running_intent = CommandIntent(
+                action_id="verify_current_stage",
+                argv=("autolab", "verify"),
+                cwd=repo_root,
+                expected_writes=(),
+                mutating=False,
+            )
+            app._run_auto_refresh()
+            assert refreshes == ["refresh"]
+
+            app._running_intent = None
+            app._run_auto_refresh()
+            assert refreshes == ["refresh", "refresh"]
+
+            app._auto_refresh_enabled = False
+            app._run_auto_refresh()
+            assert refreshes == ["refresh", "refresh"]
+
+    asyncio.run(_run())
+
+
+def test_list_navigation_home_end_shortcuts_jump_runs_and_files_lists(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run-a", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run-b", "2026-02-01T02:00:00Z")
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            assert app._selected_run_index == 0
+            assert app._visible_runs
+            await pilot.press("end")
+            await pilot.pause()
+            assert app._selected_run_index == len(app._visible_runs) - 1
+
+            await pilot.press("home")
+            await pilot.pause()
+            assert app._selected_run_index == 0
+
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.press("end")
+            await pilot.pause()
+            assert app._selected_artifact_index == len(app._current_artifacts) - 1
+
+            await pilot.press("home")
+            await pilot.pause()
+            assert app._selected_artifact_index == 0
+
+    asyncio.run(_run())
+
+
+def test_rerun_last_command_confirms_and_replays_cached_intent(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._last_command_intent = CommandIntent(
+        action_id="verify_current_stage",
+        argv=("autolab", "verify"),
+        cwd=repo_root,
+        expected_writes=(".autolab/logs/verify.log",),
+        mutating=True,
+    )
+    started: list[CommandIntent] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._rerun_last_command())
+
+    assert started == [app._last_command_intent]
+
+
+def test_rerun_last_command_reports_when_no_history_is_available(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, *args, **kwargs: notices.append(str(message))
+    )
+
+    asyncio.run(app._rerun_last_command())
+
+    assert notices == ["No previous command to rerun."]
+
+
+def test_open_command_history_replays_selected_item(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._command_history.appendleft(
+        app_module.CommandHistoryItem(
+            intent=CommandIntent(
+                action_id="verify_current_stage",
+                argv=("autolab", "verify"),
+                cwd=repo_root,
+                expected_writes=(".autolab/logs/verify.log",),
+                mutating=True,
+            ),
+            command="autolab verify",
+            started_at=1.0,
+            started_at_text="10:00:00",
+            finished_at=2.0,
+            exit_code=0,
+        )
+    )
+
+    async def _push_screen_wait(_screen) -> app_module.CommandHistoryItem:
+        return app._command_history[0]
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    started: list[CommandIntent] = []
+
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._open_command_history())
+
+    assert started == [app._command_history[0].intent]
 
 
 def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
@@ -915,6 +1468,24 @@ def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
             rendered = str(status_running.render())
             assert "Idle | runs:" in rendered
             assert "missing:" in rendered
+
+    asyncio.run(_run())
+
+
+def test_home_shows_workflow_timeline_card(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            timeline = app.query_one("#home-stage-timeline", app_module.Static)
+            rendered = str(timeline.render())
+            assert "Workflow Timeline" in rendered
+            assert ">" in rendered
+            assert "[->]" in rendered
+            assert "design" in rendered
+            assert "blocked" not in rendered
 
     asyncio.run(_run())
 
@@ -1212,6 +1783,62 @@ def test_focus_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_command_history_screen_lists_and_replays_selection(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        results: list[object] = []
+        screen = app_module.CommandHistoryScreen(
+            history=(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=2.0,
+                    started_at_text="10:01:00",
+                    finished_at=3.0,
+                    exit_code=0,
+                ),
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="verify_current_stage",
+                        argv=("autolab", "verify"),
+                        cwd=repo_root,
+                        expected_writes=(".autolab/logs/verify.log",),
+                        mutating=True,
+                    ),
+                    command="autolab verify",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                ),
+            )
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.CommandHistoryScreen)
+            list_view = app.screen.query_one(
+                "#command-history-list", app_module.ListView
+            )
+            first_item = str(list_view.children[0].query_one(app_module.Label).render())
+            assert "autolab todo sync" in first_item
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(results[0], app_module.CommandHistoryItem)
+            assert results[0].intent.action_id == "verify_current_stage"
+
+    asyncio.run(_run())
+
+
 def test_experiment_create_modal_prefills_suggested_ids(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1310,7 +1937,10 @@ def test_run_details_include_artifact_presence_and_selection_counts(
                 {
                     "run_id": "run-1",
                     "status": "completed",
-                    "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+                    "timestamps": {
+                        "started_at": "2026-02-01T01:00:00Z",
+                        "completed_at": "2026-02-01T01:00:10Z",
+                    },
                 },
                 indent=2,
             )
@@ -1325,6 +1955,8 @@ def test_run_details_include_artifact_presence_and_selection_counts(
             details = app.query_one("#run-details", app_module.Static)
             rendered = str(details.render())
             assert "Selected: 1/1" in rendered
+            assert "Completion: finished" in rendered
+            assert "Duration: 10.0s" in rendered
             assert "Manifest: OK" in rendered
             assert "Metrics: MISS" in rendered
 
@@ -1498,6 +2130,117 @@ def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) ->
     asyncio.run(_run())
 
 
+def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_old",
+            started_at="2026-01-01T10:00:00Z",
+            status="completed",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_mid",
+            started_at="2026-01-02T11:00:00Z",
+            status="running",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_new",
+            started_at="2026-01-03T12:00:00Z",
+            status="failed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(240, 80)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f filter(off)" in str(hints.render())
+            assert "y sort(newest)" in str(hints.render())
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("run_new")
+            assert any("run_mid" in item for item in labels)
+            assert any("run_old" in item for item in labels)
+
+            await pilot.press("y")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "y sort(oldest)" in str(hints.render())
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("run_old")
+
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.press("r", "u", "n", "n", "i", "n", "g")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert len(labels) == 1
+            assert "run_mid" in labels[0]
+            assert "query='running'" in str(
+                app.query_one("#run-details", app_module.Static).render()
+            )
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            run_filter = app.query_one("#run-filter-input", app_module.Input)
+            assert run_filter.value == ""
+            assert "f filter(off)" in str(app.query_one("#key-hints", app_module.Static).render())
+            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            assert len(labels) == 3
+
+            await pilot.click("#run-filter-status")
+            await pilot.pause()
+            status_button = app.query_one("#run-filter-status", app_module.Button)
+            assert str(status_button.label) == "Status: running"
+            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            assert len(labels) == 1
+            assert "run_mid" in labels[0]
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            status_button = app.query_one("#run-filter-status", app_module.Button)
+            assert str(status_button.label) == "Status: all"
+
+    asyncio.run(_run())
+
+
+def test_runs_system_commands_include_filter_controls(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_completed",
+            started_at="2026-01-01T10:00:00Z",
+            status="completed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(240, 80)) as pilot:
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Filter" not in run_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Filter" in run_titles
+            assert "Cycle Runs sort order" in run_titles
+            assert "Cycle Runs Status Filter" in run_titles
+            assert "Clear Runs Filter" not in run_titles
+
+            await pilot.click("#run-filter-status")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Clear Runs Filter" in run_titles
+
+    asyncio.run(_run())
+
+
 def test_home_todos_card_shows_open_tasks(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1591,6 +2334,36 @@ def test_start_command_preserves_console_history(tmp_path: Path, monkeypatch) ->
     asyncio.run(_run())
 
 
+def test_stop_running_command_works_for_any_action(tmp_path: Path, monkeypatch) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    stopped: list[bool] = []
+    output: list[str] = []
+
+    app._running_intent = CommandIntent(
+        action_id="verify_current_stage",
+        argv=("autolab", "verify"),
+        cwd=tmp_path,
+        expected_writes=(),
+        mutating=True,
+    )
+
+    async def _fake_confirm(*_args, **_kwargs) -> bool:
+        return True
+
+    def _fake_stop() -> bool:
+        stopped.append(True)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_confirm)
+    monkeypatch.setattr(app._runner, "stop", _fake_stop)
+    monkeypatch.setattr(app, "_append_console", lambda text: output.append(text))
+
+    asyncio.run(app._stop_running_command())
+
+    assert stopped == [True]
+    assert any("stop requested for active command" in line for line in output)
+
+
 def test_start_command_preserves_prior_console_output(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1621,3 +2394,43 @@ def test_start_command_preserves_prior_console_output(
     assert lines[0] == "-" * 40
     assert lines[1].startswith("starting: ")
     assert started == [intent]
+
+
+def test_status_command_shows_running_then_last_result(tmp_path: Path, monkeypatch) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        monkeypatch.setattr(
+            app,
+            "call_from_thread",
+            lambda callback, *args, **kwargs: callback(*args, **kwargs),
+        )
+        monkeypatch.setattr(app._runner, "start", lambda _intent: None)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            status_command = app.query_one("#status-command", app_module.Static)
+            assert "Command: n/a" in str(status_command.render())
+
+            app._start_command(
+                CommandIntent(
+                    action_id="verify_current_stage",
+                    argv=("autolab", "verify"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=True,
+                )
+            )
+            await pilot.pause()
+            running_text = str(status_command.render())
+            assert "Command:" in running_text
+            assert "Last:" not in running_text
+
+            app._handle_runner_done(3, False)
+            await pilot.pause()
+            done_text = str(status_command.render())
+            assert "Last:" in done_text
+            assert "exit:3" in done_text
+
+    asyncio.run(_run())
