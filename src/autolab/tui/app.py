@@ -1672,6 +1672,7 @@ class AutolabCockpitApp(App[None]):
         ("t", "toggle_run_sort", "Sort Runs"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
+        ("n", "next_missing_artifact", "Next Missing"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("a", "toggle_auto_refresh", "Auto-refresh"),
         ("r", "refresh_snapshot", "Refresh"),
@@ -2001,6 +2002,7 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
+            parts.append("n next-missing")
             filter_state = "on" if self._files_missing_only else "off"
             parts.append(f"m missing-only({filter_state})")
             name_filter_state = "on" if self._artifact_filter_query else "off"
@@ -2151,6 +2153,11 @@ class AutolabCockpitApp(App[None]):
                 running.update(status)
                 if blocker_count or missing_required:
                     self._set_tone(running, "tone-warning")
+                elif (
+                    self._last_command_return_code is not None
+                    and self._last_command_return_code != 0
+                ):
+                    self._set_tone(running, "tone-danger")
                 else:
                     self._set_tone(running, "tone-success")
         else:
@@ -2774,7 +2781,7 @@ class AutolabCockpitApp(App[None]):
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
             "  (unlock + confirm required)\n"
-            "- Keys: Enter open viewer | / focus name filter"
+            "- Keys: Enter open viewer | n next missing | / focus name filter"
         )
         self._set_tone(context_widget, "tone-info")
 
@@ -2811,6 +2818,7 @@ class AutolabCockpitApp(App[None]):
             "- f: focus and filter runs by status (Runs view).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
+            "- v: Open selected run manifest from Runs view.\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- t: Toggle runs sort order (newest, oldest, status).\n"
             "- e: Open selected file in editor (Files view).\n"
@@ -2998,6 +3006,13 @@ class AutolabCockpitApp(App[None]):
                     self.action_open_selected_in_editor,
                 )
             )
+            commands.append(
+                SystemCommand(
+                    "Next missing artifact",
+                    "Jump to the next missing artifact in the file list.",
+                    self.action_next_missing_artifact,
+                )
+            )
             if self._artifact_filter_query:
                 commands.append(
                     SystemCommand(
@@ -3145,6 +3160,39 @@ class AutolabCockpitApp(App[None]):
             )
             return
         self.notify("Quick open is available in Home, Runs, and Files views.")
+
+    def action_open_selected_run_manifest(self) -> None:
+        if self._mode != "runs":
+            self.notify("Open run manifest is available in Runs view (2).")
+            return
+        self._start_ui_flow(
+            label="runs-open-manifest",
+            flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
+        )
+
+    def action_next_missing_artifact(self) -> None:
+        if self._mode != "files":
+            self.notify("Next missing artifact is available in Files view (3).")
+            return
+        if not self._current_artifacts:
+            self.notify("No files are currently listed.")
+            return
+        current_index = self._selected_artifact_index
+        next_missing_index: int | None = None
+        for offset in range(1, len(self._current_artifacts) + 1):
+            candidate = (current_index + offset) % len(self._current_artifacts)
+            if not self._current_artifacts[candidate].exists:
+                next_missing_index = candidate
+                break
+        if next_missing_index is None:
+            self.notify("No missing artifacts in this view.")
+            return
+        self._selected_artifact_index = next_missing_index
+        artifact_list = self.query_one("#artifact-list", ListView)
+        artifact_list.index = next_missing_index
+        self._update_files_context()
+        self._update_ui_chrome()
+        artifact_list.focus()
 
     def action_quick_secondary(self) -> None:
         if self._mode == "home":
