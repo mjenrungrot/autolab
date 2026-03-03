@@ -291,8 +291,6 @@ def test_snapshot_run_order_is_deterministic(tmp_path: Path) -> None:
     assert [item.run_id for item in first.runs] == ["run_b", "run_a"]
 
 
-
-
 def test_snapshot_loads_slurm_run_metadata(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"
@@ -322,6 +320,7 @@ def test_snapshot_loads_slurm_run_metadata(tmp_path: Path) -> None:
     assert run.host_mode == "slurm"
     assert run.job_id == "12345"
     assert run.sync_status == "pending"
+
 
 def test_snapshot_invalid_attempt_values_fallback_safely(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
