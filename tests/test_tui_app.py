@@ -619,6 +619,94 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
     asyncio.run(_run())
 
 
+def test_runs_status_filter_updates_list_and_selection_counts(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+
+        _write_run_manifest(repo_root, "run_ok", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run_failed", "2026-02-01T02:00:00Z")
+        _write_run_manifest(repo_root, "run_running", "2026-02-01T03:00:00Z")
+
+        manifest_dir = repo_root / "experiments" / "plan" / "iter1" / "runs"
+        for run_id, status in {
+            "run_failed": "failed",
+            "run_running": "running",
+            "run_ok": "completed",
+        }.items():
+            path = manifest_dir / run_id / "run_manifest.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["status"] = status
+            path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", ListView)
+            run_entries = _list_item_label_texts(run_list)
+            assert len(run_entries) >= 3
+            assert any("failed" in entry.lower() for entry in run_entries)
+            assert any("completed" in entry.lower() for entry in run_entries)
+
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.press(*"failed")
+            await pilot.pause()
+
+            filtered_runs = _list_item_label_texts(run_list)
+            assert all("failed" in entry.lower() for entry in filtered_runs) or any(
+                "no runs match status filter" in entry.lower() for entry in filtered_runs
+            )
+            assert "Run Details" in str(app.query_one("#run-details", app_module.Static).render())
+
+            selection = app.query_one("#status-selection", app_module.Static)
+            rendered_selection = str(selection.render())
+            assert "Runs: 1/" in rendered_selection
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            assert len(_list_item_label_texts(run_list)) >= 3
+
+            run_filter_touched = app._run_status_filter == ""
+            assert run_filter_touched is True
+
+    asyncio.run(_run())
+
+
+def test_system_commands_include_filter_actions_in_runs_and_console(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root, "run_failed", "2026-02-01T01:00:00Z", sync_status="failed"
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Status Filter" in run_titles
+            assert "Clear Runs Status Filter" not in run_titles
+
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.press(*"failed")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Clear Runs Status Filter" in run_titles
+
+            await pilot.press("4")
+            await pilot.pause()
+            console_titles = _system_command_titles(app)
+            assert "Toggle Console Error-only Filter" in console_titles
+
+    asyncio.run(_run())
+
+
 def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1507,3 +1595,73 @@ def test_start_command_preserves_prior_console_output(
     assert lines[0] == "-" * 40
     assert lines[1].startswith("starting: ")
     assert started == [intent]
+
+
+def test_console_error_filter_toggles_view_output_and_hides_non_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    app._mode = "console"
+
+    class _FakeLog:
+        def __init__(self) -> None:
+            self.lines: list[str] = []
+
+        def clear(self) -> None:
+            self.lines = []
+
+        def write(self, line: str) -> None:
+            self.lines.append(line)
+
+    fake_log = _FakeLog()
+    original_query_one = app.query_one
+
+    def _query_one(selector, *args, **kwargs):
+        if selector == "#console-log":
+            return fake_log
+        return original_query_one(selector, *args, **kwargs)
+
+    monkeypatch.setattr(app, "query_one", _query_one)
+
+    app._append_console("runner started")
+    app._append_console("error: failed stage precondition")
+    assert "runner started" in fake_log.lines[0]
+    assert any("error:" in line for line in fake_log.lines)
+
+    app._console_show_errors_only = True
+    app._append_console("still processing")
+    app._append_console("fatal: command crashed")
+    fake_log.clear()
+    app._render_console_tail()
+
+    rendered = "\n".join(fake_log.lines)
+    assert "error: failed stage precondition" in rendered
+    assert "fatal: command crashed" in rendered
+    assert "still processing" not in rendered
+    assert "runner started" not in rendered
+
+
+def test_open_artifact_viewer_shows_truncation_hint_for_large_text(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        path = repo_root / "big.txt"
+        path.write_text(
+            "x" * (AutolabCockpitApp._ARTIFACT_PREVIEW_MAX_CHARS + 100),
+            encoding="utf-8",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        captured: dict[str, str] = {}
+
+        async def _fake_open_text_viewer(
+            *, title: str, text: str, editor_path: Path | None, source_path: Path | None, render_hint
+        ) -> None:
+            captured["title"] = title
+            captured["text"] = text
+
+        app._open_text_viewer = _fake_open_text_viewer  # type: ignore[method-assign]
+        await app._open_artifact_viewer(path)
+        assert "truncated to first" in captured["text"]
+        assert captured["title"] == str(path)
+
+    asyncio.run(_run())
