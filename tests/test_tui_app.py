@@ -608,6 +608,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             files_titles = _system_command_titles(app)
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
+            assert "Cycle Files Source Filter" in files_titles
 
             await pilot.press("/")
             await pilot.pause()
@@ -615,6 +616,119 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+    asyncio.run(_run())
+
+
+def test_system_commands_are_contextual_for_runs_view(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-old",
+            started_at="2026-02-01T10:00:00Z",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-new",
+            started_at="2026-02-02T11:00:00Z",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            assert "Toggle Runs Sort Order" not in _system_command_titles(app)
+
+            await pilot.press("2")
+            await pilot.pause()
+            runs_titles = _system_command_titles(app)
+            assert "Toggle Runs Sort Order" in runs_titles
+
+    asyncio.run(_run())
+
+
+def test_runs_view_toggles_sort_order(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-older",
+            started_at="2026-02-01T10:00:00Z",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-newer",
+            started_at="2026-02-02T11:00:00Z",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels_before = _list_item_label_texts(run_list)
+            assert "run-newer" in labels_before[0]
+            assert "run-older" in labels_before[1]
+            sort_button = app.query_one("#run-sort-order", app_module.Button)
+            assert "Sort: Newest" in str(sort_button.label)
+
+            await pilot.press("t")
+            await pilot.pause()
+            labels_after = _list_item_label_texts(run_list)
+            assert "run-older" in labels_after[0]
+            assert "run-newer" in labels_after[1]
+            assert "Sort: Oldest" in str(sort_button.label)
+
+    asyncio.run(_run())
+
+
+def test_files_view_cycles_source_filter(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage = snapshot.current_stage
+
+        stage_artifacts = tuple(snapshot.artifacts_by_stage.get(stage, ()))
+        common_artifacts = snapshot.common_artifacts
+
+        stage_paths = {artifact.path for artifact in stage_artifacts}
+        common_paths = {artifact.path for artifact in common_artifacts}
+        all_paths = stage_paths | common_paths
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            source_button = app.query_one("#file-source-filter", app_module.Button)
+            context_widget = app.query_one("#files-context", app_module.Static)
+
+            assert "Source: All" in str(source_button.label)
+            assert "Source: all files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(all_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            context_widget = app.query_one("#files-context", app_module.Static)
+            assert "Source: Stage" in str(source_button.label)
+            assert "Source: stage files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(stage_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            context_widget = app.query_one("#files-context", app_module.Static)
+            assert "Source: Common" in str(source_button.label)
+            assert "Source: common files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(common_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            assert "Source: All" in str(source_button.label)
 
     asyncio.run(_run())
 
