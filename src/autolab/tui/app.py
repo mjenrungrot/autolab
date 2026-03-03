@@ -1758,6 +1758,14 @@ class AutolabCockpitApp(App[None]):
         "exception",
         "fatal",
     )
+    _RUN_PROBLEM_STATUSES = (
+        "failed",
+        "fail",
+        "error",
+        "timeout",
+        "timed_out",
+        "stopped",
+    )
 
     CSS = """
     Screen {
@@ -1825,7 +1833,7 @@ class AutolabCockpitApp(App[None]):
     }
 
     #status-console {
-      width: 16;
+      width: 28;
     }
 
     #status-command {
@@ -2025,6 +2033,10 @@ class AutolabCockpitApp(App[None]):
     #console-filter-input {
       width: 1fr;
     }
+
+    #console-follow {
+      width: 14;
+    }
     """
 
     BINDINGS = [
@@ -2064,6 +2076,8 @@ class AutolabCockpitApp(App[None]):
         ("c", "clear_console", "Clear Console"),
         ("shift+e", "toggle_console_error_filter", "Errors-only"),
         ("w", "toggle_console_wrap", "Wrap Console"),
+        ("ctrl+p", "toggle_console_follow", "Follow Console"),
+        ("b", "jump_to_problem_run", "Next Problem Run"),
         ("q", "quit", "Quit"),
     ]
 
@@ -2075,6 +2089,7 @@ class AutolabCockpitApp(App[None]):
         self._command_history: deque[CommandHistoryItem] = deque(maxlen=20)
         self._console_wrap = False
         self._console_show_errors_only = False
+        self._console_follow = True
         self._last_snapshot_refreshed_at: float | None = None
         self._armed = False
         self._run_status_filter = ""
@@ -2121,6 +2136,7 @@ class AutolabCockpitApp(App[None]):
         )
         self._active_history_item: CommandHistoryItem | None = None
         self._auto_refresh_enabled = False
+        self._console_filter_query = ""
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -2131,7 +2147,6 @@ class AutolabCockpitApp(App[None]):
         self._last_command_exit_code: int | None = None
         self._last_command_elapsed: str = ""
         self._last_command_label = None
-        self._console_filter_query = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -2264,6 +2279,7 @@ class AutolabCockpitApp(App[None]):
                         id="console-filter-input",
                     )
                     yield Button("Clear", id="console-filter-clear")
+                    yield Button("Follow", id="console-follow", variant="warning")
                 yield RichLog(
                     id="console-log",
                     markup=False,
@@ -2289,6 +2305,8 @@ class AutolabCockpitApp(App[None]):
         if isinstance(self.screen, ModalScreen):
             return
         if isinstance(self.focused, Input):
+            if event.key == "escape" and self._clear_focused_filter():
+                event.prevent_default()
             return
         mode_by_key = {
             "1": "home",
@@ -2337,9 +2355,9 @@ class AutolabCockpitApp(App[None]):
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
-        log = self.query_one("#console-log", RichLog)
-        if not self._passes_console_filters(line):
+        if not self._passes_console_filters(line) or not self._console_follow:
             return
+        log = self.query_one("#console-log", RichLog)
         log.write(line)
 
     def _passes_console_filters(self, line: str) -> bool:
@@ -2357,6 +2375,45 @@ class AutolabCockpitApp(App[None]):
         lines = tuple(line for line in lines if self._passes_console_filters(line))
         for line in lines:
             log.write(line)
+
+    def _clear_focused_filter(self) -> bool:
+        focused = self.focused
+        if not isinstance(focused, Input):
+            return False
+
+        if focused.id == "run-filter-input":
+            if not self._run_status_filter:
+                self._focus_mode_default()
+                return True
+            self.action_clear_runs_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "artifact-filter-input":
+            if not self._artifact_filter_query:
+                self._focus_mode_default()
+                return True
+            self.action_clear_files_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "console-filter-input":
+            if not self._console_filter_query:
+                self._focus_mode_default()
+                return True
+            self.action_clear_console_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "home-action-filter-input":
+            if not self._home_action_filter_query:
+                self._focus_mode_default()
+                return True
+            self._clear_home_action_filter()
+            self._focus_mode_default()
+            return True
+
+        return False
 
     def _is_console_error_line(self, line: str) -> bool:
         normalized = str(line).lower()
@@ -2413,6 +2470,7 @@ class AutolabCockpitApp(App[None]):
     def _key_hints_text(self) -> str:
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
+        follow_state = "on" if self._console_follow else "off"
         run_filter_state = "on" if self._run_status_filter else "off"
         console_filter_state = "on" if self._console_filter_query else "off"
         error_filter_state = "on" if self._console_show_errors_only else "off"
@@ -2436,12 +2494,14 @@ class AutolabCockpitApp(App[None]):
         ]
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
+            parts.append(f"ctrl+p follow({follow_state})")
             parts.append("c clear")
             parts.append(f"shift+e errors-only({error_filter_state})")
             parts.append(f"f filter({console_filter_state})")
         elif self._mode == "runs":
             parts.append("v manifest")
             parts.append("m metrics")
+            parts.append("b next-problem")
             parts.append(f"f filter({run_filter_state})")
             parts.append(f"y sort({self._run_sort_mode})")
         elif self._mode == "files":
@@ -2583,8 +2643,16 @@ class AutolabCockpitApp(App[None]):
             if "0/0" not in selection_label and "n/a" not in selection_label
             else "tone-muted",
         )
-        console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
-        self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
+        console.update(
+            f"Console: wrap {'on' if self._console_wrap else 'off'} "
+            f"| follow {'on' if self._console_follow else 'off'}"
+        )
+        self._set_tone(console, "tone-info" if self._console_follow else "tone-warning")
+        console_follow_button = self.query_one("#console-follow", Button)
+        console_follow_button.label = "Following" if self._console_follow else "Paused"
+        console_follow_button.variant = (
+            "primary" if self._console_follow else "default"
+        )
         run_sort_button = self.query_one("#run-sort-order", Button)
         run_sort_button.label = self._run_sort_button_label()
         key_hints.update(self._key_hints_text())
@@ -3462,6 +3530,7 @@ class AutolabCockpitApp(App[None]):
             "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
             "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
+            "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
@@ -3486,12 +3555,14 @@ class AutolabCockpitApp(App[None]):
             "- v/t/y: cycle run sorting order (recent, oldest, status).\n"
             "- w: toggle console line wrapping.\n"
             "- shift+e: toggle console error-only filter (Console view).\n"
+            "- ctrl+p: toggle console follow mode (Console view).\n"
             "- f: focus and filter in active mode (Runs/Files/Console/Home views).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- v: Open selected run manifest from Runs view.\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- t: Toggle runs sort order (newest, oldest, status).\n"
+            "- b: Jump to next problematic run when available (Runs view).\n"
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
@@ -3716,6 +3787,13 @@ class AutolabCockpitApp(App[None]):
                     self.action_jump_to_item,
                 )
             )
+            commands.append(
+                SystemCommand(
+                    "Jump to next problem run",
+                    "Jump to the next failed, error, timeout, or stopped run.",
+                    self.action_jump_to_problem_run,
+                )
+            )
         if self._mode == "files":
             commands.append(
                 SystemCommand(
@@ -3780,6 +3858,13 @@ class AutolabCockpitApp(App[None]):
                     "Toggle Console Error-only Filter",
                     "Show only console entries with error-like markers.",
                     self.action_toggle_console_error_filter,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Toggle Console Follow",
+                    "Pause or resume auto-following incoming console output.",
+                    self.action_toggle_console_follow,
                 )
             )
             commands.append(
@@ -3935,6 +4020,15 @@ class AutolabCockpitApp(App[None]):
         self.query_one("#console-log", RichLog).wrap = self._console_wrap
         self._update_ui_chrome()
 
+    def action_toggle_console_follow(self) -> None:
+        self._console_follow = not self._console_follow
+        if self._console_follow:
+            self._append_console("console follow enabled")
+            self._render_console_tail()
+        else:
+            self._console_tail.append(f"[{self._timestamp()}] console follow disabled")
+        self._update_ui_chrome()
+
     def action_stop_loop(self) -> None:
         self._start_ui_flow(
             label="stop-command", flow_factory=self._stop_running_command
@@ -4045,9 +4139,10 @@ class AutolabCockpitApp(App[None]):
                     self._selected_run_index = index
                     self._update_run_details()
                     self._update_ui_chrome()
-                    if self._mode == "runs":
-                        self.query_one("#run-list", ListView).index = index
+                    self.query_one("#run-list", ListView).index = index
                     break
+            else:
+                self.notify("Selected run no longer available.")
             return
 
         if not self._current_artifacts:
@@ -4069,6 +4164,37 @@ class AutolabCockpitApp(App[None]):
                 self._update_ui_chrome()
                 self.query_one("#artifact-list", ListView).index = index
                 break
+
+    def action_jump_to_problem_run(self) -> None:
+        if self._mode != "runs":
+            self.notify("Next problem run is available in Runs view (2).")
+            return
+        if not self._visible_runs:
+            self.notify("No runs available for jump.")
+            return
+        current_index = self._selected_run_index
+        run_count = len(self._visible_runs)
+        next_problem_index: int | None = None
+        for offset in range(1, run_count + 1):
+            candidate = (current_index + offset) % run_count
+            if (
+                str(self._visible_runs[candidate].status).strip().lower()
+                in self._RUN_PROBLEM_STATUSES
+            ):
+                next_problem_index = candidate
+                break
+        if next_problem_index is None:
+            self.notify("No failing/problematic runs found.")
+            return
+        self._selected_run_index = next_problem_index
+        self._update_run_details()
+        run_list = self.query_one("#run-list", ListView)
+        run_list.index = next_problem_index
+        self._focus_mode_default()
+        self._append_console(
+            f"jumped to problem run: {self._visible_runs[next_problem_index].run_id}"
+        )
+        self._update_ui_chrome()
 
     def action_open_selected_in_editor(self) -> None:
         if self._mode != "files":
@@ -4177,6 +4303,17 @@ class AutolabCockpitApp(App[None]):
         filter_input = self.query_one("#console-filter-input", Input)
         filter_input.value = ""
         self._render_console_tail()
+        self._update_ui_chrome()
+
+    def _clear_home_action_filter(self) -> None:
+        if not self._home_action_filter_query:
+            return
+        self._home_action_filter_query = ""
+        if self._mode == "home":
+            filter_input = self.query_one("#home-action-filter-input", Input)
+            filter_input.value = ""
+            if self._snapshot is not None:
+                self._populate_home_view()
         self._update_ui_chrome()
 
     def action_toggle_console_error_filter(self) -> None:
@@ -4377,6 +4514,10 @@ class AutolabCockpitApp(App[None]):
         elif event.input.id == "console-filter-input":
             self._console_filter_query = event.value.strip()
             self._render_console_tail()
+        elif event.input.id == "home-action-filter-input":
+            self._home_action_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_home_view()
         else:
             return
         self._update_ui_chrome()
@@ -4388,6 +4529,8 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#run-list", ListView).focus()
         elif event.input.id == "console-filter-input":
             self.query_one("#console-log", RichLog).focus()
+        elif event.input.id == "home-action-filter-input":
+            self.query_one("#home-action-list", ListView).focus()
         else:
             return
 
@@ -4417,11 +4560,17 @@ class AutolabCockpitApp(App[None]):
         if button_id == "run-filter-clear":
             self.action_clear_runs_filter()
             return
+        if button_id == "home-action-filter-clear":
+            self._clear_home_action_filter()
+            return
         if button_id == "run-filter-status":
             self.action_cycle_runs_status_filter()
             return
         if button_id == "run-sort-order":
             self.action_toggle_run_sort()
+            return
+        if button_id == "console-follow":
+            self.action_toggle_console_follow()
             return
         if button_id == "console-filter-clear":
             self.action_clear_console_filter()
