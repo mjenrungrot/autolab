@@ -1354,6 +1354,9 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             assert "m missing-only(off)" in str(hints.render())
             assert "Home/End list" in str(hints.render())
 
+            hints_text = str(hints.render())
+            assert hints_text.count("h history") == 1
+
     asyncio.run(_run())
 
 
@@ -2440,6 +2443,66 @@ def test_runs_system_commands_include_filter_controls(tmp_path: Path) -> None:
             await pilot.pause()
             run_titles = _system_command_titles(app)
             assert "Clear Runs Filter" in run_titles
+
+    asyncio.run(_run())
+
+
+def test_console_system_commands_include_error_filter_toggle(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            console_titles = _system_command_titles(app)
+            assert "Toggle Console Error-only Filter" in console_titles
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "shift+e errors-only(off)" in str(hints.render())
+
+            app.action_toggle_console_error_filter()
+            await pilot.pause()
+            assert app._console_show_errors_only is True
+            assert "shift+e errors-only(on)" in str(hints.render())
+            assert any(
+                "console errors-only on" in line for line in app._console_tail
+            )
+
+    asyncio.run(_run())
+
+
+def test_system_commands_deduplicate_redundant_entries(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        app._command_history.appendleft(
+            app_module.CommandHistoryItem(
+                intent=CommandIntent(
+                    action_id="todo_sync",
+                    argv=("autolab", "todo", "sync"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=False,
+                ),
+                command="autolab todo sync",
+                started_at=1.0,
+                started_at_text="10:00:00",
+                finished_at=2.0,
+                exit_code=0,
+            )
+        )
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            commands = app.get_system_commands(app.screen)
+            titles = [command.title for command in commands]
+            assert titles.count("Show command history") == 1
+            assert titles.count("Toggle auto-refresh") == 1
 
     asyncio.run(_run())
 

@@ -2062,6 +2062,7 @@ class AutolabCockpitApp(App[None]):
         ("s", "stop_loop", "Stop Loop"),
         ("k", "stop_running_command", "Stop Command"),
         ("c", "clear_console", "Clear Console"),
+        ("shift+e", "toggle_console_error_filter", "Errors-only"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
     ]
@@ -2425,7 +2426,6 @@ class AutolabCockpitApp(App[None]):
             f"a auto-refresh({auto_refresh_state})",
             "u lock",
             "x advanced",
-            "h history",
             "p prompt",
             "ctrl+k commands",
             "f filter",
@@ -3824,7 +3824,21 @@ class AutolabCockpitApp(App[None]):
                         self._clear_home_action_filter,
                     )
                 )
-        return commands
+        return self._deduplicate_system_commands(commands)
+
+    @staticmethod
+    def _deduplicate_system_commands(
+        commands: list[SystemCommand],
+    ) -> list[SystemCommand]:
+        deduped: list[SystemCommand] = []
+        seen: set[tuple[str, str]] = set()
+        for command in commands:
+            key = (command.title.casefold(), command.description.casefold())
+            if key in seen:
+                continue
+            deduped.append(command)
+            seen.add(key)
+        return deduped
 
     def action_show_home(self) -> None:
         self._switch_mode("home")
@@ -4162,6 +4176,15 @@ class AutolabCockpitApp(App[None]):
         self._console_filter_query = ""
         filter_input = self.query_one("#console-filter-input", Input)
         filter_input.value = ""
+        self._render_console_tail()
+        self._update_ui_chrome()
+
+    def action_toggle_console_error_filter(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._console_show_errors_only = not self._console_show_errors_only
+        state = "on" if self._console_show_errors_only else "off"
+        self._append_console(f"console errors-only {state}")
         self._render_console_tail()
         self._update_ui_chrome()
 
