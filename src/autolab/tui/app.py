@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 import shlex
 import time
@@ -1889,6 +1890,7 @@ class AutolabCockpitApp(App[None]):
     #home-stage-list,
     #home-blocker-card,
     #home-artifacts-card,
+    #home-verification-card,
     #home-todos-card,
     #help-text {
       border: round $surface;
@@ -2016,6 +2018,7 @@ class AutolabCockpitApp(App[None]):
         ("x", "toggle_advanced", "Advanced"),
         ("a", "toggle_auto_refresh", "Auto Refresh"),
         ("s", "stop_loop", "Stop Loop"),
+        ("k", "stop_running_command", "Stop Command"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -2435,6 +2438,7 @@ class AutolabCockpitApp(App[None]):
         console = self.query_one("#status-console", Static)
         command_status = self.query_one("#status-command", Static)
         running = self.query_one("#status-running", Static)
+        snapshot_status = self.query_one("#status-snapshot", Static)
         key_hints = self.query_one("#key-hints", Static)
 
         safety.update(
@@ -2502,6 +2506,21 @@ class AutolabCockpitApp(App[None]):
                 else "tone-danger"
             )
             self._set_tone(command_status, last_tone)
+
+        if self._snapshot is None or self._last_snapshot_refreshed_at is None:
+            snapshot_status.update("Snapshot: n/a")
+            self._set_tone(snapshot_status, "tone-warning")
+        else:
+            age_seconds = time.monotonic() - self._last_snapshot_refreshed_at
+            age_seconds = max(age_seconds, 0.0)
+            snapshot_status.update(f"Snapshot: {age_seconds:.1f}s ago")
+            if age_seconds < 10:
+                tone = "tone-success"
+            elif age_seconds < 60:
+                tone = "tone-warning"
+            else:
+                tone = "tone-danger"
+            self._set_tone(snapshot_status, tone)
 
         if self._running_intent is None:
             snapshot = self._snapshot
@@ -2690,6 +2709,10 @@ class AutolabCockpitApp(App[None]):
         blocker_widget.update("Blockers\nSnapshot refresh failed.")
         self._set_tone(blocker_widget, "tone-danger")
 
+        verification_widget = self.query_one("#home-verification-card", Static)
+        verification_widget.update("Verification\nUnavailable.")
+        self._set_tone(verification_widget, "tone-muted")
+
         artifacts_widget = self.query_one("#home-artifacts-card", Static)
         artifacts_widget.update("Artifacts\nUnavailable.")
         self._set_tone(artifacts_widget, "tone-warning")
@@ -2719,6 +2742,7 @@ class AutolabCockpitApp(App[None]):
             if not from_auto:
                 self.notify(f"Snapshot refresh failed: {exc}")
             return False
+        self._last_snapshot_refreshed_at = time.monotonic()
 
         self._populate_home_view()
         self._populate_run_list()
@@ -2830,6 +2854,32 @@ class AutolabCockpitApp(App[None]):
             blocker_widget,
             "tone-success" if snapshot.primary_blocker == "none" else "tone-danger",
         )
+
+        verification = snapshot.verification
+        verification_widget = self.query_one("#home-verification-card", Static)
+        if verification is None:
+            verification_widget.update(
+                "Verification\n- Result: not available.\n- Run autolab verify to capture results."
+            )
+            self._set_tone(verification_widget, "tone-muted")
+        else:
+            verification_lines = [
+                f"- Result: {'pass' if verification.passed else 'fail'}",
+                f"- Stage: {verification.stage_effective or snapshot.current_stage or '-'}",
+                f"- Message: {verification.message or 'no message'}",
+            ]
+            if verification.generated_at:
+                verification_lines.insert(1, f"- Updated: {verification.generated_at}")
+            if verification.failing_commands:
+                verification_lines.append("- Failing command(s):")
+                verification_lines.extend(
+                    f"  - {entry}" for entry in verification.failing_commands[:2]
+                )
+            verification_widget.update("Verification\n" + "\n".join(verification_lines))
+            self._set_tone(
+                verification_widget,
+                "tone-success" if verification.passed else "tone-danger",
+            )
 
         stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
         if stage_artifacts:
@@ -4277,6 +4327,14 @@ class AutolabCockpitApp(App[None]):
 
         if action_id == "open_state_history":
             await self._open_artifact_viewer(snapshot.state_path)
+            return
+
+        if action_id == "open_verification_result":
+            verification_path = snapshot.autolab_dir / "verification_result.json"
+            if not verification_path.exists():
+                self.notify("Verification result file is not available yet.")
+                return
+            await self._open_artifact_viewer(verification_path)
             return
 
         intent: CommandIntent | None = None

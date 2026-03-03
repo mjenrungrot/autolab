@@ -631,25 +631,40 @@ def _build_recommended_actions(
                 )
             )
 
-        if verification is None:
-            recommended.append(
-                RecommendedAction(
-                    action_id="verify_current_stage",
-                    reason="No verification result found for this workspace.",
-                )
+    if verification is None:
+        recommended.append(
+            RecommendedAction(
+                action_id="verify_current_stage",
+                reason="No verification result found for this workspace.",
             )
-        elif not verification.passed and verification.stage_effective == current_stage:
-            recommended.append(
-                RecommendedAction(
-                    action_id="verify_current_stage",
-                    reason="Verification is failing for this stage.",
-                )
+        )
+    elif not verification.passed and verification.stage_effective == current_stage:
+        recommended.append(
+            RecommendedAction(
+                action_id="verify_current_stage",
+                reason="Verification is failing for this stage.",
             )
+        )
 
-        if blockers:
+        if verification.failing_commands:
             recommended.append(
                 RecommendedAction(
-                    action_id="open_state_history",
+                    action_id="open_verification_result",
+                    reason="Open the verification result to inspect failing command details.",
+                )
+            )
+    else:
+        recommended.append(
+            RecommendedAction(
+                action_id="open_verification_result",
+                reason="Review the most recent verification output and metrics.",
+            )
+        )
+
+    if blockers:
+        recommended.append(
+            RecommendedAction(
+                action_id="open_state_history",
                     reason="Review state and blockers before retrying.",
                 )
             )
