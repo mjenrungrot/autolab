@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import time
 import re
@@ -1812,6 +1813,10 @@ class AutolabCockpitApp(App[None]):
       width: 24;
     }
 
+    #status-updated {
+      width: 16;
+    }
+
     #status-console {
       width: 16;
     }
@@ -2106,6 +2111,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Auto-refresh: off", id="status-autorefresh")
             yield Static("Selection: -", id="status-selection")
+            yield Static("Updated: n/a", id="status-updated")
             yield Static("Console wrap: off", id="status-console")
             yield Static("Command: n/a", id="status-command")
             yield Static("", id="status-running")
@@ -2353,6 +2359,7 @@ class AutolabCockpitApp(App[None]):
             f"a auto-refresh({auto_refresh_state})",
             "u lock",
             "x advanced",
+            "h history",
             "p prompt",
             "ctrl+k commands",
             "f filter",
@@ -2453,6 +2460,7 @@ class AutolabCockpitApp(App[None]):
         advanced = self.query_one("#status-advanced", Static)
         auto_refresh = self.query_one("#status-autorefresh", Static)
         selection = self.query_one("#status-selection", Static)
+        updated = self.query_one("#status-updated", Static)
         console = self.query_one("#status-console", Static)
         command_status = self.query_one("#status-command", Static)
         running = self.query_one("#status-running", Static)
@@ -2754,6 +2762,7 @@ class AutolabCockpitApp(App[None]):
             self._snapshot = None
             self._snapshot_refreshed_at = None
             self._armed = False
+            self._last_snapshot_refresh_at = None
             self._clear_snapshot_views()
             self._update_ui_chrome()
             self._append_console(f"snapshot refresh failed: {exc}")
@@ -3254,7 +3263,8 @@ class AutolabCockpitApp(App[None]):
                 f"- Source: {self._files_source_filter_label(self._files_source_filter)}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
                 f"- Name filter: {self._artifact_filter_query or 'none'}\n"
-                f"- {empty_text}"
+                f"- {empty_text}\n"
+                "- Tip: use / to focus filter, Esc to continue, and Clear button to reset."
             )
             self._set_tone(context_widget, "tone-muted")
             return
