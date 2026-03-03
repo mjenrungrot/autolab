@@ -127,6 +127,26 @@ class CommandIntent:
     mutating: bool
 
 
+@dataclass
+class CommandHistoryEntry:
+    action_id: str
+    action_label: str
+    command: str
+    started_at: float
+    return_code: int | None = None
+    duration: float | None = None
+    stopped: bool = False
+    status: Literal["running", "succeeded", "failed", "interrupted"] = "running"
+
+
+@dataclass(frozen=True)
+class CommandHistoryItem:
+    label: str
+    command: str
+    exit_code: int | None
+    duration_seconds: float | None
+
+
 @dataclass(frozen=True)
 class RecommendedAction:
     action_id: str
