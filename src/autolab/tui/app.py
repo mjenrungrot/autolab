@@ -1634,6 +1634,82 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
         self.dismiss((experiment_id, iteration_id, target_type))
 
 
+class CommandHistoryScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "cancel", "Close"), ("enter", "cancel", "Close")]
+
+    CSS = """
+    CommandHistoryScreen {
+      align: center middle;
+    }
+
+    #command-history-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #command-history-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #command-history-scroll {
+      height: 1fr;
+      border: round $surface;
+      padding: 0 1;
+    }
+
+    #command-history-button-row {
+      height: auto;
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, entries: tuple[CommandHistoryEntry, ...]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-dialog"):
+            yield Label(f"Recent Commands ({len(self._entries)})", id="command-history-title")
+            with VerticalScroll(id="command-history-scroll"):
+                if not self._entries:
+                    yield Label("No commands have been executed in this session yet.")
+                else:
+                    for entry in self._entries:
+                        yield Label(self._format_entry(entry))
+            with Horizontal(id="command-history-button-row"):
+                yield Button("Close", id="close")
+
+    def _format_entry(self, entry: CommandHistoryEntry) -> str:
+        status = {
+            "running": "RUNNING",
+            "succeeded": "OK",
+            "failed": "FAIL",
+            "interrupted": "INT",
+        }[entry.status]
+        duration = (
+            f"{entry.duration:.1f}s" if entry.duration is not None else "n/a"
+        )
+        exit_code = f"exit={entry.return_code}" if entry.return_code is not None else "exit=n/a"
+        return (
+            f"{status.upper():>10} | "
+            f"{entry.action_label} ({exit_code}, {duration})\n"
+            f"  {entry.command}"
+        )
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.action_cancel()
+            return
+
+
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
     _RUN_SORT_MODES: tuple[Literal["newest", "oldest", "status"], ...] = (
@@ -1944,6 +2020,7 @@ class AutolabCockpitApp(App[None]):
         self._last_snapshot_refresh_at: float | None = None
         self._run_sort_mode: Literal["newest", "oldest", "status"] = "newest"
         self._mode: ViewMode = "home"
+        self._snapshot_refreshed_at: float | None = None
         self._snapshot: CockpitSnapshot | None = None
         self._actions: tuple[ActionSpec, ...] = list_actions()
         self._actions_by_id: dict[str, ActionSpec] = {
@@ -2391,6 +2468,7 @@ class AutolabCockpitApp(App[None]):
                     f"blockers:{blocker_count} "
                     f"todos:{len(snapshot.todos)} "
                     f"missing:{missing_required}"
+                    f"{refresh_label}"
                 )
                 if last_summary:
                     status = f"{status} | {last_summary}"
@@ -2566,6 +2644,7 @@ class AutolabCockpitApp(App[None]):
             self._snapshot = load_cockpit_snapshot(self._state_path)
         except Exception as exc:
             self._snapshot = None
+            self._snapshot_refreshed_at = None
             self._armed = False
             self._clear_snapshot_views()
             self._update_ui_chrome()
@@ -3342,6 +3421,9 @@ class AutolabCockpitApp(App[None]):
 
     def action_show_help(self) -> None:
         self._switch_mode("help")
+
+    def action_show_command_history(self) -> None:
+        self.push_screen(CommandHistoryScreen(entries=tuple(self._command_history)))
 
     def action_show_previous_view(self) -> None:
         self._cycle_mode(-1)
@@ -4205,6 +4287,9 @@ class AutolabCockpitApp(App[None]):
             history_item.exit_code = 1
             history_item.finished_at = time.monotonic()
             self._append_console(f"failed to start command: {exc}")
+            history_entry.status = "failed"
+            history_entry.return_code = 1
+            history_entry.duration = time.monotonic() - history_entry.started_at
             self._running_intent = None
             self._running_command_started_at = None
             self._active_history_item = None
