@@ -1867,6 +1867,21 @@ class AutolabCockpitApp(App[None]):
       min-height: 8;
     }
 
+    #home-action-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #home-action-filter-label {
+      width: 16;
+      color: $text-muted;
+    }
+
+    #home-action-filter-input {
+      width: 1fr;
+    }
+
     #run-details,
     #run-filter-row,
     #files-context,
@@ -2104,6 +2119,18 @@ class AutolabCockpitApp(App[None]):
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
+                with Horizontal(id="home-action-filter-row"):
+                    yield Static(
+                        "Filter",
+                        id="home-action-filter-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        value=self._home_action_filter_query,
+                        placeholder="Filter recommended actions by text...",
+                        id="home-action-filter-input",
+                    )
+                    yield Button("Clear", id="home-action-filter-clear")
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
                 yield Static("Runs", classes="view-title")
@@ -2846,39 +2873,65 @@ class AutolabCockpitApp(App[None]):
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
         action_ids: list[str] = []
+        query = self._home_action_filter_query.strip().lower()
         for recommended in snapshot.recommended_actions:
             action = self._actions_by_id.get(recommended.action_id)
             if action is None:
                 continue
             if action.advanced and not self._show_advanced:
                 continue
+            action_label = action.user_label or action.label
+            action_help = action.help_text or action.description
+            if (
+                query
+                and query not in action_label.lower()
+                and query not in action_help.lower()
+                and query not in recommended.reason.lower()
+            ):
+                continue
             label = action.user_label or action.label
-            item_label = Label(f"{label}: {recommended.reason}")
-            item_label.add_class("tone-info")
+            tags = []
+            if action.requires_arm:
+                tags.append("mutating")
+            tags.append(f"risk:{action.risk_level}")
+            tag_text = f" [{' / '.join(tags)}]"
+            item_label = Label(f"{label}: {recommended.reason}{tag_text}")
+            item_label.add_class("tone-warning" if action.requires_arm else "tone-info")
             action_list.append(ListItem(item_label))
             action_ids.append(action.action_id)
 
         if not action_ids:
-            fallback_action_id = (
-                "open_rendered_prompt"
-                if snapshot.render_preview.status == "ok"
-                else "open_stage_prompt"
-            )
-            fallback_text = (
-                "Open rendered prompt: preview what will run next."
-                if fallback_action_id == "open_rendered_prompt"
-                else "Open stage prompt template."
-            )
-            item_label = Label(fallback_text)
-            item_label.add_class("tone-info")
-            action_list.append(ListItem(item_label))
-            action_ids.append(fallback_action_id)
+            if query:
+                item_label = Label(
+                    f"No matching recommended actions for '{self._home_action_filter_query}'."
+                )
+                item_label.add_class("tone-warning")
+                action_list.append(ListItem(item_label))
+                action_ids = ()
+            else:
+                fallback_action_id = (
+                    "open_rendered_prompt"
+                    if snapshot.render_preview.status == "ok"
+                    else "open_stage_prompt"
+                )
+                fallback_text = (
+                    "Open rendered prompt: preview what will run next."
+                    if fallback_action_id == "open_rendered_prompt"
+                    else "Open stage prompt template."
+                )
+                item_label = Label(fallback_text)
+                item_label.add_class("tone-info")
+                action_list.append(ListItem(item_label))
+                action_ids.append(fallback_action_id)
 
         self._home_action_ids = tuple(action_ids)
-        self._home_action_index = min(
-            self._home_action_index, len(self._home_action_ids) - 1
-        )
-        action_list.index = self._home_action_index
+        if self._home_action_ids:
+            self._home_action_index = min(
+                self._home_action_index, len(self._home_action_ids) - 1
+            )
+            action_list.index = self._home_action_index
+        else:
+            self._home_action_index = 0
 
     def _populate_run_list(self, *, preserve_selected_run_id: str | None = None) -> None:
         snapshot = self._snapshot
@@ -3015,6 +3068,11 @@ class AutolabCockpitApp(App[None]):
         run_count = len(self._visible_runs)
         total_count = len(snapshot.runs) if snapshot is not None else run_count
         details_widget = self.query_one("#run-details", Static)
+        snapshot_block = f"sort={self._run_sort_mode} | "
+        if snapshot is not None:
+            snapshot_block = (
+                f"sort={self._run_sort_mode} | total={len(snapshot.runs)} | "
+            )
         details_widget.update(
             "Run Details\n"
             f"- Selected: {selected_index}/{run_count}\n"
@@ -3446,6 +3504,22 @@ class AutolabCockpitApp(App[None]):
                     self.action_stop_loop,
                 )
             )
+        if self._mode == "home":
+            commands.append(
+                SystemCommand(
+                    "Focus Home Action Filter",
+                    "Filter recommended actions by text.",
+                    self.action_focus_home_action_filter,
+                )
+            )
+            if self._home_action_filter_query:
+                commands.append(
+                    SystemCommand(
+                        "Clear Home Action Filter",
+                        "Reset the home action filter query.",
+                        self._clear_home_action_filter,
+                    )
+                )
         return commands
 
     def action_show_home(self) -> None:
