@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-import time
 import re
 import shlex
 import time
@@ -10,7 +8,6 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -166,6 +163,15 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
       min-height: 8;
     }
 
+    #command-history-filter-row {
+      height: auto;
+      margin-bottom: 1;
+    }
+
+    #command-history-filter {
+      width: 1fr;
+    }
+
     #command-history-detail {
       margin-top: 1;
       color: $text-muted;
@@ -180,10 +186,19 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
     def __init__(self, *, history: tuple[CommandHistoryItem, ...]) -> None:
         super().__init__()
         self._history = history
+        self._filtered_history = history
+        self._last_query = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-dialog"):
             yield Label("Command History", id="command-history-title")
+            with Horizontal(id="command-history-filter-row"):
+                yield Input(
+                    value="",
+                    placeholder="Filter by command or label...",
+                    id="command-history-filter",
+                )
+                yield Button("Clear", id="command-history-filter-clear")
             yield ListView(id="command-history-list")
             yield Static("", id="command-history-detail", markup=False)
             with Horizontal(id="command-history-buttons"):
@@ -198,8 +213,7 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             return
         list_view = self.query_one("#command-history-list", ListView)
         list_view.clear()
-        for item in self._history:
-            list_view.append(ListItem(Label(self._format_history_line(item))))
+        self._refresh_history_matches("")
         list_view.index = 0
         list_view.focus()
         self._update_detail()
@@ -208,19 +222,70 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         self.dismiss(None)
 
     def action_replay(self) -> None:
-        self.dismiss(self._selected_item())
+        self._replay_selected()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "command-history-close":
             self.dismiss(None)
             return
         if event.button.id == "command-history-replay":
-            self.dismiss(self._selected_item())
+            self._replay_selected()
+            return
+        if event.button.id == "command-history-filter-clear":
+            self.query_one("#command-history-filter", Input).value = ""
+            self._refresh_history_matches("")
             return
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id != "command-history-list":
+            return
+        self._update_detail()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if event.list_view.id == "command-history-list":
-            self.dismiss(self._selected_item())
+        if event.list_view.id != "command-history-list":
+            return
+        self._replay_selected()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-history-filter":
+            return
+        self._refresh_history_matches(event.value)
+
+    def _refresh_history_matches(self, query: str) -> None:
+        normalized_query = str(query).strip().lower()
+        if self._last_query == normalized_query:
+            return
+        self._last_query = normalized_query
+        if normalized_query:
+            self._filtered_history = tuple(
+                item
+                for item in self._history
+                if normalized_query in str(item.command).lower()
+                or normalized_query in str(item.intent.action_id).lower()
+            )
+        else:
+            self._filtered_history = self._history
+
+        list_view = self.query_one("#command-history-list", ListView)
+        list_view.clear()
+        if not self._filtered_history:
+            list_view.append(
+                ListItem(
+                    Label(f"(No command history matches {query!r})", classes="tone-muted")
+                )
+            )
+            self._update_detail()
+            return
+        for item in self._filtered_history:
+            list_view.append(ListItem(Label(self._format_history_line(item))))
+        list_view.index = 0
+        self._update_detail()
+
+    def _replay_selected(self) -> None:
+        selected = self._selected_item()
+        if selected is None:
+            return
+        self.dismiss(selected)
 
     @staticmethod
     def _format_status(item: CommandHistoryItem) -> str:
@@ -247,12 +312,12 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
 
     def _selected_item(self) -> CommandHistoryItem | None:
         list_view = self.query_one("#command-history-list", ListView)
-        if not self._history:
+        if not self._filtered_history:
             return None
         index = list_view.index
-        if index is None or index < 0 or index >= len(self._history):
+        if index is None or index < 0 or index >= len(self._filtered_history):
             return None
-        return self._history[index]
+        return self._filtered_history[index]
 
     def _update_detail(self) -> None:
         item = self._selected_item()
@@ -266,10 +331,6 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             f"Exit: {item.exit_code if item.exit_code is not None else '-'}\n"
             f"Stopped: {'yes' if item.stopped else 'no'}"
         )
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        del event
-        self._update_detail()
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
@@ -1954,6 +2015,16 @@ class AutolabCockpitApp(App[None]):
       height: 1fr;
       border: round $surface;
     }
+
+    #console-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #console-filter-input {
+      width: 1fr;
+    }
     """
 
     BINDINGS = [
@@ -2059,6 +2130,7 @@ class AutolabCockpitApp(App[None]):
         self._last_command_exit_code: int | None = None
         self._last_command_elapsed: str = ""
         self._last_command_label = None
+        self._console_filter_query = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -2184,6 +2256,13 @@ class AutolabCockpitApp(App[None]):
                     )
             with Vertical(id="console-view", classes="view-panel"):
                 yield Static("Console", classes="view-title")
+                with Horizontal(id="console-filter-row"):
+                    yield Input(
+                        value=self._console_filter_query,
+                        placeholder="Filter console output... (empty = no filter)",
+                        id="console-filter-input",
+                    )
+                    yield Button("Clear", id="console-filter-clear")
                 yield RichLog(
                     id="console-log",
                     markup=False,
@@ -2204,10 +2283,11 @@ class AutolabCockpitApp(App[None]):
         self._update_help_text()
         self._update_ui_chrome()
         self._switch_mode("home")
-        self.set_interval(_AUTO_REFRESH_INTERVAL_SECONDS, self._run_auto_refresh)
 
     def on_key(self, event: events.Key) -> None:
         if isinstance(self.screen, ModalScreen):
+            return
+        if isinstance(self.focused, Input):
             return
         mode_by_key = {
             "1": "home",
@@ -2257,16 +2337,23 @@ class AutolabCockpitApp(App[None]):
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
         log = self.query_one("#console-log", RichLog)
-        if self._console_show_errors_only and not self._is_console_error_line(line):
+        if not self._passes_console_filters(line):
             return
         log.write(line)
+
+    def _passes_console_filters(self, line: str) -> bool:
+        if self._console_show_errors_only and not self._is_console_error_line(line):
+            return False
+        query = self._console_filter_query.strip().lower()
+        if not query:
+            return True
+        return query in str(line).lower()
 
     def _render_console_tail(self) -> None:
         log = self.query_one("#console-log", RichLog)
         log.clear()
         lines = self._console_tail
-        if self._console_show_errors_only:
-            lines = tuple(line for line in lines if self._is_console_error_line(line))
+        lines = tuple(line for line in lines if self._passes_console_filters(line))
         for line in lines:
             log.write(line)
 
@@ -2326,6 +2413,7 @@ class AutolabCockpitApp(App[None]):
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
         run_filter_state = "on" if self._run_status_filter else "off"
+        console_filter_state = "on" if self._console_filter_query else "off"
         error_filter_state = "on" if self._console_show_errors_only else "off"
         parts = [
             "1-5 view",
@@ -2350,6 +2438,7 @@ class AutolabCockpitApp(App[None]):
             parts.append(f"w wrap({wrap_state})")
             parts.append("c clear")
             parts.append(f"shift+e errors-only({error_filter_state})")
+            parts.append(f"f filter({console_filter_state})")
         elif self._mode == "runs":
             parts.append("v manifest")
             parts.append("m metrics")
@@ -2604,6 +2693,9 @@ class AutolabCockpitApp(App[None]):
         run_filter_clear = self.query_one("#run-filter-clear", Button)
         run_filter_clear.disabled = not bool(self._run_status_filter)
         run_filter_clear.variant = "primary" if self._run_status_filter else "default"
+        console_filter_clear = self.query_one("#console-filter-clear", Button)
+        console_filter_clear.disabled = not bool(self._console_filter_query)
+        console_filter_clear.variant = "primary" if self._console_filter_query else "default"
         run_status_button = self.query_one("#run-filter-status", Button)
         run_status_value = self._run_status_filter.strip().lower()
         run_status_button.label = (
@@ -3371,10 +3463,11 @@ class AutolabCockpitApp(App[None]):
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
             "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
+            "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
-            "- Runs: t toggles newest/oldest sort.\n"
+            "- Runs: t/y toggles newest/oldest sort.\n"
             "- Files: v cycles all/stage/common source.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -3390,10 +3483,10 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
-            "- v: cycle run sorting order (recent, oldest, status).\n"
+            "- v/t/y: cycle run sorting order (recent, oldest, status).\n"
             "- w: toggle console line wrapping.\n"
             "- shift+e: toggle console error-only filter (Console view).\n"
-            "- f: focus and filter runs by status (Runs view).\n"
+            "- f: focus and filter in active mode (Runs/Files/Console/Home views).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- v: Open selected run manifest from Runs view.\n"
@@ -3689,6 +3782,21 @@ class AutolabCockpitApp(App[None]):
                     self.action_toggle_console_error_filter,
                 )
             )
+            commands.append(
+                SystemCommand(
+                    "Focus Console Filter",
+                    "Focus the console output text filter.",
+                    self.action_focus_mode_filter,
+                )
+            )
+            if self._console_filter_query:
+                commands.append(
+                    SystemCommand(
+                        "Clear Console Filter",
+                        "Clear the console output text filter.",
+                        self.action_clear_console_filter,
+                    )
+                )
         if (
             self._running_intent is not None
             and self._running_intent.action_id == "run_loop"
@@ -4031,11 +4139,31 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_focus_mode_filter(self) -> None:
+        if self._mode == "home":
+            self.action_focus_home_action_filter()
+            return
         if self._mode == "files":
             self.action_cycle_file_source_filter()
             self.action_focus_files_filter()
             return
+        if self._mode == "runs":
+            self.action_focus_files_filter()
+            return
+        if self._mode == "console":
+            filter_input = self.query_one("#console-filter-input", Input)
+            filter_input.focus()
+            filter_input.cursor_position = len(filter_input.value)
+            return
         self.action_focus_files_filter()
+
+    def action_clear_console_filter(self) -> None:
+        if not self._console_filter_query:
+            return
+        self._console_filter_query = ""
+        filter_input = self.query_one("#console-filter-input", Input)
+        filter_input.value = ""
+        self._render_console_tail()
+        self._update_ui_chrome()
 
     def action_focus_home_action_filter(self) -> None:
         if isinstance(self.screen, ModalScreen):
@@ -4223,6 +4351,9 @@ class AutolabCockpitApp(App[None]):
             self._run_status_filter = event.value.strip()
             if self._snapshot is not None:
                 self._populate_run_list()
+        elif event.input.id == "console-filter-input":
+            self._console_filter_query = event.value.strip()
+            self._render_console_tail()
         else:
             return
         self._update_ui_chrome()
@@ -4232,6 +4363,8 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#artifact-list", ListView).focus()
         elif event.input.id == "run-filter-input":
             self.query_one("#run-list", ListView).focus()
+        elif event.input.id == "console-filter-input":
+            self.query_one("#console-log", RichLog).focus()
         else:
             return
 
@@ -4266,6 +4399,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "run-sort-order":
             self.action_toggle_run_sort()
+            return
+        if button_id == "console-filter-clear":
+            self.action_clear_console_filter()
             return
         if button_id in {"file-cycle-source-scope", "file-source-filter"}:
             self.action_cycle_file_source_filter()
