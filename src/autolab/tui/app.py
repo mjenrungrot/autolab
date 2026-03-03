@@ -2032,6 +2032,7 @@ class AutolabCockpitApp(App[None]):
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
         self._command_history: deque[CommandHistoryEntry] = deque(maxlen=20)
         self._console_wrap = False
+        self._last_snapshot_refreshed_at: float | None = None
         self._armed = False
         self._run_status_filter = ""
         self._show_advanced = False
@@ -2746,6 +2747,8 @@ class AutolabCockpitApp(App[None]):
             return False
         self._last_snapshot_refreshed_at = time.monotonic()
 
+        self._last_snapshot_refreshed_at = time.monotonic()
+
         self._populate_home_view()
         self._populate_run_list()
         self._populate_artifact_list()
@@ -3319,6 +3322,7 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
+            "- v: cycle run sorting order (recent, oldest, status).\n"
             "- w: toggle console line wrapping.\n"
             "- shift+e: toggle console error-only filter (Console view).\n"
             "- f: focus and filter runs by status (Runs view).\n"
