@@ -219,10 +219,22 @@ def _load_runs(iteration_dir: Path | None) -> tuple[RunItem, ...]:
         started_at = str(timestamps.get("started_at", "")).strip()
         completed_at = str(timestamps.get("completed_at", "")).strip()
         status = str(payload.get("status", "")).strip()
+        host_mode = (
+            str(payload.get("host_mode", "")).strip()
+            or str(payload.get("launch_mode", "")).strip()
+            or "unknown"
+        )
+        sync_payload = payload.get("artifact_sync_to_local", {})
+        sync_status = ""
+        if isinstance(sync_payload, dict):
+            sync_status = str(sync_payload.get("status", "")).strip()
+        job_id = str(payload.get("job_id", "")).strip()
+        if not job_id:
+            nested_slurm = payload.get("slurm", {})
+            if isinstance(nested_slurm, dict):
+                job_id = str(nested_slurm.get("job_id", "")).strip()
         if not status:
-            sync_payload = payload.get("artifact_sync_to_local", {})
-            if isinstance(sync_payload, dict):
-                status = str(sync_payload.get("status", "")).strip()
+            status = sync_status
         if not status:
             status = "unknown"
         metrics_path = manifest_path.parent / "metrics.json"
@@ -230,6 +242,9 @@ def _load_runs(iteration_dir: Path | None) -> tuple[RunItem, ...]:
             RunItem(
                 run_id=run_id,
                 status=status,
+                host_mode=host_mode,
+                job_id=job_id,
+                sync_status=sync_status,
                 started_at=started_at,
                 completed_at=completed_at,
                 manifest_path=manifest_path,
