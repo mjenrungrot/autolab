@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import re
 import shlex
@@ -59,6 +60,104 @@ from autolab.tui.snapshot import (
     load_cockpit_snapshot,
     resolve_stage_prompt_path,
 )
+
+
+@dataclass
+class CommandHistoryItem:
+    action_id: str
+    label: str
+    command: str
+    started_at: float
+    started_monotonic: float
+    duration_seconds: float | None = None
+    exit_code: int | None = None
+    stopped: bool = False
+
+
+class CommandHistoryScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "cancel", "Close")]
+
+    CSS = """
+    CommandHistoryScreen {
+      align: center middle;
+    }
+
+    #command-history-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #command-history-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #command-history-content {
+      height: 1fr;
+      border: round $surface;
+      padding: 0 1;
+    }
+
+    #command-history-footer {
+      align-horizontal: right;
+      margin-top: 1;
+    }
+    """
+
+    def __init__(self, *, entries: tuple[CommandHistoryItem, ...]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def _format_history_entry(self, entry: CommandHistoryItem) -> str:
+        started = datetime.fromtimestamp(entry.started_at).strftime("%H:%M:%S")
+        if entry.exit_code is None:
+            status = "RUN"
+            duration = "running"
+        elif entry.stopped:
+            status = "STOP"
+            duration = (
+                f"{entry.duration_seconds:.1f}s" if entry.duration_seconds else "n/a"
+            )
+        elif entry.exit_code == 0:
+            status = "OK"
+            duration = (
+                f"{entry.duration_seconds:.1f}s" if entry.duration_seconds else "n/a"
+            )
+        else:
+            status = f"ERR {entry.exit_code}"
+            duration = (
+                f"{entry.duration_seconds:.1f}s" if entry.duration_seconds else "n/a"
+            )
+        return f"{started} [{status}] {duration:>7} | {entry.label} | {entry.command}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-dialog"):
+            yield Label("Command History", id="command-history-title")
+            yield Static(
+                "Recent cockpit command executions (newest first).",
+                markup=False,
+            )
+            history_items = [self._format_history_entry(item) for item in self._entries]
+            content = (
+                "\n".join(history_items)
+                if history_items
+                else "(No commands have run in this session yet.)"
+            )
+            yield Static(content, id="command-history-content", markup=False)
+            with Horizontal(id="command-history-footer"):
+                yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        self.query_one("#close", Button).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
 
 
 class UnlockSafetyScreen(ModalScreen[bool]):
@@ -1296,6 +1395,10 @@ class AutolabCockpitApp(App[None]):
       width: 24;
     }
 
+    #status-updated {
+      width: 16;
+    }
+
     #status-console {
       width: 16;
     }
@@ -1438,7 +1541,8 @@ class AutolabCockpitApp(App[None]):
         ("r", "refresh_snapshot", "Refresh"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
-        ("s", "stop_loop", "Stop Loop"),
+        ("s", "stop_command", "Stop command"),
+        ("h", "show_command_history", "History"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -1469,6 +1573,8 @@ class AutolabCockpitApp(App[None]):
         self._missing_artifacts_count = 0
         self._files_missing_only = False
         self._artifact_filter_query = ""
+        self._command_history: deque[CommandHistoryItem] = deque(maxlen=40)
+        self._last_snapshot_refresh_at: float | None = None
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1482,6 +1588,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Selection: -", id="status-selection")
+            yield Static("Updated: n/a", id="status-updated")
             yield Static("Console wrap: off", id="status-console")
             yield Static("", id="status-running")
         yield Static(
@@ -1636,6 +1743,7 @@ class AutolabCockpitApp(App[None]):
             "o open",
             "u lock",
             "x advanced",
+            "h history",
             "p prompt",
             "ctrl+k commands",
             "r refresh",
@@ -1658,11 +1766,8 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
-            parts.append("s stop loop")
+        if self._running_intent is not None:
+            parts.append("s stop command")
         return "Keys: " + " | ".join(parts)
 
     def _selection_status_label(self) -> str:
@@ -1686,11 +1791,19 @@ class AutolabCockpitApp(App[None]):
         position = min(max(index, 0), total - 1) + 1
         return f"{prefix}: {position}/{total}"
 
+    def _action_label(self, action_id: str) -> str:
+        action = self._actions_by_id.get(action_id)
+        if action is not None and action.user_label:
+            return action.user_label
+        label = action_id.replace("_", " ").replace("-", " ").strip()
+        return label or "command"
+
     def _update_ui_chrome(self) -> None:
         safety = self.query_one("#status-safety", Static)
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
         selection = self.query_one("#status-selection", Static)
+        updated = self.query_one("#status-updated", Static)
         console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
         key_hints = self.query_one("#key-hints", Static)
@@ -1714,6 +1827,14 @@ class AutolabCockpitApp(App[None]):
         )
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
+        if self._last_snapshot_refresh_at is None:
+            updated.update("Updated: n/a")
+            self._set_tone(updated, "tone-muted")
+        else:
+            refresh_age = time.monotonic() - self._last_snapshot_refresh_at
+            updated.update(f"Updated: {refresh_age:0.1f}s ago")
+            tone = "tone-info" if refresh_age <= 10.0 else "tone-warning"
+            self._set_tone(updated, tone)
         key_hints.update(self._key_hints_text())
 
         if self._running_intent is None:
@@ -1882,6 +2003,7 @@ class AutolabCockpitApp(App[None]):
         except Exception as exc:
             self._snapshot = None
             self._armed = False
+            self._last_snapshot_refresh_at = None
             self._clear_snapshot_views()
             self._update_ui_chrome()
             self._append_console(f"snapshot refresh failed: {exc}")
@@ -1891,6 +2013,7 @@ class AutolabCockpitApp(App[None]):
         self._populate_home_view()
         self._populate_run_list()
         self._populate_artifact_list()
+        self._last_snapshot_refresh_at = time.monotonic()
         self._update_ui_chrome()
         return True
 
@@ -2070,7 +2193,9 @@ class AutolabCockpitApp(App[None]):
             self._selected_run_index = 0
             details_widget = self.query_one("#run-details", Static)
             details_widget.update(
-                "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
+                "Run Details\nNo runs available yet.\n"
+                "Run one transition to create run artifacts.\n"
+                "Tip: use Enter in Home for run_once when ready."
             )
             self._set_tone(details_widget, "tone-muted")
             return
@@ -2178,7 +2303,8 @@ class AutolabCockpitApp(App[None]):
                 f"- Stage: {stage}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
                 f"- Name filter: {self._artifact_filter_query or 'none'}\n"
-                f"- {empty_text}"
+                f"- {empty_text}\n"
+                "- Tip: use / to focus filter, Esc to continue, and Clear button to reset."
             )
             self._set_tone(context_widget, "tone-muted")
             return
@@ -2233,7 +2359,7 @@ class AutolabCockpitApp(App[None]):
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: h command history, r refresh, s stop active command, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2353,6 +2479,13 @@ class AutolabCockpitApp(App[None]):
                     self.action_quick_secondary,
                 )
             )
+        commands.append(
+            SystemCommand(
+                "Show command history",
+                "Open recent cockpit command executions.",
+                self.action_show_command_history,
+            )
+        )
         if self._mode == "home" and self._home_action_ids:
             index = min(self._home_action_index, len(self._home_action_ids) - 1)
             action_id = self._home_action_ids[index]
@@ -2396,15 +2529,12 @@ class AutolabCockpitApp(App[None]):
                         self.action_clear_files_filter,
                     )
                 )
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
+        if self._running_intent is not None:
             commands.append(
                 SystemCommand(
-                    "Stop active loop",
-                    "Request a graceful stop for the active loop command.",
-                    self.action_stop_loop,
+                    "Stop active command",
+                    "Request a graceful stop for the active command.",
+                    self.action_stop_command,
                 )
             )
         return commands
@@ -2476,8 +2606,18 @@ class AutolabCockpitApp(App[None]):
         self.query_one("#console-log", RichLog).wrap = self._console_wrap
         self._update_ui_chrome()
 
-    def action_stop_loop(self) -> None:
-        self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+    def action_show_command_history(self) -> None:
+        self._start_ui_flow(
+            label="show-command-history", flow_factory=self._show_command_history
+        )
+
+    def action_stop_command(self) -> None:
+        self._start_ui_flow(label="stop-command", flow_factory=self._stop_running_command)
+
+    async def _show_command_history(self) -> None:
+        await self.push_screen_wait(
+            CommandHistoryScreen(entries=tuple(self._command_history))
+        )
 
     def action_quick_open(self) -> None:
         if self._mode == "home":
@@ -2977,6 +3117,26 @@ class AutolabCockpitApp(App[None]):
         ):
             self._start_command(intent)
 
+    def _mark_command_start(self, intent: CommandIntent) -> None:
+        self._command_history.appendleft(
+            CommandHistoryItem(
+                action_id=intent.action_id,
+                label=self._action_label(intent.action_id),
+                command=shlex.join(intent.argv),
+                started_at=time.time(),
+                started_monotonic=time.monotonic(),
+            )
+        )
+
+    def _mark_command_complete(self, return_code: int, stopped: bool) -> None:
+        for entry in self._command_history:
+            if entry.exit_code is not None:
+                continue
+            entry.exit_code = return_code
+            entry.duration_seconds = time.monotonic() - entry.started_monotonic
+            entry.stopped = stopped
+            return
+
     def _start_command(self, intent: CommandIntent) -> None:
         if self._running_intent is not None:
             self.notify("A command is already running.")
@@ -2985,12 +3145,14 @@ class AutolabCockpitApp(App[None]):
             self._append_console("-" * 40)
         command = shlex.join(intent.argv)
         self._append_console(f"starting: {command}")
+        self._mark_command_start(intent)
         self._running_intent = intent
         self._update_ui_chrome()
         try:
             self._runner.start(intent)
         except Exception as exc:
             self._append_console(f"failed to start command: {exc}")
+            self._mark_command_complete(return_code=1, stopped=False)
             self._running_intent = None
             self._update_ui_chrome()
 
@@ -3006,6 +3168,7 @@ class AutolabCockpitApp(App[None]):
             if stopped:
                 self._append_console("process interrupted")
             self._append_console(f"process exit code: {return_code}")
+            self._mark_command_complete(return_code, stopped)
             self._running_intent = None
             if intent is not None and intent.mutating:
                 self._armed = False
@@ -3017,33 +3180,31 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    async def _stop_loop(self) -> None:
+    async def _stop_running_command(self) -> None:
         intent = self._running_intent
-        if intent is None or intent.action_id != "run_loop":
-            self.notify("No loop command is running.")
+        if intent is None:
+            self.notify("No command is running.")
             return
-
-        stop_intent = CommandIntent(
-            action_id="stop_loop",
-            argv=("autolab", "tui", "--stop-loop"),
-            cwd=intent.cwd,
-            expected_writes=(),
-            mutating=False,
+        summary = (
+            "Stop loop command"
+            if intent.action_id == "run_loop"
+            else "Stop active command"
         )
+        command = shlex.join(intent.argv)
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
-                title="Stop active loop?",
-                summary="This requests a graceful interrupt for the active loop process.",
-                command=shlex.join(stop_intent.argv),
-                cwd=stop_intent.cwd,
-                expected_writes=stop_intent.expected_writes,
-                confirm_label="Stop loop",
+                title=f"{summary}?",
+                summary=f"This will attempt a graceful stop for:\n{command}",
+                command=command,
+                cwd=intent.cwd,
+                expected_writes=(),
+                confirm_label="Stop",
             )
         )
         if not confirmed:
             return
 
         if self._runner.stop():
-            self._append_console("stop requested for active loop process")
+            self._append_console("stop requested for active command")
         else:
-            self._append_console("no running loop process to stop")
+            self._append_console("no running process to stop")
