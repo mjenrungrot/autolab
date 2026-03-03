@@ -140,6 +140,14 @@ class CommandHistoryEntry:
 
 
 @dataclass(frozen=True)
+class CommandHistoryItem:
+    label: str
+    command: str
+    exit_code: int | None
+    duration_seconds: float | None
+
+
+@dataclass(frozen=True)
 class RecommendedAction:
     action_id: str
     reason: str
