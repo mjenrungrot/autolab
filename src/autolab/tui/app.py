@@ -1240,6 +1240,7 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
 
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _FILE_SOURCE_SCOPES: tuple[str, ...] = ("all", "stage", "common")
     _TONE_CLASSES = (
         "tone-success",
         "tone-info",
@@ -1433,12 +1434,13 @@ class AutolabCockpitApp(App[None]):
         ("slash", "focus_files_filter", "Filter Files"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
+        ("f", "cycle_file_source_scope", "Source Scope"),
         ("e", "open_selected_in_editor", "Open Editor"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
-        ("s", "stop_loop", "Stop Loop"),
+        ("s", "stop_loop", "Stop Command"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -1468,6 +1470,7 @@ class AutolabCockpitApp(App[None]):
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
         self._missing_artifacts_count = 0
         self._files_missing_only = False
+        self._files_source_filter = "all"
         self._artifact_filter_query = ""
 
         self._runner = CommandRunner(
@@ -1535,6 +1538,7 @@ class AutolabCockpitApp(App[None]):
                         id="artifact-filter-input",
                     )
                     yield Button("Clear", id="artifact-filter-clear")
+                    yield Button("Source: All", id="file-cycle-source-scope")
                 yield ListView(id="artifact-list")
                 with Horizontal(id="file-buttons"):
                     yield Button("Open Viewer", id="file-open-viewer")
@@ -1655,15 +1659,42 @@ class AutolabCockpitApp(App[None]):
             parts.append(f"m missing-only({filter_state})")
             name_filter_state = "on" if self._artifact_filter_query else "off"
             parts.append(f"/ name-filter({name_filter_state})")
+            parts.append(f"f source({self._files_source_filter})")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
-            parts.append("s stop loop")
+        if self._running_intent is not None:
+            parts.append("s stop command")
         return "Keys: " + " | ".join(parts)
+
+    def _files_source_filter_label(self, value: str) -> str:
+        return str(value).strip().lower() or "all"
+
+    def _next_files_source_filter(self) -> str:
+        try:
+            index = self._FILE_SOURCE_SCOPES.index(self._files_source_filter)
+        except ValueError:
+            index = 0
+        return self._FILE_SOURCE_SCOPES[(index + 1) % len(self._FILE_SOURCE_SCOPES)]
+
+    def _files_scope_artifacts(self) -> tuple[ArtifactItem, ...]:
+        snapshot = self._snapshot
+        if snapshot is None:
+            return ()
+        stage = snapshot.current_stage
+        stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
+        if self._files_source_filter == "stage":
+            return stage_artifacts
+        if self._files_source_filter == "common":
+            return snapshot.common_artifacts
+        merged: list[ArtifactItem] = []
+        seen: set[Path] = set()
+        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
+            if artifact.path in seen:
+                continue
+            seen.add(artifact.path)
+            merged.append(artifact)
+        return tuple(merged)
 
     def _selection_status_label(self) -> str:
         if self._mode == "home":
@@ -1755,6 +1786,14 @@ class AutolabCockpitApp(App[None]):
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
         )
         filter_button.variant = "primary" if self._files_missing_only else "default"
+        source_button = self.query_one("#file-cycle-source-scope", Button)
+        source_scope = self._files_source_filter_label(self._files_source_filter)
+        source_button.label = (
+            "Source: All"
+            if source_scope == "all"
+            else f"Source: {source_scope.title()}"
+        )
+        source_button.variant = "warning" if source_scope != "all" else "default"
         clear_button = self.query_one("#artifact-filter-clear", Button)
         clear_button.disabled = not bool(self._artifact_filter_query)
 
@@ -2127,16 +2166,8 @@ class AutolabCockpitApp(App[None]):
         if snapshot is None:
             return
 
-        stage = snapshot.current_stage
-        stage_artifacts = list(snapshot.artifacts_by_stage.get(stage, ()))
-        seen: set[Path] = set()
-        merged: list[ArtifactItem] = []
-        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
-            if artifact.path in seen:
-                continue
-            seen.add(artifact.path)
-            merged.append(artifact)
-        self._all_artifacts = tuple(merged)
+        scope_artifacts = self._files_scope_artifacts()
+        self._all_artifacts = scope_artifacts
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
@@ -2175,7 +2206,8 @@ class AutolabCockpitApp(App[None]):
             context_widget = self.query_one("#files-context", Static)
             context_widget.update(
                 "Files\n"
-                f"- Stage: {stage}\n"
+                f"- Stage: {snapshot.current_stage}\n"
+                f"- Source: {self._files_source_filter_label(self._files_source_filter)}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
                 f"- Name filter: {self._artifact_filter_query or 'none'}\n"
                 f"- {empty_text}"
@@ -2212,6 +2244,7 @@ class AutolabCockpitApp(App[None]):
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
+            f"- Source: {self._files_source_filter_label(self._files_source_filter)}\n"
             f"- Item: {selected_index}/{visible_count}\n"
             f"- Selected: {selected_text}\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
@@ -2233,7 +2266,7 @@ class AutolabCockpitApp(App[None]):
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, s stop active command, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2255,6 +2288,7 @@ class AutolabCockpitApp(App[None]):
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus files name filter (Files view).\n"
+            "- f: Cycle Files view source scope (all/stage/common).\n"
             "- Ctrl+k: Open command palette.\n"
             "\n"
             "Safety\n"
@@ -2383,6 +2417,13 @@ class AutolabCockpitApp(App[None]):
             )
             commands.append(
                 SystemCommand(
+                    "Cycle Files Source Scope",
+                    "Switch between all, stage, and common artifacts.",
+                    self.action_cycle_file_source_scope,
+                )
+            )
+            commands.append(
+                SystemCommand(
                     "Open selected file in editor",
                     "Open the selected artifact in your external editor.",
                     self.action_open_selected_in_editor,
@@ -2396,14 +2437,11 @@ class AutolabCockpitApp(App[None]):
                         self.action_clear_files_filter,
                     )
                 )
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
+        if self._running_intent is not None:
             commands.append(
                 SystemCommand(
-                    "Stop active loop",
-                    "Request a graceful stop for the active loop command.",
+                    "Stop active command",
+                    "Request a graceful stop for the active command.",
                     self.action_stop_loop,
                 )
             )
@@ -2477,7 +2515,16 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
-        self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+        self._start_ui_flow(label="stop-command", flow_factory=self._stop_running_command)
+
+    def action_cycle_file_source_scope(self) -> None:
+        if self._mode != "files":
+            self.notify("Source scope cycle is available in Files view (3).")
+            return
+        self._files_source_filter = self._next_files_source_filter()
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
 
     def action_quick_open(self) -> None:
         if self._mode == "home":
@@ -2637,6 +2684,10 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
+            return
+        if button_id == "file-cycle-source-scope":
+            self.action_cycle_file_source_scope()
+            return
         if button_id == "home-render-toggle":
             self.action_toggle_prompt_view()
             return
@@ -3017,33 +3068,36 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    async def _stop_loop(self) -> None:
+    def _running_command_label(self) -> str:
+        if self._running_intent is None:
+            return "Running command"
+        action = self._actions_by_id.get(self._running_intent.action_id)
+        if action is not None:
+            return action.user_label or action.label
+        return self._running_intent.action_id or "running command"
+
+    async def _stop_running_command(self) -> None:
         intent = self._running_intent
-        if intent is None or intent.action_id != "run_loop":
-            self.notify("No loop command is running.")
+        if intent is None:
+            self.notify("No command is running.")
             return
 
-        stop_intent = CommandIntent(
-            action_id="stop_loop",
-            argv=("autolab", "tui", "--stop-loop"),
-            cwd=intent.cwd,
-            expected_writes=(),
-            mutating=False,
-        )
+        command = shlex.join(intent.argv)
+        label = self._running_command_label()
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
-                title="Stop active loop?",
-                summary="This requests a graceful interrupt for the active loop process.",
-                command=shlex.join(stop_intent.argv),
-                cwd=stop_intent.cwd,
-                expected_writes=stop_intent.expected_writes,
-                confirm_label="Stop loop",
+                title=f"Stop active command: {label}?",
+                summary="This requests a graceful interrupt for the active command.",
+                command=command,
+                cwd=intent.cwd,
+                expected_writes=(),
+                confirm_label="Stop command",
             )
         )
         if not confirmed:
             return
 
         if self._runner.stop():
-            self._append_console("stop requested for active loop process")
+            self._append_console(f"stop requested for active command: {command}")
         else:
-            self._append_console("no running loop process to stop")
+            self._append_console("no running command process to stop")
