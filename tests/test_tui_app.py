@@ -1084,6 +1084,22 @@ def test_system_commands_are_contextual_for_runs_view(tmp_path: Path) -> None:
             started_at="2026-02-02T11:00:00Z",
         )
         app = AutolabCockpitApp(state_path=state_path)
+        app._command_history.appendleft(
+            app_module.CommandHistoryItem(
+                intent=CommandIntent(
+                    action_id="todo_sync",
+                    argv=("autolab", "todo", "sync"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=False,
+                ),
+                command="autolab todo sync",
+                started_at=1.0,
+                started_at_text="10:00:00",
+                finished_at=2.0,
+                exit_code=0,
+            )
+        )
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
             assert "Toggle Runs Sort Order" not in _system_command_titles(app)
@@ -1092,6 +1108,95 @@ def test_system_commands_are_contextual_for_runs_view(tmp_path: Path) -> None:
             await pilot.pause()
             runs_titles = _system_command_titles(app)
             assert "Toggle Runs Sort Order" in runs_titles
+            assert "Clear command history" in runs_titles
+            assert "Jump to previous problem run" in runs_titles
+
+    asyncio.run(_run())
+
+
+def test_runs_view_previous_problem_jump_binding_moves_backward(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run-good",
+            status="completed",
+            started_at="2026-01-03T12:00:00Z",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run-bad-mid",
+            status="failed",
+            started_at="2026-01-02T11:00:00Z",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run-bad-old",
+            status="failed",
+            started_at="2026-01-01T10:00:00Z",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            assert app._mode == "runs"
+            assert app._visible_runs[app._selected_run_index].run_id == "run-good"
+
+            await pilot.press("b")
+            await pilot.pause()
+            assert app._visible_runs[app._selected_run_index].run_id == "run-bad-mid"
+
+            await pilot.press("shift+b")
+            await pilot.pause()
+            assert app._visible_runs[app._selected_run_index].run_id == "run-bad-old"
+
+    asyncio.run(_run())
+
+
+def test_shift_c_clears_command_history_with_confirmation(tmp_path: Path, monkeypatch) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        app._command_history.appendleft(
+            app_module.CommandHistoryItem(
+                intent=CommandIntent(
+                    action_id="todo_sync",
+                    argv=("autolab", "todo", "sync"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=False,
+                ),
+                command="autolab todo sync",
+                started_at=1.0,
+                started_at_text="10:00:00",
+                finished_at=2.0,
+                exit_code=0,
+            )
+        )
+        output: list[str] = []
+
+        async def _confirm(_screen) -> bool:
+            return True
+
+        monkeypatch.setattr(app, "push_screen_wait", _confirm)
+        monkeypatch.setattr(app, "_append_console", lambda text: output.append(text))
+        monkeypatch.setattr(app, "_update_ui_chrome", lambda: None)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            assert "C clear history" in str(
+                app.query_one("#key-hints", app_module.Static).render()
+            )
+            assert len(app._command_history) == 1
+
+            await pilot.press("shift+c")
+            await pilot.pause()
+
+            assert len(app._command_history) == 0
+            assert output == ["command history cleared"]
 
     asyncio.run(_run())
 
