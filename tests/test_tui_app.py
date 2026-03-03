@@ -643,8 +643,27 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             home_titles = _system_command_titles(app)
             assert "Go to Files view" in home_titles
+            assert "Show command history" not in home_titles
             assert "Quick open selected item" in home_titles
             assert "Focus Files Name Filter" not in home_titles
+
+            app._command_history.appendleft(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                )
+            )
+            assert "Show command history" in _system_command_titles(app)
 
             await pilot.press("3")
             await pilot.pause()
@@ -941,6 +960,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.pause()
             hints = app.query_one("#key-hints", app_module.Static)
             assert "Enter recommended action" in str(hints.render())
+            assert "h history" in str(hints.render())
             assert "p prompt" in str(hints.render())
 
             await pilot.press("4")
@@ -1047,6 +1067,49 @@ def test_rerun_last_command_reports_when_no_history_is_available(
     asyncio.run(app._rerun_last_command())
 
     assert notices == ["No previous command to rerun."]
+
+
+def test_open_command_history_replays_selected_item(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._command_history.appendleft(
+        app_module.CommandHistoryItem(
+            intent=CommandIntent(
+                action_id="verify_current_stage",
+                argv=("autolab", "verify"),
+                cwd=repo_root,
+                expected_writes=(".autolab/logs/verify.log",),
+                mutating=True,
+            ),
+            command="autolab verify",
+            started_at=1.0,
+            started_at_text="10:00:00",
+            finished_at=2.0,
+            exit_code=0,
+        )
+    )
+
+    async def _push_screen_wait(_screen) -> app_module.CommandHistoryItem:
+        return app._command_history[0]
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    started: list[CommandIntent] = []
+
+    monkeypatch.setattr(app, "push_screen_wait", _push_screen_wait)
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._open_command_history())
+
+    assert started == [app._command_history[0].intent]
 
 
 def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
@@ -1353,6 +1416,62 @@ def test_focus_modal_uses_fullscreen_geometry(tmp_path: Path) -> None:
             assert isinstance(app.screen, app_module.FocusExperimentScreen)
             _assert_fullscreen_modal_dialog(app, "#focus-dialog")
             assert await _click_when_visible(pilot, "#cancel") is True
+
+    asyncio.run(_run())
+
+
+def test_command_history_screen_lists_and_replays_selection(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        results: list[object] = []
+        screen = app_module.CommandHistoryScreen(
+            history=(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=2.0,
+                    started_at_text="10:01:00",
+                    finished_at=3.0,
+                    exit_code=0,
+                ),
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="verify_current_stage",
+                        argv=("autolab", "verify"),
+                        cwd=repo_root,
+                        expected_writes=(".autolab/logs/verify.log",),
+                        mutating=True,
+                    ),
+                    command="autolab verify",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                ),
+            )
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.CommandHistoryScreen)
+            list_view = app.screen.query_one(
+                "#command-history-list", app_module.ListView
+            )
+            first_item = str(list_view.children[0].query_one(app_module.Label).render())
+            assert "autolab todo sync" in first_item
+            await pilot.press("down")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(results[0], app_module.CommandHistoryItem)
+            assert results[0].intent.action_id == "verify_current_stage"
 
     asyncio.run(_run())
 
