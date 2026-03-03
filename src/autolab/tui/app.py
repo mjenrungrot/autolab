@@ -7,6 +7,7 @@ import shlex
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -2029,6 +2030,7 @@ class AutolabCockpitApp(App[None]):
         self._state_path = state_path.expanduser().resolve()
         self._tail_lines = max(200, int(tail_lines))
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
+        self._command_history: deque[CommandHistoryEntry] = deque(maxlen=20)
         self._console_wrap = False
         self._armed = False
         self._run_status_filter = ""
@@ -3144,7 +3146,9 @@ class AutolabCockpitApp(App[None]):
         )
         self._set_tone(details_widget, self._tone_for_run_status(run.status))
 
-    def _populate_artifact_list(self) -> None:
+    def _populate_artifact_list(
+        self, *, preserve_artifact_path: Path | None = None
+    ) -> None:
         snapshot = self._snapshot
         artifact_list = self.query_one("#artifact-list", ListView)
         artifact_list.clear()
@@ -3160,6 +3164,11 @@ class AutolabCockpitApp(App[None]):
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
+        if preserve_artifact_path is not None:
+            for candidate_index, artifact in enumerate(self._all_artifacts):
+                if artifact.path == preserve_artifact_path:
+                    self._selected_artifact_index = candidate_index
+                    break
         visible_artifacts: tuple[ArtifactItem, ...]
         if self._files_missing_only:
             visible_artifacts = tuple(
@@ -3176,6 +3185,18 @@ class AutolabCockpitApp(App[None]):
             )
         else:
             self._current_artifacts = visible_artifacts
+
+        if preserve_artifact_path is not None:
+            visible_match = next(
+                (
+                    idx
+                    for idx, artifact in enumerate(self._current_artifacts)
+                    if artifact.path == preserve_artifact_path
+                ),
+                None,
+            )
+            if visible_match is not None:
+                self._selected_artifact_index = visible_match
 
         if not self._current_artifacts:
             if query:
@@ -3309,6 +3330,7 @@ class AutolabCockpitApp(App[None]):
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
+            "- s: Stop active command (if running).\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -3381,6 +3403,11 @@ class AutolabCockpitApp(App[None]):
                     "Go to Help view",
                     "Open keymap and safety guidance.",
                     self.action_show_help,
+                ),
+                SystemCommand(
+                    "Open command history",
+                    "Review completed command results and status.",
+                    self.action_show_command_history,
                 ),
                 SystemCommand(
                     "Refresh snapshot",
@@ -3672,6 +3699,11 @@ class AutolabCockpitApp(App[None]):
         self._console_wrap = not self._console_wrap
         self.query_one("#console-log", RichLog).wrap = self._console_wrap
         self._update_ui_chrome()
+
+    def action_show_command_history(self) -> None:
+        self._start_ui_flow(
+            label="show-command-history", flow_factory=self._show_command_history
+        )
 
     def action_stop_loop(self) -> None:
         self._start_ui_flow(label="stop-command", flow_factory=self._stop_running_command)
@@ -4439,6 +4471,14 @@ class AutolabCockpitApp(App[None]):
         ):
             self._start_command(intent)
 
+    async def _show_command_history(self) -> None:
+        should_clear = await self.push_screen_wait(
+            CommandHistoryScreen(entries=tuple(self._command_history))
+        )
+        if should_clear:
+            self._command_history.clear()
+            self._append_console("command history cleared")
+
     def _start_command(self, intent: CommandIntent) -> None:
         if self._running_intent is not None:
             self.notify("A command is already running.")
@@ -4529,6 +4569,7 @@ class AutolabCockpitApp(App[None]):
             self._active_history_item = None
             self._update_ui_chrome()
             self._refresh_snapshot()
+            self._running_command_started_at = None
 
         try:
             self.call_from_thread(_finish)
