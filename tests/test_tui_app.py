@@ -510,6 +510,33 @@ def test_files_name_filter_slash_focuses_input_and_clear_restores_list(
     asyncio.run(_run())
 
 
+def test_f_focuses_active_filter_in_runs_and_files(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "run-filter-input"
+
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "artifact-filter-input"
+
+    asyncio.run(_run())
+
+
 def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -935,8 +962,91 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.press("3")
             await pilot.pause()
             assert "m missing-only(off)" in str(hints.render())
+            assert "Home/End list" in str(hints.render())
 
     asyncio.run(_run())
+
+
+def test_list_navigation_home_end_shortcuts_jump_runs_and_files_lists(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(repo_root, "run-a", "2026-02-01T01:00:00Z")
+        _write_run_manifest(repo_root, "run-b", "2026-02-01T02:00:00Z")
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            assert app._selected_run_index == 0
+            assert app._visible_runs
+            await pilot.press("end")
+            await pilot.pause()
+            assert app._selected_run_index == len(app._visible_runs) - 1
+
+            await pilot.press("home")
+            await pilot.pause()
+            assert app._selected_run_index == 0
+
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.press("end")
+            await pilot.pause()
+            assert app._selected_artifact_index == len(app._current_artifacts) - 1
+
+            await pilot.press("home")
+            await pilot.pause()
+            assert app._selected_artifact_index == 0
+
+    asyncio.run(_run())
+
+
+def test_rerun_last_command_confirms_and_replays_cached_intent(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    state_path = _write_state_file(repo_root)
+    app = AutolabCockpitApp(state_path=state_path)
+    app._snapshot = load_cockpit_snapshot(state_path)
+    app._last_command_intent = CommandIntent(
+        action_id="verify_current_stage",
+        argv=("autolab", "verify"),
+        cwd=repo_root,
+        expected_writes=(".autolab/logs/verify.log",),
+        mutating=True,
+    )
+    started: list[CommandIntent] = []
+
+    async def _unlock(_action) -> bool:
+        return True
+
+    async def _confirm(*, action, title, intent, confirm_label="Confirm") -> bool:
+        return True
+
+    monkeypatch.setattr(app, "_unlock_if_needed", _unlock)
+    monkeypatch.setattr(app, "_confirm_action_intent", _confirm)
+    monkeypatch.setattr(app, "_start_command", lambda intent: started.append(intent))
+
+    asyncio.run(app._rerun_last_command())
+
+    assert started == [app._last_command_intent]
+
+
+def test_rerun_last_command_reports_when_no_history_is_available(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, *args, **kwargs: notices.append(str(message))
+    )
+
+    asyncio.run(app._rerun_last_command())
+
+    assert notices == ["No previous command to rerun."]
 
 
 def test_status_rail_shows_idle_counts(tmp_path: Path) -> None:
