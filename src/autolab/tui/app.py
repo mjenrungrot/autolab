@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -1351,6 +1352,7 @@ class AutolabCockpitApp(App[None]):
     #run-details,
     #files-context,
     #home-stage-card,
+    #home-stage-timeline,
     #home-blocker-card,
     #home-artifacts-card,
     #home-todos-card,
@@ -1474,6 +1476,11 @@ class AutolabCockpitApp(App[None]):
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
         )
         self._running_intent: CommandIntent | None = None
+        self._running_started_at: float | None = None
+        self._running_command_label: str = ""
+        self._last_command_exit_code: int | None = None
+        self._last_command_elapsed: str = ""
+        self._last_command_label: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1500,6 +1507,7 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("Workflow Timeline", id="home-stage-timeline", markup=False)
                 with Vertical(id="home-render-card"):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
@@ -1588,6 +1596,31 @@ class AutolabCockpitApp(App[None]):
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
+    def _shorten_command(self, command: str, *, max_len: int) -> str:
+        if len(command) <= max_len:
+            return command
+        if max_len <= 4:
+            return command[:max_len]
+        return f"{command[: max_len - 3]}..."
+
+    def _running_elapsed_label(self) -> str:
+        if self._running_started_at is None:
+            return "00:00"
+        elapsed_seconds = max(0, int(time.perf_counter() - self._running_started_at))
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _last_command_summary(self) -> str:
+        if self._last_command_exit_code is None:
+            return ""
+        return (
+            f"last: {self._last_command_label} | exit={self._last_command_exit_code}"
+            f" | {self._last_command_elapsed}"
+        )
+
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
@@ -1626,6 +1659,18 @@ class AutolabCockpitApp(App[None]):
         if normalized in {"failed", "fail", "error", "timeout", "stopped"}:
             return "tone-danger"
         return "tone-muted"
+
+    def _stage_timeline_icon(self, status: str) -> str:
+        normalized = str(status).strip().lower()
+        if normalized == "complete":
+            return "[ok]"
+        if normalized == "current":
+            return "[->]"
+        if normalized == "blocked":
+            return "[!]"
+        if normalized == "upcoming":
+            return "[  ]"
+        return "[??]"
 
     def _key_hints_text(self) -> str:
         wrap_state = "on" if self._console_wrap else "off"
@@ -1718,9 +1763,12 @@ class AutolabCockpitApp(App[None]):
 
         if self._running_intent is None:
             snapshot = self._snapshot
+            last_summary = self._last_command_summary()
             if snapshot is None:
                 running.update("Idle")
                 self._set_tone(running, "tone-muted")
+                if last_summary:
+                    running.update(f"Idle | {last_summary}")
             else:
                 stage_artifacts = snapshot.artifacts_by_stage.get(
                     snapshot.current_stage, ()
@@ -1731,20 +1779,27 @@ class AutolabCockpitApp(App[None]):
                     if snapshot.primary_blocker == "none"
                     else len(snapshot.top_blockers)
                 )
-                running.update(
+                status = (
                     "Idle | "
                     f"runs:{len(snapshot.runs)} "
                     f"blockers:{blocker_count} "
                     f"todos:{len(snapshot.todos)} "
                     f"missing:{missing_required}"
                 )
+                if last_summary:
+                    status = f"{status} | {last_summary}"
+                running.update(status)
                 if blocker_count or missing_required:
                     self._set_tone(running, "tone-warning")
                 else:
                     self._set_tone(running, "tone-success")
         else:
-            command = shlex.join(self._running_intent.argv)
-            running.update(f"Running: {command[:72]}")
+            command = self._running_command_label or shlex.join(self._running_intent.argv)
+            running.update(
+                "Running "
+                f"({self._running_elapsed_label()}) | "
+                f"{self._shorten_command(command, max_len=72)}"
+            )
             self._set_tone(running, "tone-info")
 
         self.query_one(
@@ -1846,6 +1901,10 @@ class AutolabCockpitApp(App[None]):
         stage_widget.update("Stage\nUnavailable.")
         self._set_tone(stage_widget, "tone-muted")
 
+        timeline_widget = self.query_one("#home-stage-timeline", Static)
+        timeline_widget.update("Workflow Timeline\nUnavailable.")
+        self._set_tone(timeline_widget, "tone-muted")
+
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
         render_markdown.update(
@@ -1908,6 +1967,23 @@ class AutolabCockpitApp(App[None]):
             f"- Summary: {snapshot.stage_summaries.get(stage, 'No summary available.')}"
         )
         self._set_tone(stage_widget, "tone-info")
+
+        timeline_widget = self.query_one("#home-stage-timeline", Static)
+        timeline_lines = []
+        for stage_item in snapshot.stage_items:
+            marker = ">" if stage_item.is_current else " "
+            timeline_lines.append(
+                f"{marker} {self._stage_timeline_icon(stage_item.status)} "
+                f"{stage_item.name:<18} "
+                f"{stage_item.status:<9} {stage_item.attempts}"
+            )
+        timeline_widget.update("Workflow Timeline\n" + "\n".join(timeline_lines))
+        has_blocked_stage = any(
+            item.status == "blocked" for item in snapshot.stage_items
+        )
+        self._set_tone(
+            timeline_widget, "tone-danger" if has_blocked_stage else "tone-muted"
+        )
 
         render_card = self.query_one("#home-render-card", Vertical)
         render_markdown = self.query_one("#home-render-markdown", Markdown)
@@ -2238,7 +2314,7 @@ class AutolabCockpitApp(App[None]):
             "- Modals: Esc closes or cancels.\n"
             "\n"
             "Views\n"
-            "- Home: stage status, rendered prompt preview, recommended actions.\n"
+            "- Home: stage status, workflow timeline, rendered prompt preview, recommended actions.\n"
             "- Home: open tasks card highlights active todo priorities.\n"
             "- Runs: run manifest and metrics overview.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
@@ -2984,6 +3060,8 @@ class AutolabCockpitApp(App[None]):
         if self._console_tail:
             self._append_console("-" * 40)
         command = shlex.join(intent.argv)
+        self._running_started_at = time.perf_counter()
+        self._running_command_label = self._shorten_command(command, max_len=72)
         self._append_console(f"starting: {command}")
         self._running_intent = intent
         self._update_ui_chrome()
@@ -2992,21 +3070,38 @@ class AutolabCockpitApp(App[None]):
         except Exception as exc:
             self._append_console(f"failed to start command: {exc}")
             self._running_intent = None
+            self._running_started_at = None
+            self._running_command_label = ""
             self._update_ui_chrome()
 
     def _handle_runner_line(self, line: str) -> None:
         try:
             self.call_from_thread(self._append_console, line)
+            self.call_from_thread(self._update_ui_chrome)
         except Exception:
             pass
 
     def _handle_runner_done(self, return_code: int, stopped: bool) -> None:
         def _finish() -> None:
             intent = self._running_intent
+            command = (
+                self._running_command_label
+                if self._running_command_label
+                else (shlex.join(intent.argv) if intent is not None else "(unknown)")
+            )
+            elapsed = self._running_elapsed_label()
             if stopped:
                 self._append_console("process interrupted")
-            self._append_console(f"process exit code: {return_code}")
+            self._append_console(
+                f"command finished: {self._shorten_command(command, max_len=72)} | "
+                f"exit={return_code} | elapsed={elapsed}"
+            )
             self._running_intent = None
+            self._running_started_at = None
+            self._running_command_label = ""
+            self._last_command_exit_code = return_code
+            self._last_command_elapsed = elapsed
+            self._last_command_label = self._shorten_command(command, max_len=58)
             if intent is not None and intent.mutating:
                 self._armed = False
             self._update_ui_chrome()
