@@ -734,6 +734,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             assert "Go to Files view" in home_titles
             assert "Show command history" not in home_titles
             assert "Quick open selected item" in home_titles
+            assert "Show command history" in home_titles
             assert "Focus Files Name Filter" not in home_titles
 
             app._command_history.appendleft(
@@ -759,6 +760,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             files_titles = _system_command_titles(app)
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
+            assert "Show command history" in files_titles
 
             await pilot.press("/")
             await pilot.pause()
