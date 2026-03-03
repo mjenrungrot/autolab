@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from textual import events
 from textual.app import App, ComposeResult, SystemCommand
@@ -50,8 +51,11 @@ from autolab.tui.models import (
     BacklogExperimentItem,
     BacklogHypothesisItem,
     CockpitSnapshot,
+    CommandHistoryItem,
     CommandIntent,
+    RunItem,
     LoopActionOptions,
+    RunItem,
     RunActionOptions,
     ViewMode,
 )
@@ -822,6 +826,247 @@ class HumanReviewDecisionScreen(ModalScreen[str | None]):
         self.dismiss(self._statuses[selected_index])
 
 
+class RunJumpScreen(ModalScreen[str | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    CSS = """
+    RunJumpScreen {
+      align: center middle;
+    }
+
+    #run-jump-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #run-jump-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #run-jump-list {
+      border: round $surface;
+      height: 1fr;
+      margin-bottom: 1;
+    }
+
+    #run-jump-buttons {
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, runs: tuple[RunItem, ...]) -> None:
+        super().__init__()
+        self._all_runs = tuple(runs)
+        self._filtered_runs: tuple[RunItem, ...] = ()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="run-jump-dialog"):
+            yield Label("Jump to run", id="run-jump-title")
+            yield Static(
+                "Type to find runs by id/status/host/job id, then press Enter.",
+                id="run-jump-hint",
+                markup=False,
+            )
+            yield Input(value="", placeholder="Find run...", id="run-jump-query")
+            yield ListView(id="run-jump-list")
+            with Horizontal(id="run-jump-buttons"):
+                yield Button("Cancel", id="run-jump-cancel")
+                yield Button("Continue", id="run-jump-continue", variant="primary")
+
+    def on_mount(self) -> None:
+        query_input = self.query_one("#run-jump-query", Input)
+        query_input.focus()
+        self._refresh_run_matches("")
+
+    def _refresh_run_matches(self, query: str) -> None:
+        query_lower = query.strip().lower()
+        if query_lower:
+            matches = [
+                run
+                for run in self._all_runs
+                if query_lower in str(run.run_id).lower()
+                or query_lower in str(run.status).lower()
+                or query_lower in str(run.host_mode).lower()
+                or query_lower in str(run.job_id).lower()
+            ]
+        else:
+            matches = list(self._all_runs)
+        self._filtered_runs = tuple(matches)
+        run_list = self.query_one("#run-jump-list", ListView)
+        run_list.clear()
+        if not matches:
+            empty_text = (
+                "(No runs match this query)"
+                if self._all_runs
+                else "(No runs available)"
+            )
+            run_list.append(ListItem(Label(empty_text)))
+            return
+        for run in self._filtered_runs:
+            run_list.append(
+                ListItem(
+                    Label(
+                        f"{run.run_id} [{run.status}] ({run.host_mode})"
+                        f" start={run.started_at or '-'}"
+                    )
+                )
+            )
+        run_list.index = 0
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "run-jump-query":
+            return
+        self._refresh_run_matches(event.value)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "run-jump-list":
+            self._submit_selection()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "run-jump-cancel":
+            self.action_cancel()
+            return
+        if event.button.id != "run-jump-continue":
+            return
+        self._submit_selection()
+
+    def _submit_selection(self) -> None:
+        if not self._filtered_runs:
+            return
+        run_list = self.query_one("#run-jump-list", ListView)
+        selected_index = run_list.index or 0
+        if selected_index is None or selected_index < 0:
+            return
+        if selected_index >= len(self._filtered_runs):
+            selected_index = 0
+        self.dismiss(self._filtered_runs[selected_index].run_id)
+
+
+class ArtifactJumpScreen(ModalScreen[Path | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    CSS = """
+    ArtifactJumpScreen {
+      align: center middle;
+    }
+
+    #artifact-jump-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #artifact-jump-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #artifact-jump-list {
+      border: round $surface;
+      height: 1fr;
+      margin-bottom: 1;
+    }
+
+    #artifact-jump-buttons {
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        artifact_paths: tuple[tuple[Path, str], ...],
+    ) -> None:
+        super().__init__()
+        self._artifact_paths = tuple(artifact_paths)
+        self._filtered_artifacts: tuple[tuple[Path, str], ...] = ()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="artifact-jump-dialog"):
+            yield Label("Jump to file", id="artifact-jump-title")
+            yield Static(
+                "Type to find files by path, then press Enter.",
+                id="artifact-jump-hint",
+                markup=False,
+            )
+            yield Input(value="", placeholder="Find file...", id="artifact-jump-query")
+            yield ListView(id="artifact-jump-list")
+            with Horizontal(id="artifact-jump-buttons"):
+                yield Button("Cancel", id="artifact-jump-cancel")
+                yield Button("Continue", id="artifact-jump-continue", variant="primary")
+
+    def on_mount(self) -> None:
+        query_input = self.query_one("#artifact-jump-query", Input)
+        query_input.focus()
+        self._refresh_artifact_matches("")
+
+    def _refresh_artifact_matches(self, query: str) -> None:
+        query_lower = query.strip().lower()
+        if query_lower:
+            matches = [
+                (path, label)
+                for path, label in self._artifact_paths
+                if query_lower in str(label).lower() or query_lower in str(path).lower()
+            ]
+        else:
+            matches = list(self._artifact_paths)
+        self._filtered_artifacts = tuple(matches)
+        artifact_list = self.query_one("#artifact-jump-list", ListView)
+        artifact_list.clear()
+        if not matches:
+            empty_text = (
+                "(No files match this query)"
+                if self._artifact_paths
+                else "(No files available)"
+            )
+            artifact_list.append(ListItem(Label(empty_text)))
+            return
+        for path, label in self._filtered_artifacts:
+            artifact_list.append(ListItem(Label(f"{label} [{path.name}]")))
+        artifact_list.index = 0
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "artifact-jump-query":
+            return
+        self._refresh_artifact_matches(event.value)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "artifact-jump-list":
+            self._submit_selection()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "artifact-jump-cancel":
+            self.action_cancel()
+            return
+        if event.button.id != "artifact-jump-continue":
+            return
+        self._submit_selection()
+
+    def _submit_selection(self) -> None:
+        if not self._filtered_artifacts:
+            return
+        artifact_list = self.query_one("#artifact-jump-list", ListView)
+        selected_index = artifact_list.index or 0
+        if selected_index is None or selected_index < 0:
+            return
+        if selected_index >= len(self._filtered_artifacts):
+            selected_index = 0
+        path, _label = self._filtered_artifacts[selected_index]
+        self.dismiss(path)
+
+
 class ArtifactViewerScreen(ModalScreen[str | None]):
     BINDINGS = [("escape", "cancel", "Close")]
 
@@ -1390,8 +1635,115 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
         self.dismiss((experiment_id, iteration_id, target_type))
 
 
+class CommandHistoryScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "cancel", "Close"), ("enter", "cancel", "Close")]
+
+    CSS = """
+    CommandHistoryScreen {
+      align: center middle;
+    }
+
+    #command-history-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #command-history-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #command-history-scroll {
+      height: 1fr;
+      border: round $surface;
+      padding: 0 1;
+    }
+
+    #command-history-button-row {
+      height: auto;
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, entries: tuple[CommandHistoryEntry, ...]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-dialog"):
+            yield Label(f"Recent Commands ({len(self._entries)})", id="command-history-title")
+            with VerticalScroll(id="command-history-scroll"):
+                if not self._entries:
+                    yield Label("No commands have been executed in this session yet.")
+                else:
+                    for entry in self._entries:
+                        yield Label(self._format_entry(entry))
+            with Horizontal(id="command-history-button-row"):
+                yield Button("Close", id="close")
+
+    def _format_entry(self, entry: CommandHistoryEntry) -> str:
+        status = {
+            "running": "RUNNING",
+            "succeeded": "OK",
+            "failed": "FAIL",
+            "interrupted": "INT",
+        }[entry.status]
+        duration = (
+            f"{entry.duration:.1f}s" if entry.duration is not None else "n/a"
+        )
+        exit_code = f"exit={entry.return_code}" if entry.return_code is not None else "exit=n/a"
+        return (
+            f"{status.upper():>10} | "
+            f"{entry.action_label} ({exit_code}, {duration})\n"
+            f"  {entry.command}"
+        )
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.action_cancel()
+            return
+
+
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _RUN_SORT_MODES: tuple[Literal["newest", "oldest", "status"], ...] = (
+        "newest",
+        "oldest",
+        "status",
+    )
+    _RUN_SORT_LABELS = {
+        "newest": "Newest",
+        "oldest": "Oldest",
+        "status": "Status",
+    }
+    _RUN_SORT_STATUS_ORDER = {
+        "running": 0,
+        "queued": 0,
+        "pending": 0,
+        "in_progress": 0,
+        "submitted": 0,
+        "partial": 1,
+        "warning": 1,
+        "needs_attention": 1,
+        "pass": 2,
+        "success": 2,
+        "done": 2,
+        "completed": 2,
+        "synced": 2,
+        "failed": 3,
+        "fail": 3,
+        "timeout": 3,
+        "error": 3,
+        "stopped": 3,
+    }
+    _AUTO_REFRESH_INTERVAL_SECONDS = 5.0
     _TONE_CLASSES = (
         "tone-success",
         "tone-info",
@@ -1399,6 +1751,8 @@ class AutolabCockpitApp(App[None]):
         "tone-danger",
         "tone-muted",
     )
+    _ARTIFACT_PREVIEW_MAX_CHARS = 12_000
+    _CONSOLE_ERROR_KEYWORDS = ("error", "failed", "failure", "traceback", "exception", "fatal")
 
     CSS = """
     Screen {
@@ -1438,6 +1792,10 @@ class AutolabCockpitApp(App[None]):
 
     #status-mode {
       width: 16;
+    }
+
+    #status-autorefresh {
+      width: 17;
     }
 
     #status-advanced {
@@ -1510,7 +1868,23 @@ class AutolabCockpitApp(App[None]):
       min-height: 8;
     }
 
+    #home-action-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #home-action-filter-label {
+      width: 16;
+      color: $text-muted;
+    }
+
+    #home-action-filter-input {
+      width: 1fr;
+    }
+
     #run-details,
+    #run-filter-row,
     #files-context,
     #home-stage-card,
     #home-stage-list,
@@ -1558,6 +1932,21 @@ class AutolabCockpitApp(App[None]):
       height: auto;
       align-horizontal: left;
       margin-top: 1;
+    }
+
+    #run-filter-row {
+      height: auto;
+      margin-top: 1;
+      align-vertical: middle;
+    }
+
+    #run-filter-label {
+      width: 18;
+      color: $text-muted;
+    }
+
+    #run-filter-input {
+      width: 16;
     }
 
     #files-filter-row {
@@ -1615,13 +2004,17 @@ class AutolabCockpitApp(App[None]):
         ("home", "list_first", "List Start"),
         ("end", "list_last", "List End"),
         ("o", "quick_open", "Open"),
+        ("t", "toggle_run_sort", "Sort Runs"),
         ("m", "quick_secondary", "Mode Quick"),
+        ("j", "jump_to_item", "Jump"),
         ("e", "open_selected_in_editor", "Open Editor"),
+        ("n", "next_missing_artifact", "Next Missing"),
         ("u", "toggle_safety_lock", "Unlock/Lock"),
+        ("a", "toggle_auto_refresh", "Auto-refresh"),
         ("r", "refresh_snapshot", "Refresh"),
         ("R", "rerun_last_command", "Rerun Last"),
         ("p", "toggle_prompt_view", "Prompt View"),
-        ("n", "next_missing_artifact", "Next missing file"),
+        ("t", "toggle_runs_sort", "Sort Runs"),
         ("x", "toggle_advanced", "Advanced"),
         ("a", "toggle_auto_refresh", "Auto Refresh"),
         ("s", "stop_loop", "Stop Loop"),
@@ -1641,7 +2034,11 @@ class AutolabCockpitApp(App[None]):
         self._run_status_filter = ""
         self._show_advanced = False
         self._show_full_prompt = False
+        self._auto_refresh_enabled = False
+        self._last_snapshot_refresh_at: float | None = None
+        self._run_sort_mode: Literal["newest", "oldest", "status"] = "newest"
         self._mode: ViewMode = "home"
+        self._snapshot_refreshed_at: float | None = None
         self._snapshot: CockpitSnapshot | None = None
         self._actions: tuple[ActionSpec, ...] = list_actions()
         self._actions_by_id: dict[str, ActionSpec] = {
@@ -1650,13 +2047,17 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._run_status_filter: str = ""
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_run_index = 0
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_artifact_index = 0
         self._visible_runs: tuple[RunItem, ...] = ()
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
         self._missing_artifacts_count = 0
         self._files_missing_only = False
+        self._files_source_filter = "all"
         self._artifact_filter_query = ""
         self._last_command_label: str | None = None
         self._last_command_exit_code: int | None = None
@@ -1683,6 +2084,7 @@ class AutolabCockpitApp(App[None]):
         with Horizontal(id="status-rail"):
             yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
+            yield Static("Auto Refresh: off", id="status-autorefresh")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Auto-refresh: off", id="status-autorefresh")
             yield Static("Selection: -", id="status-selection")
@@ -1720,6 +2122,18 @@ class AutolabCockpitApp(App[None]):
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
+                with Horizontal(id="home-action-filter-row"):
+                    yield Static(
+                        "Filter",
+                        id="home-action-filter-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        value=self._home_action_filter_query,
+                        placeholder="Filter recommended actions by text...",
+                        id="home-action-filter-input",
+                    )
+                    yield Button("Clear", id="home-action-filter-clear")
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
                 yield Static("Runs", classes="view-title")
@@ -1733,9 +2147,17 @@ class AutolabCockpitApp(App[None]):
                     yield Button("Clear", id="run-filter-clear")
                 yield ListView(id="run-list")
                 yield Static("", id="run-details", markup=False)
-                with Horizontal(id="run-buttons"):
+                with Horizontal(id="run-details-buttons"):
                     yield Button("Open Manifest", id="run-open-manifest")
                     yield Button("Open Metrics", id="run-open-metrics")
+                with Horizontal(id="run-filter-row"):
+                    yield Static("Status Filter", id="run-filter-label", markup=False)
+                    yield Input(
+                        value=self._run_status_filter,
+                        placeholder="Type to filter by status...",
+                        id="run-filter-input",
+                    )
+                    yield Button("Clear", id="run-filter-clear")
             with Vertical(id="files-view", classes="view-panel"):
                 yield Static("Files", classes="view-title")
                 yield Static("", id="files-context", markup=False)
@@ -1749,6 +2171,7 @@ class AutolabCockpitApp(App[None]):
                         id="artifact-filter-input",
                     )
                     yield Button("Clear", id="artifact-filter-clear")
+                    yield Button("Source: All", id="file-cycle-source-scope")
                 yield ListView(id="artifact-list")
                 with Horizontal(id="file-buttons"):
                     yield Button("Open Viewer", id="file-open-viewer")
@@ -1795,6 +2218,10 @@ class AutolabCockpitApp(App[None]):
 
     def on_mount(self) -> None:
         self._refresh_snapshot()
+        self.set_interval(
+            self._AUTO_REFRESH_INTERVAL_SECONDS,
+            self._auto_refresh_tick,
+        )
         self._update_help_text()
         self._update_ui_chrome()
         self._switch_mode("home")
@@ -1832,13 +2259,27 @@ class AutolabCockpitApp(App[None]):
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
         log = self.query_one("#console-log", RichLog)
+        if self._console_show_errors_only and not self._is_console_error_line(line):
+            return
         log.write(line)
 
     def _render_console_tail(self) -> None:
         log = self.query_one("#console-log", RichLog)
         log.clear()
-        for line in self._console_tail:
+        lines = self._console_tail
+        if self._console_show_errors_only:
+            lines = tuple(
+                line for line in lines if self._is_console_error_line(line)
+            )
+        for line in lines:
             log.write(line)
+
+    def _is_console_error_line(self, line: str) -> bool:
+        normalized = str(line).lower()
+        return any(
+            re.search(rf"\b{re.escape(keyword)}\b", normalized)
+            for keyword in self._CONSOLE_ERROR_KEYWORDS
+        )
 
     def _display_path(self, path: Path) -> str:
         snapshot = self._snapshot
@@ -1882,6 +2323,8 @@ class AutolabCockpitApp(App[None]):
     def _key_hints_text(self) -> str:
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
+        run_filter_state = "on" if self._run_status_filter else "off"
+        error_filter_state = "on" if self._console_show_errors_only else "off"
         parts = [
             "1-5 view",
             "[ / ] cycle",
@@ -1903,6 +2346,7 @@ class AutolabCockpitApp(App[None]):
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
             parts.append("c clear")
+            parts.append(f"shift+e errors-only({error_filter_state})")
         elif self._mode == "runs":
             parts.append("Enter manifest")
             parts.append("m metrics")
@@ -1911,11 +2355,12 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
+            parts.append("n next-missing")
             filter_state = "on" if self._files_missing_only else "off"
             parts.append(f"m missing-only({filter_state})")
             name_filter_state = "on" if self._artifact_filter_query else "off"
             parts.append(f"/ name-filter({name_filter_state})")
-            parts.append("n next-missing")
+            parts.append(f"f source({self._files_source_filter})")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
@@ -1926,6 +2371,35 @@ class AutolabCockpitApp(App[None]):
         ):
             parts.append("s stop loop")
         return "Keys: " + " | ".join(parts)
+
+    def _files_source_filter_label(self, value: str) -> str:
+        return str(value).strip().lower() or "all"
+
+    def _next_files_source_filter(self) -> str:
+        try:
+            index = self._FILE_SOURCE_SCOPES.index(self._files_source_filter)
+        except ValueError:
+            index = 0
+        return self._FILE_SOURCE_SCOPES[(index + 1) % len(self._FILE_SOURCE_SCOPES)]
+
+    def _files_scope_artifacts(self) -> tuple[ArtifactItem, ...]:
+        snapshot = self._snapshot
+        if snapshot is None:
+            return ()
+        stage = snapshot.current_stage
+        stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
+        if self._files_source_filter == "stage":
+            return stage_artifacts
+        if self._files_source_filter == "common":
+            return snapshot.common_artifacts
+        merged: list[ArtifactItem] = []
+        seen: set[Path] = set()
+        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
+            if artifact.path in seen:
+                continue
+            seen.add(artifact.path)
+            merged.append(artifact)
+        return tuple(merged)
 
     def _selection_status_label(self) -> str:
         if self._mode == "home":
@@ -1972,6 +2446,12 @@ class AutolabCockpitApp(App[None]):
         )
         self._set_tone(safety, "tone-warning" if self._armed else "tone-success")
         mode.update(f"Mode: {self._mode}")
+        auto_refresh = self.query_one("#status-autorefresh", Static)
+        auto_refresh.update(f"Auto Refresh: {self._auto_refresh_state_label()}")
+        self._set_tone(
+            auto_refresh,
+            "tone-info" if self._auto_refresh_enabled else "tone-muted",
+        )
         advanced.update(
             "Advanced: visible" if self._show_advanced else "Advanced: hidden"
         )
@@ -1992,6 +2472,8 @@ class AutolabCockpitApp(App[None]):
         )
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
+        run_sort_button = self.query_one("#run-sort", Button)
+        run_sort_button.label = self._run_sort_button_label()
         key_hints.update(self._key_hints_text())
         if self._running_intent is not None:
             elapsed: str = ""
@@ -2064,12 +2546,18 @@ class AutolabCockpitApp(App[None]):
                     f"blockers:{blocker_count} "
                     f"todos:{len(snapshot.todos)} "
                     f"missing:{missing_required}"
+                    f"{refresh_label}"
                 )
                 if last_summary:
                     status = f"{status} | {last_summary}"
                 running.update(status)
                 if blocker_count or missing_required:
                     self._set_tone(running, "tone-warning")
+                elif (
+                    self._last_command_return_code is not None
+                    and self._last_command_return_code != 0
+                ):
+                    self._set_tone(running, "tone-danger")
                 else:
                     self._set_tone(running, "tone-success")
         else:
@@ -2084,11 +2572,22 @@ class AutolabCockpitApp(App[None]):
         self.query_one(
             "#file-advanced-buttons", Horizontal
         ).display = self._show_advanced
+        run_filter_clear = self.query_one("#run-filter-clear", Button)
+        run_filter_clear.disabled = not bool(self._run_status_filter)
+        run_filter_clear.variant = "primary" if self._run_status_filter else "default"
         filter_button = self.query_one("#file-toggle-missing-filter", Button)
         filter_button.label = (
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
         )
         filter_button.variant = "primary" if self._files_missing_only else "default"
+        source_button = self.query_one("#file-cycle-source-scope", Button)
+        source_scope = self._files_source_filter_label(self._files_source_filter)
+        source_button.label = (
+            "Source: All"
+            if source_scope == "all"
+            else f"Source: {source_scope.title()}"
+        )
+        source_button.variant = "warning" if source_scope != "all" else "default"
         clear_button = self.query_one("#artifact-filter-clear", Button)
         clear_button.disabled = not bool(self._artifact_filter_query)
         run_clear_button = self.query_one("#run-filter-clear", Button)
@@ -2169,6 +2668,7 @@ class AutolabCockpitApp(App[None]):
         self._home_action_ids = ()
         self._home_action_index = 0
         self._selected_run_index = 0
+        self._visible_runs = ()
         self._selected_artifact_index = 0
         self._visible_runs = ()
         self._current_artifacts = ()
@@ -2229,24 +2729,28 @@ class AutolabCockpitApp(App[None]):
         files_widget.update("Files\nUnavailable.")
         self._set_tone(files_widget, "tone-muted")
 
-    def _refresh_snapshot(self) -> bool:
+    def _refresh_snapshot(self, *, from_auto: bool = False) -> bool:
         try:
             self._snapshot = load_cockpit_snapshot(self._state_path)
         except Exception as exc:
             self._snapshot = None
-            self._last_snapshot_refreshed_at = None
+            self._snapshot_refreshed_at = None
             self._armed = False
             self._clear_snapshot_views()
             self._update_ui_chrome()
             self._append_console(f"snapshot refresh failed: {exc}")
-            self.notify(f"Snapshot refresh failed: {exc}")
+            if not from_auto:
+                self.notify(f"Snapshot refresh failed: {exc}")
             return False
         self._last_snapshot_refreshed_at = time.monotonic()
 
         self._populate_home_view()
         self._populate_run_list()
         self._populate_artifact_list()
+        self._last_snapshot_refresh_at = time.time()
         self._update_ui_chrome()
+        if not from_auto:
+            self._append_console("snapshot refreshed")
         return True
 
     def _populate_home_view(self) -> None:
@@ -2419,50 +2923,91 @@ class AutolabCockpitApp(App[None]):
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
         action_ids: list[str] = []
+        query = self._home_action_filter_query.strip().lower()
         for recommended in snapshot.recommended_actions:
             action = self._actions_by_id.get(recommended.action_id)
             if action is None:
                 continue
             if action.advanced and not self._show_advanced:
                 continue
+            action_label = action.user_label or action.label
+            action_help = action.help_text or action.description
+            if (
+                query
+                and query not in action_label.lower()
+                and query not in action_help.lower()
+                and query not in recommended.reason.lower()
+            ):
+                continue
             label = action.user_label or action.label
-            item_label = Label(f"{label}: {recommended.reason}")
-            item_label.add_class("tone-info")
+            tags = []
+            if action.requires_arm:
+                tags.append("mutating")
+            tags.append(f"risk:{action.risk_level}")
+            tag_text = f" [{' / '.join(tags)}]"
+            item_label = Label(f"{label}: {recommended.reason}{tag_text}")
+            item_label.add_class("tone-warning" if action.requires_arm else "tone-info")
             action_list.append(ListItem(item_label))
             action_ids.append(action.action_id)
 
         if not action_ids:
-            fallback_action_id = (
-                "open_rendered_prompt"
-                if snapshot.render_preview.status == "ok"
-                else "open_stage_prompt"
-            )
-            fallback_text = (
-                "Open rendered prompt: preview what will run next."
-                if fallback_action_id == "open_rendered_prompt"
-                else "Open stage prompt template."
-            )
-            item_label = Label(fallback_text)
-            item_label.add_class("tone-info")
-            action_list.append(ListItem(item_label))
-            action_ids.append(fallback_action_id)
+            if query:
+                item_label = Label(
+                    f"No matching recommended actions for '{self._home_action_filter_query}'."
+                )
+                item_label.add_class("tone-warning")
+                action_list.append(ListItem(item_label))
+                action_ids = ()
+            else:
+                fallback_action_id = (
+                    "open_rendered_prompt"
+                    if snapshot.render_preview.status == "ok"
+                    else "open_stage_prompt"
+                )
+                fallback_text = (
+                    "Open rendered prompt: preview what will run next."
+                    if fallback_action_id == "open_rendered_prompt"
+                    else "Open stage prompt template."
+                )
+                item_label = Label(fallback_text)
+                item_label.add_class("tone-info")
+                action_list.append(ListItem(item_label))
+                action_ids.append(fallback_action_id)
 
         self._home_action_ids = tuple(action_ids)
-        self._home_action_index = min(
-            self._home_action_index, len(self._home_action_ids) - 1
-        )
-        action_list.index = self._home_action_index
+        if self._home_action_ids:
+            self._home_action_index = min(
+                self._home_action_index, len(self._home_action_ids) - 1
+            )
+            action_list.index = self._home_action_index
+        else:
+            self._home_action_index = 0
 
-    def _populate_run_list(self) -> None:
+    def _populate_run_list(self, *, preserve_selected_run_id: str | None = None) -> None:
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
         if snapshot is None:
+            self._visible_runs = ()
             return
         filter_query = self._run_status_filter.strip().lower()
 
-        if not snapshot.runs:
+        if self._run_status_filter:
+            filter_text = self._run_status_filter.strip().lower()
+            self._visible_runs = tuple(
+                run
+                for run in snapshot.runs
+                if filter_text in str(run.status).strip().lower()
+            )
+        else:
+            self._visible_runs = snapshot.runs
+
+        if not self._visible_runs:
             empty_label = Label("(No runs found yet)")
+            if self._run_status_filter:
+                empty_label = Label(
+                    f"(No runs match status filter: {self._run_status_filter})"
+                )
             empty_label.add_class("tone-muted")
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
@@ -2562,7 +3107,6 @@ class AutolabCockpitApp(App[None]):
 
     def _update_run_details(self) -> None:
         run = self._selected_run()
-        snapshot = self._snapshot
         if run is None:
             details_widget = self.query_one("#run-details", Static)
             details_widget.update("Run Details\nNo run selected.")
@@ -2574,6 +3118,11 @@ class AutolabCockpitApp(App[None]):
         run_count = len(self._visible_runs)
         total_count = len(snapshot.runs) if snapshot is not None else run_count
         details_widget = self.query_one("#run-details", Static)
+        snapshot_block = f"sort={self._run_sort_mode} | "
+        if snapshot is not None:
+            snapshot_block = (
+                f"sort={self._run_sort_mode} | total={len(snapshot.runs)} | "
+            )
         details_widget.update(
             "Run Details\n"
             f"- Selected: {selected_index}/{run_count}\n"
@@ -2588,6 +3137,7 @@ class AutolabCockpitApp(App[None]):
             f"- Artifact sync: {run.sync_status or '-'}\n"
             f"- Started: {run.started_at or '-'}\n"
             f"- Completed: {run.completed_at or '-'}\n"
+            f"- Filter: {self._run_status_filter or 'none'}\n"
             f"- Manifest: {'OK' if run.manifest_path.exists() else 'MISS'}\n"
             f"- Metrics: {'OK' if run.metrics_path.exists() else 'MISS'}\n"
             "- Keys: Enter open manifest | Open Metrics button for metrics"
@@ -2605,16 +3155,8 @@ class AutolabCockpitApp(App[None]):
         if snapshot is None:
             return
 
-        stage = snapshot.current_stage
-        stage_artifacts = list(snapshot.artifacts_by_stage.get(stage, ()))
-        seen: set[Path] = set()
-        merged: list[ArtifactItem] = []
-        for artifact in [*stage_artifacts, *snapshot.common_artifacts]:
-            if artifact.path in seen:
-                continue
-            seen.add(artifact.path)
-            merged.append(artifact)
-        self._all_artifacts = tuple(merged)
+        scope_artifacts = self._files_scope_artifacts()
+        self._all_artifacts = scope_artifacts
         self._missing_artifacts_count = sum(
             1 for artifact in self._all_artifacts if not artifact.exists
         )
@@ -2653,7 +3195,8 @@ class AutolabCockpitApp(App[None]):
             context_widget = self.query_one("#files-context", Static)
             context_widget.update(
                 "Files\n"
-                f"- Stage: {stage}\n"
+                f"- Stage: {snapshot.current_stage}\n"
+                f"- Source: {self._files_source_filter_label(self._files_source_filter)}\n"
                 f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
                 f"- Name filter: {self._artifact_filter_query or 'none'}\n"
                 f"- {empty_text}"
@@ -2693,6 +3236,7 @@ class AutolabCockpitApp(App[None]):
         context_widget.update(
             "Files\n"
             f"- Stage: {snapshot.current_stage}\n"
+            f"- Source: {self._files_source_filter_label(self._files_source_filter)}\n"
             f"- Item: {selected_index}/{visible_count}\n"
             f"- Selected: {selected_text}\n"
             f"- Filter: {'missing only' if self._files_missing_only else 'all files'}\n"
@@ -2702,9 +3246,29 @@ class AutolabCockpitApp(App[None]):
             "- View-only: Viewer, Editor, Rendered, Context, Template, State\n"
             "- Mutating: Loop, Lock Break, Focus, Experiment Create/Move\n"
             "  (unlock + confirm required)\n"
-            "- Keys: Enter open viewer | / focus name filter"
+            "- Keys: Enter open viewer | n next missing | / focus name filter"
         )
         self._set_tone(context_widget, "tone-info")
+
+    def _command_history_lines(self) -> str:
+        if not self._command_history:
+            return "No commands executed yet."
+
+        lines: list[str] = []
+        for item in list(self._command_history)[:5]:
+            status = "OK" if item.exit_code == 0 else f"ERR({item.exit_code})"
+            duration = (
+                f"{item.duration_seconds:.1f}s"
+                if item.duration_seconds is not None
+                else "n/a"
+            )
+            command = item.command
+            if len(command) > 110:
+                command = command[:107] + "..."
+            lines.append(
+                f"- {item.label}: {status} ({duration})\n  {command}"
+            )
+        return "\n".join(lines)
 
     def _update_help_text(self) -> None:
         help_widget = self.query_one("#help-text", Static)
@@ -2728,16 +3292,20 @@ class AutolabCockpitApp(App[None]):
             "- Runs: run manifest and metrics overview with optional run filtering.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
             "- Files advanced: focus experiment, create experiment, move experiment.\n"
-            "- Console: live command output.\n"
+            "- Console: live command output with optional error-only filtering.\n"
             "\n"
             "Keys\n"
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
             "- w: toggle console line wrapping.\n"
+            "- shift+e: toggle console error-only filter (Console view).\n"
+            "- f: focus and filter runs by status (Runs view).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
+            "- v: Open selected run manifest from Runs view.\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
+            "- t: Toggle runs sort order (newest, oldest, status).\n"
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
@@ -2777,6 +3345,13 @@ class AutolabCockpitApp(App[None]):
             group="tui-ui-flows",
             exit_on_error=False,
         )
+
+    def _auto_refresh_tick(self) -> None:
+        if not self._auto_refresh_enabled or self._running_intent is not None:
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._refresh_snapshot(from_auto=True)
 
     def get_system_commands(self, screen) -> list[SystemCommand]:
         commands = list(super().get_system_commands(screen))
@@ -2826,6 +3401,11 @@ class AutolabCockpitApp(App[None]):
                     "Toggle safety lock",
                     "Lock or unlock mutating actions.",
                     self.action_toggle_safety_lock,
+                ),
+                SystemCommand(
+                    "Toggle auto-refresh",
+                    "Enable or disable periodic snapshot refresh.",
+                    self.action_toggle_auto_refresh,
                 ),
             ]
         )
@@ -2889,7 +3469,29 @@ class AutolabCockpitApp(App[None]):
                         self.action_clear_runs_filter,
                     )
                 )
+        if self._mode == "runs":
+            commands.append(
+                SystemCommand(
+                    "Toggle run sort order",
+                    "Switch runs between newest-first and oldest-first order.",
+                    self.action_toggle_runs_sort,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Jump to run",
+                    "Open a searchable list of runs and jump to a row.",
+                    self.action_jump_to_item,
+                )
+            )
         if self._mode == "files":
+            commands.append(
+                SystemCommand(
+                    "Jump to file",
+                    "Open a searchable list of visible files and jump to a row.",
+                    self.action_jump_to_item,
+                )
+            )
             commands.append(
                 SystemCommand(
                     "Focus Files Name Filter",
@@ -2906,9 +3508,23 @@ class AutolabCockpitApp(App[None]):
             )
             commands.append(
                 SystemCommand(
+                    "Cycle Files Source Scope",
+                    "Switch between all, stage, and common artifacts.",
+                    self.action_cycle_file_source_scope,
+                )
+            )
+            commands.append(
+                SystemCommand(
                     "Open selected file in editor",
                     "Open the selected artifact in your external editor.",
                     self.action_open_selected_in_editor,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Next missing artifact",
+                    "Jump to the next missing artifact in the file list.",
+                    self.action_next_missing_artifact,
                 )
             )
             if self._artifact_filter_query:
@@ -2917,22 +3533,41 @@ class AutolabCockpitApp(App[None]):
                         "Clear Files Name Filter",
                         "Reset the file name filter query.",
                         self.action_clear_files_filter,
-                    )
                 )
-        if self._running_intent is not None:
+            )
+        if self._mode == "console":
+            commands.append(
+                SystemCommand(
+                    "Toggle Console Error-only Filter",
+                    "Show only console entries with error-like markers.",
+                    self.action_toggle_console_error_filter,
+                )
+            )
+        if (
+            self._running_intent is not None
+            and self._running_intent.action_id == "run_loop"
+        ):
             commands.append(
                 SystemCommand(
                     "Stop active command",
-                    f"Stop the active command: {self._running_intent.action_id}",
-                    self.action_stop_running_command,
+                    "Request a graceful stop for the active command.",
+                    self.action_stop_loop,
                 )
             )
-            if self._running_intent.action_id == "run_loop":
+        if self._mode == "home":
+            commands.append(
+                SystemCommand(
+                    "Focus Home Action Filter",
+                    "Filter recommended actions by text.",
+                    self.action_focus_home_action_filter,
+                )
+            )
+            if self._home_action_filter_query:
                 commands.append(
                     SystemCommand(
-                        "Stop active loop",
-                        "Request a graceful stop for the active loop command.",
-                        self.action_stop_loop,
+                        "Clear Home Action Filter",
+                        "Reset the home action filter query.",
+                        self._clear_home_action_filter,
                     )
                 )
         return commands
@@ -2951,6 +3586,9 @@ class AutolabCockpitApp(App[None]):
 
     def action_show_help(self) -> None:
         self._switch_mode("help")
+
+    def action_show_command_history(self) -> None:
+        self.push_screen(CommandHistoryScreen(entries=tuple(self._command_history)))
 
     def action_show_previous_view(self) -> None:
         self._cycle_mode(-1)
@@ -2995,9 +3633,34 @@ class AutolabCockpitApp(App[None]):
         self._populate_home_view()
         self._update_ui_chrome()
 
+    def action_toggle_auto_refresh(self) -> None:
+        if self._running_intent is not None:
+            self.notify("Auto-refresh cannot be changed while a command is running.")
+            return
+        self._auto_refresh_enabled = not self._auto_refresh_enabled
+        if self._auto_refresh_enabled:
+            self._append_console("auto-refresh enabled")
+        else:
+            self._append_console("auto-refresh disabled")
+        self._update_ui_chrome()
+        self._refresh_snapshot(from_auto=True)
+
+    def action_toggle_run_sort(self) -> None:
+        if self._snapshot is None:
+            self.notify("Run sort is not available until snapshot loads.")
+            return
+        current_index = self._RUN_SORT_MODES.index(self._run_sort_mode)
+        self._run_sort_mode = self._RUN_SORT_MODES[
+            (current_index + 1) % len(self._RUN_SORT_MODES)
+        ]
+        selected = self._selected_run()
+        selected_id = selected.run_id if selected is not None else None
+        self._populate_run_list(preserve_selected_run_id=selected_id)
+        self._append_console(f"run sort mode: {self._run_sort_label().lower()}")
+        self._update_ui_chrome()
+
     def action_refresh_snapshot(self) -> None:
-        if self._refresh_snapshot():
-            self._append_console("snapshot refreshed")
+        self._refresh_snapshot()
 
     def action_clear_console(self) -> None:
         self._console_tail.clear()
@@ -3011,46 +3674,15 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
-        self._start_ui_flow(
-            label="stop-loop",
-            flow_factory=lambda: self._stop_running_command(for_loop=True),
-        )
+        self._start_ui_flow(label="stop-command", flow_factory=self._stop_running_command)
 
-    def action_stop_running_command(self) -> None:
-        self._start_ui_flow(
-            label="stop-command", flow_factory=lambda: self._stop_running_command()
-        )
-
-    def action_next_missing_artifact(self) -> None:
+    def action_cycle_file_source_scope(self) -> None:
         if self._mode != "files":
-            self.notify("Next missing artifact is available in Files view (3).")
+            self.notify("Source scope cycle is available in Files view (3).")
             return
-        if not self._current_artifacts:
-            self.notify("No artifacts are currently visible.")
-            return
-
-        if self._running_intent is not None:
-            self.notify("Navigation is unavailable while a command is running.")
-            return
-
-        missing_indices: list[int] = [
-            index
-            for index, artifact in enumerate(self._current_artifacts)
-            if not artifact.exists
-        ]
-        if not missing_indices:
-            self.notify("No missing artifacts in current file list.")
-            return
-
-        start = self._selected_artifact_index + 1
-        next_missing = next(
-            (index for index in missing_indices if index >= start),
-            missing_indices[0],
-        )
-        self._selected_artifact_index = next_missing
-        artifact_list = self.query_one("#artifact-list", ListView)
-        artifact_list.index = next_missing
-        self._update_files_context()
+        self._files_source_filter = self._next_files_source_filter()
+        if self._snapshot is not None:
+            self._populate_artifact_list()
         self._update_ui_chrome()
 
     def action_quick_open(self) -> None:
@@ -3071,6 +3703,39 @@ class AutolabCockpitApp(App[None]):
             return
         self.notify("Quick open is available in Home, Runs, and Files views.")
 
+    def action_open_selected_run_manifest(self) -> None:
+        if self._mode != "runs":
+            self.notify("Open run manifest is available in Runs view (2).")
+            return
+        self._start_ui_flow(
+            label="runs-open-manifest",
+            flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
+        )
+
+    def action_next_missing_artifact(self) -> None:
+        if self._mode != "files":
+            self.notify("Next missing artifact is available in Files view (3).")
+            return
+        if not self._current_artifacts:
+            self.notify("No files are currently listed.")
+            return
+        current_index = self._selected_artifact_index
+        next_missing_index: int | None = None
+        for offset in range(1, len(self._current_artifacts) + 1):
+            candidate = (current_index + offset) % len(self._current_artifacts)
+            if not self._current_artifacts[candidate].exists:
+                next_missing_index = candidate
+                break
+        if next_missing_index is None:
+            self.notify("No missing artifacts in this view.")
+            return
+        self._selected_artifact_index = next_missing_index
+        artifact_list = self.query_one("#artifact-list", ListView)
+        artifact_list.index = next_missing_index
+        self._update_files_context()
+        self._update_ui_chrome()
+        artifact_list.focus()
+
     def action_quick_secondary(self) -> None:
         if self._mode == "home":
             self._start_ui_flow(
@@ -3088,6 +3753,55 @@ class AutolabCockpitApp(App[None]):
             self.action_toggle_missing_only_filter()
             return
         self.notify("Mode quick action is available in Home, Runs, and Files views.")
+
+    def action_jump_to_item(self) -> None:
+        if self._mode not in {"runs", "files"}:
+            self.notify("Jump is available in Runs and Files views.")
+            return
+        self._start_ui_flow(
+            label=f"jump:{self._mode}",
+            flow_factory=self._jump_to_item,
+        )
+
+    async def _jump_to_item(self) -> None:
+        if self._mode == "runs":
+            if not self._visible_runs:
+                self.notify("No runs available for jump.")
+                return
+            selected_run_id = await self.push_screen_wait(
+                RunJumpScreen(runs=self._visible_runs)
+            )
+            if selected_run_id is None:
+                return
+            for index, run in enumerate(self._visible_runs):
+                if run.run_id == selected_run_id:
+                    self._selected_run_index = index
+                    self._update_run_details()
+                    self._update_ui_chrome()
+                    if self._mode == "runs":
+                        self.query_one("#run-list", ListView).index = index
+                    break
+            return
+
+        if not self._current_artifacts:
+            self.notify("No files available for jump.")
+            return
+        artifact_options = tuple(
+            (artifact.path, self._display_path(artifact.path))
+            for artifact in self._current_artifacts
+        )
+        selected_artifact = await self.push_screen_wait(
+            ArtifactJumpScreen(artifact_paths=artifact_options)
+        )
+        if selected_artifact is None:
+            return
+        for index, artifact in enumerate(self._current_artifacts):
+            if artifact.path == selected_artifact:
+                self._selected_artifact_index = index
+                self._update_files_context()
+                self._update_ui_chrome()
+                self.query_one("#artifact-list", ListView).index = index
+                break
 
     def action_open_selected_in_editor(self) -> None:
         if self._mode != "files":
@@ -3755,6 +4469,9 @@ class AutolabCockpitApp(App[None]):
             history_item.exit_code = 1
             history_item.finished_at = time.monotonic()
             self._append_console(f"failed to start command: {exc}")
+            history_entry.status = "failed"
+            history_entry.return_code = 1
+            history_entry.duration = time.monotonic() - history_entry.started_at
             self._running_intent = None
             self._running_command_started_at = None
             self._active_history_item = None
@@ -3767,6 +4484,14 @@ class AutolabCockpitApp(App[None]):
             self.call_from_thread(self._update_ui_chrome)
         except Exception:
             pass
+
+    def _action_label(self, action_id: str) -> str:
+        """Return a user-facing label for a command action id."""
+
+        action = self._actions_by_id.get(action_id)
+        if action is None:
+            return action_id.replace("_", " ").title()
+        return action.user_label or action.label
 
     def _handle_runner_done(self, return_code: int, stopped: bool) -> None:
         def _finish() -> None:
@@ -3810,48 +4535,36 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    async def _stop_running_command(self, *, for_loop: bool = False) -> None:
+    def _running_command_label(self) -> str:
+        if self._running_intent is None:
+            return "Running command"
+        action = self._actions_by_id.get(self._running_intent.action_id)
+        if action is not None:
+            return action.user_label or action.label
+        return self._running_intent.action_id or "running command"
+
+    async def _stop_running_command(self) -> None:
         intent = self._running_intent
         if intent is None:
             self.notify("No command is running.")
             return
-        if for_loop and intent.action_id != "run_loop":
-            self.notify("No loop command is running.")
-            return
 
-        is_loop = intent.action_id == "run_loop"
-        target_command = shlex.join(intent.argv)
-        stop_intent = CommandIntent(
-            action_id="stop_loop",
-            argv=("autolab", "tui", "--stop-loop"),
-            cwd=intent.cwd,
-            expected_writes=(),
-            mutating=False,
-        )
-        stop_command = target_command if target_command else shlex.join(stop_intent.argv)
+        command = shlex.join(intent.argv)
+        label = self._running_command_label()
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
-                title="Stop active loop?" if is_loop else "Stop active command?",
-                summary=(
-                    "This requests a graceful stop for the active process."
-                    if is_loop
-                    else f"Stop command: {target_command}"
-                ),
-                command=stop_command,
-                cwd=stop_intent.cwd,
-                expected_writes=stop_intent.expected_writes,
-                confirm_label="Stop loop" if is_loop else "Stop",
+                title=f"Stop active command: {label}?",
+                summary="This requests a graceful interrupt for the active command.",
+                command=command,
+                cwd=intent.cwd,
+                expected_writes=(),
+                confirm_label="Stop command",
             )
         )
         if not confirmed:
             return
 
         if self._runner.stop():
-            if is_loop:
-                self._append_console("stop requested for active loop process")
-            else:
-                self._append_console(
-                    f"stop requested for active command: {target_command}"
-                )
+            self._append_console(f"stop requested for active command: {command}")
         else:
-            self._append_console("no running process to stop")
+            self._append_console("no running command process to stop")
