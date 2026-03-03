@@ -2917,16 +2917,20 @@ class AutolabCockpitApp(App[None]):
             total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
+            total_all = len(self._snapshot.runs) if self._snapshot is not None else total
         elif self._mode == "files":
             total = len(self._current_artifacts)
             index = self._selected_artifact_index
             prefix = "Files"
+            total_all = len(self._all_artifacts)
         else:
             return "Selection: n/a"
 
         if total <= 0:
             return f"{prefix}: 0/0"
         position = min(max(index, 0), total - 1) + 1
+        if self._mode in {"runs", "files"} and total_all != total:
+            return f"{prefix}: {position}/{total} (of {total_all})"
         return f"{prefix}: {position}/{total}"
 
     def _action_label(self, action_id: str) -> str:
