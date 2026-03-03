@@ -75,6 +75,8 @@ class CommandHistoryItem:
 
 
 _COMMAND_HISTORY_MAX = 25
+_AUTO_REFRESH_INTERVAL_SECONDS = 5.0
+_ARTIFACT_PREVIEW_MAX_CHARS = 12_000
 
 
 class UnlockSafetyScreen(ModalScreen[bool]):
@@ -1441,6 +1443,11 @@ class AutolabCockpitApp(App[None]):
       width: 17;
     }
 
+    #status-autorefresh {
+      width: 18;
+      content-align: right middle;
+    }
+
     #status-selection {
       width: 24;
     }
@@ -1613,6 +1620,7 @@ class AutolabCockpitApp(App[None]):
         ("R", "rerun_last_command", "Rerun Last"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
+        ("a", "toggle_auto_refresh", "Auto Refresh"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
@@ -1651,8 +1659,10 @@ class AutolabCockpitApp(App[None]):
         self._last_command_duration: float | None = None
         self._running_command_started_at: float | None = None
         self._last_command_intent: CommandIntent | None = None
+        self._artifact_preview_max_chars: int = _ARTIFACT_PREVIEW_MAX_CHARS
         self._command_history: deque[CommandHistoryItem] = deque(maxlen=_COMMAND_HISTORY_MAX)
         self._active_history_item: CommandHistoryItem | None = None
+        self._auto_refresh_enabled = False
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1665,6 +1675,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
             yield Static("Advanced: hidden", id="status-advanced")
+            yield Static("Auto-refresh: off", id="status-autorefresh")
             yield Static("Selection: -", id="status-selection")
             yield Static("Console wrap: off", id="status-console")
             yield Static("Command: n/a", id="status-command")
@@ -1778,6 +1789,7 @@ class AutolabCockpitApp(App[None]):
         self._update_help_text()
         self._update_ui_chrome()
         self._switch_mode("home")
+        self.set_interval(_AUTO_REFRESH_INTERVAL_SECONDS, self._run_auto_refresh)
 
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
@@ -1822,6 +1834,7 @@ class AutolabCockpitApp(App[None]):
         return "tone-muted"
 
     def _key_hints_text(self) -> str:
+        auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
         parts = [
             "1-5 view",
@@ -1830,6 +1843,7 @@ class AutolabCockpitApp(App[None]):
             "Home/End list",
             "h history",
             "o open",
+            f"a auto-refresh({auto_refresh_state})",
             "u lock",
             "x advanced",
             "p prompt",
@@ -1898,6 +1912,7 @@ class AutolabCockpitApp(App[None]):
         safety = self.query_one("#status-safety", Static)
         mode = self.query_one("#status-mode", Static)
         advanced = self.query_one("#status-advanced", Static)
+        auto_refresh = self.query_one("#status-autorefresh", Static)
         selection = self.query_one("#status-selection", Static)
         console = self.query_one("#status-console", Static)
         command_status = self.query_one("#status-command", Static)
@@ -1913,6 +1928,12 @@ class AutolabCockpitApp(App[None]):
             "Advanced: visible" if self._show_advanced else "Advanced: hidden"
         )
         self._set_tone(advanced, "tone-info" if self._show_advanced else "tone-muted")
+        auto_refresh.update(
+            f"Auto-refresh: {'on' if self._auto_refresh_enabled else 'off'}"
+        )
+        self._set_tone(
+            auto_refresh, "tone-info" if self._auto_refresh_enabled else "tone-muted"
+        )
         selection_label = self._selection_status_label()
         selection.update(selection_label)
         self._set_tone(
@@ -1999,6 +2020,15 @@ class AutolabCockpitApp(App[None]):
         clear_button.disabled = not bool(self._artifact_filter_query)
         run_clear_button = self.query_one("#run-filter-clear", Button)
         run_clear_button.disabled = not bool(self._run_status_filter)
+
+    def _run_auto_refresh(self) -> None:
+        if not self._auto_refresh_enabled:
+            return
+        if self._running_intent is not None:
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._refresh_snapshot()
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -2386,6 +2416,45 @@ class AutolabCockpitApp(App[None]):
         run_list.index = self._selected_run_index
         self._update_run_details()
 
+    def _parse_run_timestamp(self, raw_value: str) -> datetime | None:
+        raw = str(raw_value).strip()
+        if not raw:
+            return None
+        normalized = raw.replace(" ", "T")
+        normalized = normalized.replace("Z", "+00:00")
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+        ):
+            try:
+                return datetime.strptime(normalized, fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+
+    def _run_duration_text(self, run: RunItem) -> str:
+        if not run.started_at:
+            return "-"
+        started = self._parse_run_timestamp(run.started_at)
+        if started is None:
+            return "-"
+
+        ended = self._parse_run_timestamp(run.completed_at or "")
+        if ended is None and run.completed_at:
+            return "-"
+        if ended is None:
+            now = datetime.now(started.tzinfo) if started.tzinfo is not None else datetime.now()
+            ended = now
+        elapsed = (ended - started).total_seconds()
+        return f"{elapsed:.1f}s"
+
     def _update_run_details(self) -> None:
         run = self._selected_run()
         snapshot = self._snapshot
@@ -2394,6 +2463,8 @@ class AutolabCockpitApp(App[None]):
             details_widget.update("Run Details\nNo run selected.")
             self._set_tone(details_widget, "tone-muted")
             return
+        completion = "finished" if _is_completed_backlog_status(run.status) else "active"
+        run_duration = self._run_duration_text(run)
         selected_index = self._selected_run_index + 1
         run_count = len(self._visible_runs)
         total_count = len(snapshot.runs) if snapshot is not None else run_count
@@ -2403,6 +2474,8 @@ class AutolabCockpitApp(App[None]):
             f"- Selected: {selected_index}/{run_count}\n"
             f"- Total runs: {total_count}\n"
             f"- Filter: {self._run_status_filter or 'none'}\n"
+            f"- Completion: {completion}\n"
+            f"- Duration: {run_duration}\n"
             f"- Run ID: {run.run_id}\n"
             f"- Status: {run.status}\n"
             f"- Host mode: {run.host_mode}\n"
@@ -2537,7 +2610,7 @@ class AutolabCockpitApp(App[None]):
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "- History: R reruns the last command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
@@ -2638,6 +2711,11 @@ class AutolabCockpitApp(App[None]):
                     "Toggle advanced actions",
                     "Show or hide advanced actions.",
                     self.action_toggle_advanced,
+                ),
+                SystemCommand(
+                    "Toggle auto-refresh",
+                    "Enable or disable automatic periodic snapshot refresh.",
+                    self.action_toggle_auto_refresh,
                 ),
                 SystemCommand(
                     "Toggle safety lock",
@@ -2790,6 +2868,12 @@ class AutolabCockpitApp(App[None]):
         if self._snapshot is not None:
             self._populate_home_view()
             self._populate_artifact_list()
+        self._update_ui_chrome()
+
+    def action_toggle_auto_refresh(self) -> None:
+        self._auto_refresh_enabled = not self._auto_refresh_enabled
+        state = "enabled" if self._auto_refresh_enabled else "disabled"
+        self._append_console(f"auto-refresh {state}")
         self._update_ui_chrome()
 
     def action_toggle_prompt_view(self) -> None:
@@ -3268,9 +3352,15 @@ class AutolabCockpitApp(App[None]):
             self._start_command(intent)
 
     async def _open_artifact_viewer(self, artifact_path: Path) -> None:
-        text, _truncated = load_artifact_text(artifact_path, max_chars=None)
+        text, truncated = load_artifact_text(
+            artifact_path, max_chars=self._artifact_preview_max_chars
+        )
+        if truncated:
+            title = f"{self._display_path(artifact_path)} [truncated]"
+        else:
+            title = self._display_path(artifact_path)
         await self._open_text_viewer(
-            title=self._display_path(artifact_path),
+            title=title,
             text=text,
             editor_path=artifact_path,
             source_path=artifact_path,
