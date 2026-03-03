@@ -601,6 +601,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             home_titles = _system_command_titles(app)
             assert "Go to Files view" in home_titles
             assert "Quick open selected item" in home_titles
+            assert "Show command history" in home_titles
             assert "Focus Files Name Filter" not in home_titles
 
             await pilot.press("3")
@@ -608,6 +609,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             files_titles = _system_command_titles(app)
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
+            assert "Show command history" in files_titles
 
             await pilot.press("/")
             await pilot.pause()
@@ -615,6 +617,104 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+    asyncio.run(_run())
+
+
+def test_command_history_modal_shows_recent_command_statuses(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+
+        def _call_from_thread(callback, *args, **kwargs) -> bool:
+            callback(*args, **kwargs)
+            return True
+
+        app._runner.start = lambda intent: None  # type: ignore[method-assign]
+        app.call_from_thread = _call_from_thread  # type: ignore[method-assign]
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app._start_command(
+                CommandIntent(
+                    action_id="verify_current_stage",
+                    argv=("autolab", "verify"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=False,
+                )
+            )
+            app._handle_runner_done(0, False)
+            app._start_command(
+                CommandIntent(
+                    action_id="todo_sync",
+                    argv=("autolab", "todo", "sync"),
+                    cwd=repo_root,
+                    expected_writes=(),
+                    mutating=False,
+                )
+            )
+            app._handle_runner_done(1, False)
+            await pilot.pause()
+
+            assert len(app._command_history) >= 2
+
+            await pilot.press("z")
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.CommandHistoryScreen)
+            _assert_fullscreen_modal_dialog(app, "#command-history-dialog")
+            labels = [str(label.render()) for label in app.screen.query("Label")]
+            assert any("OK" in label for label in labels)
+            assert any("FAIL" in label for label in labels)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, app_module.CommandHistoryScreen)
+
+    asyncio.run(_run())
+
+
+def test_focus_next_missing_artifact_jumps_to_next_missing_entry(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _materialize_all_current_stage_artifacts(state_path)
+        snapshot = load_cockpit_snapshot(state_path)
+        missing_path = None
+        for artifact in snapshot.common_artifacts:
+            if artifact.path.name == "todo.md":
+                missing_path = artifact.path
+                break
+        assert missing_path is not None
+        assert missing_path.exists()
+        missing_path.unlink()
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            assert artifact_list.index == 0
+            assert app._current_artifacts
+            missing_indices = [
+                index
+                for index, artifact in enumerate(app._current_artifacts)
+                if not artifact.exists
+            ]
+            assert missing_indices
+
+            await pilot.press("n")
+            await pilot.pause()
+            current_index = app._selected_artifact_index
+            assert current_index in missing_indices
+
+            selected = app._selected_artifact_path()
+            assert selected is not None
+            assert not app._current_artifacts[current_index].exists
+            assert app._current_artifacts[current_index].path == selected
 
     asyncio.run(_run())
 
