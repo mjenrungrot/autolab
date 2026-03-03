@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-import time
 import re
 import shlex
 import time
@@ -10,7 +8,6 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -84,6 +81,17 @@ class CommandHistoryItem:
 _COMMAND_HISTORY_MAX = 25
 _AUTO_REFRESH_INTERVAL_SECONDS = 5.0
 _ARTIFACT_PREVIEW_MAX_CHARS = 12_000
+_CONSOLE_EXPORT_STEM = "autolab-console"
+
+
+def _query_matches(raw_text: str, query: str) -> bool:
+    haystack = str(raw_text).strip().lower()
+    if not haystack:
+        haystack = ""
+    normalized_query = str(query).strip().lower()
+    if not normalized_query:
+        return True
+    return all(term in haystack for term in normalized_query.split())
 
 
 class UnlockSafetyScreen(ModalScreen[bool]):
@@ -140,6 +148,7 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         ("escape", "cancel", "Close"),
         ("enter", "replay", "Replay"),
         ("r", "replay", "Replay"),
+        ("f", "toggle_failed_filter", "Failed Only"),
     ]
 
     CSS = """
@@ -166,6 +175,15 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
       min-height: 8;
     }
 
+    #command-history-filter-row {
+      height: auto;
+      margin-bottom: 1;
+    }
+
+    #command-history-filter {
+      width: 1fr;
+    }
+
     #command-history-detail {
       margin-top: 1;
       color: $text-muted;
@@ -180,10 +198,22 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
     def __init__(self, *, history: tuple[CommandHistoryItem, ...]) -> None:
         super().__init__()
         self._history = history
+        self._filtered_history = history
+        self._last_query = "\0"
+        self._failed_only_filter = False
+        self._last_failed_only_filter = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-dialog"):
             yield Label("Command History", id="command-history-title")
+            with Horizontal(id="command-history-filter-row"):
+                yield Input(
+                    value="",
+                    placeholder="Filter by command or label...",
+                    id="command-history-filter",
+                )
+                yield Button("Mode: All", id="command-history-filter-mode")
+                yield Button("Clear", id="command-history-filter-clear")
             yield ListView(id="command-history-list")
             yield Static("", id="command-history-detail", markup=False)
             with Horizontal(id="command-history-buttons"):
@@ -198,8 +228,8 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             return
         list_view = self.query_one("#command-history-list", ListView)
         list_view.clear()
-        for item in self._history:
-            list_view.append(ListItem(Label(self._format_history_line(item))))
+        self._refresh_history_matches("")
+        self._update_filter_mode_button()
         list_view.index = 0
         list_view.focus()
         self._update_detail()
@@ -208,19 +238,91 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         self.dismiss(None)
 
     def action_replay(self) -> None:
-        self.dismiss(self._selected_item())
+        self._replay_selected()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "command-history-close":
             self.dismiss(None)
             return
         if event.button.id == "command-history-replay":
-            self.dismiss(self._selected_item())
+            self._replay_selected()
+            return
+        if event.button.id == "command-history-filter-mode":
+            self.action_toggle_failed_filter()
+            return
+        if event.button.id == "command-history-filter-clear":
+            self.query_one("#command-history-filter", Input).value = ""
+            self._refresh_history_matches("")
             return
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id != "command-history-list":
+            return
+        self._update_detail()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if event.list_view.id == "command-history-list":
-            self.dismiss(self._selected_item())
+        if event.list_view.id != "command-history-list":
+            return
+        self._replay_selected()
+
+    def action_toggle_failed_filter(self) -> None:
+        self._failed_only_filter = not self._failed_only_filter
+        self._update_filter_mode_button()
+        filter_input = self.query_one("#command-history-filter", Input)
+        self._refresh_history_matches(filter_input.value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-history-filter":
+            return
+        self._refresh_history_matches(event.value)
+
+    def _refresh_history_matches(self, query: str) -> None:
+        normalized_query = str(query).strip().lower()
+        if (
+            self._last_query == normalized_query
+            and not self._history_refresh_required()
+        ):
+            return
+        self._last_query = normalized_query
+        filtered_items = self._history
+        if self._failed_only_filter:
+            filtered_items = tuple(
+                item for item in filtered_items if self._is_failed_item(item)
+            )
+
+        if normalized_query:
+            filtered_items = tuple(
+                item
+                for item in filtered_items
+                if _query_matches(self._history_search_text(item), normalized_query)
+            )
+        self._filtered_history = filtered_items
+        mode_text = " failed-only" if self._failed_only_filter else ""
+        query_hint = normalized_query or "-"
+
+        list_view = self.query_one("#command-history-list", ListView)
+        list_view.clear()
+        if not self._filtered_history:
+            list_view.append(
+                ListItem(
+                    Label(
+                        f"(No command history matches {query_hint!r}{mode_text})",
+                        classes="tone-muted",
+                    )
+                )
+            )
+            self._update_detail()
+            return
+        for item in self._filtered_history:
+            list_view.append(ListItem(Label(self._format_history_line(item))))
+        list_view.index = 0
+        self._update_detail()
+
+    def _replay_selected(self) -> None:
+        selected = self._selected_item()
+        if selected is None:
+            return
+        self.dismiss(selected)
 
     @staticmethod
     def _format_status(item: CommandHistoryItem) -> str:
@@ -247,12 +349,12 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
 
     def _selected_item(self) -> CommandHistoryItem | None:
         list_view = self.query_one("#command-history-list", ListView)
-        if not self._history:
+        if not self._filtered_history:
             return None
         index = list_view.index
-        if index is None or index < 0 or index >= len(self._history):
+        if index is None or index < 0 or index >= len(self._filtered_history):
             return None
-        return self._history[index]
+        return self._filtered_history[index]
 
     def _update_detail(self) -> None:
         item = self._selected_item()
@@ -264,12 +366,28 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             f"{item.command}\n"
             f"Started: {item.started_at_text}\n"
             f"Exit: {item.exit_code if item.exit_code is not None else '-'}\n"
+            f"Action: {item.intent.action_id}\n"
             f"Stopped: {'yes' if item.stopped else 'no'}"
         )
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        del event
-        self._update_detail()
+    def _history_refresh_required(self) -> bool:
+        required = self._last_failed_only_filter != self._failed_only_filter
+        if required:
+            self._last_failed_only_filter = self._failed_only_filter
+        return required
+
+    def _update_filter_mode_button(self) -> None:
+        button = self.query_one("#command-history-filter-mode", Button)
+        button.label = "Mode: Failed" if self._failed_only_filter else "Mode: All"
+        button.variant = "warning" if self._failed_only_filter else "default"
+
+    @staticmethod
+    def _history_search_text(item: CommandHistoryItem) -> str:
+        return f"{item.command} {item.intent.action_id} {item.command}"
+
+    @staticmethod
+    def _is_failed_item(item: CommandHistoryItem) -> bool:
+        return item.exit_code is not None and item.exit_code != 0
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
@@ -894,10 +1012,10 @@ class RunJumpScreen(ModalScreen[str | None]):
             matches = [
                 run
                 for run in self._all_runs
-                if query_lower in str(run.run_id).lower()
-                or query_lower in str(run.status).lower()
-                or query_lower in str(run.host_mode).lower()
-                or query_lower in str(run.job_id).lower()
+                if _query_matches(
+                    f"{run.run_id} {run.status} {run.host_mode} {run.job_id}",
+                    query_lower,
+                )
             ]
         else:
             matches = list(self._all_runs)
@@ -1021,7 +1139,7 @@ class ArtifactJumpScreen(ModalScreen[Path | None]):
             matches = [
                 (path, label)
                 for path, label in self._artifact_paths
-                if query_lower in str(label).lower() or query_lower in str(path).lower()
+                if _query_matches(f"{path} {label}", query_lower)
             ]
         else:
             matches = list(self._artifact_paths)
@@ -1071,6 +1189,62 @@ class ArtifactJumpScreen(ModalScreen[Path | None]):
             selected_index = 0
         path, _label = self._filtered_artifacts[selected_index]
         self.dismiss(path)
+
+
+class SelectionInspectorScreen(ModalScreen[None]):
+    BINDINGS = [("escape", "cancel", "Close")]
+
+    CSS = """
+    SelectionInspectorScreen {
+      align: center middle;
+    }
+
+    #selection-inspector-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #selection-inspector-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #selection-inspector-content {
+      border: round $surface;
+      height: 1fr;
+      margin-bottom: 1;
+      padding: 1 1;
+    }
+
+    #selection-inspector-buttons {
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, title: str, lines: tuple[str, ...]) -> None:
+        super().__init__()
+        self._title = title
+        self._lines = lines
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="selection-inspector-dialog"):
+            yield Label(self._title, id="selection-inspector-title")
+            yield Static("\n".join(self._lines), id="selection-inspector-content")
+            with Horizontal(id="selection-inspector-buttons"):
+                yield Button("Close", id="selection-inspector-close")
+
+    def on_mount(self) -> None:
+        self.query_one("#selection-inspector-close", Button).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "selection-inspector-close":
+            self.dismiss(None)
 
 
 class ArtifactViewerScreen(ModalScreen[str | None]):
@@ -1697,6 +1871,14 @@ class AutolabCockpitApp(App[None]):
         "exception",
         "fatal",
     )
+    _RUN_PROBLEM_STATUSES = (
+        "failed",
+        "fail",
+        "error",
+        "timeout",
+        "timed_out",
+        "stopped",
+    )
 
     CSS = """
     Screen {
@@ -1764,7 +1946,7 @@ class AutolabCockpitApp(App[None]):
     }
 
     #status-console {
-      width: 16;
+      width: 28;
     }
 
     #status-command {
@@ -1954,6 +2136,24 @@ class AutolabCockpitApp(App[None]):
       height: 1fr;
       border: round $surface;
     }
+
+    #console-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #console-filter-input {
+      width: 1fr;
+    }
+
+    #console-save {
+      width: 12;
+    }
+
+    #console-follow {
+      width: 14;
+    }
     """
 
     BINDINGS = [
@@ -1972,6 +2172,7 @@ class AutolabCockpitApp(App[None]):
         ("enter", "activate_selection", "Activate"),
         ("slash", "focus_files_filter", "Filter Files"),
         ("f", "focus_mode_filter", "Filter"),
+        ("0", "clear_mode_filters", "Clear filters"),
         ("v", "mode_v_shortcut", "Mode V"),
         ("home", "list_first", "List Start"),
         ("end", "list_last", "List End"),
@@ -1986,13 +2187,21 @@ class AutolabCockpitApp(App[None]):
         ("a", "toggle_auto_refresh", "Auto-refresh"),
         ("r", "refresh_snapshot", "Refresh"),
         ("R", "rerun_last_command", "Rerun Last"),
+        ("shift+f", "rerun_last_failed_command", "Rerun Last Failed"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
         ("k", "stop_running_command", "Stop Command"),
         ("c", "clear_console", "Clear Console"),
+        ("shift+e", "toggle_console_error_filter", "Errors-only"),
         ("w", "toggle_console_wrap", "Wrap Console"),
+        ("ctrl+p", "toggle_console_follow", "Follow Console"),
+        ("ctrl+o", "save_console_output", "Save Console"),
+        ("i", "inspect_selection", "Inspect"),
+        ("b", "jump_to_problem_run", "Next Problem Run"),
+        ("shift+b", "jump_to_previous_problem_run", "Prev Problem Run"),
         ("q", "quit", "Quit"),
+        ("shift+c", "clear_command_history", "Clear command history"),
     ]
 
     def __init__(self, *, state_path: Path, tail_lines: int = 2000) -> None:
@@ -2003,6 +2212,8 @@ class AutolabCockpitApp(App[None]):
         self._command_history: deque[CommandHistoryItem] = deque(maxlen=20)
         self._console_wrap = False
         self._console_show_errors_only = False
+        self._console_follow = True
+        self._console_unread_lines = 0
         self._last_snapshot_refreshed_at: float | None = None
         self._armed = False
         self._run_status_filter = ""
@@ -2047,8 +2258,10 @@ class AutolabCockpitApp(App[None]):
         self._command_history: deque[CommandHistoryItem] = deque(
             maxlen=_COMMAND_HISTORY_MAX
         )
+        self._last_snapshot_error: str | None = None
         self._active_history_item: CommandHistoryItem | None = None
         self._auto_refresh_enabled = False
+        self._console_filter_query = ""
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -2184,6 +2397,15 @@ class AutolabCockpitApp(App[None]):
                     )
             with Vertical(id="console-view", classes="view-panel"):
                 yield Static("Console", classes="view-title")
+                with Horizontal(id="console-filter-row"):
+                    yield Input(
+                        value=self._console_filter_query,
+                        placeholder="Filter console output... (empty = no filter)",
+                        id="console-filter-input",
+                    )
+                    yield Button("Save", id="console-save")
+                    yield Button("Clear", id="console-filter-clear")
+                    yield Button("Follow", id="console-follow", variant="warning")
                 yield RichLog(
                     id="console-log",
                     markup=False,
@@ -2204,10 +2426,13 @@ class AutolabCockpitApp(App[None]):
         self._update_help_text()
         self._update_ui_chrome()
         self._switch_mode("home")
-        self.set_interval(_AUTO_REFRESH_INTERVAL_SECONDS, self._run_auto_refresh)
 
     def on_key(self, event: events.Key) -> None:
         if isinstance(self.screen, ModalScreen):
+            return
+        if isinstance(self.focused, Input):
+            if event.key == "escape" and self._clear_focused_filter():
+                event.prevent_default()
             return
         mode_by_key = {
             "1": "home",
@@ -2245,6 +2470,29 @@ class AutolabCockpitApp(App[None]):
     def _auto_refresh_state_label(self) -> str:
         return "on" if self._auto_refresh_enabled else "off"
 
+    def _human_duration(self, *, seconds: float) -> str:
+        elapsed = max(0.0, float(seconds))
+        if elapsed < 1:
+            return "now"
+        if elapsed < 60:
+            return f"{elapsed:.0f}s"
+        if elapsed < 3600:
+            return f"{elapsed / 60:.1f}m"
+        return f"{elapsed / 3600:.1f}h"
+
+    def _failed_command_count(self) -> int:
+        return sum(
+            1
+            for item in self._command_history
+            if item.exit_code is not None and item.exit_code != 0
+        )
+
+    def _latest_failed_command(self) -> CommandHistoryItem | None:
+        for item in self._command_history:
+            if item.exit_code is not None and item.exit_code != 0:
+                return item
+        return None
+
     def _last_command_summary(self) -> str:
         if self._last_command_exit_code is None:
             return ""
@@ -2256,19 +2504,223 @@ class AutolabCockpitApp(App[None]):
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
-        log = self.query_one("#console-log", RichLog)
-        if self._console_show_errors_only and not self._is_console_error_line(line):
+        passes_filters = self._passes_console_filters(line)
+        if self._console_follow and passes_filters:
+            log = self.query_one("#console-log", RichLog)
+            log.write(line)
             return
-        log.write(line)
+        if not self._console_follow and passes_filters:
+            self._console_unread_lines += 1
+            return
+        if not passes_filters:
+            return
+
+    def _passes_console_filters(self, line: str) -> bool:
+        if self._console_show_errors_only and not self._is_console_error_line(line):
+            return False
+        query = self._console_filter_query.strip().lower()
+        if not query:
+            return True
+        return query in str(line).lower()
+
+    def _visible_console_lines(self) -> tuple[str, ...]:
+        return tuple(
+            line for line in self._console_tail if self._passes_console_filters(line)
+        )
+
+    def _visible_console_line_count(self) -> int:
+        return len(self._visible_console_lines())
+
+    def _reset_console_unread_count(self) -> None:
+        if self._console_follow:
+            self._console_unread_lines = 0
+            return
+        self._console_unread_lines = self._visible_console_line_count()
 
     def _render_console_tail(self) -> None:
         log = self.query_one("#console-log", RichLog)
         log.clear()
-        lines = self._console_tail
-        if self._console_show_errors_only:
-            lines = tuple(line for line in lines if self._is_console_error_line(line))
+        lines = self._visible_console_lines()
         for line in lines:
             log.write(line)
+        self._reset_console_unread_count()
+
+    def _resolve_console_export_dir(self) -> Path:
+        if self._snapshot is None:
+            return self._state_path.parent / ".autolab" / "logs"
+        return self._snapshot.repo_root / ".autolab" / "logs"
+
+    def _next_console_export_path(self, *, export_dir: Path) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        index = 0
+        while True:
+            suffix = f"{_CONSOLE_EXPORT_STEM}-{timestamp}.log"
+            if index:
+                suffix = f"{_CONSOLE_EXPORT_STEM}-{timestamp}-{index:02d}.log"
+            candidate = export_dir / suffix
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def _save_console_output(self) -> None:
+        lines = self._visible_console_lines()
+        if not lines:
+            self.notify("No visible console output to save.")
+            return
+
+        export_dir = self._resolve_console_export_dir()
+        try:
+            export_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self.notify(f"Failed to prepare console export directory: {exc}")
+            return
+
+        export_path = self._next_console_export_path(export_dir=export_dir)
+        try:
+            export_path.write_text(
+                "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.notify(f"Failed to save console output: {exc}")
+            return
+
+        self._append_console(
+            f"console output saved ({len(lines)} lines) -> {export_path}"
+        )
+        self.notify(f"Saved console output to {export_path}")
+
+    def action_save_console_output(self) -> None:
+        self._save_console_output()
+
+    def _clear_focused_filter(self) -> bool:
+        focused = self.focused
+        if not isinstance(focused, Input):
+            return False
+
+        if focused.id == "run-filter-input":
+            if not self._run_status_filter:
+                self._focus_mode_default()
+                return True
+            self.action_clear_runs_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "artifact-filter-input":
+            if not self._artifact_filter_query:
+                self._focus_mode_default()
+                return True
+            self.action_clear_files_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "console-filter-input":
+            if not self._console_filter_query:
+                self._focus_mode_default()
+                return True
+            self.action_clear_console_filter()
+            self._focus_mode_default()
+            return True
+
+        if focused.id == "home-action-filter-input":
+            if not self._home_action_filter_query:
+                self._focus_mode_default()
+                return True
+            self._clear_home_action_filter()
+            self._focus_mode_default()
+            return True
+
+        return False
+
+    def _has_active_filters(self) -> bool:
+        if self._mode == "home":
+            return bool(self._home_action_filter_query)
+        if self._mode == "runs":
+            return bool(self._run_status_filter)
+        if self._mode == "files":
+            return (
+                bool(self._artifact_filter_query)
+                or self._files_missing_only
+                or self._files_source_filter != "all"
+            )
+        if self._mode == "console":
+            return bool(self._console_filter_query) or self._console_show_errors_only
+        return False
+
+    def _clear_mode_filters(self) -> bool:
+        if self._mode == "home":
+            if not self._home_action_filter_query:
+                return False
+            self._home_action_filter_query = ""
+            if self._snapshot is not None:
+                filter_input = self.query_one("#home-action-filter-input", Input)
+                filter_input.value = ""
+                self._populate_home_view()
+            else:
+                try:
+                    filter_input = self.query_one("#home-action-filter-input", Input)
+                    filter_input.value = ""
+                except Exception:
+                    pass
+            self._update_ui_chrome()
+            return True
+
+        if self._mode == "runs":
+            if not self._run_status_filter:
+                return False
+            self._run_status_filter = ""
+            filter_input = self.query_one("#run-filter-input", Input)
+            filter_input.value = ""
+            if self._snapshot is not None:
+                self._populate_run_list()
+            self._update_ui_chrome()
+            return True
+
+        if self._mode == "files":
+            changed = False
+            if self._artifact_filter_query:
+                self._artifact_filter_query = ""
+                filter_input = self.query_one("#artifact-filter-input", Input)
+                filter_input.value = ""
+                changed = True
+            if self._files_missing_only:
+                self._files_missing_only = False
+                changed = True
+            if self._files_source_filter != "all":
+                self._set_files_source_filter("all")
+                changed = True
+            if self._file_source_filter != "all":
+                self._file_source_filter = "all"
+                changed = True
+            if changed and self._snapshot is not None:
+                self._populate_artifact_list()
+            if changed:
+                self._update_ui_chrome()
+            return changed
+
+        if self._mode == "console":
+            changed = False
+            if self._console_filter_query:
+                self._console_filter_query = ""
+                filter_input = self.query_one("#console-filter-input", Input)
+                filter_input.value = ""
+                self._render_console_tail()
+                changed = True
+            if self._console_show_errors_only:
+                self._console_show_errors_only = False
+                self._append_console("console errors-only off")
+                changed = True
+            if changed:
+                self._update_ui_chrome()
+            return changed
+        return False
+
+    def action_clear_mode_filters(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        if self._clear_mode_filters():
+            return
+        self.notify("No active filters to clear in this view.")
 
     def _is_console_error_line(self, line: str) -> bool:
         normalized = str(line).lower()
@@ -2304,6 +2756,18 @@ class AutolabCockpitApp(App[None]):
             return "tone-danger"
         return "tone-muted"
 
+    def _run_status_icon(self, status: str) -> str:
+        normalized = str(status).strip().lower()
+        if normalized in {"completed", "synced", "pass", "success", "done"}:
+            return "[OK]"
+        if normalized in {"running", "queued", "pending", "submitted", "in_progress"}:
+            return "[RUN]"
+        if normalized in {"partial", "warning", "needs_attention"}:
+            return "[WARN]"
+        if normalized in {"failed", "fail", "error", "timeout", "stopped"}:
+            return "[ERR]"
+        return "[INFO]"
+
     def _stage_timeline_icon(self, status: str) -> str:
         normalized = str(status).strip().lower()
         if normalized == "complete":
@@ -2325,7 +2789,9 @@ class AutolabCockpitApp(App[None]):
     def _key_hints_text(self) -> str:
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
         wrap_state = "on" if self._console_wrap else "off"
+        follow_state = "on" if self._console_follow else "off"
         run_filter_state = "on" if self._run_status_filter else "off"
+        console_filter_state = "on" if self._console_filter_query else "off"
         error_filter_state = "on" if self._console_show_errors_only else "off"
         parts = [
             "1-5 view",
@@ -2337,7 +2803,6 @@ class AutolabCockpitApp(App[None]):
             f"a auto-refresh({auto_refresh_state})",
             "u lock",
             "x advanced",
-            "h history",
             "p prompt",
             "ctrl+k commands",
             "f filter",
@@ -2346,15 +2811,30 @@ class AutolabCockpitApp(App[None]):
             "? help",
             "q quit",
         ]
+        if self._has_active_filters():
+            parts.append("0 clear filters")
+        if self._command_history:
+            parts.append("C clear history")
+        failed_count = self._failed_command_count()
+        if failed_count:
+            parts.append(f"shift+f rerun failed ({failed_count})")
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
+            parts.append(f"ctrl+p follow({follow_state})")
+            if not self._console_follow and self._console_unread_lines:
+                parts.append(f"new console lines({self._console_unread_lines})")
             parts.append("c clear")
             parts.append(f"shift+e errors-only({error_filter_state})")
+            parts.append("ctrl+o save")
+            parts.append(f"f filter({console_filter_state})")
         elif self._mode == "runs":
             parts.append("v manifest")
             parts.append("m metrics")
+            parts.append("b next-problem")
+            parts.append("B prev-problem")
             parts.append(f"f filter({run_filter_state})")
             parts.append(f"y sort({self._run_sort_mode})")
+            parts.append("i inspect")
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
@@ -2366,10 +2846,14 @@ class AutolabCockpitApp(App[None]):
             parts.append(
                 f"f source({self._files_source_filter_label(self._file_source_filter)})"
             )
+            parts.append("i inspect")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
             parts.append("R rerun last command")
+            parts.append("i inspect")
+        elif self._mode == "console":
+            parts.append("i inspect")
         if (
             self._running_intent is not None
             and self._running_intent.action_id == "run_loop"
@@ -2433,16 +2917,22 @@ class AutolabCockpitApp(App[None]):
             total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
+            total_all = (
+                len(self._snapshot.runs) if self._snapshot is not None else total
+            )
         elif self._mode == "files":
             total = len(self._current_artifacts)
             index = self._selected_artifact_index
             prefix = "Files"
+            total_all = len(self._all_artifacts)
         else:
             return "Selection: n/a"
 
         if total <= 0:
             return f"{prefix}: 0/0"
         position = min(max(index, 0), total - 1) + 1
+        if self._mode in {"runs", "files"} and total_all != total:
+            return f"{prefix}: {position}/{total} (of {total_all})"
         return f"{prefix}: {position}/{total}"
 
     def _action_label(self, action_id: str) -> str:
@@ -2494,8 +2984,30 @@ class AutolabCockpitApp(App[None]):
             if "0/0" not in selection_label and "n/a" not in selection_label
             else "tone-muted",
         )
-        console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
-        self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
+        console.update(
+            "Console: "
+            f"wrap {'on' if self._console_wrap else 'off'} "
+            f"| follow {'on' if self._console_follow else 'off'}"
+            + (
+                f" | unread:{self._console_unread_lines}"
+                if self._console_unread_lines > 0 and not self._console_follow
+                else ""
+            )
+        )
+        self._set_tone(
+            console,
+            "tone-info"
+            if self._console_follow
+            else ("tone-danger" if self._console_unread_lines else "tone-warning"),
+        )
+        console_follow_button = self.query_one("#console-follow", Button)
+        if self._console_follow:
+            console_follow_button.label = "Following"
+        elif self._console_unread_lines:
+            console_follow_button.label = f"Paused ({self._console_unread_lines})"
+        else:
+            console_follow_button.label = "Paused"
+        console_follow_button.variant = "primary" if self._console_follow else "default"
         run_sort_button = self.query_one("#run-sort-order", Button)
         run_sort_button.label = self._run_sort_button_label()
         key_hints.update(self._key_hints_text())
@@ -2532,8 +3044,14 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(command_status, last_tone)
 
         if self._snapshot is None or self._last_snapshot_refreshed_at is None:
-            snapshot_status.update("Snapshot: n/a")
-            self._set_tone(snapshot_status, "tone-warning")
+            if self._last_snapshot_error:
+                snapshot_status.update(f"Snapshot: error ({self._last_snapshot_error})")
+                self._set_tone(snapshot_status, "tone-danger")
+            else:
+                snapshot_status.update("Snapshot: n/a")
+                self._set_tone(snapshot_status, "tone-warning")
+            updated.update("Updated: n/a")
+            self._set_tone(updated, "tone-muted")
         else:
             age_seconds = time.monotonic() - self._last_snapshot_refreshed_at
             age_seconds = max(age_seconds, 0.0)
@@ -2545,6 +3063,13 @@ class AutolabCockpitApp(App[None]):
             else:
                 tone = "tone-danger"
             self._set_tone(snapshot_status, tone)
+            updated.update(f"Updated: {self._human_duration(seconds=age_seconds)} ago")
+            if age_seconds < 30:
+                self._set_tone(updated, "tone-success")
+            elif age_seconds < 120:
+                self._set_tone(updated, "tone-warning")
+            else:
+                self._set_tone(updated, "tone-danger")
 
         if self._running_intent is None:
             snapshot = self._snapshot
@@ -2604,6 +3129,11 @@ class AutolabCockpitApp(App[None]):
         run_filter_clear = self.query_one("#run-filter-clear", Button)
         run_filter_clear.disabled = not bool(self._run_status_filter)
         run_filter_clear.variant = "primary" if self._run_status_filter else "default"
+        console_filter_clear = self.query_one("#console-filter-clear", Button)
+        console_filter_clear.disabled = not bool(self._console_filter_query)
+        console_filter_clear.variant = (
+            "primary" if self._console_filter_query else "default"
+        )
         run_status_button = self.query_one("#run-filter-status", Button)
         run_status_value = self._run_status_filter.strip().lower()
         run_status_button.label = (
@@ -2776,6 +3306,7 @@ class AutolabCockpitApp(App[None]):
         except Exception as exc:
             self._snapshot = None
             self._snapshot_refreshed_at = None
+            self._last_snapshot_error = str(exc).strip() or "refresh failed"
             self._armed = False
             self._last_snapshot_refresh_at = None
             self._clear_snapshot_views()
@@ -2784,6 +3315,7 @@ class AutolabCockpitApp(App[None]):
             if not from_auto:
                 self.notify(f"Snapshot refresh failed: {exc}")
             return False
+        self._last_snapshot_error = None
         self._last_snapshot_refreshed_at = time.monotonic()
 
         self._populate_home_view()
@@ -3082,8 +3614,8 @@ class AutolabCockpitApp(App[None]):
                         str(run.started_at),
                         str(run.completed_at),
                     ]
-                ).lower()
-                if filter_query in haystack:
+                )
+                if _query_matches(haystack, filter_query):
                     filtered_runs.append(run)
             self._visible_runs = tuple(filtered_runs)
         else:
@@ -3119,7 +3651,8 @@ class AutolabCockpitApp(App[None]):
             if run.host_mode == "slurm":
                 slurm_suffix = f" job={run.job_id or '-'}"
             run_label = Label(
-                f"{run.run_id} [{run.status}] ({run.host_mode}{slurm_suffix}) start={started}"
+                f"{self._run_status_icon(run.status)} {run.run_id} [{run.status}] "
+                f"({run.host_mode}{slurm_suffix}) start={started}"
             )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
@@ -3248,7 +3781,7 @@ class AutolabCockpitApp(App[None]):
             self._current_artifacts = tuple(
                 artifact
                 for artifact in visible_artifacts
-                if query in self._display_path(artifact.path).lower()
+                if _query_matches(self._display_path(artifact.path), query)
             )
         else:
             self._current_artifacts = visible_artifacts
@@ -3369,12 +3902,18 @@ class AutolabCockpitApp(App[None]):
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
-            "- Filters: f (or / in files/runs) focuses active filter input.\n"
+            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop,\n"
+            "  c clear console, Shift+C clear command history.\n"
+            "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle,\n"
+            "  ctrl+o save visible output.\n"
+            "- Filters: 0 clears active filters for the current view,\n"
+            "  f (or / in files/runs) focuses active filter input.\n"
+            "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
+            "- History: Shift+F reruns the most recent failed command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
-            "- Runs: t toggles newest/oldest sort.\n"
+            "- Runs: t/y toggles newest/oldest sort, b next problem run, Shift+B previous problem run.\n"
             "- Files: v cycles all/stage/common source.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -3390,19 +3929,26 @@ class AutolabCockpitApp(App[None]):
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
-            "- v: cycle run sorting order (recent, oldest, status).\n"
+            "- v/t/y: cycle run sorting order (recent, oldest, status).\n"
             "- w: toggle console line wrapping.\n"
             "- shift+e: toggle console error-only filter (Console view).\n"
-            "- f: focus and filter runs by status (Runs view).\n"
+            "- ctrl+p: toggle console follow mode (Console view).\n"
+            "- ctrl+o: save currently visible console output.\n"
+            "- console follow pause shows unread line count in the status rail.\n"
+            "- f: focus and filter in active mode (Runs/Files/Console/Home views).\n"
+            "- 0: clear active filters in the current view.\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- v: Open selected run manifest from Runs view.\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- t: Toggle runs sort order (newest, oldest, status).\n"
+            "- b: Jump to next problematic run when available (Runs view).\n"
+            "- Shift+B: Jump to previous problematic run.\n"
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
             "- s: Stop active command (if running).\n"
+            "- Shift+F: Rerun the last failed command in history.\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -3528,12 +4074,43 @@ class AutolabCockpitApp(App[None]):
                     self.action_quick_secondary,
                 )
             )
+        commands.append(
+            SystemCommand(
+                "Inspect selected item",
+                "Open a read-only inspector for the active selection.",
+                self.action_inspect_selection,
+            )
+        )
+        if self._command_history:
+            commands.append(
+                SystemCommand(
+                    "Clear command history",
+                    "Remove all command history entries from this TUI session.",
+                    self.action_clear_command_history,
+                )
+            )
         if self._last_command_intent is not None:
             commands.append(
                 SystemCommand(
                     "Rerun last command",
                     "Re-run the most recently started command.",
                     self.action_rerun_last_command,
+                )
+            )
+        if self._failed_command_count():
+            commands.append(
+                SystemCommand(
+                    "Rerun last failed command",
+                    "Re-run the most recent failed command.",
+                    self.action_rerun_last_failed_command,
+                )
+            )
+        if self._has_active_filters():
+            commands.append(
+                SystemCommand(
+                    "Clear active filters",
+                    "Reset all active filters for this view.",
+                    self.action_clear_mode_filters,
                 )
             )
         if self._command_history:
@@ -3623,6 +4200,20 @@ class AutolabCockpitApp(App[None]):
                     self.action_jump_to_item,
                 )
             )
+            commands.append(
+                SystemCommand(
+                    "Jump to next problem run",
+                    "Jump to the next failed, error, timeout, or stopped run.",
+                    self.action_jump_to_problem_run,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Jump to previous problem run",
+                    "Jump to the previous failed, error, timeout, or stopped run.",
+                    self.action_jump_to_previous_problem_run,
+                )
+            )
         if self._mode == "files":
             commands.append(
                 SystemCommand(
@@ -3689,6 +4280,35 @@ class AutolabCockpitApp(App[None]):
                     self.action_toggle_console_error_filter,
                 )
             )
+            commands.append(
+                SystemCommand(
+                    "Save Console Output",
+                    "Save the currently visible console output to the repository logs directory.",
+                    self.action_save_console_output,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Toggle Console Follow",
+                    "Pause or resume auto-following incoming console output.",
+                    self.action_toggle_console_follow,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Focus Console Filter",
+                    "Focus the console output text filter.",
+                    self.action_focus_mode_filter,
+                )
+            )
+            if self._console_filter_query:
+                commands.append(
+                    SystemCommand(
+                        "Clear Console Filter",
+                        "Clear the console output text filter.",
+                        self.action_clear_console_filter,
+                    )
+                )
         if (
             self._running_intent is not None
             and self._running_intent.action_id == "run_loop"
@@ -3716,7 +4336,21 @@ class AutolabCockpitApp(App[None]):
                         self._clear_home_action_filter,
                     )
                 )
-        return commands
+        return self._deduplicate_system_commands(commands)
+
+    @staticmethod
+    def _deduplicate_system_commands(
+        commands: list[SystemCommand],
+    ) -> list[SystemCommand]:
+        deduped: list[SystemCommand] = []
+        seen: set[tuple[str, str]] = set()
+        for command in commands:
+            key = (command.title.casefold(), command.description.casefold())
+            if key in seen:
+                continue
+            deduped.append(command)
+            seen.add(key)
+        return deduped
 
     def action_show_home(self) -> None:
         self._switch_mode("home")
@@ -3739,6 +4373,11 @@ class AutolabCockpitApp(App[None]):
     def action_show_next_view(self) -> None:
         self._cycle_mode(1)
 
+    def action_inspect_selection(self) -> None:
+        self._start_ui_flow(
+            label="inspect", flow_factory=self._open_selection_inspector
+        )
+
     def action_toggle_safety_lock(self) -> None:
         self._start_ui_flow(
             label="toggle-safety", flow_factory=self._toggle_safety_lock
@@ -3760,6 +4399,140 @@ class AutolabCockpitApp(App[None]):
             self._populate_home_view()
             self._populate_artifact_list()
         self._update_ui_chrome()
+
+    def _selected_artifact(self) -> ArtifactItem | None:
+        selected_path = self._selected_artifact_path()
+        if selected_path is None:
+            return None
+        for item in self._current_artifacts:
+            if item.path == selected_path:
+                return item
+        return None
+
+    def _build_console_inspector_lines(self) -> tuple[str, ...]:
+        if self._running_intent is not None:
+            running_label = self._action_label(self._running_intent.action_id)
+            start = self._timestamp()
+            return (
+                f"Running command: {running_label}",
+                f"Started: {start}",
+                f"Command: {shlex.join(self._running_intent.argv)}",
+                f"Working directory: {self._running_intent.cwd}",
+            )
+
+        if self._active_history_item is not None:
+            item = self._active_history_item
+        elif self._command_history:
+            item = self._command_history[0]
+        else:
+            return ("No command history is available in this session.",)
+
+        status = "finished"
+        if item.exit_code is None and item.finished_at is None:
+            status = "running"
+        elif item.exit_code is None:
+            status = "pending"
+        elif item.stopped:
+            status = "stopped"
+        elif item.exit_code == 0:
+            status = "ok"
+        else:
+            status = "failed"
+        duration = (
+            f"{(item.finished_at - item.started_at):.1f}s"
+            if item.finished_at is not None
+            else "n/a"
+        )
+        label = self._action_label(item.intent.action_id)
+        return (
+            f"Last command: {label}",
+            f"Status: {status}",
+            f"Duration: {duration}",
+            f"Exit code: {item.exit_code!s}",
+            f"Command: {item.command}",
+            f"Working directory: {item.intent.cwd}",
+        )
+
+    def _build_run_inspector_lines(self) -> tuple[str, ...]:
+        run = self._selected_run()
+        if run is None:
+            return ("No run selected in this view.",)
+        snapshot = self._snapshot
+        summary = ("",)
+        run_summary = [
+            f"Run details for {run.run_id}",
+            f"- Status: {run.status}",
+            f"- Host mode: {run.host_mode}",
+            f"- Sync status: {run.sync_status or '-'}",
+            f"- Job id: {run.job_id or '-'}",
+            f"- Started: {run.started_at or '-'}",
+            f"- Completed: {run.completed_at or '-'}",
+            f"- Manifest: {self._display_path(run.manifest_path)}",
+            f"- Metrics: {self._display_path(run.metrics_path)}",
+            f"- Manifest exists: {'yes' if run.manifest_path.exists() else 'no'}",
+            f"- Metrics exists: {'yes' if run.metrics_path.exists() else 'no'}",
+        ]
+        if snapshot is not None:
+            run_summary.append(f"- Total runs: {len(snapshot.runs)}")
+            run_summary.append(f"- Visible runs: {len(self._visible_runs)}")
+        return tuple(run_summary)
+
+    def _build_file_inspector_lines(self) -> tuple[str, ...]:
+        item = self._selected_artifact()
+        if item is None:
+            return ("No file selected in this view.",)
+        return (
+            f"File details for {self._display_path(item.path)}",
+            f"- Source: {item.source}",
+            f"- Exists: {'yes' if item.exists else 'no'}",
+            f"- Relative path: {self._display_path(item.path)}",
+            f"- Absolute path: {item.path}",
+        )
+
+    def _build_home_inspector_lines(self) -> tuple[str, ...]:
+        if not self._home_action_ids:
+            return ("No home actions are currently available.",)
+        snapshot = self._snapshot
+        action_id = self._home_action_ids[self._home_action_index]
+        action = self._actions_by_id.get(action_id)
+        if action is None:
+            return (f"Action id: {action_id}",)
+        reason = ""
+        if snapshot is not None:
+            for recommended in snapshot.recommended_actions:
+                if recommended.action_id == action_id:
+                    reason = recommended.reason
+                    break
+        return (
+            f"Action: {action.user_label or action.label}",
+            f"- Id: {action.action_id}",
+            f"- Type: {action.kind}",
+            f"- Risk: {action.risk_level}",
+            f"- Requires arm: {'yes' if action.requires_arm else 'no'}",
+            f"- Requires confirm: {'yes' if action.requires_confirmation else 'no'}",
+            f"- Advanced: {'yes' if action.advanced else 'no'}",
+            f"- Reason: {reason or 'custom action'}",
+            f"- Help: {action.help_text or action.description}",
+        )
+
+    async def _open_selection_inspector(self) -> None:
+        if self._mode == "home":
+            lines = self._build_home_inspector_lines()
+            title = "Home selection inspector"
+        elif self._mode == "runs":
+            lines = self._build_run_inspector_lines()
+            title = "Run selection inspector"
+        elif self._mode == "files":
+            lines = self._build_file_inspector_lines()
+            title = "File selection inspector"
+        elif self._mode == "console":
+            lines = self._build_console_inspector_lines()
+            title = "Console selection inspector"
+        else:
+            self.notify("Selection inspector is unavailable in this view.")
+            return
+
+        await self.push_screen_wait(SelectionInspectorScreen(title=title, lines=lines))
 
     def action_toggle_prompt_view(self) -> None:
         snapshot = self._snapshot
@@ -3804,6 +4577,7 @@ class AutolabCockpitApp(App[None]):
 
     def action_clear_console(self) -> None:
         self._console_tail.clear()
+        self._console_unread_lines = 0
         self._render_console_tail()
 
     def action_toggle_console_wrap(self) -> None:
@@ -3811,6 +4585,17 @@ class AutolabCockpitApp(App[None]):
             return
         self._console_wrap = not self._console_wrap
         self.query_one("#console-log", RichLog).wrap = self._console_wrap
+        self._update_ui_chrome()
+
+    def action_toggle_console_follow(self) -> None:
+        self._console_follow = not self._console_follow
+        if self._console_follow:
+            self._append_console("console follow enabled")
+            self._console_unread_lines = 0
+            self._render_console_tail()
+        else:
+            self._append_console("console follow disabled")
+            self._console_unread_lines = 0
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
@@ -3923,9 +4708,10 @@ class AutolabCockpitApp(App[None]):
                     self._selected_run_index = index
                     self._update_run_details()
                     self._update_ui_chrome()
-                    if self._mode == "runs":
-                        self.query_one("#run-list", ListView).index = index
+                    self.query_one("#run-list", ListView).index = index
                     break
+            else:
+                self.notify("Selected run no longer available.")
             return
 
         if not self._current_artifacts:
@@ -3947,6 +4733,67 @@ class AutolabCockpitApp(App[None]):
                 self._update_ui_chrome()
                 self.query_one("#artifact-list", ListView).index = index
                 break
+
+    def _next_problem_run_index(
+        self,
+        *,
+        reverse: bool = False,
+    ) -> int | None:
+        if self._mode != "runs" or not self._visible_runs:
+            return None
+        run_count = len(self._visible_runs)
+        step = -1 if reverse else 1
+        for offset in range(1, run_count + 1):
+            candidate = (self._selected_run_index + (step * offset)) % run_count
+            if (
+                str(self._visible_runs[candidate].status).strip().lower()
+                in self._RUN_PROBLEM_STATUSES
+            ):
+                return candidate
+        return None
+
+    def action_jump_to_problem_run(self) -> None:
+        if self._mode != "runs":
+            self.notify("Next problem run is available in Runs view (2).")
+            return
+        if not self._visible_runs:
+            self.notify("No runs available for jump.")
+            return
+        next_problem_index = self._next_problem_run_index(reverse=False)
+        if next_problem_index is None:
+            self.notify("No failing/problematic runs found.")
+            return
+        self._selected_run_index = next_problem_index
+        self._update_run_details()
+        run_list = self.query_one("#run-list", ListView)
+        run_list.index = next_problem_index
+        self._focus_mode_default()
+        self._append_console(
+            f"jumped to problem run: {self._visible_runs[next_problem_index].run_id}"
+        )
+        self._update_ui_chrome()
+
+    def action_jump_to_previous_problem_run(self) -> None:
+        if self._mode != "runs":
+            self.notify("Previous problem run is available in Runs view (2).")
+            return
+        if not self._visible_runs:
+            self.notify("No runs available for jump.")
+            return
+        previous_problem_index = self._next_problem_run_index(reverse=True)
+        if previous_problem_index is None:
+            self.notify("No failing/problematic runs found.")
+            return
+        self._selected_run_index = previous_problem_index
+        self._update_run_details()
+        run_list = self.query_one("#run-list", ListView)
+        run_list.index = previous_problem_index
+        self._focus_mode_default()
+        self._append_console(
+            "jumped to previous problem run: "
+            f"{self._visible_runs[previous_problem_index].run_id}"
+        )
+        self._update_ui_chrome()
 
     def action_open_selected_in_editor(self) -> None:
         if self._mode != "files":
@@ -4031,11 +4878,51 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_focus_mode_filter(self) -> None:
+        if self._mode == "home":
+            self.action_focus_home_action_filter()
+            return
         if self._mode == "files":
             self.action_cycle_file_source_filter()
             self.action_focus_files_filter()
             return
+        if self._mode == "runs":
+            self.action_focus_files_filter()
+            return
+        if self._mode == "console":
+            filter_input = self.query_one("#console-filter-input", Input)
+            filter_input.focus()
+            filter_input.cursor_position = len(filter_input.value)
+            return
         self.action_focus_files_filter()
+
+    def action_clear_console_filter(self) -> None:
+        if not self._console_filter_query:
+            return
+        self._console_filter_query = ""
+        filter_input = self.query_one("#console-filter-input", Input)
+        filter_input.value = ""
+        self._render_console_tail()
+        self._update_ui_chrome()
+
+    def _clear_home_action_filter(self) -> None:
+        if not self._home_action_filter_query:
+            return
+        self._home_action_filter_query = ""
+        if self._mode == "home":
+            filter_input = self.query_one("#home-action-filter-input", Input)
+            filter_input.value = ""
+            if self._snapshot is not None:
+                self._populate_home_view()
+        self._update_ui_chrome()
+
+    def action_toggle_console_error_filter(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        self._console_show_errors_only = not self._console_show_errors_only
+        state = "on" if self._console_show_errors_only else "off"
+        self._append_console(f"console errors-only {state}")
+        self._render_console_tail()
+        self._update_ui_chrome()
 
     def action_focus_home_action_filter(self) -> None:
         if isinstance(self.screen, ModalScreen):
@@ -4112,6 +4999,38 @@ class AutolabCockpitApp(App[None]):
             flow_factory=self._open_command_history,
         )
 
+    def action_clear_command_history(self) -> None:
+        self._start_ui_flow(
+            label="clear-command-history",
+            flow_factory=self._clear_command_history,
+        )
+
+    async def _clear_command_history(self) -> None:
+        if not self._command_history:
+            self.notify("Command history is already empty.")
+            return
+        if self._snapshot is not None:
+            cwd = self._snapshot.repo_root
+        else:
+            cwd = self._state_path.parent
+        confirmed = await self.push_screen_wait(
+            ActionConfirmScreen(
+                title="Clear command history?",
+                summary=(
+                    "This clears only the in-memory command history for this TUI session."
+                ),
+                command="command history clear",
+                cwd=cwd,
+                expected_writes=(),
+                confirm_label="Clear",
+            )
+        )
+        if not confirmed:
+            return
+        self._command_history.clear()
+        self._append_console("command history cleared")
+        self._update_ui_chrome()
+
     async def _open_command_history(self) -> None:
         if not self._command_history:
             self.notify("No command history available yet.")
@@ -4151,6 +5070,12 @@ class AutolabCockpitApp(App[None]):
     def action_rerun_last_command(self) -> None:
         self._start_ui_flow(label="rerun-last", flow_factory=self._rerun_last_command)
 
+    def action_rerun_last_failed_command(self) -> None:
+        self._start_ui_flow(
+            label="rerun-last-failed",
+            flow_factory=self._rerun_last_failed_command,
+        )
+
     async def _rerun_last_command(self) -> None:
         if self._last_command_intent is None:
             self.notify("No previous command to rerun.")
@@ -4166,6 +5091,23 @@ class AutolabCockpitApp(App[None]):
             intent=last_intent,
             title=f"Re-run: {action_name}",
             confirm_label="Re-run",
+        )
+
+    async def _rerun_last_failed_command(self) -> None:
+        failed_intent = self._latest_failed_command()
+        if failed_intent is None:
+            self.notify("No failed commands in this session yet.")
+            return
+        action = self._actions_by_id.get(failed_intent.intent.action_id)
+        action_name = (
+            (action.user_label or action.label)
+            if action is not None
+            else failed_intent.intent.action_id
+        )
+        await self._replay_command_intent(
+            intent=failed_intent.intent,
+            title=f"Re-run failed: {action_name}",
+            confirm_label="Re-run Failed",
         )
 
     def action_activate_selection(self) -> None:
@@ -4223,6 +5165,13 @@ class AutolabCockpitApp(App[None]):
             self._run_status_filter = event.value.strip()
             if self._snapshot is not None:
                 self._populate_run_list()
+        elif event.input.id == "console-filter-input":
+            self._console_filter_query = event.value.strip()
+            self._render_console_tail()
+        elif event.input.id == "home-action-filter-input":
+            self._home_action_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_home_view()
         else:
             return
         self._update_ui_chrome()
@@ -4232,6 +5181,10 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#artifact-list", ListView).focus()
         elif event.input.id == "run-filter-input":
             self.query_one("#run-list", ListView).focus()
+        elif event.input.id == "console-filter-input":
+            self.query_one("#console-log", RichLog).focus()
+        elif event.input.id == "home-action-filter-input":
+            self.query_one("#home-action-list", ListView).focus()
         else:
             return
 
@@ -4261,11 +5214,23 @@ class AutolabCockpitApp(App[None]):
         if button_id == "run-filter-clear":
             self.action_clear_runs_filter()
             return
+        if button_id == "home-action-filter-clear":
+            self._clear_home_action_filter()
+            return
         if button_id == "run-filter-status":
             self.action_cycle_runs_status_filter()
             return
         if button_id == "run-sort-order":
             self.action_toggle_run_sort()
+            return
+        if button_id == "console-follow":
+            self.action_toggle_console_follow()
+            return
+        if button_id == "console-filter-clear":
+            self.action_clear_console_filter()
+            return
+        if button_id == "console-save":
+            self.action_save_console_output()
             return
         if button_id in {"file-cycle-source-scope", "file-source-filter"}:
             self.action_cycle_file_source_filter()
