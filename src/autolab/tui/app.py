@@ -2078,7 +2078,9 @@ class AutolabCockpitApp(App[None]):
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("ctrl+p", "toggle_console_follow", "Follow Console"),
         ("b", "jump_to_problem_run", "Next Problem Run"),
+        ("shift+b", "jump_to_previous_problem_run", "Prev Problem Run"),
         ("q", "quit", "Quit"),
+        ("shift+c", "clear_command_history", "Clear command history"),
     ]
 
     def __init__(self, *, state_path: Path, tail_lines: int = 2000) -> None:
@@ -2492,6 +2494,8 @@ class AutolabCockpitApp(App[None]):
             "? help",
             "q quit",
         ]
+        if self._command_history:
+            parts.append("C clear history")
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
             parts.append(f"ctrl+p follow({follow_state})")
@@ -2502,6 +2506,7 @@ class AutolabCockpitApp(App[None]):
             parts.append("v manifest")
             parts.append("m metrics")
             parts.append("b next-problem")
+            parts.append("B prev-problem")
             parts.append(f"f filter({run_filter_state})")
             parts.append(f"y sort({self._run_sort_mode})")
         elif self._mode == "files":
@@ -3529,14 +3534,15 @@ class AutolabCockpitApp(App[None]):
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, a auto-refresh on/off, s stop active loop,\n"
+            "  c clear console, Shift+C clear command history.\n"
             "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
-            "- Runs: t/y toggles newest/oldest sort.\n"
+            "- Runs: t/y toggles newest/oldest sort, b next problem run, Shift+B previous problem run.\n"
             "- Files: v cycles all/stage/common source.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -3563,6 +3569,7 @@ class AutolabCockpitApp(App[None]):
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- t: Toggle runs sort order (newest, oldest, status).\n"
             "- b: Jump to next problematic run when available (Runs view).\n"
+            "- Shift+B: Jump to previous problematic run.\n"
             "- e: Open selected file in editor (Files view).\n"
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
@@ -3692,6 +3699,14 @@ class AutolabCockpitApp(App[None]):
                     self.action_quick_secondary,
                 )
             )
+        if self._command_history:
+            commands.append(
+                SystemCommand(
+                    "Clear command history",
+                    "Remove all command history entries from this TUI session.",
+                    self.action_clear_command_history,
+                )
+            )
         if self._last_command_intent is not None:
             commands.append(
                 SystemCommand(
@@ -3792,6 +3807,13 @@ class AutolabCockpitApp(App[None]):
                     "Jump to next problem run",
                     "Jump to the next failed, error, timeout, or stopped run.",
                     self.action_jump_to_problem_run,
+                )
+            )
+            commands.append(
+                SystemCommand(
+                    "Jump to previous problem run",
+                    "Jump to the previous failed, error, timeout, or stopped run.",
+                    self.action_jump_to_previous_problem_run,
                 )
             )
         if self._mode == "files":
@@ -4165,6 +4187,24 @@ class AutolabCockpitApp(App[None]):
                 self.query_one("#artifact-list", ListView).index = index
                 break
 
+    def _next_problem_run_index(
+        self,
+        *,
+        reverse: bool = False,
+    ) -> int | None:
+        if self._mode != "runs" or not self._visible_runs:
+            return None
+        run_count = len(self._visible_runs)
+        step = -1 if reverse else 1
+        for offset in range(1, run_count + 1):
+            candidate = (self._selected_run_index + (step * offset)) % run_count
+            if (
+                str(self._visible_runs[candidate].status).strip().lower()
+                in self._RUN_PROBLEM_STATUSES
+            ):
+                return candidate
+        return None
+
     def action_jump_to_problem_run(self) -> None:
         if self._mode != "runs":
             self.notify("Next problem run is available in Runs view (2).")
@@ -4172,17 +4212,7 @@ class AutolabCockpitApp(App[None]):
         if not self._visible_runs:
             self.notify("No runs available for jump.")
             return
-        current_index = self._selected_run_index
-        run_count = len(self._visible_runs)
-        next_problem_index: int | None = None
-        for offset in range(1, run_count + 1):
-            candidate = (current_index + offset) % run_count
-            if (
-                str(self._visible_runs[candidate].status).strip().lower()
-                in self._RUN_PROBLEM_STATUSES
-            ):
-                next_problem_index = candidate
-                break
+        next_problem_index = self._next_problem_run_index(reverse=False)
         if next_problem_index is None:
             self.notify("No failing/problematic runs found.")
             return
@@ -4193,6 +4223,28 @@ class AutolabCockpitApp(App[None]):
         self._focus_mode_default()
         self._append_console(
             f"jumped to problem run: {self._visible_runs[next_problem_index].run_id}"
+        )
+        self._update_ui_chrome()
+
+    def action_jump_to_previous_problem_run(self) -> None:
+        if self._mode != "runs":
+            self.notify("Previous problem run is available in Runs view (2).")
+            return
+        if not self._visible_runs:
+            self.notify("No runs available for jump.")
+            return
+        previous_problem_index = self._next_problem_run_index(reverse=True)
+        if previous_problem_index is None:
+            self.notify("No failing/problematic runs found.")
+            return
+        self._selected_run_index = previous_problem_index
+        self._update_run_details()
+        run_list = self.query_one("#run-list", ListView)
+        run_list.index = previous_problem_index
+        self._focus_mode_default()
+        self._append_console(
+            "jumped to previous problem run: "
+            f"{self._visible_runs[previous_problem_index].run_id}"
         )
         self._update_ui_chrome()
 
@@ -4399,6 +4451,38 @@ class AutolabCockpitApp(App[None]):
             label="command-history",
             flow_factory=self._open_command_history,
         )
+
+    def action_clear_command_history(self) -> None:
+        self._start_ui_flow(
+            label="clear-command-history",
+            flow_factory=self._clear_command_history,
+        )
+
+    async def _clear_command_history(self) -> None:
+        if not self._command_history:
+            self.notify("Command history is already empty.")
+            return
+        if self._snapshot is not None:
+            cwd = self._snapshot.repo_root
+        else:
+            cwd = self._state_path.parent
+        confirmed = await self.push_screen_wait(
+            ActionConfirmScreen(
+                title="Clear command history?",
+                summary=(
+                    "This clears only the in-memory command history for this TUI session."
+                ),
+                command="command history clear",
+                cwd=cwd,
+                expected_writes=(),
+                confirm_label="Clear",
+            )
+        )
+        if not confirmed:
+            return
+        self._command_history.clear()
+        self._append_console("command history cleared")
+        self._update_ui_chrome()
 
     async def _open_command_history(self) -> None:
         if not self._command_history:
