@@ -1668,6 +1668,11 @@ class AutolabCockpitApp(App[None]):
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
         )
         self._running_intent: CommandIntent | None = None
+        self._running_started_at: float | None = None
+        self._running_command_label: str = ""
+        self._last_command_exit_code: int | None = None
+        self._last_command_elapsed: str = ""
+        self._last_command_label: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1794,6 +1799,31 @@ class AutolabCockpitApp(App[None]):
     def _timestamp(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
+    def _shorten_command(self, command: str, *, max_len: int) -> str:
+        if len(command) <= max_len:
+            return command
+        if max_len <= 4:
+            return command[:max_len]
+        return f"{command[: max_len - 3]}..."
+
+    def _running_elapsed_label(self) -> str:
+        if self._running_started_at is None:
+            return "00:00"
+        elapsed_seconds = max(0, int(time.perf_counter() - self._running_started_at))
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _last_command_summary(self) -> str:
+        if self._last_command_exit_code is None:
+            return ""
+        return (
+            f"last: {self._last_command_label} | exit={self._last_command_exit_code}"
+            f" | {self._last_command_elapsed}"
+        )
+
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
@@ -1832,6 +1862,18 @@ class AutolabCockpitApp(App[None]):
         if normalized in {"failed", "fail", "error", "timeout", "stopped"}:
             return "tone-danger"
         return "tone-muted"
+
+    def _stage_timeline_icon(self, status: str) -> str:
+        normalized = str(status).strip().lower()
+        if normalized == "complete":
+            return "[ok]"
+        if normalized == "current":
+            return "[->]"
+        if normalized == "blocked":
+            return "[!]"
+        if normalized == "upcoming":
+            return "[  ]"
+        return "[??]"
 
     def _key_hints_text(self) -> str:
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
@@ -1979,9 +2021,12 @@ class AutolabCockpitApp(App[None]):
 
         if self._running_intent is None:
             snapshot = self._snapshot
+            last_summary = self._last_command_summary()
             if snapshot is None:
                 running.update("Idle")
                 self._set_tone(running, "tone-muted")
+                if last_summary:
+                    running.update(f"Idle | {last_summary}")
             else:
                 stage_artifacts = snapshot.artifacts_by_stage.get(
                     snapshot.current_stage, ()
@@ -1992,20 +2037,27 @@ class AutolabCockpitApp(App[None]):
                     if snapshot.primary_blocker == "none"
                     else len(snapshot.top_blockers)
                 )
-                running.update(
+                status = (
                     "Idle | "
                     f"runs:{len(snapshot.runs)} "
                     f"blockers:{blocker_count} "
                     f"todos:{len(snapshot.todos)} "
                     f"missing:{missing_required}"
                 )
+                if last_summary:
+                    status = f"{status} | {last_summary}"
+                running.update(status)
                 if blocker_count or missing_required:
                     self._set_tone(running, "tone-warning")
                 else:
                     self._set_tone(running, "tone-success")
         else:
-            command = shlex.join(self._running_intent.argv)
-            running.update(f"Running: {command[:72]}")
+            command = self._running_command_label or shlex.join(self._running_intent.argv)
+            running.update(
+                "Running "
+                f"({self._running_elapsed_label()}) | "
+                f"{self._shorten_command(command, max_len=72)}"
+            )
             self._set_tone(running, "tone-info")
 
         self.query_one(
@@ -3606,6 +3658,7 @@ class AutolabCockpitApp(App[None]):
     def _handle_runner_line(self, line: str) -> None:
         try:
             self.call_from_thread(self._append_console, line)
+            self.call_from_thread(self._update_ui_chrome)
         except Exception:
             pass
 
