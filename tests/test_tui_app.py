@@ -442,6 +442,39 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_artifact_viewer_truncates_long_text_with_indicator(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_design_prompt(repo_root, lines=5)
+        prompt_path = (
+            repo_root / ".autolab" / "prompts" / "stage_design.md"
+        )
+        prompt_path.write_text(
+            "line\n".join(f"line {idx}" for idx in range(1, 201)),
+            encoding="utf-8",
+        )
+
+        app = AutolabCockpitApp(state_path=state_path)
+        app._artifact_preview_max_chars = 90
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.click("#file-open-prompt")
+            await pilot.pause()
+
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert " [truncated]" in str(title.render())
+            content = app.screen.query_one("#artifact-content", app_module.Markdown)
+            assert "... [truncated]" in content._markdown
+            assert "line 100" not in content._markdown
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
 def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -961,6 +994,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             hints = app.query_one("#key-hints", app_module.Static)
             assert "Enter recommended action" in str(hints.render())
             assert "h history" in str(hints.render())
+            assert "a auto-refresh(off)" in str(hints.render())
             assert "p prompt" in str(hints.render())
 
             await pilot.press("4")
@@ -983,6 +1017,49 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.pause()
             assert "m missing-only(off)" in str(hints.render())
             assert "Home/End list" in str(hints.render())
+
+    asyncio.run(_run())
+
+
+def test_auto_refresh_binding_toggles_indicator_and_interval_refresh(tmp_path: Path, monkeypatch) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        refreshes: list[str] = []
+
+        monkeypatch.setattr(app, "_refresh_snapshot", lambda: refreshes.append("refresh"))
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            status = app.query_one("#status-autorefresh", app_module.Static)
+            assert "Auto-refresh: off" in str(status.render())
+
+            await pilot.press("a")
+            await pilot.pause()
+            assert "auto-refresh enabled" in app._console_tail[-1]
+            assert "Auto-refresh: on" in str(status.render())
+
+            app._run_auto_refresh()
+            assert refreshes == ["refresh"]
+
+            app._running_intent = CommandIntent(
+                action_id="verify_current_stage",
+                argv=("autolab", "verify"),
+                cwd=repo_root,
+                expected_writes=(),
+                mutating=False,
+            )
+            app._run_auto_refresh()
+            assert refreshes == ["refresh"]
+
+            app._running_intent = None
+            app._run_auto_refresh()
+            assert refreshes == ["refresh", "refresh"]
+
+            app._auto_refresh_enabled = False
+            app._run_auto_refresh()
+            assert refreshes == ["refresh", "refresh"]
 
     asyncio.run(_run())
 
@@ -1574,7 +1651,10 @@ def test_run_details_include_artifact_presence_and_selection_counts(
                 {
                     "run_id": "run-1",
                     "status": "completed",
-                    "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+                    "timestamps": {
+                        "started_at": "2026-02-01T01:00:00Z",
+                        "completed_at": "2026-02-01T01:00:10Z",
+                    },
                 },
                 indent=2,
             )
@@ -1589,6 +1669,8 @@ def test_run_details_include_artifact_presence_and_selection_counts(
             details = app.query_one("#run-details", app_module.Static)
             rendered = str(details.render())
             assert "Selected: 1/1" in rendered
+            assert "Completion: finished" in rendered
+            assert "Duration: 10.0s" in rendered
             assert "Manifest: OK" in rendered
             assert "Metrics: MISS" in rendered
 
