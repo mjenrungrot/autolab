@@ -1671,13 +1671,15 @@ class CommandHistoryScreen(ModalScreen[None]):
     }
     """
 
-    def __init__(self, *, entries: tuple[CommandHistoryEntry, ...]) -> None:
+    def __init__(self, *, entries: tuple[CommandHistoryItem, ...]) -> None:
         super().__init__()
         self._entries = entries
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-dialog"):
-            yield Label(f"Recent Commands ({len(self._entries)})", id="command-history-title")
+            yield Label(
+                f"Recent Commands ({len(self._entries)})", id="command-history-title"
+            )
             with VerticalScroll(id="command-history-scroll"):
                 if not self._entries:
                     yield Label("No commands have been executed in this session yet.")
@@ -1687,17 +1689,17 @@ class CommandHistoryScreen(ModalScreen[None]):
             with Horizontal(id="command-history-button-row"):
                 yield Button("Close", id="close")
 
-    def _format_entry(self, entry: CommandHistoryEntry) -> str:
+    def _format_entry(self, entry: CommandHistoryItem) -> str:
         status = {
             "running": "RUNNING",
             "succeeded": "OK",
             "failed": "FAIL",
             "interrupted": "INT",
         }[entry.status]
-        duration = (
-            f"{entry.duration:.1f}s" if entry.duration is not None else "n/a"
+        duration = f"{entry.duration:.1f}s" if entry.duration is not None else "n/a"
+        exit_code = (
+            f"exit={entry.return_code}" if entry.return_code is not None else "exit=n/a"
         )
-        exit_code = f"exit={entry.return_code}" if entry.return_code is not None else "exit=n/a"
         return (
             f"{status.upper():>10} | "
             f"{entry.action_label} ({exit_code}, {duration})\n"
@@ -1715,6 +1717,7 @@ class CommandHistoryScreen(ModalScreen[None]):
 
 class AutolabCockpitApp(App[None]):
     _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _FILE_SOURCE_SCOPES: tuple[str, ...] = ("all", "stage", "common")
     _RUN_SORT_MODES: tuple[Literal["newest", "oldest", "status"], ...] = (
         "newest",
         "oldest",
@@ -1754,7 +1757,14 @@ class AutolabCockpitApp(App[None]):
         "tone-muted",
     )
     _ARTIFACT_PREVIEW_MAX_CHARS = 12_000
-    _CONSOLE_ERROR_KEYWORDS = ("error", "failed", "failure", "traceback", "exception", "fatal")
+    _CONSOLE_ERROR_KEYWORDS = (
+        "error",
+        "failed",
+        "failure",
+        "traceback",
+        "exception",
+        "fatal",
+    )
 
     CSS = """
     Screen {
@@ -2050,8 +2060,9 @@ class AutolabCockpitApp(App[None]):
         self._state_path = state_path.expanduser().resolve()
         self._tail_lines = max(200, int(tail_lines))
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
-        self._command_history: deque[CommandHistoryEntry] = deque(maxlen=20)
+        self._command_history: deque[CommandHistoryItem] = deque(maxlen=20)
         self._console_wrap = False
+        self._console_show_errors_only = False
         self._last_snapshot_refreshed_at: float | None = None
         self._armed = False
         self._run_status_filter = ""
@@ -2070,6 +2081,7 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._home_action_filter_query = ""
         self._run_status_filter: str = ""
         self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_run_index = 0
@@ -2078,7 +2090,10 @@ class AutolabCockpitApp(App[None]):
         self._visible_runs: tuple[RunItem, ...] = ()
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._missing_artifacts_count = 0
+        self._run_sort_newest_first = True
+        self._file_source_filter = "all"
         self._files_missing_only = False
         self._files_source_filter = "all"
         self._artifact_filter_query = ""
@@ -2088,7 +2103,9 @@ class AutolabCockpitApp(App[None]):
         self._running_command_started_at: float | None = None
         self._last_command_intent: CommandIntent | None = None
         self._artifact_preview_max_chars: int = _ARTIFACT_PREVIEW_MAX_CHARS
-        self._command_history: deque[CommandHistoryItem] = deque(maxlen=_COMMAND_HISTORY_MAX)
+        self._command_history: deque[CommandHistoryItem] = deque(
+            maxlen=_COMMAND_HISTORY_MAX
+        )
         self._active_history_item: CommandHistoryItem | None = None
         self._auto_refresh_enabled = False
 
@@ -2100,18 +2117,18 @@ class AutolabCockpitApp(App[None]):
         self._running_command_label: str = ""
         self._last_command_exit_code: int | None = None
         self._last_command_elapsed: str = ""
-        self._last_command_label: str = ""
+        self._last_command_label = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="status-rail"):
             yield Static("Locked: read-only.", id="status-safety")
             yield Static("Mode: home", id="status-mode")
-            yield Static("Auto Refresh: off", id="status-autorefresh")
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Auto-refresh: off", id="status-autorefresh")
             yield Static("Selection: -", id="status-selection")
             yield Static("Updated: n/a", id="status-updated")
+            yield Static("Snapshot: n/a", id="status-snapshot")
             yield Static("Console wrap: off", id="status-console")
             yield Static("Command: n/a", id="status-command")
             yield Static("", id="status-running")
@@ -2143,6 +2160,7 @@ class AutolabCockpitApp(App[None]):
                             variant="default",
                         )
                 yield Static("", id="home-blocker-card", markup=False)
+                yield Static("", id="home-verification-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
@@ -2174,14 +2192,7 @@ class AutolabCockpitApp(App[None]):
                 with Horizontal(id="run-details-buttons"):
                     yield Button("Open Manifest", id="run-open-manifest")
                     yield Button("Open Metrics", id="run-open-metrics")
-                with Horizontal(id="run-filter-row"):
-                    yield Static("Status Filter", id="run-filter-label", markup=False)
-                    yield Input(
-                        value=self._run_status_filter,
-                        placeholder="Type to filter by status...",
-                        id="run-filter-input",
-                    )
-                    yield Button("Clear", id="run-filter-clear")
+                    yield Button("Sort: Newest", id="run-sort-order")
             with Vertical(id="files-view", classes="view-panel"):
                 yield Static("Files", classes="view-title")
                 yield Static("", id="files-context", markup=False)
@@ -2271,6 +2282,9 @@ class AutolabCockpitApp(App[None]):
             return f"{hours}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
+    def _auto_refresh_state_label(self) -> str:
+        return "on" if self._auto_refresh_enabled else "off"
+
     def _last_command_summary(self) -> str:
         if self._last_command_exit_code is None:
             return ""
@@ -2292,9 +2306,7 @@ class AutolabCockpitApp(App[None]):
         log.clear()
         lines = self._console_tail
         if self._console_show_errors_only:
-            lines = tuple(
-                line for line in lines if self._is_console_error_line(line)
-            )
+            lines = tuple(line for line in lines if self._is_console_error_line(line))
         for line in lines:
             log.write(line)
 
@@ -2343,6 +2355,12 @@ class AutolabCockpitApp(App[None]):
         if normalized == "upcoming":
             return "[  ]"
         return "[??]"
+
+    def _run_sort_label(self) -> str:
+        return self._RUN_SORT_LABELS.get(self._run_sort_mode, "Newest")
+
+    def _run_sort_button_label(self) -> str:
+        return f"Sort: {self._run_sort_label()}"
 
     def _key_hints_text(self) -> str:
         auto_refresh_state = "on" if self._auto_refresh_enabled else "off"
@@ -2473,7 +2491,7 @@ class AutolabCockpitApp(App[None]):
         self._set_tone(safety, "tone-warning" if self._armed else "tone-success")
         mode.update(f"Mode: {self._mode}")
         auto_refresh = self.query_one("#status-autorefresh", Static)
-        auto_refresh.update(f"Auto Refresh: {self._auto_refresh_state_label()}")
+        auto_refresh.update(f"Auto-refresh: {self._auto_refresh_state_label()}")
         self._set_tone(
             auto_refresh,
             "tone-info" if self._auto_refresh_enabled else "tone-muted",
@@ -2498,13 +2516,15 @@ class AutolabCockpitApp(App[None]):
         )
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
-        run_sort_button = self.query_one("#run-sort", Button)
+        run_sort_button = self.query_one("#run-sort-order", Button)
         run_sort_button.label = self._run_sort_button_label()
         key_hints.update(self._key_hints_text())
         if self._running_intent is not None:
             elapsed: str = ""
             if self._running_command_started_at is not None:
-                elapsed = f" ({time.monotonic() - self._running_command_started_at:.1f}s)"
+                elapsed = (
+                    f" ({time.monotonic() - self._running_command_started_at:.1f}s)"
+                )
             command_status.update(
                 f"Command: {self._action_label(self._running_intent.action_id)}{elapsed}"
             )
@@ -2527,9 +2547,7 @@ class AutolabCockpitApp(App[None]):
                 f"Last: {self._last_command_label} |{last_exit} | {duration}"
             )
             last_tone = (
-                "tone-success"
-                if self._last_command_exit_code == 0
-                else "tone-danger"
+                "tone-success" if self._last_command_exit_code == 0 else "tone-danger"
             )
             self._set_tone(command_status, last_tone)
 
@@ -2560,6 +2578,9 @@ class AutolabCockpitApp(App[None]):
                 stage_artifacts = snapshot.artifacts_by_stage.get(
                     snapshot.current_stage, ()
                 )
+                refresh_label = (
+                    " | auto-refresh:on" if self._auto_refresh_enabled else ""
+                )
                 missing_required = sum(1 for item in stage_artifacts if not item.exists)
                 blocker_count = (
                     0
@@ -2587,7 +2608,9 @@ class AutolabCockpitApp(App[None]):
                 else:
                     self._set_tone(running, "tone-success")
         else:
-            command = self._running_command_label or shlex.join(self._running_intent.argv)
+            command = self._running_command_label or shlex.join(
+                self._running_intent.argv
+            )
             running.update(
                 "Running "
                 f"({self._running_elapsed_label()}) | "
@@ -2699,6 +2722,7 @@ class AutolabCockpitApp(App[None]):
         self._visible_runs = ()
         self._current_artifacts = ()
         self._all_artifacts = ()
+        self._visible_runs = ()
         self._missing_artifacts_count = 0
 
         home_actions = self.query_one("#home-action-list", ListView)
@@ -2778,8 +2802,6 @@ class AutolabCockpitApp(App[None]):
         self._populate_artifact_list()
         self._last_snapshot_refresh_at = time.time()
         self._update_ui_chrome()
-        if not from_auto:
-            self._append_console("snapshot refreshed")
         return True
 
     def _populate_home_view(self) -> None:
@@ -3012,10 +3034,13 @@ class AutolabCockpitApp(App[None]):
         else:
             self._home_action_index = 0
 
-    def _populate_run_list(self, *, preserve_selected_run_id: str | None = None) -> None:
+    def _populate_run_list(
+        self, *, preserve_selected_run_id: str | None = None
+    ) -> None:
         snapshot = self._snapshot
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
+        self._visible_runs = ()
         if snapshot is None:
             self._visible_runs = ()
             return
@@ -3084,7 +3109,9 @@ class AutolabCockpitApp(App[None]):
 
         self._visible_runs = tuple(filtered_runs)
         if not self._visible_runs:
-            empty_label = Label(f"(No runs match status filter: {self._run_status_filter})")
+            empty_label = Label(
+                f"(No runs match status filter: {self._run_status_filter})"
+            )
             empty_label.add_class("tone-muted")
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
@@ -3107,7 +3134,9 @@ class AutolabCockpitApp(App[None]):
             )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(self._visible_runs) - 1)
+        self._selected_run_index = min(
+            self._selected_run_index, len(self._visible_runs) - 1
+        )
         run_list.index = self._selected_run_index
         self._update_run_details()
 
@@ -3145,19 +3174,26 @@ class AutolabCockpitApp(App[None]):
         if ended is None and run.completed_at:
             return "-"
         if ended is None:
-            now = datetime.now(started.tzinfo) if started.tzinfo is not None else datetime.now()
+            now = (
+                datetime.now(started.tzinfo)
+                if started.tzinfo is not None
+                else datetime.now()
+            )
             ended = now
         elapsed = (ended - started).total_seconds()
         return f"{elapsed:.1f}s"
 
     def _update_run_details(self) -> None:
         run = self._selected_run()
+        snapshot = self._snapshot
         if run is None:
             details_widget = self.query_one("#run-details", Static)
             details_widget.update("Run Details\nNo run selected.")
             self._set_tone(details_widget, "tone-muted")
             return
-        completion = "finished" if _is_completed_backlog_status(run.status) else "active"
+        completion = (
+            "finished" if _is_completed_backlog_status(run.status) else "active"
+        )
         run_duration = self._run_duration_text(run)
         selected_index = self._selected_run_index + 1
         run_count = len(self._visible_runs)
@@ -3185,6 +3221,7 @@ class AutolabCockpitApp(App[None]):
             f"- Filter: {self._run_status_filter or 'none'}\n"
             f"- Manifest: {'OK' if run.manifest_path.exists() else 'MISS'}\n"
             f"- Metrics: {'OK' if run.metrics_path.exists() else 'MISS'}\n"
+            f"- Sort: {'newest-first' if self._run_sort_newest_first else 'oldest-first'}\n"
             "- Keys: Enter open manifest | Open Metrics button for metrics"
         )
         self._set_tone(details_widget, self._tone_for_run_status(run.status))
@@ -3247,11 +3284,14 @@ class AutolabCockpitApp(App[None]):
                     f"(No files match name filter: {self._artifact_filter_query})"
                 )
             else:
-                empty_text = (
-                    "(No missing files for this stage)"
-                    if self._files_missing_only
-                    else "(No relevant files)"
-                )
+                if self._file_source_filter == "stage":
+                    empty_text = "(No stage files)"
+                elif self._file_source_filter == "common":
+                    empty_text = "(No common files)"
+                elif self._files_missing_only:
+                    empty_text = "(No missing files for this stage)"
+                else:
+                    empty_text = "(No relevant files)"
             empty_label = Label(empty_text)
             empty_label.add_class("tone-muted")
             artifact_list.append(ListItem(empty_label))
@@ -3330,9 +3370,7 @@ class AutolabCockpitApp(App[None]):
             command = item.command
             if len(command) > 110:
                 command = command[:107] + "..."
-            lines.append(
-                f"- {item.label}: {status} ({duration})\n  {command}"
-            )
+            lines.append(f"- {item.label}: {status} ({duration})\n  {command}")
         return "\n".join(lines)
 
     def _update_help_text(self) -> None:
@@ -3349,6 +3387,8 @@ class AutolabCockpitApp(App[None]):
             "- History: R reruns the last command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
+            "- Runs: t toggles newest/oldest sort.\n"
+            "- Files: v cycles all/stage/common source.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
             "Views\n"
@@ -3523,8 +3563,8 @@ class AutolabCockpitApp(App[None]):
                         f"Run selected recommended action: {label}",
                         "Execute the selected action from Home recommendations.",
                         self.action_activate_selection,
+                    )
                 )
-            )
         if self._mode == "runs":
             commands.append(
                 SystemCommand(
@@ -3573,6 +3613,13 @@ class AutolabCockpitApp(App[None]):
             )
             commands.append(
                 SystemCommand(
+                    "Cycle Files Source Filter",
+                    "Switch between all, stage-only, and common-only file views.",
+                    self.action_cycle_file_source_filter,
+                )
+            )
+            commands.append(
+                SystemCommand(
                     "Toggle Files Missing-only Filter",
                     "Switch between all files and only missing files.",
                     self.action_toggle_missing_only_filter,
@@ -3605,8 +3652,8 @@ class AutolabCockpitApp(App[None]):
                         "Clear Files Name Filter",
                         "Reset the file name filter query.",
                         self.action_clear_files_filter,
+                    )
                 )
-            )
         if self._mode == "console":
             commands.append(
                 SystemCommand(
@@ -3732,7 +3779,8 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_refresh_snapshot(self) -> None:
-        self._refresh_snapshot()
+        if self._refresh_snapshot():
+            self._append_console("snapshot refreshed")
 
     def action_clear_console(self) -> None:
         self._console_tail.clear()
@@ -3751,7 +3799,9 @@ class AutolabCockpitApp(App[None]):
         )
 
     def action_stop_loop(self) -> None:
-        self._start_ui_flow(label="stop-command", flow_factory=self._stop_running_command)
+        self._start_ui_flow(
+            label="stop-command", flow_factory=self._stop_running_command
+        )
 
     def action_cycle_file_source_scope(self) -> None:
         if self._mode != "files":
@@ -3898,6 +3948,15 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
+    def action_cycle_file_source_filter(self) -> None:
+        if self._mode != "files":
+            self.notify("File source filter is available in Files view (3).")
+            return
+        self._file_source_filter = self._next_file_source_filter()
+        if self._snapshot is not None:
+            self._populate_artifact_list()
+        self._update_ui_chrome()
+
     def action_focus_files_filter(self) -> None:
         if isinstance(self.screen, ModalScreen):
             return
@@ -3943,9 +4002,7 @@ class AutolabCockpitApp(App[None]):
                 return
             self._home_action_index = 0
             list_view = self.query_one("#home-action-list", ListView)
-            self._apply_list_selection(
-                list_id="home-action-list", selected_index=0
-            )
+            self._apply_list_selection(list_id="home-action-list", selected_index=0)
             list_view.index = 0
             list_view.focus()
             return
@@ -3963,9 +4020,7 @@ class AutolabCockpitApp(App[None]):
                 return
             self._selected_artifact_index = 0
             list_view = self.query_one("#artifact-list", ListView)
-            self._apply_list_selection(
-                list_id="artifact-list", selected_index=0
-            )
+            self._apply_list_selection(list_id="artifact-list", selected_index=0)
             list_view.index = 0
             list_view.focus()
 
@@ -3976,9 +4031,7 @@ class AutolabCockpitApp(App[None]):
             index = len(self._home_action_ids) - 1
             list_view = self.query_one("#home-action-list", ListView)
             self._home_action_index = index
-            self._apply_list_selection(
-                list_id="home-action-list", selected_index=index
-            )
+            self._apply_list_selection(list_id="home-action-list", selected_index=index)
             list_view.index = index
             list_view.focus()
             return
@@ -3998,9 +4051,7 @@ class AutolabCockpitApp(App[None]):
             index = len(self._current_artifacts) - 1
             list_view = self.query_one("#artifact-list", ListView)
             self._selected_artifact_index = index
-            self._apply_list_selection(
-                list_id="artifact-list", selected_index=index
-            )
+            self._apply_list_selection(list_id="artifact-list", selected_index=index)
             list_view.index = index
             list_view.focus()
 
@@ -4158,6 +4209,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "run-filter-clear":
             self.action_clear_runs_filter()
+            return
+        if button_id == "run-sort-order":
+            self.action_toggle_run_sort()
             return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
@@ -4554,9 +4608,6 @@ class AutolabCockpitApp(App[None]):
             history_item.exit_code = 1
             history_item.finished_at = time.monotonic()
             self._append_console(f"failed to start command: {exc}")
-            history_entry.status = "failed"
-            history_entry.return_code = 1
-            history_entry.duration = time.monotonic() - history_entry.started_at
             self._running_intent = None
             self._running_command_started_at = None
             self._active_history_item = None
@@ -4592,9 +4643,10 @@ class AutolabCockpitApp(App[None]):
                         history_item = item
                         break
                 self._active_history_item = history_item
+            command = shlex.join(intent.argv) if intent is not None else "command"
             if stopped:
                 self._append_console("process interrupted")
-            self._append_console(f"process exit code: {return_code}")
+            self._append_console(f"command finished: {command} | exit={return_code}")
             if self._active_history_item is not None and intent is not None:
                 self._active_history_item.finished_at = time.monotonic()
                 self._active_history_item.exit_code = return_code
@@ -4602,7 +4654,9 @@ class AutolabCockpitApp(App[None]):
             self._running_intent = None
             if self._running_command_started_at is not None:
                 end_time = time.monotonic()
-                self._last_command_duration = end_time - self._running_command_started_at
+                self._last_command_duration = (
+                    end_time - self._running_command_started_at
+                )
             else:
                 self._last_command_duration = None
             self._running_command_started_at = None
@@ -4621,7 +4675,7 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    def _running_command_label(self) -> str:
+    def _running_command_title(self) -> str:
         if self._running_intent is None:
             return "Running command"
         action = self._actions_by_id.get(self._running_intent.action_id)
@@ -4636,7 +4690,7 @@ class AutolabCockpitApp(App[None]):
             return
 
         command = shlex.join(intent.argv)
-        label = self._running_command_label()
+        label = self._running_command_title()
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
                 title=f"Stop active command: {label}?",

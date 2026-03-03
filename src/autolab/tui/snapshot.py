@@ -665,9 +665,9 @@ def _build_recommended_actions(
         recommended.append(
             RecommendedAction(
                 action_id="open_state_history",
-                    reason="Review state and blockers before retrying.",
-                )
+                reason="Review state and blockers before retrying.",
             )
+        )
 
         if todos:
             recommended.append(

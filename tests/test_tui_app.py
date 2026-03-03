@@ -394,7 +394,9 @@ def test_home_shows_render_preview_card(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
-def test_home_stage_timeline_displays_progress_for_current_iteration(tmp_path: Path) -> None:
+def test_home_stage_timeline_displays_progress_for_current_iteration(
+    tmp_path: Path,
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root, stage="implementation")
@@ -483,9 +485,7 @@ def test_artifact_viewer_truncates_long_text_with_indicator(tmp_path: Path) -> N
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
         _write_design_prompt(repo_root, lines=5)
-        prompt_path = (
-            repo_root / ".autolab" / "prompts" / "stage_design.md"
-        )
+        prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
         prompt_path.write_text(
             "line\n".join(f"line {idx}" for idx in range(1, 201)),
             encoding="utf-8",
@@ -557,9 +557,7 @@ def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
             await pilot.press("3")
             await pilot.pause()
 
-            source_button = app.query_one(
-                "#file-cycle-source-scope", app_module.Button
-            )
+            source_button = app.query_one("#file-cycle-source-scope", app_module.Button)
             hints = app.query_one("#key-hints", app_module.Static)
             assert "f source(all)" in str(hints.render())
             assert "Source: All" in str(source_button.label)
@@ -567,9 +565,7 @@ def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
 
             await pilot.press("f")
             await pilot.pause()
-            source_button = app.query_one(
-                "#file-cycle-source-scope", app_module.Button
-            )
+            source_button = app.query_one("#file-cycle-source-scope", app_module.Button)
             hints = app.query_one("#key-hints", app_module.Static)
             assert "f source(stage)" in str(hints.render())
             assert "Source: Stage" in str(source_button.label)
@@ -577,9 +573,7 @@ def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
 
             await pilot.click("#file-cycle-source-scope")
             await pilot.pause()
-            source_button = app.query_one(
-                "#file-cycle-source-scope", app_module.Button
-            )
+            source_button = app.query_one("#file-cycle-source-scope", app_module.Button)
             hints = app.query_one("#key-hints", app_module.Static)
             assert "f source(common)" in str(hints.render())
             assert "Source: Common" in str(source_button.label)
@@ -587,9 +581,7 @@ def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
 
             await pilot.press("f")
             await pilot.pause()
-            source_button = app.query_one(
-                "#file-cycle-source-scope", app_module.Button
-            )
+            source_button = app.query_one("#file-cycle-source-scope", app_module.Button)
             assert "Source: All" in str(source_button.label)
             assert {item.path for item in app._all_artifacts} == all_paths
 
@@ -1001,6 +993,119 @@ def test_runs_view_filter_input_reduces_list_and_clear_restores_all_runs(
     asyncio.run(_run())
 
 
+def test_system_commands_are_contextual_for_runs_view(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-old",
+            started_at="2026-02-01T10:00:00Z",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-new",
+            started_at="2026-02-02T11:00:00Z",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            assert "Toggle Runs Sort Order" not in _system_command_titles(app)
+
+            await pilot.press("2")
+            await pilot.pause()
+            runs_titles = _system_command_titles(app)
+            assert "Toggle Runs Sort Order" in runs_titles
+
+    asyncio.run(_run())
+
+
+def test_runs_view_toggles_sort_order(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run-older",
+            started_at="2026-02-01T10:00:00Z",
+        )
+        _write_run_manifest(
+            repo_root,
+            "run-newer",
+            started_at="2026-02-02T11:00:00Z",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels_before = _list_item_label_texts(run_list)
+            assert "run-newer" in labels_before[0]
+            assert "run-older" in labels_before[1]
+            sort_button = app.query_one("#run-sort-order", app_module.Button)
+            assert "Sort: Newest" in str(sort_button.label)
+
+            await pilot.press("t")
+            await pilot.pause()
+            labels_after = _list_item_label_texts(run_list)
+            assert "run-older" in labels_after[0]
+            assert "run-newer" in labels_after[1]
+            assert "Sort: Oldest" in str(sort_button.label)
+
+    asyncio.run(_run())
+
+
+def test_files_view_cycles_source_filter(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage = snapshot.current_stage
+
+        stage_artifacts = tuple(snapshot.artifacts_by_stage.get(stage, ()))
+        common_artifacts = snapshot.common_artifacts
+
+        stage_paths = {artifact.path for artifact in stage_artifacts}
+        common_paths = {artifact.path for artifact in common_artifacts}
+        all_paths = stage_paths | common_paths
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            source_button = app.query_one("#file-source-filter", app_module.Button)
+            context_widget = app.query_one("#files-context", app_module.Static)
+
+            assert "Source: All" in str(source_button.label)
+            assert "Source: all files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(all_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            context_widget = app.query_one("#files-context", app_module.Static)
+            assert "Source: Stage" in str(source_button.label)
+            assert "Source: stage files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(stage_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            context_widget = app.query_one("#files-context", app_module.Static)
+            assert "Source: Common" in str(source_button.label)
+            assert "Source: common files" in str(context_widget.render())
+            assert len(_list_item_label_texts(artifact_list)) == len(common_paths)
+
+            await pilot.press("v")
+            await pilot.pause()
+            assert "Source: All" in str(source_button.label)
+
+    asyncio.run(_run())
+
+
 def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1176,14 +1281,18 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
-def test_auto_refresh_binding_toggles_indicator_and_interval_refresh(tmp_path: Path, monkeypatch) -> None:
+def test_auto_refresh_binding_toggles_indicator_and_interval_refresh(
+    tmp_path: Path, monkeypatch
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
         app = AutolabCockpitApp(state_path=state_path)
         refreshes: list[str] = []
 
-        monkeypatch.setattr(app, "_refresh_snapshot", lambda: refreshes.append("refresh"))
+        monkeypatch.setattr(
+            app, "_refresh_snapshot", lambda: refreshes.append("refresh")
+        )
 
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
@@ -1258,7 +1367,9 @@ def test_list_navigation_home_end_shortcuts_jump_runs_and_files_lists(
     asyncio.run(_run())
 
 
-def test_rerun_last_command_confirms_and_replays_cached_intent(tmp_path: Path, monkeypatch) -> None:
+def test_rerun_last_command_confirms_and_replays_cached_intent(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo_root = tmp_path / "repo"
     state_path = _write_state_file(repo_root)
     app = AutolabCockpitApp(state_path=state_path)
@@ -1301,7 +1412,9 @@ def test_rerun_last_command_reports_when_no_history_is_available(
     assert notices == ["No previous command to rerun."]
 
 
-def test_open_command_history_replays_selected_item(tmp_path: Path, monkeypatch) -> None:
+def test_open_command_history_replays_selected_item(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo_root = tmp_path / "repo"
     state_path = _write_state_file(repo_root)
     app = AutolabCockpitApp(state_path=state_path)
@@ -1968,8 +2081,6 @@ def test_execute_action_resolve_human_review_guards_non_human_stage(
     assert any("Human review can only be resolved" in item for item in notices)
 
 
-
-
 def test_runs_view_shows_slurm_metadata(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1995,6 +2106,7 @@ def test_runs_view_shows_slurm_metadata(tmp_path: Path) -> None:
 
     asyncio.run(_run())
 
+
 def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -2017,7 +2129,9 @@ def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) ->
     asyncio.run(_run())
 
 
-def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(tmp_path: Path) -> None:
+def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(
+    tmp_path: Path,
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
@@ -2076,15 +2190,21 @@ def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(tmp_path:
             await pilot.pause()
             run_filter = app.query_one("#run-filter-input", app_module.Input)
             assert run_filter.value == ""
-            assert "f filter(off)" in str(app.query_one("#key-hints", app_module.Static).render())
-            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            assert "f filter(off)" in str(
+                app.query_one("#key-hints", app_module.Static).render()
+            )
+            labels = _list_item_label_texts(
+                app.query_one("#run-list", app_module.ListView)
+            )
             assert len(labels) == 3
 
             await pilot.click("#run-filter-status")
             await pilot.pause()
             status_button = app.query_one("#run-filter-status", app_module.Button)
             assert str(status_button.label) == "Status: running"
-            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            labels = _list_item_label_texts(
+                app.query_one("#run-list", app_module.ListView)
+            )
             assert len(labels) == 1
             assert "run_mid" in labels[0]
 
@@ -2283,7 +2403,9 @@ def test_start_command_preserves_prior_console_output(
     assert started == [intent]
 
 
-def test_status_command_shows_running_then_last_result(tmp_path: Path, monkeypatch) -> None:
+def test_status_command_shows_running_then_last_result(
+    tmp_path: Path, monkeypatch
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
