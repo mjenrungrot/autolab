@@ -132,6 +132,16 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         help_text="Inspect resolved token values and render metadata.",
     ),
     ActionSpec(
+        action_id="open_verification_result",
+        label="Open verification result",
+        description="Open .autolab/verification_result.json for detailed verifier output.",
+        kind="view",
+        risk_level="low",
+        group="home",
+        user_label="Open verification result",
+        help_text="Inspect verifier status, command outcomes, and staged failures.",
+    ),
+    ActionSpec(
         action_id="open_stage_prompt",
         label="Open current stage prompt",
         description="Open .autolab/prompts/stage_*.md for the selected stage.",
