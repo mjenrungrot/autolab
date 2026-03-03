@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 
 from textual import events
@@ -62,6 +63,20 @@ from autolab.tui.snapshot import (
 )
 
 
+@dataclass
+class CommandHistoryItem:
+    intent: CommandIntent
+    command: str
+    started_at: float
+    started_at_text: str
+    finished_at: float | None = None
+    exit_code: int | None = None
+    stopped: bool = False
+
+
+_COMMAND_HISTORY_MAX = 25
+
+
 class UnlockSafetyScreen(ModalScreen[bool]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
@@ -109,6 +124,139 @@ class UnlockSafetyScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "unlock")
+
+
+class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
+    BINDINGS = [
+        ("escape", "cancel", "Close"),
+        ("enter", "replay", "Replay"),
+        ("r", "replay", "Replay"),
+    ]
+
+    CSS = """
+    CommandHistoryScreen {
+      align: center middle;
+    }
+
+    #command-history-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #command-history-title {
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    #command-history-list {
+      border: round $surface;
+      height: 1fr;
+      min-height: 8;
+    }
+
+    #command-history-detail {
+      margin-top: 1;
+      color: $text-muted;
+    }
+
+    #command-history-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def __init__(self, *, history: tuple[CommandHistoryItem, ...]) -> None:
+        super().__init__()
+        self._history = history
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="command-history-dialog"):
+            yield Label("Command History", id="command-history-title")
+            yield ListView(id="command-history-list")
+            yield Static("", id="command-history-detail", markup=False)
+            with Horizontal(id="command-history-buttons"):
+                yield Button("Close", id="command-history-close")
+                yield Button(
+                    "Replay selected", id="command-history-replay", variant="warning"
+                )
+
+    def on_mount(self) -> None:
+        if not self._history:
+            self.dismiss(None)
+            return
+        list_view = self.query_one("#command-history-list", ListView)
+        list_view.clear()
+        for item in self._history:
+            list_view.append(ListItem(Label(self._format_history_line(item))))
+        list_view.index = 0
+        list_view.focus()
+        self._update_detail()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_replay(self) -> None:
+        self.dismiss(self._selected_item())
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "command-history-close":
+            self.dismiss(None)
+            return
+        if event.button.id == "command-history-replay":
+            self.dismiss(self._selected_item())
+            return
+
+    @staticmethod
+    def _format_status(item: CommandHistoryItem) -> str:
+        if item.exit_code is None and item.finished_at is None:
+            return "running"
+        if item.exit_code is None:
+            return "pending"
+        if item.exit_code == 0:
+            return "ok"
+        if item.stopped:
+            return "stopped"
+        return "fail"
+
+    @staticmethod
+    def _format_duration(item: CommandHistoryItem) -> str:
+        if item.finished_at is None:
+            return "-"
+        return f"{item.finished_at - item.started_at:.1f}s"
+
+    def _format_history_line(self, item: CommandHistoryItem) -> str:
+        status = self._format_status(item)
+        duration = self._format_duration(item)
+        return f"[{item.started_at_text}] {status:7} {duration:>7} | {item.command}"
+
+    def _selected_item(self) -> CommandHistoryItem | None:
+        list_view = self.query_one("#command-history-list", ListView)
+        if not self._history:
+            return None
+        index = list_view.index
+        if index is None or index < 0 or index >= len(self._history):
+            return None
+        return self._history[index]
+
+    def _update_detail(self) -> None:
+        item = self._selected_item()
+        detail = self.query_one("#command-history-detail", Static)
+        if item is None:
+            detail.update("")
+            return
+        detail.update(
+            f"{item.command}\n"
+            f"Started: {item.started_at_text}\n"
+            f"Exit: {item.exit_code if item.exit_code is not None else '-'}\n"
+            f"Stopped: {'yes' if item.stopped else 'no'}"
+        )
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        del event
+        self._update_detail()
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
@@ -1445,6 +1593,7 @@ class AutolabCockpitApp(App[None]):
         ("3", "show_files", "Files"),
         ("4", "show_console", "Console"),
         ("5", "show_help", "Help"),
+        ("h", "show_command_history", "History"),
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
         ("question_mark", "show_help", "Help"),
@@ -1502,6 +1651,8 @@ class AutolabCockpitApp(App[None]):
         self._last_command_duration: float | None = None
         self._running_command_started_at: float | None = None
         self._last_command_intent: CommandIntent | None = None
+        self._command_history: deque[CommandHistoryItem] = deque(maxlen=_COMMAND_HISTORY_MAX)
+        self._active_history_item: CommandHistoryItem | None = None
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1677,6 +1828,7 @@ class AutolabCockpitApp(App[None]):
             "[ / ] cycle",
             "Enter activate",
             "Home/End list",
+            "h history",
             "o open",
             "u lock",
             "x advanced",
@@ -2388,6 +2540,7 @@ class AutolabCockpitApp(App[None]):
             "- Utilities: r refresh, s stop active loop, c clear console.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "- History: R reruns the last command after confirmation.\n"
+            "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2514,6 +2667,14 @@ class AutolabCockpitApp(App[None]):
                     "Rerun last command",
                     "Re-run the most recently started command.",
                     self.action_rerun_last_command,
+                )
+            )
+        if self._command_history:
+            commands.append(
+                SystemCommand(
+                    "Show command history",
+                    "Review recent commands and replay one.",
+                    self.action_show_command_history,
                 )
             )
         if self._mode == "home" and self._home_action_ids:
@@ -2818,6 +2979,48 @@ class AutolabCockpitApp(App[None]):
             list_view.index = index
             list_view.focus()
 
+    def action_show_command_history(self) -> None:
+        self._start_ui_flow(
+            label="command-history",
+            flow_factory=self._open_command_history,
+        )
+
+    async def _open_command_history(self) -> None:
+        if not self._command_history:
+            self.notify("No command history available yet.")
+            return
+        selected = await self.push_screen_wait(
+            CommandHistoryScreen(history=tuple(self._command_history))
+        )
+        if selected is None:
+            return
+        await self._replay_command_intent(
+            intent=selected.intent,
+            title=f"Re-run: {selected.intent.action_id}",
+            confirm_label="Re-run",
+        )
+
+    async def _replay_command_intent(
+        self,
+        *,
+        intent: CommandIntent,
+        title: str,
+        confirm_label: str,
+    ) -> None:
+        action = self._actions_by_id.get(intent.action_id)
+        if action is None:
+            self._start_command(intent)
+            return
+        if not await self._unlock_if_needed(action):
+            return
+        if await self._confirm_action_intent(
+            action=action,
+            title=title,
+            intent=intent,
+            confirm_label=confirm_label,
+        ):
+            self._start_command(intent)
+
     def action_rerun_last_command(self) -> None:
         self._start_ui_flow(label="rerun-last", flow_factory=self._rerun_last_command)
 
@@ -2827,18 +3030,16 @@ class AutolabCockpitApp(App[None]):
             return
         last_intent = self._last_command_intent
         action = self._actions_by_id.get(last_intent.action_id)
-        if action is None:
-            self._start_command(last_intent)
-            return
-        if not await self._unlock_if_needed(action):
-            return
-        if await self._confirm_action_intent(
-            action=action,
-            title=f"Re-run: {action.user_label or action.label}",
+        action_name = (
+            (action.user_label or action.label)
+            if action is not None
+            else last_intent.action_id
+        )
+        await self._replay_command_intent(
             intent=last_intent,
+            title=f"Re-run: {action_name}",
             confirm_label="Re-run",
-        ):
-            self._start_command(last_intent)
+        )
 
     def action_activate_selection(self) -> None:
         focused = self.focused
@@ -3283,22 +3484,34 @@ class AutolabCockpitApp(App[None]):
         if self._console_tail:
             self._append_console("-" * 40)
         command = shlex.join(intent.argv)
+        started_at = time.monotonic()
+        history_item = CommandHistoryItem(
+            intent=intent,
+            command=command,
+            started_at=started_at,
+            started_at_text=self._timestamp(),
+        )
+        self._command_history.appendleft(history_item)
         self._append_console(f"starting: {command}")
         self._last_command_label = self._action_label(intent.action_id)
         self._last_command_exit_code = None
         self._last_command_duration = None
         self._running_intent = intent
-        self._running_command_started_at = time.monotonic()
+        self._running_command_started_at = started_at
+        self._active_history_item = history_item
+        self._last_command_intent = intent
         self._update_ui_chrome()
         try:
             self._runner.start(intent)
         except Exception as exc:
+            history_item.exit_code = 1
+            history_item.finished_at = time.monotonic()
             self._append_console(f"failed to start command: {exc}")
             self._running_intent = None
             self._running_command_started_at = None
+            self._active_history_item = None
             self._update_ui_chrome()
             return
-        self._last_command_intent = intent
 
     def _handle_runner_line(self, line: str) -> None:
         try:
@@ -3309,14 +3522,28 @@ class AutolabCockpitApp(App[None]):
     def _handle_runner_done(self, return_code: int, stopped: bool) -> None:
         def _finish() -> None:
             intent = self._running_intent
+            if self._active_history_item is None:
+                history_item = None
+                for item in self._command_history:
+                    if (
+                        item.intent == intent
+                        and item.finished_at is None
+                        and item.exit_code is None
+                    ):
+                        history_item = item
+                        break
+                self._active_history_item = history_item
             if stopped:
                 self._append_console("process interrupted")
             self._append_console(f"process exit code: {return_code}")
+            if self._active_history_item is not None and intent is not None:
+                self._active_history_item.finished_at = time.monotonic()
+                self._active_history_item.exit_code = return_code
+                self._active_history_item.stopped = stopped
             self._running_intent = None
             if self._running_command_started_at is not None:
-                self._last_command_duration = (
-                    time.monotonic() - self._running_command_started_at
-                )
+                end_time = time.monotonic()
+                self._last_command_duration = end_time - self._running_command_started_at
             else:
                 self._last_command_duration = None
             self._running_command_started_at = None
@@ -3325,6 +3552,7 @@ class AutolabCockpitApp(App[None]):
                 self._last_command_label = self._action_label(intent.action_id)
             if intent is not None and intent.mutating:
                 self._armed = False
+            self._active_history_item = None
             self._update_ui_chrome()
             self._refresh_snapshot()
 
