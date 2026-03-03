@@ -642,7 +642,7 @@ def test_f_focuses_active_filter_in_runs_and_files(tmp_path: Path) -> None:
             assert isinstance(focused, app_module.Input)
             assert focused.id == "run-filter-input"
 
-            await pilot.press("3")
+            await pilot.click("#nav-files")
             await pilot.pause()
             await pilot.press("f")
             await pilot.pause()
@@ -814,7 +814,6 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             home_titles = _system_command_titles(app)
             assert "Go to Files view" in home_titles
-            assert "Show command history" not in home_titles
             assert "Quick open selected item" in home_titles
             assert "Show command history" in home_titles
             assert "Focus Files Name Filter" not in home_titles
@@ -852,7 +851,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
 
-            await pilot.press("2")
+            await pilot.click("#nav-runs")
             await pilot.pause()
             run_titles = _system_command_titles(app)
             assert "Cycle run sort order" in run_titles
@@ -922,7 +921,7 @@ def test_system_commands_are_contextual_for_runs_filter(tmp_path: Path) -> None:
             assert "Clear Runs Status Filter" not in run_titles
 
             await pilot.press("/")
-            await pilot.type("running")
+            await pilot.press("r", "u", "n", "n", "i", "n", "g")
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Runs Status Filter" in filtered_titles
@@ -938,6 +937,8 @@ def test_runs_view_filter_input_reduces_list_and_clear_restores_all_runs(
         state_path = _write_state_file(repo_root)
         run_list_root = repo_root / "experiments" / "plan" / "iter1" / "runs"
         run_list_root.mkdir(parents=True, exist_ok=True)
+        (run_list_root / "run-completed").mkdir(parents=True, exist_ok=True)
+        (run_list_root / "run-running").mkdir(parents=True, exist_ok=True)
 
         (run_list_root / "run-completed" / "run_manifest.json").write_text(
             json.dumps(
@@ -975,7 +976,7 @@ def test_runs_view_filter_input_reduces_list_and_clear_restores_all_runs(
             assert len(before_labels) == 2
 
             await pilot.press("/")
-            await pilot.type("completed")
+            await pilot.press("c", "o", "m", "p", "l", "e", "t", "e", "d")
             await pilot.pause()
             filtered_labels = _list_item_label_texts(run_list)
             assert len(filtered_labels) == 1
@@ -1831,7 +1832,7 @@ def test_command_history_screen_lists_and_replays_selection(tmp_path: Path) -> N
             first_item = str(list_view.children[0].query_one(app_module.Label).render())
             assert "autolab todo sync" in first_item
             await pilot.press("down")
-            await pilot.press("enter")
+            await pilot.click("#command-history-replay")
             await pilot.pause()
             assert isinstance(results[0], app_module.CommandHistoryItem)
             assert results[0].intent.action_id == "verify_current_stage"
