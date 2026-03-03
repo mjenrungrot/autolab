@@ -100,6 +100,7 @@ def _write_run_manifest(
     *,
     host_mode: str = "local",
     job_id: str = "",
+    status: str = "running",
     sync_status: str = "",
 ) -> None:
     manifest_path = (
@@ -114,7 +115,7 @@ def _write_run_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "host_mode": host_mode,
         "timestamps": {"started_at": started_at},
     }
@@ -187,6 +188,10 @@ def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
         label = item.query_one(app_module.Label)
         labels.append(str(label.render()))
     return labels
+
+
+def _run_ids_from_list_items(list_view: app_module.ListView) -> list[str]:
+    return [entry.split(" ")[0] for entry in _list_item_label_texts(list_view)]
 
 
 def _system_command_titles(app: AutolabCockpitApp) -> set[str]:
@@ -813,6 +818,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.press("3")
             await pilot.pause()
             files_titles = _system_command_titles(app)
+            assert "Focus next missing file" in files_titles
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
             assert "Show command history" in files_titles
@@ -823,6 +829,11 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Cycle run sort order" in run_titles
 
     asyncio.run(_run())
 
