@@ -2172,6 +2172,7 @@ class AutolabCockpitApp(App[None]):
         ("enter", "activate_selection", "Activate"),
         ("slash", "focus_files_filter", "Filter Files"),
         ("f", "focus_mode_filter", "Filter"),
+        ("0", "clear_mode_filters", "Clear filters"),
         ("v", "mode_v_shortcut", "Mode V"),
         ("home", "list_first", "List Start"),
         ("end", "list_last", "List End"),
@@ -2631,6 +2632,96 @@ class AutolabCockpitApp(App[None]):
 
         return False
 
+    def _has_active_filters(self) -> bool:
+        if self._mode == "home":
+            return bool(self._home_action_filter_query)
+        if self._mode == "runs":
+            return bool(self._run_status_filter)
+        if self._mode == "files":
+            return (
+                bool(self._artifact_filter_query)
+                or self._files_missing_only
+                or self._files_source_filter != "all"
+            )
+        if self._mode == "console":
+            return bool(self._console_filter_query) or self._console_show_errors_only
+        return False
+
+    def _clear_mode_filters(self) -> bool:
+        if self._mode == "home":
+            if not self._home_action_filter_query:
+                return False
+            self._home_action_filter_query = ""
+            if self._snapshot is not None:
+                filter_input = self.query_one("#home-action-filter-input", Input)
+                filter_input.value = ""
+                self._populate_home_view()
+            else:
+                try:
+                    filter_input = self.query_one("#home-action-filter-input", Input)
+                    filter_input.value = ""
+                except Exception:
+                    pass
+            self._update_ui_chrome()
+            return True
+
+        if self._mode == "runs":
+            if not self._run_status_filter:
+                return False
+            self._run_status_filter = ""
+            filter_input = self.query_one("#run-filter-input", Input)
+            filter_input.value = ""
+            if self._snapshot is not None:
+                self._populate_run_list()
+            self._update_ui_chrome()
+            return True
+
+        if self._mode == "files":
+            changed = False
+            if self._artifact_filter_query:
+                self._artifact_filter_query = ""
+                filter_input = self.query_one("#artifact-filter-input", Input)
+                filter_input.value = ""
+                changed = True
+            if self._files_missing_only:
+                self._files_missing_only = False
+                changed = True
+            if self._files_source_filter != "all":
+                self._set_files_source_filter("all")
+                changed = True
+            if self._file_source_filter != "all":
+                self._file_source_filter = "all"
+                changed = True
+            if changed and self._snapshot is not None:
+                self._populate_artifact_list()
+            if changed:
+                self._update_ui_chrome()
+            return changed
+
+        if self._mode == "console":
+            changed = False
+            if self._console_filter_query:
+                self._console_filter_query = ""
+                filter_input = self.query_one("#console-filter-input", Input)
+                filter_input.value = ""
+                self._render_console_tail()
+                changed = True
+            if self._console_show_errors_only:
+                self._console_show_errors_only = False
+                self._append_console("console errors-only off")
+                changed = True
+            if changed:
+                self._update_ui_chrome()
+            return changed
+        return False
+
+    def action_clear_mode_filters(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            return
+        if self._clear_mode_filters():
+            return
+        self.notify("No active filters to clear in this view.")
+
     def _is_console_error_line(self, line: str) -> bool:
         normalized = str(line).lower()
         return any(
@@ -2720,6 +2811,8 @@ class AutolabCockpitApp(App[None]):
             "? help",
             "q quit",
         ]
+        if self._has_active_filters():
+            parts.append("0 clear filters")
         if self._command_history:
             parts.append("C clear history")
         failed_count = self._failed_command_count()
@@ -3807,7 +3900,8 @@ class AutolabCockpitApp(App[None]):
             "  c clear console, Shift+C clear command history.\n"
             "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle,\n"
             "  ctrl+o save visible output.\n"
-            "- Filters: f (or / in files/runs) focuses active filter input.\n"
+            "- Filters: 0 clears active filters for the current view,\n"
+            "  f (or / in files/runs) focuses active filter input.\n"
             "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
             "- History: Shift+F reruns the most recent failed command after confirmation.\n"
@@ -3836,6 +3930,7 @@ class AutolabCockpitApp(App[None]):
             "- ctrl+o: save currently visible console output.\n"
             "- console follow pause shows unread line count in the status rail.\n"
             "- f: focus and filter in active mode (Runs/Files/Console/Home views).\n"
+            "- 0: clear active filters in the current view.\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- v: Open selected run manifest from Runs view.\n"
@@ -4002,6 +4097,14 @@ class AutolabCockpitApp(App[None]):
                     "Rerun last failed command",
                     "Re-run the most recent failed command.",
                     self.action_rerun_last_failed_command,
+                )
+            )
+        if self._has_active_filters():
+            commands.append(
+                SystemCommand(
+                    "Clear active filters",
+                    "Reset all active filters for this view.",
+                    self.action_clear_mode_filters,
                 )
             )
         if self._command_history:
