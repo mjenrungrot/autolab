@@ -174,6 +174,10 @@ def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
     return labels
 
 
+def _system_command_titles(app: AutolabCockpitApp) -> set[str]:
+    return {command.title for command in app.get_system_commands(app.screen)}
+
+
 def _write_run_files(repo_root: Path, *, run_id: str = "run-001") -> None:
     run_dir = repo_root / "experiments" / "plan" / "iter1" / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -438,6 +442,44 @@ def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_files_name_filter_slash_focuses_input_and_clear_restores_list(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+
+            focused = app.focused
+            assert isinstance(focused, app_module.Input)
+            assert focused.id == "artifact-filter-input"
+
+            await pilot.press("d", "e", "s", "i", "g", "n")
+            await pilot.pause()
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            filtered_entries = _list_item_label_texts(artifact_list)
+            assert filtered_entries
+            assert all("design" in entry.lower() for entry in filtered_entries)
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Name filter: design" in str(context.render())
+
+            await pilot.click("#artifact-filter-clear")
+            await pilot.pause()
+
+            restored_entries = _list_item_label_texts(artifact_list)
+            assert len(restored_entries) > len(filtered_entries)
+            context = app.query_one("#files-context", app_module.Static)
+            assert "- Name filter: none" in str(context.render())
+
+    asyncio.run(_run())
+
+
 def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -535,6 +577,34 @@ def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            home_titles = _system_command_titles(app)
+            assert "Go to Files view" in home_titles
+            assert "Quick open selected item" in home_titles
+            assert "Focus Files Name Filter" not in home_titles
+
+            await pilot.press("3")
+            await pilot.pause()
+            files_titles = _system_command_titles(app)
+            assert "Focus Files Name Filter" in files_titles
+            assert "Toggle Files Missing-only Filter" in files_titles
+
+            await pilot.press("/")
+            await pilot.pause()
+            await pilot.press("d", "e")
+            await pilot.pause()
+            filtered_titles = _system_command_titles(app)
+            assert "Clear Files Name Filter" in filtered_titles
+
+    asyncio.run(_run())
+
+
 def test_unlock_modal_opens_and_cancel_keeps_locked(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -593,6 +663,46 @@ def test_escape_closes_action_confirm_modal(tmp_path: Path) -> None:
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, app_module.ActionConfirmScreen)
+
+    asyncio.run(_run())
+
+
+def test_action_confirm_keyboard_shortcuts_toggle_details_and_confirm(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(
+                app_module.ActionConfirmScreen(
+                    title="Confirm action",
+                    summary="summary",
+                    command="autolab verify",
+                    cwd=repo_root,
+                    expected_writes=("state.json",),
+                ),
+                callback=lambda result: results.append(result),
+            )
+            await pilot.pause()
+            assert isinstance(app.screen, app_module.ActionConfirmScreen)
+
+            details = app.screen.query_one("#action-confirm-details", app_module.Static)
+            assert "Details hidden." in str(details.render())
+
+            await pilot.press("d")
+            await pilot.pause()
+            details = app.screen.query_one("#action-confirm-details", app_module.Static)
+            assert "Command:" in str(details.render())
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not isinstance(app.screen, app_module.ActionConfirmScreen)
+
+        assert results == [True]
 
     asyncio.run(_run())
 
