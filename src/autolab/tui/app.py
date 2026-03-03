@@ -48,6 +48,7 @@ from autolab.tui.models import (
     BacklogHypothesisItem,
     CockpitSnapshot,
     CommandIntent,
+    RunItem,
     LoopActionOptions,
     RunActionOptions,
     ViewMode,
@@ -1247,6 +1248,8 @@ class AutolabCockpitApp(App[None]):
         "tone-danger",
         "tone-muted",
     )
+    _ARTIFACT_PREVIEW_MAX_CHARS = 12_000
+    _CONSOLE_ERROR_KEYWORDS = ("error", "failed", "failure", "traceback", "exception", "fatal")
 
     CSS = """
     Screen {
@@ -1349,6 +1352,7 @@ class AutolabCockpitApp(App[None]):
     }
 
     #run-details,
+    #run-filter-row,
     #files-context,
     #home-stage-card,
     #home-blocker-card,
@@ -1396,6 +1400,21 @@ class AutolabCockpitApp(App[None]):
       margin-top: 1;
     }
 
+    #run-filter-row {
+      height: auto;
+      margin-top: 1;
+      align-vertical: middle;
+    }
+
+    #run-filter-label {
+      width: 18;
+      color: $text-muted;
+    }
+
+    #run-filter-input {
+      width: 16;
+    }
+
     #files-filter-row {
       height: auto;
       margin-bottom: 1;
@@ -1431,6 +1450,7 @@ class AutolabCockpitApp(App[None]):
         ("shift+tab", "focus_previous", "Prev"),
         ("enter", "activate_selection", "Activate"),
         ("slash", "focus_files_filter", "Filter Files"),
+        ("f", "focus_runs_filter", "Filter Runs"),
         ("o", "quick_open", "Open"),
         ("m", "quick_secondary", "Mode Quick"),
         ("e", "open_selected_in_editor", "Open Editor"),
@@ -1438,6 +1458,7 @@ class AutolabCockpitApp(App[None]):
         ("r", "refresh_snapshot", "Refresh"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
+        ("shift+e", "toggle_console_error_filter", "Errors Only"),
         ("s", "stop_loop", "Stop Loop"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
@@ -1462,6 +1483,8 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._run_status_filter: str = ""
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_run_index = 0
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
@@ -1469,6 +1492,7 @@ class AutolabCockpitApp(App[None]):
         self._missing_artifacts_count = 0
         self._files_missing_only = False
         self._artifact_filter_query = ""
+        self._console_show_errors_only = False
 
         self._runner = CommandRunner(
             on_line=self._handle_runner_line, on_done=self._handle_runner_done
@@ -1522,6 +1546,14 @@ class AutolabCockpitApp(App[None]):
                 with Horizontal(id="run-buttons"):
                     yield Button("Open Manifest", id="run-open-manifest")
                     yield Button("Open Metrics", id="run-open-metrics")
+                with Horizontal(id="run-filter-row"):
+                    yield Static("Status Filter", id="run-filter-label", markup=False)
+                    yield Input(
+                        value=self._run_status_filter,
+                        placeholder="Type to filter by status...",
+                        id="run-filter-input",
+                    )
+                    yield Button("Clear", id="run-filter-clear")
             with Vertical(id="files-view", classes="view-panel"):
                 yield Static("Files", classes="view-title")
                 yield Static("", id="files-context", markup=False)
@@ -1592,13 +1624,27 @@ class AutolabCockpitApp(App[None]):
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
         log = self.query_one("#console-log", RichLog)
+        if self._console_show_errors_only and not self._is_console_error_line(line):
+            return
         log.write(line)
 
     def _render_console_tail(self) -> None:
         log = self.query_one("#console-log", RichLog)
         log.clear()
-        for line in self._console_tail:
+        lines = self._console_tail
+        if self._console_show_errors_only:
+            lines = tuple(
+                line for line in lines if self._is_console_error_line(line)
+            )
+        for line in lines:
             log.write(line)
+
+    def _is_console_error_line(self, line: str) -> bool:
+        normalized = str(line).lower()
+        return any(
+            re.search(rf"\b{re.escape(keyword)}\b", normalized)
+            for keyword in self._CONSOLE_ERROR_KEYWORDS
+        )
 
     def _display_path(self, path: Path) -> str:
         snapshot = self._snapshot
@@ -1629,6 +1675,8 @@ class AutolabCockpitApp(App[None]):
 
     def _key_hints_text(self) -> str:
         wrap_state = "on" if self._console_wrap else "off"
+        run_filter_state = "on" if self._run_status_filter else "off"
+        error_filter_state = "on" if self._console_show_errors_only else "off"
         parts = [
             "1-5 view",
             "[ / ] cycle",
@@ -1645,9 +1693,11 @@ class AutolabCockpitApp(App[None]):
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
             parts.append("c clear")
+            parts.append(f"shift+e errors-only({error_filter_state})")
         elif self._mode == "runs":
             parts.append("Enter manifest")
             parts.append("m metrics")
+            parts.append(f"f filter({run_filter_state})")
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
@@ -1671,7 +1721,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1750,6 +1800,9 @@ class AutolabCockpitApp(App[None]):
         self.query_one(
             "#file-advanced-buttons", Horizontal
         ).display = self._show_advanced
+        run_filter_clear = self.query_one("#run-filter-clear", Button)
+        run_filter_clear.disabled = not bool(self._run_status_filter)
+        run_filter_clear.variant = "primary" if self._run_status_filter else "default"
         filter_button = self.query_one("#file-toggle-missing-filter", Button)
         filter_button.label = (
             "Filter: Missing Only" if self._files_missing_only else "Filter: All"
@@ -1808,11 +1861,11 @@ class AutolabCockpitApp(App[None]):
 
     def _selected_run(self):
         snapshot = self._snapshot
-        if snapshot is None or not snapshot.runs:
+        if snapshot is None or not self._visible_runs:
             return None
-        if self._selected_run_index >= len(snapshot.runs):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return snapshot.runs[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1825,6 +1878,7 @@ class AutolabCockpitApp(App[None]):
         self._home_action_ids = ()
         self._home_action_index = 0
         self._selected_run_index = 0
+        self._visible_runs = ()
         self._selected_artifact_index = 0
         self._current_artifacts = ()
         self._all_artifacts = ()
@@ -2061,10 +2115,25 @@ class AutolabCockpitApp(App[None]):
         run_list = self.query_one("#run-list", ListView)
         run_list.clear()
         if snapshot is None:
+            self._visible_runs = ()
             return
 
-        if not snapshot.runs:
+        if self._run_status_filter:
+            filter_text = self._run_status_filter.strip().lower()
+            self._visible_runs = tuple(
+                run
+                for run in snapshot.runs
+                if filter_text in str(run.status).strip().lower()
+            )
+        else:
+            self._visible_runs = snapshot.runs
+
+        if not self._visible_runs:
             empty_label = Label("(No runs found yet)")
+            if self._run_status_filter:
+                empty_label = Label(
+                    f"(No runs match status filter: {self._run_status_filter})"
+                )
             empty_label.add_class("tone-muted")
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
@@ -2075,7 +2144,7 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in snapshot.runs:
+        for run in self._visible_runs:
             started = run.started_at or "-"
             slurm_suffix = ""
             if run.host_mode == "slurm":
@@ -2085,20 +2154,21 @@ class AutolabCockpitApp(App[None]):
             )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
+        self._selected_run_index = min(
+            self._selected_run_index, len(self._visible_runs) - 1
+        )
         run_list.index = self._selected_run_index
         self._update_run_details()
 
     def _update_run_details(self) -> None:
         run = self._selected_run()
-        snapshot = self._snapshot
         if run is None:
             details_widget = self.query_one("#run-details", Static)
             details_widget.update("Run Details\nNo run selected.")
             self._set_tone(details_widget, "tone-muted")
             return
         selected_index = self._selected_run_index + 1
-        run_count = len(snapshot.runs) if snapshot is not None else selected_index
+        run_count = len(self._visible_runs)
         details_widget = self.query_one("#run-details", Static)
         details_widget.update(
             "Run Details\n"
@@ -2110,6 +2180,7 @@ class AutolabCockpitApp(App[None]):
             f"- Artifact sync: {run.sync_status or '-'}\n"
             f"- Started: {run.started_at or '-'}\n"
             f"- Completed: {run.completed_at or '-'}\n"
+            f"- Filter: {self._run_status_filter or 'none'}\n"
             f"- Manifest: {'OK' if run.manifest_path.exists() else 'MISS'}\n"
             f"- Metrics: {'OK' if run.metrics_path.exists() else 'MISS'}\n"
             "- Keys: Enter open manifest | Open Metrics button for metrics"
@@ -2240,16 +2311,18 @@ class AutolabCockpitApp(App[None]):
             "Views\n"
             "- Home: stage status, rendered prompt preview, recommended actions.\n"
             "- Home: open tasks card highlights active todo priorities.\n"
-            "- Runs: run manifest and metrics overview.\n"
+            "- Runs: run manifest and metrics overview with status filtering.\n"
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
             "- Files advanced: focus experiment, create experiment, move experiment.\n"
-            "- Console: live command output.\n"
+            "- Console: live command output with optional error-only filtering.\n"
             "\n"
             "Keys\n"
             "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
             "- w: toggle console line wrapping.\n"
+            "- shift+e: toggle console error-only filter (Console view).\n"
+            "- f: focus and filter runs by status (Runs view).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
@@ -2364,6 +2437,22 @@ class AutolabCockpitApp(App[None]):
                         f"Run selected recommended action: {label}",
                         "Execute the selected action from Home recommendations.",
                         self.action_activate_selection,
+                )
+            )
+        if self._mode == "runs":
+            commands.append(
+                SystemCommand(
+                    "Focus Runs Status Filter",
+                    "Focus the runs status filter input.",
+                    self.action_focus_runs_filter,
+                )
+            )
+            if self._run_status_filter:
+                commands.append(
+                    SystemCommand(
+                        "Clear Runs Status Filter",
+                        "Reset the run status filter query.",
+                        self.action_clear_runs_filter,
                     )
                 )
         if self._mode == "files":
@@ -2394,8 +2483,16 @@ class AutolabCockpitApp(App[None]):
                         "Clear Files Name Filter",
                         "Reset the file name filter query.",
                         self.action_clear_files_filter,
-                    )
                 )
+            )
+        if self._mode == "console":
+            commands.append(
+                SystemCommand(
+                    "Toggle Console Error-only Filter",
+                    "Show only console entries with error-like markers.",
+                    self.action_toggle_console_error_filter,
+                )
+            )
         if (
             self._running_intent is not None
             and self._running_intent.action_id == "run_loop"
@@ -2553,6 +2650,34 @@ class AutolabCockpitApp(App[None]):
             self._populate_artifact_list()
         self._update_ui_chrome()
 
+    def action_focus_runs_filter(self) -> None:
+        if self._mode != "runs":
+            self.notify("Run status filter is available in Runs view (2).")
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        filter_input = self.query_one("#run-filter-input", Input)
+        filter_input.focus()
+        filter_input.cursor_position = len(filter_input.value)
+
+    def action_clear_runs_filter(self) -> None:
+        if not self._run_status_filter:
+            return
+        self._run_status_filter = ""
+        run_filter_input = self.query_one("#run-filter-input", Input)
+        run_filter_input.value = ""
+        if self._snapshot is not None:
+            self._populate_run_list()
+        self._update_ui_chrome()
+
+    def action_toggle_console_error_filter(self) -> None:
+        if self._mode != "console":
+            self.notify("Error-only console filter is available in Console view (4).")
+            return
+        self._console_show_errors_only = not self._console_show_errors_only
+        self._render_console_tail()
+        self._update_ui_chrome()
+
     def action_activate_selection(self) -> None:
         focused = self.focused
         if isinstance(focused, ListView):
@@ -2600,17 +2725,25 @@ class AutolabCockpitApp(App[None]):
         self._handle_button_action(event.button.id or "")
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "artifact-filter-input":
+        if event.input.id == "artifact-filter-input":
+            self._artifact_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_artifact_list()
+            self._update_ui_chrome()
             return
-        self._artifact_filter_query = event.value.strip()
+        if event.input.id != "run-filter-input":
+            return
+        self._run_status_filter = event.value.strip()
         if self._snapshot is not None:
-            self._populate_artifact_list()
+            self._populate_run_list()
         self._update_ui_chrome()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "artifact-filter-input":
+        if event.input.id == "artifact-filter-input":
+            self.query_one("#artifact-list", ListView).focus()
             return
-        self.query_one("#artifact-list", ListView).focus()
+        if event.input.id == "run-filter-input":
+            self.query_one("#run-list", ListView).focus()
 
     def _handle_button_action(self, button_id: str) -> None:
         if button_id == "nav-home":
@@ -2635,8 +2768,13 @@ class AutolabCockpitApp(App[None]):
             self.action_clear_files_filter()
             self.action_focus_files_filter()
             return
+        if button_id == "run-filter-clear":
+            self.action_clear_runs_filter()
+            self.action_focus_runs_filter()
+            return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
+            return
         if button_id == "home-render-toggle":
             self.action_toggle_prompt_view()
             return
@@ -2768,7 +2906,15 @@ class AutolabCockpitApp(App[None]):
             self._start_command(intent)
 
     async def _open_artifact_viewer(self, artifact_path: Path) -> None:
-        text, _truncated = load_artifact_text(artifact_path, max_chars=None)
+        text, truncated = load_artifact_text(
+            artifact_path, max_chars=self._ARTIFACT_PREVIEW_MAX_CHARS
+        )
+        if truncated:
+            text = (
+                f"{text}\n\n"
+                f"... output truncated to first "
+                f"{self._ARTIFACT_PREVIEW_MAX_CHARS} characters."
+            )
         await self._open_text_viewer(
             title=self._display_path(artifact_path),
             text=text,
