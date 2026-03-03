@@ -1155,7 +1155,9 @@ def test_runs_view_previous_problem_jump_binding_moves_backward(tmp_path: Path) 
     asyncio.run(_run())
 
 
-def test_shift_c_clears_command_history_with_confirmation(tmp_path: Path, monkeypatch) -> None:
+def test_shift_c_clears_command_history_with_confirmation(
+    tmp_path: Path, monkeypatch
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
@@ -2083,7 +2085,9 @@ def test_command_history_screen_supports_filter_and_replay(tmp_path: Path) -> No
             assert results[0].intent.action_id == "verify_current_stage"
 
 
-def test_command_history_filter_clear_button_resets_history_list(tmp_path: Path) -> None:
+def test_command_history_filter_clear_button_resets_history_list(
+    tmp_path: Path,
+) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
@@ -2129,7 +2133,8 @@ def test_command_history_filter_clear_button_resets_history_list(tmp_path: Path)
             await pilot.click("#command-history-filter-clear")
             await pilot.pause()
             assert (
-                app.screen.query_one("#command-history-filter", app_module.Input).value == ""
+                app.screen.query_one("#command-history-filter", app_module.Input).value
+                == ""
             )
             list_view = app.screen.query_one(
                 "#command-history-list", app_module.ListView
@@ -2571,9 +2576,7 @@ def test_console_system_commands_include_error_filter_toggle(tmp_path: Path) -> 
             await pilot.pause()
             assert app._console_show_errors_only is True
             assert "shift+e errors-only(on)" in str(hints.render())
-            assert any(
-                "console errors-only on" in line for line in app._console_tail
-            )
+            assert any("console errors-only on" in line for line in app._console_tail)
 
     asyncio.run(_run())
 

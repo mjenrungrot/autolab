@@ -2917,7 +2917,9 @@ class AutolabCockpitApp(App[None]):
             total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
-            total_all = len(self._snapshot.runs) if self._snapshot is not None else total
+            total_all = (
+                len(self._snapshot.runs) if self._snapshot is not None else total
+            )
         elif self._mode == "files":
             total = len(self._current_artifacts)
             index = self._selected_artifact_index
@@ -3005,9 +3007,7 @@ class AutolabCockpitApp(App[None]):
             console_follow_button.label = f"Paused ({self._console_unread_lines})"
         else:
             console_follow_button.label = "Paused"
-        console_follow_button.variant = (
-            "primary" if self._console_follow else "default"
-        )
+        console_follow_button.variant = "primary" if self._console_follow else "default"
         run_sort_button = self.query_one("#run-sort-order", Button)
         run_sort_button.label = self._run_sort_button_label()
         key_hints.update(self._key_hints_text())
@@ -3131,7 +3131,9 @@ class AutolabCockpitApp(App[None]):
         run_filter_clear.variant = "primary" if self._run_status_filter else "default"
         console_filter_clear = self.query_one("#console-filter-clear", Button)
         console_filter_clear.disabled = not bool(self._console_filter_query)
-        console_filter_clear.variant = "primary" if self._console_filter_query else "default"
+        console_filter_clear.variant = (
+            "primary" if self._console_filter_query else "default"
+        )
         run_status_button = self.query_one("#run-filter-status", Button)
         run_status_value = self._run_status_filter.strip().lower()
         run_status_button.label = (
@@ -4372,7 +4374,9 @@ class AutolabCockpitApp(App[None]):
         self._cycle_mode(1)
 
     def action_inspect_selection(self) -> None:
-        self._start_ui_flow(label="inspect", flow_factory=self._open_selection_inspector)
+        self._start_ui_flow(
+            label="inspect", flow_factory=self._open_selection_inspector
+        )
 
     def action_toggle_safety_lock(self) -> None:
         self._start_ui_flow(
