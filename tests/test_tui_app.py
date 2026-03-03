@@ -653,6 +653,81 @@ def test_f_focuses_active_filter_in_runs_and_files(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_mode_filtering_f_key_is_blocked_by_active_input_focus(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._mode == "runs"
+            assert isinstance(app.focused, app_module.Input)
+
+            await pilot.press("1")
+            await pilot.pause()
+            assert app._mode == "runs"
+
+            await pilot.click("#nav-files")
+            await pilot.pause()
+            assert app._mode == "files"
+            await pilot.press("f")
+            await pilot.pause()
+            assert isinstance(app.focused, app_module.Input)
+            assert app.focused.id == "artifact-filter-input"
+
+            await pilot.press("3")
+            await pilot.pause()
+            assert app._mode == "files"
+
+    asyncio.run(_run())
+
+
+def test_console_filter_input_tracks_query_and_clear_button(
+    tmp_path: Path, monkeypatch
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        rerender_calls: list[object] = []
+
+        original_render = app._render_console_tail
+
+        def _tracked_render() -> None:
+            rerender_calls.append(None)
+            original_render()
+
+        monkeypatch.setattr(app, "_render_console_tail", _tracked_render)
+
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+
+            clear_button = app.query_one("#console-filter-clear", app_module.Button)
+            assert clear_button.disabled is True
+
+            await pilot.click("#console-filter-input")
+            await pilot.press("e", "r", "r", "o", "r")
+            await pilot.pause()
+            assert app._console_filter_query == "error"
+            assert clear_button.disabled is False
+            assert rerender_calls
+
+            await pilot.click("#console-filter-clear")
+            await pilot.pause()
+            assert app._console_filter_query == ""
+            assert app.query_one("#console-filter-input", app_module.Input).value == ""
+            assert clear_button.disabled is True
+
+    asyncio.run(_run())
+
+
 def test_files_missing_filter_shows_only_missing_entries(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1836,6 +1911,126 @@ def test_command_history_screen_lists_and_replays_selection(tmp_path: Path) -> N
             await pilot.pause()
             assert isinstance(results[0], app_module.CommandHistoryItem)
             assert results[0].intent.action_id == "verify_current_stage"
+
+    asyncio.run(_run())
+
+
+def test_command_history_screen_supports_filter_and_replay(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        results: list[object] = []
+        screen = app_module.CommandHistoryScreen(
+            history=(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=2.0,
+                    started_at_text="10:01:00",
+                    finished_at=3.0,
+                    exit_code=0,
+                ),
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="verify_current_stage",
+                        argv=("autolab", "verify"),
+                        cwd=repo_root,
+                        expected_writes=(".autolab/logs/verify.log",),
+                        mutating=True,
+                    ),
+                    command="autolab verify",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                ),
+            )
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.click("#command-history-filter")
+            await pilot.press("v", "e", "r", "i", "f", "y")
+            await pilot.pause()
+            list_view = app.screen.query_one(
+                "#command-history-list", app_module.ListView
+            )
+            items = [
+                str(item.query_one(app_module.Label).render())
+                for item in list_view.children
+            ]
+            assert len(items) == 1
+            assert "autolab verify" in items[0]
+
+            await pilot.click("#command-history-replay")
+            await pilot.pause()
+            assert isinstance(results[0], app_module.CommandHistoryItem)
+            assert results[0].intent.action_id == "verify_current_stage"
+
+
+def test_command_history_filter_clear_button_resets_history_list(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.CommandHistoryScreen(
+            history=(
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="todo_sync",
+                        argv=("autolab", "todo", "sync"),
+                        cwd=repo_root,
+                        expected_writes=(),
+                        mutating=False,
+                    ),
+                    command="autolab todo sync",
+                    started_at=2.0,
+                    started_at_text="10:01:00",
+                    finished_at=3.0,
+                    exit_code=0,
+                ),
+                app_module.CommandHistoryItem(
+                    intent=CommandIntent(
+                        action_id="verify_current_stage",
+                        argv=("autolab", "verify"),
+                        cwd=repo_root,
+                        expected_writes=(".autolab/logs/verify.log",),
+                        mutating=True,
+                    ),
+                    command="autolab verify",
+                    started_at=1.0,
+                    started_at_text="10:00:00",
+                    finished_at=2.0,
+                    exit_code=0,
+                ),
+            )
+        )
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+            await pilot.click("#command-history-filter")
+            await pilot.press("v", "e", "r", "i", "f", "y")
+            await pilot.pause()
+            await pilot.click("#command-history-filter-clear")
+            await pilot.pause()
+            assert (
+                app.screen.query_one("#command-history-filter", app_module.Input).value == ""
+            )
+            list_view = app.screen.query_one(
+                "#command-history-list", app_module.ListView
+            )
+            items = [
+                str(item.query_one(app_module.Label).render())
+                for item in list_view.children
+            ]
+            assert len(items) == 2
 
     asyncio.run(_run())
 
