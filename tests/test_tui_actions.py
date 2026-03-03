@@ -25,6 +25,7 @@ def test_action_catalog_contains_required_entries() -> None:
     action_ids = {action.action_id for action in actions}
     assert "open_rendered_prompt" in action_ids
     assert "open_render_context" in action_ids
+    assert "open_verification_result" in action_ids
     assert "verify_current_stage" in action_ids
     assert "run_once" in action_ids
     assert "resolve_human_review" in action_ids
@@ -48,6 +49,13 @@ def test_action_catalog_contains_required_entries() -> None:
     assert verify_action.requires_confirmation is True
     assert verify_action.risk_level == "medium"
     assert verify_action.user_label
+
+    open_verification_action = next(
+        action for action in actions if action.action_id == "open_verification_result"
+    )
+    assert open_verification_action.kind == "view"
+    assert open_verification_action.requires_confirmation is False
+    assert open_verification_action.risk_level == "low"
 
     run_loop = next(action for action in actions if action.action_id == "run_loop")
     assert run_loop.advanced is True

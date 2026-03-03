@@ -52,6 +52,33 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
     assert "design" in {item.name for item in snapshot.stage_items}
 
 
+def test_snapshot_recommends_open_verification_result_when_available(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="design")
+
+    verification_payload = {
+        "generated_at": "2026-02-01T01:00:00Z",
+        "stage_effective": "design",
+        "passed": True,
+        "message": "verification passed",
+        "details": {"commands": [{"name": "smoke", "status": "pass"}]},
+    }
+    verification_path = repo / ".autolab" / "verification_result.json"
+    verification_path.parent.mkdir(parents=True, exist_ok=True)
+    verification_path.write_text(
+        json.dumps(verification_payload, indent=2) + "\n", encoding="utf-8"
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+    action_ids = [action.action_id for action in snapshot.recommended_actions]
+
+    assert "open_verification_result" in action_ids
+    assert "verify_current_stage" not in action_ids
+
+
 def test_snapshot_render_preview_ok_without_rendered_output_writes(
     tmp_path: Path,
 ) -> None:
