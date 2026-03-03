@@ -42,6 +42,10 @@ Only one primary workspace is shown at a time to reduce UI overload for first-ti
 - `r` Refresh snapshot
 - `s` Stop active loop
 - `c` Clear console
+- `w` Wrap console lines
+- `shift+e` Toggle console errors-only filter
+- `ctrl+p` Pause/resume console follow
+- `ctrl+o` Save visible console output
 - `q` Quit
 
 ## Safety Model (Strict)
@@ -106,3 +110,4 @@ Reveal them with `x` (Toggle Advanced).
 - File/viewer previews default to full content (no size cap). Use external editor when you need native tooling for very large artifacts.
 - Semantic colors are intentionally restrained: success/info/warning/error cues improve scanability without changing behavior.
 - If `stdin/stdout` are not interactive TTYs, `autolab tui` exits with an error.
+- Console saves write visible lines (including filters/search results) to `.autolab/logs/autolab-console-YYYYMMDD-HHMMSS.log`.

@@ -81,6 +81,7 @@ class CommandHistoryItem:
 _COMMAND_HISTORY_MAX = 25
 _AUTO_REFRESH_INTERVAL_SECONDS = 5.0
 _ARTIFACT_PREVIEW_MAX_CHARS = 12_000
+_CONSOLE_EXPORT_STEM = "autolab-console"
 
 
 def _query_matches(raw_text: str, query: str) -> bool:
@@ -2146,6 +2147,10 @@ class AutolabCockpitApp(App[None]):
       width: 1fr;
     }
 
+    #console-save {
+      width: 12;
+    }
+
     #console-follow {
       width: 14;
     }
@@ -2190,6 +2195,7 @@ class AutolabCockpitApp(App[None]):
         ("shift+e", "toggle_console_error_filter", "Errors-only"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("ctrl+p", "toggle_console_follow", "Follow Console"),
+        ("ctrl+o", "save_console_output", "Save Console"),
         ("i", "inspect_selection", "Inspect"),
         ("b", "jump_to_problem_run", "Next Problem Run"),
         ("shift+b", "jump_to_previous_problem_run", "Prev Problem Run"),
@@ -2206,6 +2212,7 @@ class AutolabCockpitApp(App[None]):
         self._console_wrap = False
         self._console_show_errors_only = False
         self._console_follow = True
+        self._console_unread_lines = 0
         self._last_snapshot_refreshed_at: float | None = None
         self._armed = False
         self._run_status_filter = ""
@@ -2395,6 +2402,7 @@ class AutolabCockpitApp(App[None]):
                         placeholder="Filter console output... (empty = no filter)",
                         id="console-filter-input",
                     )
+                    yield Button("Save", id="console-save")
                     yield Button("Clear", id="console-filter-clear")
                     yield Button("Follow", id="console-follow", variant="warning")
                 yield RichLog(
@@ -2495,10 +2503,16 @@ class AutolabCockpitApp(App[None]):
     def _append_console(self, text: str) -> None:
         line = f"[{self._timestamp()}] {text}"
         self._console_tail.append(line)
-        if not self._passes_console_filters(line) or not self._console_follow:
+        passes_filters = self._passes_console_filters(line)
+        if self._console_follow and passes_filters:
+            log = self.query_one("#console-log", RichLog)
+            log.write(line)
             return
-        log = self.query_one("#console-log", RichLog)
-        log.write(line)
+        if not self._console_follow and passes_filters:
+            self._console_unread_lines += 1
+            return
+        if not passes_filters:
+            return
 
     def _passes_console_filters(self, line: str) -> bool:
         if self._console_show_errors_only and not self._is_console_error_line(line):
@@ -2508,13 +2522,75 @@ class AutolabCockpitApp(App[None]):
             return True
         return query in str(line).lower()
 
+    def _visible_console_lines(self) -> tuple[str, ...]:
+        return tuple(
+            line for line in self._console_tail if self._passes_console_filters(line)
+        )
+
+    def _visible_console_line_count(self) -> int:
+        return len(self._visible_console_lines())
+
+    def _reset_console_unread_count(self) -> None:
+        if self._console_follow:
+            self._console_unread_lines = 0
+            return
+        self._console_unread_lines = self._visible_console_line_count()
+
     def _render_console_tail(self) -> None:
         log = self.query_one("#console-log", RichLog)
         log.clear()
-        lines = self._console_tail
-        lines = tuple(line for line in lines if self._passes_console_filters(line))
+        lines = self._visible_console_lines()
         for line in lines:
             log.write(line)
+        self._reset_console_unread_count()
+
+    def _resolve_console_export_dir(self) -> Path:
+        if self._snapshot is None:
+            return self._state_path.parent / ".autolab" / "logs"
+        return self._snapshot.repo_root / ".autolab" / "logs"
+
+    def _next_console_export_path(self, *, export_dir: Path) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        index = 0
+        while True:
+            suffix = f"{_CONSOLE_EXPORT_STEM}-{timestamp}.log"
+            if index:
+                suffix = f"{_CONSOLE_EXPORT_STEM}-{timestamp}-{index:02d}.log"
+            candidate = export_dir / suffix
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def _save_console_output(self) -> None:
+        lines = self._visible_console_lines()
+        if not lines:
+            self.notify("No visible console output to save.")
+            return
+
+        export_dir = self._resolve_console_export_dir()
+        try:
+            export_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self.notify(f"Failed to prepare console export directory: {exc}")
+            return
+
+        export_path = self._next_console_export_path(export_dir=export_dir)
+        try:
+            export_path.write_text(
+                "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.notify(f"Failed to save console output: {exc}")
+            return
+
+        self._append_console(
+            f"console output saved ({len(lines)} lines) -> {export_path}"
+        )
+        self.notify(f"Saved console output to {export_path}")
+
+    def action_save_console_output(self) -> None:
+        self._save_console_output()
 
     def _clear_focused_filter(self) -> bool:
         focused = self.focused
@@ -2652,8 +2728,11 @@ class AutolabCockpitApp(App[None]):
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
             parts.append(f"ctrl+p follow({follow_state})")
+            if not self._console_follow and self._console_unread_lines:
+                parts.append(f"new console lines({self._console_unread_lines})")
             parts.append("c clear")
             parts.append(f"shift+e errors-only({error_filter_state})")
+            parts.append("ctrl+o save")
             parts.append(f"f filter({console_filter_state})")
         elif self._mode == "runs":
             parts.append("v manifest")
@@ -2807,12 +2886,28 @@ class AutolabCockpitApp(App[None]):
             else "tone-muted",
         )
         console.update(
-            f"Console: wrap {'on' if self._console_wrap else 'off'} "
+            "Console: "
+            f"wrap {'on' if self._console_wrap else 'off'} "
             f"| follow {'on' if self._console_follow else 'off'}"
+            + (
+                f" | unread:{self._console_unread_lines}"
+                if self._console_unread_lines > 0 and not self._console_follow
+                else ""
+            )
         )
-        self._set_tone(console, "tone-info" if self._console_follow else "tone-warning")
+        self._set_tone(
+            console,
+            "tone-info"
+            if self._console_follow
+            else ("tone-danger" if self._console_unread_lines else "tone-warning"),
+        )
         console_follow_button = self.query_one("#console-follow", Button)
-        console_follow_button.label = "Following" if self._console_follow else "Paused"
+        if self._console_follow:
+            console_follow_button.label = "Following"
+        elif self._console_unread_lines:
+            console_follow_button.label = f"Paused ({self._console_unread_lines})"
+        else:
+            console_follow_button.label = "Paused"
         console_follow_button.variant = (
             "primary" if self._console_follow else "default"
         )
@@ -3710,7 +3805,8 @@ class AutolabCockpitApp(App[None]):
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
             "- Utilities: r refresh, a auto-refresh on/off, s stop active loop,\n"
             "  c clear console, Shift+C clear command history.\n"
-            "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle.\n"
+            "- Console: w toggle wrap, ctrl+p follow, shift+e errors-only toggle,\n"
+            "  ctrl+o save visible output.\n"
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
@@ -3737,6 +3833,8 @@ class AutolabCockpitApp(App[None]):
             "- w: toggle console line wrapping.\n"
             "- shift+e: toggle console error-only filter (Console view).\n"
             "- ctrl+p: toggle console follow mode (Console view).\n"
+            "- ctrl+o: save currently visible console output.\n"
+            "- console follow pause shows unread line count in the status rail.\n"
             "- f: focus and filter in active mode (Runs/Files/Console/Home views).\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
@@ -4075,6 +4173,13 @@ class AutolabCockpitApp(App[None]):
             )
             commands.append(
                 SystemCommand(
+                    "Save Console Output",
+                    "Save the currently visible console output to the repository logs directory.",
+                    self.action_save_console_output,
+                )
+            )
+            commands.append(
+                SystemCommand(
                     "Toggle Console Follow",
                     "Pause or resume auto-following incoming console output.",
                     self.action_toggle_console_follow,
@@ -4361,6 +4466,7 @@ class AutolabCockpitApp(App[None]):
 
     def action_clear_console(self) -> None:
         self._console_tail.clear()
+        self._console_unread_lines = 0
         self._render_console_tail()
 
     def action_toggle_console_wrap(self) -> None:
@@ -4374,9 +4480,11 @@ class AutolabCockpitApp(App[None]):
         self._console_follow = not self._console_follow
         if self._console_follow:
             self._append_console("console follow enabled")
+            self._console_unread_lines = 0
             self._render_console_tail()
         else:
-            self._console_tail.append(f"[{self._timestamp()}] console follow disabled")
+            self._append_console("console follow disabled")
+            self._console_unread_lines = 0
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
@@ -5009,6 +5117,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "console-filter-clear":
             self.action_clear_console_filter()
+            return
+        if button_id == "console-save":
+            self.action_save_console_output()
             return
         if button_id in {"file-cycle-source-scope", "file-source-filter"}:
             self.action_cycle_file_source_filter()
