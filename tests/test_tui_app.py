@@ -210,6 +210,36 @@ def _write_run_files(repo_root: Path, *, run_id: str = "run-001") -> None:
     (run_dir / "metrics.json").write_text('{"loss": 0.1}\n', encoding="utf-8")
 
 
+def _write_run_manifest_with_status(
+    repo_root: Path,
+    *,
+    run_id: str,
+    started_at: str,
+    status: str,
+    host_mode: str = "local",
+    job_id: str = "",
+) -> None:
+    run_dir = (
+        repo_root
+        / "experiments"
+        / "plan"
+        / "iter1"
+        / "runs"
+        / run_id
+        / "run_manifest.json"
+    )
+    payload = {
+        "run_id": run_id,
+        "status": status,
+        "host_mode": host_mode,
+        "timestamps": {"started_at": started_at},
+    }
+    if job_id:
+        payload["job_id"] = job_id
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _materialize_all_current_stage_artifacts(state_path: Path) -> None:
     snapshot = load_cockpit_snapshot(state_path)
     stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
@@ -1380,6 +1410,117 @@ def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) ->
             await pilot.pause()
             selection = app.query_one("#status-selection", app_module.Static)
             assert "Runs: 2/2" in str(selection.render())
+
+    asyncio.run(_run())
+
+
+def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_old",
+            started_at="2026-01-01T10:00:00Z",
+            status="completed",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_mid",
+            started_at="2026-01-02T11:00:00Z",
+            status="running",
+        )
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_new",
+            started_at="2026-01-03T12:00:00Z",
+            status="failed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(240, 80)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f filter(off)" in str(hints.render())
+            assert "y sort(newest)" in str(hints.render())
+
+            run_list = app.query_one("#run-list", app_module.ListView)
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("run_new")
+            assert any("run_mid" in item for item in labels)
+            assert any("run_old" in item for item in labels)
+
+            await pilot.press("y")
+            await pilot.pause()
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "y sort(oldest)" in str(hints.render())
+            labels = _list_item_label_texts(run_list)
+            assert labels[0].startswith("run_old")
+
+            await pilot.press("f")
+            await pilot.pause()
+            await pilot.press("r", "u", "n", "n", "i", "n", "g")
+            await pilot.pause()
+            labels = _list_item_label_texts(run_list)
+            assert len(labels) == 1
+            assert "run_mid" in labels[0]
+            assert "query='running'" in str(
+                app.query_one("#run-details", app_module.Static).render()
+            )
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            run_filter = app.query_one("#run-filter-input", app_module.Input)
+            assert run_filter.value == ""
+            assert "f filter(off)" in str(app.query_one("#key-hints", app_module.Static).render())
+            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            assert len(labels) == 3
+
+            await pilot.click("#run-filter-status")
+            await pilot.pause()
+            status_button = app.query_one("#run-filter-status", app_module.Button)
+            assert str(status_button.label) == "Status: running"
+            labels = _list_item_label_texts(app.query_one("#run-list", app_module.ListView))
+            assert len(labels) == 1
+            assert "run_mid" in labels[0]
+
+            await pilot.click("#run-filter-clear")
+            await pilot.pause()
+            status_button = app.query_one("#run-filter-status", app_module.Button)
+            assert str(status_button.label) == "Status: all"
+
+    asyncio.run(_run())
+
+
+def test_runs_system_commands_include_filter_controls(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest_with_status(
+            repo_root,
+            run_id="run_completed",
+            started_at="2026-01-01T10:00:00Z",
+            status="completed",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(240, 80)) as pilot:
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Filter" not in run_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Focus Runs Filter" in run_titles
+            assert "Cycle Runs sort order" in run_titles
+            assert "Cycle Runs Status Filter" in run_titles
+            assert "Clear Runs Filter" not in run_titles
+
+            await pilot.click("#run-filter-status")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Clear Runs Filter" in run_titles
 
     asyncio.run(_run())
 
