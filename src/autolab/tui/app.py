@@ -147,6 +147,7 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         ("escape", "cancel", "Close"),
         ("enter", "replay", "Replay"),
         ("r", "replay", "Replay"),
+        ("f", "toggle_failed_filter", "Failed Only"),
     ]
 
     CSS = """
@@ -197,7 +198,9 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         super().__init__()
         self._history = history
         self._filtered_history = history
-        self._last_query = ""
+        self._last_query = "\0"
+        self._failed_only_filter = False
+        self._last_failed_only_filter = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command-history-dialog"):
@@ -208,6 +211,7 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
                     placeholder="Filter by command or label...",
                     id="command-history-filter",
                 )
+                yield Button("Mode: All", id="command-history-filter-mode")
                 yield Button("Clear", id="command-history-filter-clear")
             yield ListView(id="command-history-list")
             yield Static("", id="command-history-detail", markup=False)
@@ -224,6 +228,7 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         list_view = self.query_one("#command-history-list", ListView)
         list_view.clear()
         self._refresh_history_matches("")
+        self._update_filter_mode_button()
         list_view.index = 0
         list_view.focus()
         self._update_detail()
@@ -241,6 +246,9 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
         if event.button.id == "command-history-replay":
             self._replay_selected()
             return
+        if event.button.id == "command-history-filter-mode":
+            self.action_toggle_failed_filter()
+            return
         if event.button.id == "command-history-filter-clear":
             self.query_one("#command-history-filter", Input).value = ""
             self._refresh_history_matches("")
@@ -256,6 +264,12 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             return
         self._replay_selected()
 
+    def action_toggle_failed_filter(self) -> None:
+        self._failed_only_filter = not self._failed_only_filter
+        self._update_filter_mode_button()
+        filter_input = self.query_one("#command-history-filter", Input)
+        self._refresh_history_matches(filter_input.value)
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "command-history-filter":
             return
@@ -263,27 +277,37 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
 
     def _refresh_history_matches(self, query: str) -> None:
         normalized_query = str(query).strip().lower()
-        if self._last_query == normalized_query:
+        if (
+            self._last_query == normalized_query
+            and not self._history_refresh_required()
+        ):
             return
         self._last_query = normalized_query
-        if normalized_query:
-            self._filtered_history = tuple(
-                item
-                for item in self._history
-                if _query_matches(
-                    f"{item.command} {item.intent.action_id} {item.command}",
-                    normalized_query,
-                )
+        filtered_items = self._history
+        if self._failed_only_filter:
+            filtered_items = tuple(
+                item for item in filtered_items if self._is_failed_item(item)
             )
-        else:
-            self._filtered_history = self._history
+
+        if normalized_query:
+            filtered_items = tuple(
+                item
+                for item in filtered_items
+                if _query_matches(self._history_search_text(item), normalized_query)
+            )
+        self._filtered_history = filtered_items
+        mode_text = " failed-only" if self._failed_only_filter else ""
+        query_hint = normalized_query or "-"
 
         list_view = self.query_one("#command-history-list", ListView)
         list_view.clear()
         if not self._filtered_history:
             list_view.append(
                 ListItem(
-                    Label(f"(No command history matches {query!r})", classes="tone-muted")
+                    Label(
+                        f"(No command history matches {query_hint!r}{mode_text})",
+                        classes="tone-muted",
+                    )
                 )
             )
             self._update_detail()
@@ -341,8 +365,28 @@ class CommandHistoryScreen(ModalScreen[CommandHistoryItem | None]):
             f"{item.command}\n"
             f"Started: {item.started_at_text}\n"
             f"Exit: {item.exit_code if item.exit_code is not None else '-'}\n"
+            f"Action: {item.intent.action_id}\n"
             f"Stopped: {'yes' if item.stopped else 'no'}"
         )
+
+    def _history_refresh_required(self) -> bool:
+        required = self._last_failed_only_filter != self._failed_only_filter
+        if required:
+            self._last_failed_only_filter = self._failed_only_filter
+        return required
+
+    def _update_filter_mode_button(self) -> None:
+        button = self.query_one("#command-history-filter-mode", Button)
+        button.label = "Mode: Failed" if self._failed_only_filter else "Mode: All"
+        button.variant = "warning" if self._failed_only_filter else "default"
+
+    @staticmethod
+    def _history_search_text(item: CommandHistoryItem) -> str:
+        return f"{item.command} {item.intent.action_id} {item.command}"
+
+    @staticmethod
+    def _is_failed_item(item: CommandHistoryItem) -> bool:
+        return item.exit_code is not None and item.exit_code != 0
 
 
 class ActionConfirmScreen(ModalScreen[bool]):
@@ -2137,6 +2181,7 @@ class AutolabCockpitApp(App[None]):
         ("a", "toggle_auto_refresh", "Auto-refresh"),
         ("r", "refresh_snapshot", "Refresh"),
         ("R", "rerun_last_command", "Rerun Last"),
+        ("shift+f", "rerun_last_failed_command", "Rerun Last Failed"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
@@ -2416,6 +2461,29 @@ class AutolabCockpitApp(App[None]):
     def _auto_refresh_state_label(self) -> str:
         return "on" if self._auto_refresh_enabled else "off"
 
+    def _human_duration(self, *, seconds: float) -> str:
+        elapsed = max(0.0, float(seconds))
+        if elapsed < 1:
+            return "now"
+        if elapsed < 60:
+            return f"{elapsed:.0f}s"
+        if elapsed < 3600:
+            return f"{elapsed / 60:.1f}m"
+        return f"{elapsed / 3600:.1f}h"
+
+    def _failed_command_count(self) -> int:
+        return sum(
+            1
+            for item in self._command_history
+            if item.exit_code is not None and item.exit_code != 0
+        )
+
+    def _latest_failed_command(self) -> CommandHistoryItem | None:
+        for item in self._command_history:
+            if item.exit_code is not None and item.exit_code != 0:
+                return item
+        return None
+
     def _last_command_summary(self) -> str:
         if self._last_command_exit_code is None:
             return ""
@@ -2578,6 +2646,9 @@ class AutolabCockpitApp(App[None]):
         ]
         if self._command_history:
             parts.append("C clear history")
+        failed_count = self._failed_command_count()
+        if failed_count:
+            parts.append(f"shift+f rerun failed ({failed_count})")
         if self._mode == "console":
             parts.append(f"w wrap({wrap_state})")
             parts.append(f"ctrl+p follow({follow_state})")
@@ -2787,6 +2858,8 @@ class AutolabCockpitApp(App[None]):
             else:
                 snapshot_status.update("Snapshot: n/a")
                 self._set_tone(snapshot_status, "tone-warning")
+            updated.update("Updated: n/a")
+            self._set_tone(updated, "tone-muted")
         else:
             age_seconds = time.monotonic() - self._last_snapshot_refreshed_at
             age_seconds = max(age_seconds, 0.0)
@@ -2798,6 +2871,13 @@ class AutolabCockpitApp(App[None]):
             else:
                 tone = "tone-danger"
             self._set_tone(snapshot_status, tone)
+            updated.update(f"Updated: {self._human_duration(seconds=age_seconds)} ago")
+            if age_seconds < 30:
+                self._set_tone(updated, "tone-success")
+            elif age_seconds < 120:
+                self._set_tone(updated, "tone-warning")
+            else:
+                self._set_tone(updated, "tone-danger")
 
         if self._running_intent is None:
             snapshot = self._snapshot
@@ -3634,6 +3714,7 @@ class AutolabCockpitApp(App[None]):
             "- Filters: f (or / in files/runs) focuses active filter input.\n"
             "  Console input includes a text search filter and error-only toggle.\n"
             "- History: R reruns the last command after confirmation.\n"
+            "- History: Shift+F reruns the most recent failed command after confirmation.\n"
             "- History: h opens command history for quick replay.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Runs: t/y toggles newest/oldest sort, b next problem run, Shift+B previous problem run.\n"
@@ -3668,6 +3749,7 @@ class AutolabCockpitApp(App[None]):
             "- /: Focus active filter input (Runs or Files view).\n"
             "- Ctrl+k: Open command palette.\n"
             "- s: Stop active command (if running).\n"
+            "- Shift+F: Rerun the last failed command in history.\n"
             "\n"
             "Safety\n"
             "- Starts locked (read-only).\n"
@@ -3814,6 +3896,14 @@ class AutolabCockpitApp(App[None]):
                     "Rerun last command",
                     "Re-run the most recently started command.",
                     self.action_rerun_last_command,
+                )
+            )
+        if self._failed_command_count():
+            commands.append(
+                SystemCommand(
+                    "Rerun last failed command",
+                    "Re-run the most recent failed command.",
+                    self.action_rerun_last_failed_command,
                 )
             )
         if self._command_history:
@@ -4761,6 +4851,12 @@ class AutolabCockpitApp(App[None]):
     def action_rerun_last_command(self) -> None:
         self._start_ui_flow(label="rerun-last", flow_factory=self._rerun_last_command)
 
+    def action_rerun_last_failed_command(self) -> None:
+        self._start_ui_flow(
+            label="rerun-last-failed",
+            flow_factory=self._rerun_last_failed_command,
+        )
+
     async def _rerun_last_command(self) -> None:
         if self._last_command_intent is None:
             self.notify("No previous command to rerun.")
@@ -4776,6 +4872,23 @@ class AutolabCockpitApp(App[None]):
             intent=last_intent,
             title=f"Re-run: {action_name}",
             confirm_label="Re-run",
+        )
+
+    async def _rerun_last_failed_command(self) -> None:
+        failed_intent = self._latest_failed_command()
+        if failed_intent is None:
+            self.notify("No failed commands in this session yet.")
+            return
+        action = self._actions_by_id.get(failed_intent.intent.action_id)
+        action_name = (
+            (action.user_label or action.label)
+            if action is not None
+            else failed_intent.intent.action_id
+        )
+        await self._replay_command_intent(
+            intent=failed_intent.intent,
+            title=f"Re-run failed: {action_name}",
+            confirm_label="Re-run Failed",
         )
 
     def action_activate_selection(self) -> None:
