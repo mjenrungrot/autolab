@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,7 @@ def _write_run_manifest(
     *,
     host_mode: str = "local",
     job_id: str = "",
+    status: str = "running",
     sync_status: str = "",
 ) -> None:
     manifest_path = (
@@ -113,7 +115,7 @@ def _write_run_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "run_id": run_id,
-        "status": "running",
+        "status": status,
         "host_mode": host_mode,
         "timestamps": {"started_at": started_at},
     }
@@ -186,6 +188,10 @@ def _list_item_label_texts(list_view: app_module.ListView) -> list[str]:
         label = item.query_one(app_module.Label)
         labels.append(str(label.render()))
     return labels
+
+
+def _run_ids_from_list_items(list_view: app_module.ListView) -> list[str]:
+    return [entry.split(" ")[0] for entry in _list_item_label_texts(list_view)]
 
 
 def _system_command_titles(app: AutolabCockpitApp) -> set[str]:
@@ -535,6 +541,61 @@ def test_files_missing_filter_toggles_with_m_binding(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_files_source_scope_cycles_with_f_and_button(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage = snapshot.current_stage
+        stage_paths = {item.path for item in snapshot.artifacts_by_stage.get(stage, ())}
+        common_paths = {item.path for item in snapshot.common_artifacts}
+        all_paths = stage_paths | common_paths
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(all)" in str(hints.render())
+            assert "Source: All" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == all_paths
+
+            await pilot.press("f")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(stage)" in str(hints.render())
+            assert "Source: Stage" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == stage_paths
+
+            await pilot.click("#file-cycle-source-scope")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            hints = app.query_one("#key-hints", app_module.Static)
+            assert "f source(common)" in str(hints.render())
+            assert "Source: Common" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == common_paths
+
+            await pilot.press("f")
+            await pilot.pause()
+            source_button = app.query_one(
+                "#file-cycle-source-scope", app_module.Button
+            )
+            assert "Source: All" in str(source_button.label)
+            assert {item.path for item in app._all_artifacts} == all_paths
+
+    asyncio.run(_run())
+
+
 def test_files_name_filter_slash_focuses_input_and_clear_restores_list(
     tmp_path: Path,
 ) -> None:
@@ -697,6 +758,61 @@ def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_runs_view_v_key_opens_selected_run_manifest(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_files(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        dispatched: list[str] = []
+
+        async def _fake_execute(action_id: str) -> None:
+            dispatched.append(action_id)
+
+        app._execute_action = _fake_execute  # type: ignore[method-assign]
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+
+        assert dispatched == ["open_selected_run_manifest"]
+
+    asyncio.run(_run())
+
+
+def test_files_view_n_key_jumps_to_next_missing_artifact(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+        assert stage_artifacts
+        stage_artifacts[0].path.parent.mkdir(parents=True, exist_ok=True)
+        stage_artifacts[0].path.write_text("seed", encoding="utf-8")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            app._selected_artifact_index = 0
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            artifact_list.index = 0
+            app._update_files_context()
+            app._update_ui_chrome()
+
+            if all(item.exists for item in app._current_artifacts):
+                # The fixture is expected to include missing artifacts.
+                pytest.fail("Expected at least one missing artifact in files list.")
+            await pilot.press("n")
+            await pilot.pause()
+            assert app._current_artifacts[app._selected_artifact_index].exists is False
+
+    asyncio.run(_run())
+
+
 def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -708,6 +824,7 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             assert "Go to Files view" in home_titles
             assert "Show command history" not in home_titles
             assert "Quick open selected item" in home_titles
+            assert "Show command history" in home_titles
             assert "Focus Files Name Filter" not in home_titles
 
             app._command_history.appendleft(
@@ -731,8 +848,10 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.press("3")
             await pilot.pause()
             files_titles = _system_command_titles(app)
+            assert "Focus next missing file" in files_titles
             assert "Focus Files Name Filter" in files_titles
             assert "Toggle Files Missing-only Filter" in files_titles
+            assert "Show command history" in files_titles
 
             await pilot.press("/")
             await pilot.pause()
@@ -740,6 +859,11 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             await pilot.pause()
             filtered_titles = _system_command_titles(app)
             assert "Clear Files Name Filter" in filtered_titles
+
+            await pilot.press("2")
+            await pilot.pause()
+            run_titles = _system_command_titles(app)
+            assert "Cycle run sort order" in run_titles
 
     asyncio.run(_run())
 
@@ -1042,6 +1166,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.press("2")
             await pilot.pause()
             assert "m metrics" in str(hints.render())
+            assert "v manifest" in str(hints.render())
 
             await pilot.press("3")
             await pilot.pause()
@@ -2094,6 +2219,36 @@ def test_start_command_preserves_console_history(tmp_path: Path, monkeypatch) ->
             assert len(started) == 2
 
     asyncio.run(_run())
+
+
+def test_stop_running_command_works_for_any_action(tmp_path: Path, monkeypatch) -> None:
+    app = AutolabCockpitApp(state_path=tmp_path / "repo" / ".autolab" / "state.json")
+    stopped: list[bool] = []
+    output: list[str] = []
+
+    app._running_intent = CommandIntent(
+        action_id="verify_current_stage",
+        argv=("autolab", "verify"),
+        cwd=tmp_path,
+        expected_writes=(),
+        mutating=True,
+    )
+
+    async def _fake_confirm(*_args, **_kwargs) -> bool:
+        return True
+
+    def _fake_stop() -> bool:
+        stopped.append(True)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_confirm)
+    monkeypatch.setattr(app._runner, "stop", _fake_stop)
+    monkeypatch.setattr(app, "_append_console", lambda text: output.append(text))
+
+    asyncio.run(app._stop_running_command())
+
+    assert stopped == [True]
+    assert any("stop requested for active command" in line for line in output)
 
 
 def test_start_command_preserves_prior_console_output(
