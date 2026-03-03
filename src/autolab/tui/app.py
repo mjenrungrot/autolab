@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from textual import events
 from textual.app import App, ComposeResult, SystemCommand
@@ -1247,6 +1248,16 @@ class AutolabCockpitApp(App[None]):
         "tone-danger",
         "tone-muted",
     )
+    _RUN_SORT_MODES: tuple[Literal["recent", "status", "id"], ...] = (
+        "recent",
+        "status",
+        "id",
+    )
+    _RUN_SORT_LABELS: dict[Literal["recent", "status", "id"], str] = {
+        "recent": "Recent",
+        "status": "Status",
+        "id": "ID",
+    }
 
     CSS = """
     Screen {
@@ -1348,6 +1359,21 @@ class AutolabCockpitApp(App[None]):
       min-height: 8;
     }
 
+    #home-action-filter-row {
+      height: auto;
+      margin-bottom: 1;
+      align-vertical: middle;
+    }
+
+    #home-action-filter-label {
+      width: 16;
+      color: $text-muted;
+    }
+
+    #home-action-filter-input {
+      width: 1fr;
+    }
+
     #run-details,
     #files-context,
     #home-stage-card,
@@ -1411,6 +1437,11 @@ class AutolabCockpitApp(App[None]):
       width: 1fr;
     }
 
+    #run-sort-toggle {
+      width: 13;
+      min-width: 13;
+    }
+
     #console-log {
       height: 1fr;
       border: round $surface;
@@ -1438,7 +1469,9 @@ class AutolabCockpitApp(App[None]):
         ("r", "refresh_snapshot", "Refresh"),
         ("p", "toggle_prompt_view", "Prompt View"),
         ("x", "toggle_advanced", "Advanced"),
-        ("s", "stop_loop", "Stop Loop"),
+        ("a", "focus_home_action_filter", "Action Filter"),
+        ("y", "cycle_run_sort", "Run Sort"),
+        ("s", "stop_loop", "Stop Running"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -1451,6 +1484,7 @@ class AutolabCockpitApp(App[None]):
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
         self._console_wrap = False
         self._armed = False
+        self._run_sort_mode: Literal["recent", "status", "id"] = "recent"
         self._show_advanced = False
         self._show_full_prompt = False
         self._mode: ViewMode = "home"
@@ -1462,7 +1496,9 @@ class AutolabCockpitApp(App[None]):
 
         self._home_action_ids: tuple[str, ...] = ()
         self._home_action_index = 0
+        self._home_action_filter_query = ""
         self._selected_run_index = 0
+        self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_artifact_index = 0
         self._current_artifacts: tuple[ArtifactItem, ...] = ()
         self._all_artifacts: tuple[ArtifactItem, ...] = ()
@@ -1514,9 +1550,23 @@ class AutolabCockpitApp(App[None]):
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
+                with Horizontal(id="home-action-filter-row"):
+                    yield Static(
+                        "Filter",
+                        id="home-action-filter-label",
+                        markup=False,
+                    )
+                    yield Input(
+                        value=self._home_action_filter_query,
+                        placeholder="Filter recommended actions by text...",
+                        id="home-action-filter-input",
+                    )
+                    yield Button("Clear", id="home-action-filter-clear")
                 yield ListView(id="home-action-list")
             with Vertical(id="runs-view", classes="view-panel"):
                 yield Static("Runs", classes="view-title")
+                with Horizontal(id="run-filter-row"):
+                    yield Button(self._run_sort_label(), id="run-sort-toggle")
                 yield ListView(id="run-list")
                 yield Static("", id="run-details", markup=False)
                 with Horizontal(id="run-buttons"):
@@ -1648,6 +1698,7 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "runs":
             parts.append("Enter manifest")
             parts.append("m metrics")
+            parts.append(f"y sort({self._run_sort_mode})")
         elif self._mode == "files":
             parts.append("Enter viewer")
             parts.append("e editor")
@@ -1658,11 +1709,10 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
-            parts.append("s stop loop")
+            filter_state = "on" if self._home_action_filter_query else "off"
+            parts.append(f"a action-filter({filter_state})")
+        if self._running_intent is not None:
+            parts.append("s stop command")
         return "Keys: " + " | ".join(parts)
 
     def _selection_status_label(self) -> str:
@@ -1671,7 +1721,7 @@ class AutolabCockpitApp(App[None]):
             index = self._home_action_index
             prefix = "Actions"
         elif self._mode == "runs":
-            total = len(self._snapshot.runs) if self._snapshot is not None else 0
+            total = len(self._visible_runs)
             index = self._selected_run_index
             prefix = "Runs"
         elif self._mode == "files":
@@ -1685,6 +1735,46 @@ class AutolabCockpitApp(App[None]):
             return f"{prefix}: 0/0"
         position = min(max(index, 0), total - 1) + 1
         return f"{prefix}: {position}/{total}"
+
+    def _run_sort_label(self) -> str:
+        label = self._RUN_SORT_LABELS.get(self._run_sort_mode, "Recent")
+        return f"Sort: {label}"
+
+    def _sort_runs(self, runs: tuple[RunItem, ...]) -> tuple[RunItem, ...]:
+        if self._run_sort_mode == "recent":
+            return runs
+        if self._run_sort_mode == "id":
+            return tuple(sorted(runs, key=lambda item: item.run_id.lower()))
+
+        status_priority = {
+            "running": 0,
+            "queued": 1,
+            "submitted": 2,
+            "pending": 3,
+            "in_progress": 4,
+            "started": 5,
+            "completed": 6,
+            "synced": 7,
+            "pass": 8,
+            "success": 9,
+            "failed": 10,
+            "fail": 10,
+            "error": 11,
+            "timeout": 12,
+            "stopped": 13,
+            "partial": 14,
+            "warning": 15,
+            "unknown": 16,
+        }
+        return tuple(
+            sorted(
+                runs,
+                key=lambda item: (
+                    status_priority.get(item.status.lower().strip(), 99),
+                    item.run_id.lower(),
+                ),
+            )
+        )
 
     def _update_ui_chrome(self) -> None:
         safety = self.query_one("#status-safety", Static)
@@ -1757,6 +1847,10 @@ class AutolabCockpitApp(App[None]):
         filter_button.variant = "primary" if self._files_missing_only else "default"
         clear_button = self.query_one("#artifact-filter-clear", Button)
         clear_button.disabled = not bool(self._artifact_filter_query)
+        home_action_clear = self.query_one("#home-action-filter-clear", Button)
+        home_action_clear.disabled = not bool(self._home_action_filter_query)
+        run_sort = self.query_one("#run-sort-toggle", Button)
+        run_sort.label = self._run_sort_label()
 
     def _cycle_mode(self, direction: int) -> None:
         if isinstance(self.screen, ModalScreen) or isinstance(self.focused, Input):
@@ -1807,12 +1901,11 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#help-text", Static).focus()
 
     def _selected_run(self):
-        snapshot = self._snapshot
-        if snapshot is None or not snapshot.runs:
+        if not self._visible_runs:
             return None
-        if self._selected_run_index >= len(snapshot.runs):
+        if self._selected_run_index >= len(self._visible_runs):
             self._selected_run_index = 0
-        return snapshot.runs[self._selected_run_index]
+        return self._visible_runs[self._selected_run_index]
 
     def _selected_artifact_path(self) -> Path | None:
         if not self._current_artifacts:
@@ -1825,6 +1918,7 @@ class AutolabCockpitApp(App[None]):
         self._home_action_ids = ()
         self._home_action_index = 0
         self._selected_run_index = 0
+        self._visible_runs = ()
         self._selected_artifact_index = 0
         self._current_artifacts = ()
         self._all_artifacts = ()
@@ -2022,39 +2116,65 @@ class AutolabCockpitApp(App[None]):
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()
         action_ids: list[str] = []
+        query = self._home_action_filter_query.strip().lower()
         for recommended in snapshot.recommended_actions:
             action = self._actions_by_id.get(recommended.action_id)
             if action is None:
                 continue
             if action.advanced and not self._show_advanced:
                 continue
+            action_label = action.user_label or action.label
+            action_help = action.help_text or action.description
+            if (
+                query
+                and query not in action_label.lower()
+                and query not in action_help.lower()
+                and query not in recommended.reason.lower()
+            ):
+                continue
             label = action.user_label or action.label
-            item_label = Label(f"{label}: {recommended.reason}")
-            item_label.add_class("tone-info")
+            tags = []
+            if action.requires_arm:
+                tags.append("mutating")
+            tags.append(f"risk:{action.risk_level}")
+            tag_text = f" [{' / '.join(tags)}]"
+            item_label = Label(f"{label}: {recommended.reason}{tag_text}")
+            item_label.add_class("tone-warning" if action.requires_arm else "tone-info")
             action_list.append(ListItem(item_label))
             action_ids.append(action.action_id)
 
         if not action_ids:
-            fallback_action_id = (
-                "open_rendered_prompt"
-                if snapshot.render_preview.status == "ok"
-                else "open_stage_prompt"
-            )
-            fallback_text = (
-                "Open rendered prompt: preview what will run next."
-                if fallback_action_id == "open_rendered_prompt"
-                else "Open stage prompt template."
-            )
-            item_label = Label(fallback_text)
-            item_label.add_class("tone-info")
-            action_list.append(ListItem(item_label))
-            action_ids.append(fallback_action_id)
+            if query:
+                item_label = Label(
+                    f"No matching recommended actions for '{self._home_action_filter_query}'."
+                )
+                item_label.add_class("tone-warning")
+                action_list.append(ListItem(item_label))
+                action_ids = ()
+            else:
+                fallback_action_id = (
+                    "open_rendered_prompt"
+                    if snapshot.render_preview.status == "ok"
+                    else "open_stage_prompt"
+                )
+                fallback_text = (
+                    "Open rendered prompt: preview what will run next."
+                    if fallback_action_id == "open_rendered_prompt"
+                    else "Open stage prompt template."
+                )
+                item_label = Label(fallback_text)
+                item_label.add_class("tone-info")
+                action_list.append(ListItem(item_label))
+                action_ids.append(fallback_action_id)
 
         self._home_action_ids = tuple(action_ids)
-        self._home_action_index = min(
-            self._home_action_index, len(self._home_action_ids) - 1
-        )
-        action_list.index = self._home_action_index
+        if self._home_action_ids:
+            self._home_action_index = min(
+                self._home_action_index, len(self._home_action_ids) - 1
+            )
+            action_list.index = self._home_action_index
+        else:
+            self._home_action_index = 0
 
     def _populate_run_list(self) -> None:
         snapshot = self._snapshot
@@ -2068,6 +2188,7 @@ class AutolabCockpitApp(App[None]):
             empty_label.add_class("tone-muted")
             run_list.append(ListItem(empty_label))
             self._selected_run_index = 0
+            self._visible_runs = ()
             details_widget = self.query_one("#run-details", Static)
             details_widget.update(
                 "Run Details\nNo runs available yet.\nRun one transition to create run artifacts."
@@ -2075,7 +2196,9 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
 
-        for run in snapshot.runs:
+        visible_runs = self._sort_runs(snapshot.runs)
+        self._visible_runs = visible_runs
+        for run in visible_runs:
             started = run.started_at or "-"
             slurm_suffix = ""
             if run.host_mode == "slurm":
@@ -2085,7 +2208,7 @@ class AutolabCockpitApp(App[None]):
             )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
-        self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
+        self._selected_run_index = min(self._selected_run_index, len(visible_runs) - 1)
         run_list.index = self._selected_run_index
         self._update_run_details()
 
@@ -2098,11 +2221,17 @@ class AutolabCockpitApp(App[None]):
             self._set_tone(details_widget, "tone-muted")
             return
         selected_index = self._selected_run_index + 1
-        run_count = len(snapshot.runs) if snapshot is not None else selected_index
+        run_count = len(self._visible_runs)
         details_widget = self.query_one("#run-details", Static)
+        snapshot_block = f"sort={self._run_sort_mode} | "
+        if snapshot is not None:
+            snapshot_block = (
+                f"sort={self._run_sort_mode} | total={len(snapshot.runs)} | "
+            )
         details_widget.update(
             "Run Details\n"
             f"- Selected: {selected_index}/{run_count}\n"
+            f"- {snapshot_block}visible={run_count}\n"
             f"- Run ID: {run.run_id}\n"
             f"- Status: {run.status}\n"
             f"- Host mode: {run.host_mode}\n"
@@ -2233,7 +2362,8 @@ class AutolabCockpitApp(App[None]):
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: a focus home action filter, y cycle run sorting,\n"
+            "  r refresh, s stop active command, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2250,6 +2380,8 @@ class AutolabCockpitApp(App[None]):
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
             "- w: toggle console line wrapping.\n"
+            "- a (Home): focus action filter.\n"
+            "- y (Runs): cycle run sorting mode.\n"
             "Quick Actions\n"
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
@@ -2366,6 +2498,14 @@ class AutolabCockpitApp(App[None]):
                         self.action_activate_selection,
                     )
                 )
+        if self._mode == "runs":
+            commands.append(
+                SystemCommand(
+                    "Cycle Run Sorting",
+                    "Cycle run list sort mode.",
+                    self.action_cycle_run_sort,
+                )
+            )
         if self._mode == "files":
             commands.append(
                 SystemCommand(
@@ -2396,17 +2536,30 @@ class AutolabCockpitApp(App[None]):
                         self.action_clear_files_filter,
                     )
                 )
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
+        if self._running_intent is not None:
             commands.append(
                 SystemCommand(
-                    "Stop active loop",
-                    "Request a graceful stop for the active loop command.",
+                    "Stop active command",
+                    "Request a graceful stop for the active command.",
                     self.action_stop_loop,
                 )
             )
+        if self._mode == "home":
+            commands.append(
+                SystemCommand(
+                    "Focus Home Action Filter",
+                    "Filter recommended actions by text.",
+                    self.action_focus_home_action_filter,
+                )
+            )
+            if self._home_action_filter_query:
+                commands.append(
+                    SystemCommand(
+                        "Clear Home Action Filter",
+                        "Reset the home action filter query.",
+                        self._clear_home_action_filter,
+                    )
+                )
         return commands
 
     def action_show_home(self) -> None:
@@ -2461,6 +2614,35 @@ class AutolabCockpitApp(App[None]):
         self._populate_home_view()
         self._update_ui_chrome()
 
+    def action_focus_home_action_filter(self) -> None:
+        if self._mode != "home":
+            self.notify("Home action filter is available in Home view.")
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        filter_input = self.query_one("#home-action-filter-input", Input)
+        filter_input.focus()
+        filter_input.cursor_position = len(filter_input.value)
+
+    def _clear_home_action_filter(self) -> None:
+        if not self._home_action_filter_query:
+            return
+        self._home_action_filter_query = ""
+        filter_input = self.query_one("#home-action-filter-input", Input)
+        filter_input.value = ""
+        if self._snapshot is not None:
+            self._populate_home_view()
+        self._update_ui_chrome()
+
+    def action_cycle_run_sort(self) -> None:
+        if self._snapshot is None:
+            return
+        current_index = self._RUN_SORT_MODES.index(self._run_sort_mode)
+        next_index = (current_index + 1) % len(self._RUN_SORT_MODES)
+        self._run_sort_mode = self._RUN_SORT_MODES[next_index]
+        self._populate_run_list()
+        self._update_ui_chrome()
+
     def action_refresh_snapshot(self) -> None:
         if self._refresh_snapshot():
             self._append_console("snapshot refreshed")
@@ -2477,7 +2659,7 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
-        self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+        self._start_ui_flow(label="stop-command", flow_factory=self._stop_loop)
 
     def action_quick_open(self) -> None:
         if self._mode == "home":
@@ -2600,17 +2782,25 @@ class AutolabCockpitApp(App[None]):
         self._handle_button_action(event.button.id or "")
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "artifact-filter-input":
+        if event.input.id == "artifact-filter-input":
+            self._artifact_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_artifact_list()
+        elif event.input.id == "home-action-filter-input":
+            self._home_action_filter_query = event.value.strip()
+            if self._snapshot is not None:
+                self._populate_home_view()
+        else:
             return
-        self._artifact_filter_query = event.value.strip()
-        if self._snapshot is not None:
-            self._populate_artifact_list()
         self._update_ui_chrome()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "artifact-filter-input":
+        if event.input.id == "artifact-filter-input":
+            self.query_one("#artifact-list", ListView).focus()
+        elif event.input.id == "home-action-filter-input":
+            self.query_one("#home-action-list", ListView).focus()
+        else:
             return
-        self.query_one("#artifact-list", ListView).focus()
 
     def _handle_button_action(self, button_id: str) -> None:
         if button_id == "nav-home":
@@ -2635,8 +2825,15 @@ class AutolabCockpitApp(App[None]):
             self.action_clear_files_filter()
             self.action_focus_files_filter()
             return
+        if button_id == "home-action-filter-clear":
+            self._clear_home_action_filter()
+            return
+        if button_id == "run-sort-toggle":
+            self.action_cycle_run_sort()
+            return
         if button_id == "file-toggle-missing-filter":
             self.action_toggle_missing_only_filter()
+            return
         if button_id == "home-render-toggle":
             self.action_toggle_prompt_view()
             return
@@ -3019,10 +3216,9 @@ class AutolabCockpitApp(App[None]):
 
     async def _stop_loop(self) -> None:
         intent = self._running_intent
-        if intent is None or intent.action_id != "run_loop":
-            self.notify("No loop command is running.")
+        if intent is None:
+            self.notify("No command is running.")
             return
-
         stop_intent = CommandIntent(
             action_id="stop_loop",
             argv=("autolab", "tui", "--stop-loop"),
@@ -3032,18 +3228,20 @@ class AutolabCockpitApp(App[None]):
         )
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
-                title="Stop active loop?",
-                summary="This requests a graceful interrupt for the active loop process.",
+                title="Stop active command?",
+                summary=f"Request a graceful interrupt for: {self._action_label(intent.action_id)}",
                 command=shlex.join(stop_intent.argv),
                 cwd=stop_intent.cwd,
                 expected_writes=stop_intent.expected_writes,
-                confirm_label="Stop loop",
+                confirm_label="Stop command",
             )
         )
         if not confirmed:
             return
 
         if self._runner.stop():
-            self._append_console("stop requested for active loop process")
+            self._append_console(
+                f"stop requested for active command: {self._action_label(intent.action_id)}"
+            )
         else:
-            self._append_console("no running loop process to stop")
+            self._append_console("no running command process to stop")
