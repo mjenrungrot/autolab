@@ -92,7 +92,15 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
+def _write_run_manifest(
+    repo_root: Path,
+    run_id: str,
+    started_at: str,
+    *,
+    host_mode: str = "local",
+    job_id: str = "",
+    sync_status: str = "",
+) -> None:
     manifest_path = (
         repo_root
         / "experiments"
@@ -106,8 +114,14 @@ def _write_run_manifest(repo_root: Path, run_id: str, started_at: str) -> None:
     payload = {
         "run_id": run_id,
         "status": "running",
+        "host_mode": host_mode,
         "timestamps": {"started_at": started_at},
     }
+    if job_id:
+        payload["job_id"] = job_id
+        payload["slurm"] = {"job_id": job_id}
+    if sync_status:
+        payload["artifact_sync_to_local"] = {"status": sync_status}
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
@@ -1320,6 +1334,33 @@ def test_execute_action_resolve_human_review_guards_non_human_stage(
     assert started == []
     assert any("Human review can only be resolved" in item for item in notices)
 
+
+
+
+def test_runs_view_shows_slurm_metadata(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_manifest(
+            repo_root,
+            "run_slurm",
+            "2026-02-01T02:00:00Z",
+            host_mode="slurm",
+            job_id="12345",
+            sync_status="pending",
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            run_details = app.query_one("#run-details", app_module.Static)
+            rendered = str(run_details.render())
+            assert "Host mode: slurm" in rendered
+            assert "SLURM Job ID: 12345" in rendered
+            assert "Artifact sync: pending" in rendered
+
+    asyncio.run(_run())
 
 def test_status_selection_updates_when_runs_selection_changes(tmp_path: Path) -> None:
     async def _run() -> None:

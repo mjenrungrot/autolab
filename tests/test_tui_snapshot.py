@@ -264,6 +264,38 @@ def test_snapshot_run_order_is_deterministic(tmp_path: Path) -> None:
     assert [item.run_id for item in first.runs] == ["run_b", "run_a"]
 
 
+
+
+def test_snapshot_loads_slurm_run_metadata(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="slurm_monitor")
+    run_dir = repo / "experiments" / "plan" / "iter1" / "runs" / "run_slurm"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run_slurm",
+                "host_mode": "slurm",
+                "status": "submitted",
+                "slurm": {"job_id": "12345"},
+                "artifact_sync_to_local": {"status": "pending"},
+                "timestamps": {"started_at": "2026-02-01T01:00:00Z"},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert len(snapshot.runs) == 1
+    run = snapshot.runs[0]
+    assert run.host_mode == "slurm"
+    assert run.job_id == "12345"
+    assert run.sync_status == "pending"
+
 def test_snapshot_invalid_attempt_values_fallback_safely(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"

@@ -2077,7 +2077,12 @@ class AutolabCockpitApp(App[None]):
 
         for run in snapshot.runs:
             started = run.started_at or "-"
-            run_label = Label(f"{run.run_id} [{run.status}] start={started}")
+            slurm_suffix = ""
+            if run.host_mode == "slurm":
+                slurm_suffix = f" job={run.job_id or '-'}"
+            run_label = Label(
+                f"{run.run_id} [{run.status}] ({run.host_mode}{slurm_suffix}) start={started}"
+            )
             run_label.add_class(self._tone_for_run_status(run.status))
             run_list.append(ListItem(run_label))
         self._selected_run_index = min(self._selected_run_index, len(snapshot.runs) - 1)
@@ -2100,6 +2105,9 @@ class AutolabCockpitApp(App[None]):
             f"- Selected: {selected_index}/{run_count}\n"
             f"- Run ID: {run.run_id}\n"
             f"- Status: {run.status}\n"
+            f"- Host mode: {run.host_mode}\n"
+            f"- SLURM Job ID: {run.job_id or '-'}\n"
+            f"- Artifact sync: {run.sync_status or '-'}\n"
             f"- Started: {run.started_at or '-'}\n"
             f"- Completed: {run.completed_at or '-'}\n"
             f"- Manifest: {'OK' if run.manifest_path.exists() else 'MISS'}\n"

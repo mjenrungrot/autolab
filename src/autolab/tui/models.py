@@ -23,6 +23,9 @@ class StageItem:
 class RunItem:
     run_id: str
     status: str
+    host_mode: str
+    job_id: str
+    sync_status: str
     started_at: str
     completed_at: str
     manifest_path: Path
