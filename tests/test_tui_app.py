@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -667,6 +668,61 @@ def test_mode_quick_keys_dispatch_expected_actions(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_runs_view_v_key_opens_selected_run_manifest(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        _write_run_files(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        dispatched: list[str] = []
+
+        async def _fake_execute(action_id: str) -> None:
+            dispatched.append(action_id)
+
+        app._execute_action = _fake_execute  # type: ignore[method-assign]
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("2")
+            await pilot.pause()
+            await pilot.press("v")
+            await pilot.pause()
+
+        assert dispatched == ["open_selected_run_manifest"]
+
+    asyncio.run(_run())
+
+
+def test_files_view_n_key_jumps_to_next_missing_artifact(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        snapshot = load_cockpit_snapshot(state_path)
+        stage_artifacts = snapshot.artifacts_by_stage.get(snapshot.current_stage, ())
+        assert stage_artifacts
+        stage_artifacts[0].path.parent.mkdir(parents=True, exist_ok=True)
+        stage_artifacts[0].path.write_text("seed", encoding="utf-8")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            app._selected_artifact_index = 0
+            artifact_list = app.query_one("#artifact-list", app_module.ListView)
+            artifact_list.index = 0
+            app._update_files_context()
+            app._update_ui_chrome()
+
+            if all(item.exists for item in app._current_artifacts):
+                # The fixture is expected to include missing artifacts.
+                pytest.fail("Expected at least one missing artifact in files list.")
+            await pilot.press("n")
+            await pilot.pause()
+            assert app._current_artifacts[app._selected_artifact_index].exists is False
+
+    asyncio.run(_run())
+
+
 def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"
@@ -1012,6 +1068,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             await pilot.press("2")
             await pilot.pause()
             assert "m metrics" in str(hints.render())
+            assert "v manifest" in str(hints.render())
 
             await pilot.press("3")
             await pilot.pause()
