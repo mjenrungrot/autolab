@@ -2756,55 +2756,67 @@ class AutolabCockpitApp(App[None]):
             if not self._home_action_ids:
                 return
             self._home_action_index = 0
+            list_view = self.query_one("#home-action-list", ListView)
             self._apply_list_selection(
                 list_id="home-action-list", selected_index=0
             )
-            self.query_one("#home-action-list", ListView).index = 0
+            list_view.index = 0
+            list_view.focus()
             return
         if self._mode == "runs":
             if not self._visible_runs:
                 return
             self._selected_run_index = 0
+            list_view = self.query_one("#run-list", ListView)
             self._apply_list_selection(list_id="run-list", selected_index=0)
-            self.query_one("#run-list", ListView).index = 0
+            list_view.index = 0
+            list_view.focus()
             return
         if self._mode == "files":
             if not self._current_artifacts:
                 return
             self._selected_artifact_index = 0
+            list_view = self.query_one("#artifact-list", ListView)
             self._apply_list_selection(
                 list_id="artifact-list", selected_index=0
             )
-            self.query_one("#artifact-list", ListView).index = 0
+            list_view.index = 0
+            list_view.focus()
 
     def action_list_last(self) -> None:
         if self._mode == "home":
             if not self._home_action_ids:
                 return
             index = len(self._home_action_ids) - 1
+            list_view = self.query_one("#home-action-list", ListView)
             self._home_action_index = index
             self._apply_list_selection(
                 list_id="home-action-list", selected_index=index
             )
-            self.query_one("#home-action-list", ListView).index = index
+            list_view.index = index
+            list_view.focus()
             return
         if self._mode == "runs":
             if not self._visible_runs:
                 return
             index = len(self._visible_runs) - 1
+            list_view = self.query_one("#run-list", ListView)
             self._selected_run_index = index
             self._apply_list_selection(list_id="run-list", selected_index=index)
-            self.query_one("#run-list", ListView).index = index
+            list_view.index = index
+            list_view.focus()
             return
         if self._mode == "files":
             if not self._current_artifacts:
                 return
             index = len(self._current_artifacts) - 1
+            list_view = self.query_one("#artifact-list", ListView)
             self._selected_artifact_index = index
             self._apply_list_selection(
                 list_id="artifact-list", selected_index=index
             )
-            self.query_one("#artifact-list", ListView).index = index
+            list_view.index = index
+            list_view.focus()
 
     def action_rerun_last_command(self) -> None:
         self._start_ui_flow(label="rerun-last", flow_factory=self._rerun_last_command)
