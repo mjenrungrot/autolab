@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 import shlex
 from collections import deque
@@ -1300,6 +1301,11 @@ class AutolabCockpitApp(App[None]):
       width: 16;
     }
 
+    #status-snapshot {
+      width: 18;
+      content-align: right middle;
+    }
+
     #status-running {
       width: 1fr;
       content-align: right middle;
@@ -1353,6 +1359,7 @@ class AutolabCockpitApp(App[None]):
     #home-stage-card,
     #home-blocker-card,
     #home-artifacts-card,
+    #home-verification-card,
     #home-todos-card,
     #help-text {
       border: round $surface;
@@ -1437,8 +1444,10 @@ class AutolabCockpitApp(App[None]):
         ("u", "toggle_safety_lock", "Unlock/Lock"),
         ("r", "refresh_snapshot", "Refresh"),
         ("p", "toggle_prompt_view", "Prompt View"),
+        ("n", "next_missing_artifact", "Next missing file"),
         ("x", "toggle_advanced", "Advanced"),
         ("s", "stop_loop", "Stop Loop"),
+        ("k", "stop_running_command", "Stop Command"),
         ("c", "clear_console", "Clear Console"),
         ("w", "toggle_console_wrap", "Wrap Console"),
         ("q", "quit", "Quit"),
@@ -1451,6 +1460,7 @@ class AutolabCockpitApp(App[None]):
         self._console_tail: deque[str] = deque(maxlen=self._tail_lines)
         self._console_wrap = False
         self._armed = False
+        self._last_snapshot_refreshed_at: float | None = None
         self._show_advanced = False
         self._show_full_prompt = False
         self._mode: ViewMode = "home"
@@ -1483,6 +1493,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Advanced: hidden", id="status-advanced")
             yield Static("Selection: -", id="status-selection")
             yield Static("Console wrap: off", id="status-console")
+            yield Static("Snapshot: n/a", id="status-snapshot")
             yield Static("", id="status-running")
         yield Static(
             "Keys: 1-5 view | [/] cycle views | Enter activate | o open | m mode quick | ? help",
@@ -1500,6 +1511,7 @@ class AutolabCockpitApp(App[None]):
             with Vertical(id="home-view", classes="view-panel"):
                 yield Static("Home", classes="view-title")
                 yield Static("", id="home-stage-card", markup=False)
+                yield Static("", id="home-verification-card", markup=False)
                 with Vertical(id="home-render-card"):
                     yield Static("What Autolab Will Run Now", id="home-render-title")
                     with VerticalScroll(id="home-render-scroll"):
@@ -1655,14 +1667,14 @@ class AutolabCockpitApp(App[None]):
             parts.append(f"m missing-only({filter_state})")
             name_filter_state = "on" if self._artifact_filter_query else "off"
             parts.append(f"/ name-filter({name_filter_state})")
+            parts.append("n next-missing")
         elif self._mode == "home":
             parts.append("Enter recommended action")
             parts.append("m rendered prompt")
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
-            parts.append("s stop loop")
+        if self._running_intent is not None:
+            parts.append("k stop")
+            if self._running_intent.action_id == "run_loop":
+                parts.append("s stop loop")
         return "Keys: " + " | ".join(parts)
 
     def _selection_status_label(self) -> str:
@@ -1693,6 +1705,7 @@ class AutolabCockpitApp(App[None]):
         selection = self.query_one("#status-selection", Static)
         console = self.query_one("#status-console", Static)
         running = self.query_one("#status-running", Static)
+        snapshot_status = self.query_one("#status-snapshot", Static)
         key_hints = self.query_one("#key-hints", Static)
 
         safety.update(
@@ -1715,6 +1728,21 @@ class AutolabCockpitApp(App[None]):
         console.update(f"Console wrap: {'on' if self._console_wrap else 'off'}")
         self._set_tone(console, "tone-info" if self._console_wrap else "tone-muted")
         key_hints.update(self._key_hints_text())
+
+        if self._snapshot is None or self._last_snapshot_refreshed_at is None:
+            snapshot_status.update("Snapshot: n/a")
+            self._set_tone(snapshot_status, "tone-warning")
+        else:
+            age_seconds = time.monotonic() - self._last_snapshot_refreshed_at
+            age_seconds = max(age_seconds, 0.0)
+            snapshot_status.update(f"Snapshot: {age_seconds:.1f}s ago")
+            if age_seconds < 10:
+                tone = "tone-success"
+            elif age_seconds < 60:
+                tone = "tone-warning"
+            else:
+                tone = "tone-danger"
+            self._set_tone(snapshot_status, tone)
 
         if self._running_intent is None:
             snapshot = self._snapshot
@@ -1860,6 +1888,10 @@ class AutolabCockpitApp(App[None]):
         blocker_widget.update("Blockers\nSnapshot refresh failed.")
         self._set_tone(blocker_widget, "tone-danger")
 
+        verification_widget = self.query_one("#home-verification-card", Static)
+        verification_widget.update("Verification\nUnavailable.")
+        self._set_tone(verification_widget, "tone-muted")
+
         artifacts_widget = self.query_one("#home-artifacts-card", Static)
         artifacts_widget.update("Artifacts\nUnavailable.")
         self._set_tone(artifacts_widget, "tone-warning")
@@ -1881,12 +1913,14 @@ class AutolabCockpitApp(App[None]):
             self._snapshot = load_cockpit_snapshot(self._state_path)
         except Exception as exc:
             self._snapshot = None
+            self._last_snapshot_refreshed_at = None
             self._armed = False
             self._clear_snapshot_views()
             self._update_ui_chrome()
             self._append_console(f"snapshot refresh failed: {exc}")
             self.notify(f"Snapshot refresh failed: {exc}")
             return False
+        self._last_snapshot_refreshed_at = time.monotonic()
 
         self._populate_home_view()
         self._populate_run_list()
@@ -1979,6 +2013,32 @@ class AutolabCockpitApp(App[None]):
             blocker_widget,
             "tone-success" if snapshot.primary_blocker == "none" else "tone-danger",
         )
+
+        verification = snapshot.verification
+        verification_widget = self.query_one("#home-verification-card", Static)
+        if verification is None:
+            verification_widget.update(
+                "Verification\n- Result: not available.\n- Run autolab verify to capture results."
+            )
+            self._set_tone(verification_widget, "tone-muted")
+        else:
+            verification_lines = [
+                f"- Result: {'pass' if verification.passed else 'fail'}",
+                f"- Stage: {verification.stage_effective or snapshot.current_stage or '-'}",
+                f"- Message: {verification.message or 'no message'}",
+            ]
+            if verification.generated_at:
+                verification_lines.insert(1, f"- Updated: {verification.generated_at}")
+            if verification.failing_commands:
+                verification_lines.append("- Failing command(s):")
+                verification_lines.extend(
+                    f"  - {entry}" for entry in verification.failing_commands[:2]
+                )
+            verification_widget.update("Verification\n" + "\n".join(verification_lines))
+            self._set_tone(
+                verification_widget,
+                "tone-success" if verification.passed else "tone-danger",
+            )
 
         stage_artifacts = snapshot.artifacts_by_stage.get(stage, ())
         if stage_artifacts:
@@ -2233,7 +2293,7 @@ class AutolabCockpitApp(App[None]):
             "Keyboard\n"
             "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
-            "- Utilities: r refresh, s stop active loop, c clear console.\n"
+            "- Utilities: r refresh, k stop active command, s stop active loop, c clear console.\n"
             "- Home: p toggle prompt excerpt/full.\n"
             "- Modals: Esc closes or cancels.\n"
             "\n"
@@ -2254,6 +2314,7 @@ class AutolabCockpitApp(App[None]):
             "- o: Open selected item in current view (action/manifest/viewer).\n"
             "- m: Mode quick action (home rendered prompt, runs metrics, files filter).\n"
             "- e: Open selected file in editor (Files view).\n"
+            "- n: Jump to next missing artifact (Files view).\n"
             "- /: Focus files name filter (Files view).\n"
             "- Ctrl+k: Open command palette.\n"
             "\n"
@@ -2396,17 +2457,22 @@ class AutolabCockpitApp(App[None]):
                         self.action_clear_files_filter,
                     )
                 )
-        if (
-            self._running_intent is not None
-            and self._running_intent.action_id == "run_loop"
-        ):
+        if self._running_intent is not None:
             commands.append(
                 SystemCommand(
-                    "Stop active loop",
-                    "Request a graceful stop for the active loop command.",
-                    self.action_stop_loop,
+                    "Stop active command",
+                    f"Stop the active command: {self._running_intent.action_id}",
+                    self.action_stop_running_command,
                 )
             )
+            if self._running_intent.action_id == "run_loop":
+                commands.append(
+                    SystemCommand(
+                        "Stop active loop",
+                        "Request a graceful stop for the active loop command.",
+                        self.action_stop_loop,
+                    )
+                )
         return commands
 
     def action_show_home(self) -> None:
@@ -2477,7 +2543,47 @@ class AutolabCockpitApp(App[None]):
         self._update_ui_chrome()
 
     def action_stop_loop(self) -> None:
-        self._start_ui_flow(label="stop-loop", flow_factory=self._stop_loop)
+        self._start_ui_flow(
+            label="stop-loop",
+            flow_factory=lambda: self._stop_running_command(for_loop=True),
+        )
+
+    def action_stop_running_command(self) -> None:
+        self._start_ui_flow(
+            label="stop-command", flow_factory=lambda: self._stop_running_command()
+        )
+
+    def action_next_missing_artifact(self) -> None:
+        if self._mode != "files":
+            self.notify("Next missing artifact is available in Files view (3).")
+            return
+        if not self._current_artifacts:
+            self.notify("No artifacts are currently visible.")
+            return
+
+        if self._running_intent is not None:
+            self.notify("Navigation is unavailable while a command is running.")
+            return
+
+        missing_indices: list[int] = [
+            index
+            for index, artifact in enumerate(self._current_artifacts)
+            if not artifact.exists
+        ]
+        if not missing_indices:
+            self.notify("No missing artifacts in current file list.")
+            return
+
+        start = self._selected_artifact_index + 1
+        next_missing = next(
+            (index for index in missing_indices if index >= start),
+            missing_indices[0],
+        )
+        self._selected_artifact_index = next_missing
+        artifact_list = self.query_one("#artifact-list", ListView)
+        artifact_list.index = next_missing
+        self._update_files_context()
+        self._update_ui_chrome()
 
     def action_quick_open(self) -> None:
         if self._mode == "home":
@@ -2875,6 +2981,14 @@ class AutolabCockpitApp(App[None]):
             await self._open_artifact_viewer(snapshot.state_path)
             return
 
+        if action_id == "open_verification_result":
+            verification_path = snapshot.autolab_dir / "verification_result.json"
+            if not verification_path.exists():
+                self.notify("Verification result file is not available yet.")
+                return
+            await self._open_artifact_viewer(verification_path)
+            return
+
         intent: CommandIntent | None = None
         if action_id == "verify_current_stage":
             intent = build_verify_intent(
@@ -3017,12 +3131,17 @@ class AutolabCockpitApp(App[None]):
         except Exception:
             pass
 
-    async def _stop_loop(self) -> None:
+    async def _stop_running_command(self, *, for_loop: bool = False) -> None:
         intent = self._running_intent
-        if intent is None or intent.action_id != "run_loop":
+        if intent is None:
+            self.notify("No command is running.")
+            return
+        if for_loop and intent.action_id != "run_loop":
             self.notify("No loop command is running.")
             return
 
+        is_loop = intent.action_id == "run_loop"
+        target_command = shlex.join(intent.argv)
         stop_intent = CommandIntent(
             action_id="stop_loop",
             argv=("autolab", "tui", "--stop-loop"),
@@ -3030,20 +3149,30 @@ class AutolabCockpitApp(App[None]):
             expected_writes=(),
             mutating=False,
         )
+        stop_command = target_command if target_command else shlex.join(stop_intent.argv)
         confirmed = await self.push_screen_wait(
             ActionConfirmScreen(
-                title="Stop active loop?",
-                summary="This requests a graceful interrupt for the active loop process.",
-                command=shlex.join(stop_intent.argv),
+                title="Stop active loop?" if is_loop else "Stop active command?",
+                summary=(
+                    "This requests a graceful stop for the active process."
+                    if is_loop
+                    else f"Stop command: {target_command}"
+                ),
+                command=stop_command,
                 cwd=stop_intent.cwd,
                 expected_writes=stop_intent.expected_writes,
-                confirm_label="Stop loop",
+                confirm_label="Stop loop" if is_loop else "Stop",
             )
         )
         if not confirmed:
             return
 
         if self._runner.stop():
-            self._append_console("stop requested for active loop process")
+            if is_loop:
+                self._append_console("stop requested for active loop process")
+            else:
+                self._append_console(
+                    f"stop requested for active command: {target_command}"
+                )
         else:
-            self._append_console("no running loop process to stop")
+            self._append_console("no running process to stop")
