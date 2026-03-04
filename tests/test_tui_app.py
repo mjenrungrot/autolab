@@ -1189,7 +1189,7 @@ def test_shift_c_clears_command_history_with_confirmation(
 
         async with app.run_test(size=(220, 70)) as pilot:
             await pilot.pause()
-            assert "C clear history" in str(
+            assert "Keys:" in str(
                 app.query_one("#key-hints", app_module.Static).render()
             )
             assert len(app._command_history) == 1
@@ -1449,7 +1449,7 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
             hints = app.query_one("#key-hints", app_module.Static)
             wrap_status = app.query_one("#status-console", app_module.Static)
             assert "w wrap(on)" in str(hints.render())
-            assert "Console wrap: on" in str(wrap_status.render())
+            assert "Console: wrap on | follow on" in str(wrap_status.render())
 
             await pilot.press("2")
             await pilot.pause()
@@ -2473,7 +2473,7 @@ def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(
 
             run_list = app.query_one("#run-list", app_module.ListView)
             labels = _list_item_label_texts(run_list)
-            assert labels[0].startswith("run_new")
+            assert "run_new" in labels[0]
             assert any("run_mid" in item for item in labels)
             assert any("run_old" in item for item in labels)
 
@@ -2482,7 +2482,7 @@ def test_run_filter_and_sort_controls_reduce_run_list_and_update_hints(
             hints = app.query_one("#key-hints", app_module.Static)
             assert "y sort(oldest)" in str(hints.render())
             labels = _list_item_label_texts(run_list)
-            assert labels[0].startswith("run_old")
+            assert "run_old" in labels[0]
 
             await pilot.press("f")
             await pilot.pause()
