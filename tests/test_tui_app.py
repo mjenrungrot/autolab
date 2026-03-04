@@ -37,6 +37,13 @@ def _write_state_file(repo_root: Path, *, stage: str = "design") -> Path:
     prompt_path = repo_root / ".autolab" / "prompts" / f"stage_{stage}.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(f"# Stage {stage}\n", encoding="utf-8")
+    if stage == "implementation":
+        runner_prompt_path = (
+            repo_root / ".autolab" / "prompts" / "stage_implementation_runner.md"
+        )
+        runner_prompt_path.write_text(
+            "# Stage implementation runner\n", encoding="utf-8"
+        )
 
     return state_path
 
@@ -475,6 +482,39 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
                 "#artifact-content", app_module.Markdown
             )
             assert context_content._markdown.startswith("```json\n")
+            assert await _click_when_visible(pilot, "#close") is True
+
+    asyncio.run(_run())
+
+
+def test_files_buttons_open_audit_and_retry_for_implementation(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+
+            await pilot.click("#file-open-audit")
+            await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "Rendered Audit (implementation)" in str(title.render())
+            assert await _click_when_visible(pilot, "#close") is True
+
+            await pilot.click("#file-open-retry")
+            await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "Retry Brief (implementation)" in str(title.render())
+            retry_content = app.screen.query_one(
+                "#artifact-content", app_module.Markdown
+            )
+            assert "Implementation Retry Brief" in retry_content._markdown
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())

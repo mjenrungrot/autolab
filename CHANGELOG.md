@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.5] - 2026-03-04
+
+### Summary
+
+- Split implementation-stage prompting into a prompt-pack with dedicated runner, context, audit, and retry-brief artifacts.
+- Updated `autolab render`, runner integrations, and TUI views to expose runner/audit/retry prompt surfaces explicitly.
+- Added schema/lint/readiness and regression-test coverage for implementation runner-prompt routing and fail-fast scaffold sync remediation.
+
+<!-- autolab:range v1.2.4..v1.2.5 -->
+
 ## [1.2.4] - 2026-03-04
 
 ### Summary

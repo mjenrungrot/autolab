@@ -25,6 +25,8 @@ def test_action_catalog_contains_required_entries() -> None:
     action_ids = {action.action_id for action in actions}
     assert "open_rendered_prompt" in action_ids
     assert "open_render_context" in action_ids
+    assert "open_rendered_audit" in action_ids
+    assert "open_retry_brief" in action_ids
     assert "open_verification_result" in action_ids
     assert "verify_current_stage" in action_ids
     assert "run_once" in action_ids

@@ -395,6 +395,8 @@ def _substitute_runner_command(
     prompt_path: Path,
     prompt_template_path: Path,
     prompt_context_path: Path,
+    prompt_audit_path: Path,
+    prompt_retry_brief_path: Path,
     iteration_id: str,
     workspace_dir: Path,
     core_add_dirs: str,
@@ -405,6 +407,8 @@ def _substitute_runner_command(
         "{prompt_path}": shlex.quote(str(prompt_path)),
         "{prompt_template_path}": shlex.quote(str(prompt_template_path)),
         "{prompt_context_path}": shlex.quote(str(prompt_context_path)),
+        "{prompt_audit_path}": shlex.quote(str(prompt_audit_path)),
+        "{prompt_retry_brief_path}": shlex.quote(str(prompt_retry_brief_path)),
         "{iteration_id}": shlex.quote(iteration_id),
         "{workspace_dir}": shlex.quote(str(workspace_dir)),
         "{core_add_dirs}": core_add_dirs,
@@ -445,7 +449,9 @@ def _invoke_agent_runner(
             "agent_runner.command is empty; set agent_runner.command in .autolab/verifier_policy.yaml"
         )
 
-    prompt_template_path = _resolve_stage_prompt_path(repo_root, stage)
+    prompt_template_path = _resolve_stage_prompt_path(
+        repo_root, stage, prompt_role="runner"
+    )
     if not prompt_template_path.exists():
         raise StageCheckError(
             f"agent runner prompt is missing for stage '{stage}' at {prompt_template_path}"
@@ -488,6 +494,9 @@ def _invoke_agent_runner(
         prompt_path=prompt_bundle.rendered_path,
         prompt_template_path=prompt_bundle.template_path,
         prompt_context_path=prompt_bundle.context_path,
+        prompt_audit_path=prompt_bundle.audit_path or prompt_bundle.rendered_path,
+        prompt_retry_brief_path=prompt_bundle.retry_brief_path
+        or prompt_bundle.rendered_path,
         iteration_id=iteration_id,
         workspace_dir=workspace_dir,
         core_add_dirs=core_add_dirs,
@@ -522,6 +531,12 @@ def _invoke_agent_runner(
     env["AUTOLAB_PROMPT_PATH"] = str(prompt_bundle.rendered_path)
     env["AUTOLAB_PROMPT_TEMPLATE_PATH"] = str(prompt_bundle.template_path)
     env["AUTOLAB_PROMPT_CONTEXT_PATH"] = str(prompt_bundle.context_path)
+    env["AUTOLAB_PROMPT_AUDIT_PATH"] = str(
+        prompt_bundle.audit_path or prompt_bundle.rendered_path
+    )
+    env["AUTOLAB_PROMPT_RETRY_BRIEF_PATH"] = str(
+        prompt_bundle.retry_brief_path or prompt_bundle.rendered_path
+    )
     env["AUTOLAB_STATE_FILE"] = str(state_path)
     env["AUTOLAB_REPO_ROOT"] = str(repo_root)
     env["AUTOLAB_WORKSPACE_DIR"] = str(workspace_dir)

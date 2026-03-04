@@ -151,6 +151,13 @@ def _resolve_stage_prompt_files() -> dict[str, str]:
             for stage, filename in dict(mapping).items()
             if str(stage).strip() and str(filename).strip()
         }
+        if registry:
+            for stage_name, spec in registry.items():
+                normalized_stage = str(stage_name).strip()
+                runner_file = str(getattr(spec, "runner_prompt_file", "")).strip()
+                if not normalized_stage or not runner_file:
+                    continue
+                mapping[normalized_stage] = runner_file
         if mapping:
             return mapping
     except Exception:

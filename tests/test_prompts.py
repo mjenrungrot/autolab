@@ -17,6 +17,7 @@ from autolab.prompts import (
     _suggest_decision_from_metrics,
     _target_comparison_text,
     _render_stage_prompt,
+    _resolve_stage_prompt_path,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -251,7 +252,7 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(
         state["last_run_id"] = "run_001"
     _write_backlog(repo)
 
-    template_path = repo / ".autolab" / "prompts" / f"stage_{stage}.md"
+    template_path = _resolve_stage_prompt_path(repo, stage, prompt_role="runner")
     bundle = _render_stage_prompt(
         repo, stage=stage, state=state, template_path=template_path, runner_scope={}
     )
@@ -278,7 +279,9 @@ def test_render_implementation_prompt_includes_project_data_root_hints(
     media_path.parent.mkdir(parents=True, exist_ok=True)
     media_path.write_bytes(b"video")
 
-    template_path = repo / ".autolab" / "prompts" / "stage_implementation.md"
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
     bundle = _render_stage_prompt(
         repo,
         stage="implementation",
@@ -292,6 +295,112 @@ def test_render_implementation_prompt_includes_project_data_root_hints(
     assert data_root in bundle.prompt_text
     assert curated_root in bundle.prompt_text
     assert "project_data_media_counts" in bundle.prompt_text
+
+
+def test_render_implementation_prompt_pack_metadata_and_texts(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={},
+        write_outputs=False,
+    )
+
+    assert bundle.rendered_path.name == "implementation.runner.md"
+    assert bundle.context_path.name == "implementation.context.json"
+    assert bundle.audit_path is not None
+    assert bundle.audit_path.name == "implementation.audit.md"
+    assert bundle.retry_brief_path is not None
+    assert bundle.retry_brief_path.name == "implementation.retry_brief.md"
+    assert "implementation_plan.md" in bundle.prompt_text
+    assert "Implementation Auditor" in bundle.audit_text
+    assert "Implementation Retry Brief" in bundle.retry_brief_text
+    assert "rendered_audit_path" in bundle.context_payload
+    assert "rendered_retry_brief_path" in bundle.context_payload
+
+
+def test_render_implementation_retry_brief_distills_blockers(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "review_result.json").write_text(
+        json.dumps(
+            {
+                "status": "needs_retry",
+                "blocking_findings": [
+                    "Fix failing dry run in training loop.",
+                    "Add missing validation evidence for task T2.",
+                ],
+                "required_checks": {
+                    "tests": "pass",
+                    "dry_run": "fail",
+                    "schema": "pass",
+                    "env_smoke": "pass",
+                    "docs_target_update": "pass",
+                },
+                "reviewed_at": "2026-03-04T00:00:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "verification_result.json").write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "message": "verification failed: dry_run command returned non-zero",
+                "details": {
+                    "commands": [
+                        {
+                            "name": "dry_run",
+                            "status": "fail",
+                            "detail": "python -m pkg.train exited with code 1",
+                        }
+                    ]
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={},
+        write_outputs=False,
+    )
+
+    bullet_lines = [
+        line for line in bundle.retry_brief_text.splitlines() if line.startswith("- ")
+    ]
+    assert 3 <= len(bullet_lines) <= 7
+    assert "Fix failing dry run in training loop." in bundle.retry_brief_text
+    assert "python -m pkg.train exited with code 1" in bundle.retry_brief_text
 
 
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")

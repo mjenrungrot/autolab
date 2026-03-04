@@ -21,7 +21,7 @@ The cockpit is mode-based, not multi-pane focus-based.
 - **Home**: Stage summary, full rendered prompt preview ("what will run now") in a scrollable card, blockers, required artifacts, recommended actions.
   - When stage is `human_review`, Home includes a guided `Resolve human review` action (`pass|retry|stop`) with the same unlock/confirm safety model as other mutating actions.
 - **Runs**: Run list plus quick open for manifest/metrics.
-- **Files**: Stage/common files plus quick open for rendered prompt, render context, and prompt template, all in a rich markdown viewer.
+- **Files**: Stage/common files plus quick open for rendered prompt, render context, rendered audit contract, implementation retry brief, and prompt template, all in a rich markdown viewer.
   - Advanced actions in Files include backlog steering flows (`focus`, `experiment create`, `experiment move`) via picker modals.
 - **Console**: Live output for the active command.
 - **Help**: Keymap and safety model.

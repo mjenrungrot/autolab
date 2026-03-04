@@ -45,6 +45,7 @@ def test_init_bootstraps_from_canonical_scaffold(tmp_path: Path) -> None:
     source_root = _canonical_scaffold_root()
     for relative in (
         "prompts/stage_implementation.md",
+        "prompts/stage_implementation_runner.md",
         "schemas/backlog.schema.json",
         "verifiers/schema_checks.py",
         "verifiers/registry_consistency.py",

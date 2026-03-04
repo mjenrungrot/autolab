@@ -28,11 +28,14 @@ Set `agent_runner.runner` to select a preset. Override with `agent_runner.comman
 The runner command string supports these substitution tokens:
 
 - `token`: `{stage}`; `replaced_with`: Current stage name; `example`: `implementation`.
-- `token`: `{workspace_dir}`; `replaced_with`: Absolute path to repo root; `example`: `/home/user/myproject`.
-- `token`: `{prompt_file}`; `replaced_with`: Path to rendered prompt; `example`: `.autolab/prompts/rendered/implementation.md`.
-- `token`: `{state_file}`; `replaced_with`: Path to state file; `example`: `.autolab/state.json`.
+- `token`: `{workspace_dir}`; `replaced_with`: Absolute path to runner workspace; `example`: `/home/user/myproject/experiments/plan/iter1`.
+- `token`: `{prompt_path}`; `replaced_with`: Path to rendered runner prompt; `example`: `.autolab/prompts/rendered/implementation.runner.md`.
+- `token`: `{prompt_template_path}`; `replaced_with`: Path to source prompt template; `example`: `.autolab/prompts/stage_implementation_runner.md`.
+- `token`: `{prompt_context_path}`; `replaced_with`: Path to rendered prompt context JSON; `example`: `.autolab/prompts/rendered/implementation.context.json`.
+- `token`: `{prompt_audit_path}`; `replaced_with`: Path to rendered audit contract (implementation stage); `example`: `.autolab/prompts/rendered/implementation.audit.md`.
+- `token`: `{prompt_retry_brief_path}`; `replaced_with`: Path to rendered retry brief (implementation stage); `example`: `.autolab/prompts/rendered/implementation.retry_brief.md`.
 - `token`: `{iteration_id}`; `replaced_with`: Current iteration ID; `example`: `iter_001`.
-- `token`: `{allowed_dirs}`; `replaced_with`: Comma-separated allowed edit dirs; `example`: `experiments/plan/iter_001,src,scripts`.
+- `token`: `{core_add_dirs}`; `replaced_with`: Runner-specific `--add-dir` flag fragment; `example`: `--add-dir /repo/src --add-dir /repo/tests`.
 
 ## Environment Variables
 
@@ -41,9 +44,13 @@ Set by Autolab before runner invocation:
 - `variable`: `AUTOLAB_STAGE`; `value`: Current stage name; `purpose`: Runner can condition on stage.
 - `variable`: `AUTOLAB_ITERATION_ID`; `value`: Current iteration ID; `purpose`: Scoping.
 - `variable`: `AUTOLAB_STATE_FILE`; `value`: Absolute path to state.json; `purpose`: State access.
-- `variable`: `AUTOLAB_WORKSPACE_DIR`; `value`: Absolute path to repo root; `purpose`: Working directory.
-- `variable`: `AUTOLAB_PROMPT_FILE`; `value`: Path to rendered prompt; `purpose`: Prompt input.
-- `variable`: `AUTOLAB_ALLOWED_EDIT_DIRS`; `value`: Colon-separated allowed dirs; `purpose`: Scope enforcement.
+- `variable`: `AUTOLAB_WORKSPACE_DIR`; `value`: Absolute path to runner workspace; `purpose`: Working directory.
+- `variable`: `AUTOLAB_PROMPT_PATH`; `value`: Path to rendered runner prompt; `purpose`: Prompt input.
+- `variable`: `AUTOLAB_PROMPT_TEMPLATE_PATH`; `value`: Path to source prompt template; `purpose`: Debug/template traceability.
+- `variable`: `AUTOLAB_PROMPT_CONTEXT_PATH`; `value`: Path to rendered context JSON; `purpose`: Scope + stage metadata input.
+- `variable`: `AUTOLAB_PROMPT_AUDIT_PATH`; `value`: Path to rendered audit contract; `purpose`: Human/audit policy access.
+- `variable`: `AUTOLAB_PROMPT_RETRY_BRIEF_PATH`; `value`: Path to rendered retry brief; `purpose`: Focused retry blocker input.
+- `variable`: `AUTOLAB_CORE_ADD_DIRS`; `value`: Comma-separated core add-dir absolute paths; `purpose`: Scope diagnostics.
 
 ## Edit Scope Modes
 

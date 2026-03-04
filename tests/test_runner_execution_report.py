@@ -124,7 +124,9 @@ def _configure_runner_environment(
         runners, "_load_agent_runner_config", lambda _root: runner_config
     )
     monkeypatch.setattr(
-        runners, "_resolve_stage_prompt_path", lambda _root, _stage: template_path
+        runners,
+        "_resolve_stage_prompt_path",
+        lambda _root, _stage, **_kwargs: template_path,
     )
     monkeypatch.setattr(runners, "_load_state", lambda _state_path: dict(state_payload))
     monkeypatch.setattr(runners, "_normalize_state", lambda raw_state: raw_state)
@@ -283,3 +285,20 @@ def test_protected_file_violation_includes_remediation_hint(
     assert payload.get("finalized_at")
     assert "modified protected file(s)" in payload.get("error", "")
     assert "Remediation:" in payload.get("error", "")
+
+
+def test_substitute_runner_command_supports_audit_and_retry_tokens() -> None:
+    rendered = runners._substitute_runner_command(
+        "runner --prompt {prompt_path} --audit {prompt_audit_path} --retry {prompt_retry_brief_path}",
+        stage="implementation",
+        prompt_path=Path("/tmp/implementation.runner.md"),
+        prompt_template_path=Path("/tmp/stage_implementation_runner.md"),
+        prompt_context_path=Path("/tmp/implementation.context.json"),
+        prompt_audit_path=Path("/tmp/implementation.audit.md"),
+        prompt_retry_brief_path=Path("/tmp/implementation.retry_brief.md"),
+        iteration_id="iter1",
+        workspace_dir=Path("/tmp/workspace"),
+        core_add_dirs="",
+    )
+    assert "--audit /tmp/implementation.audit.md" in rendered
+    assert "--retry /tmp/implementation.retry_brief.md" in rendered

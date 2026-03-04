@@ -36,3 +36,4 @@ Notes:
 - Stage-required tokens are defined in `src/autolab/scaffold/.autolab/workflow.yaml`.
 - Unsupported tokens fail `prompt_lint`.
 - Required unresolved tokens fail prompt rendering before runner execution.
+- Implementation stage renders a prompt pack (`implementation.runner.md`, `implementation.context.json`, `implementation.audit.md`, `implementation.retry_brief.md`); token rules are unchanged.
