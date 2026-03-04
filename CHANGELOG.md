@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.3] - 2026-03-04
+
+### Summary
+
+- Added the `textual` dependency and updated resolved package pins in `uv.lock`.
+
+<!-- autolab:range v1.2.2..v1.2.3 -->
+
 ## [1.2.2] - 2026-03-03
 
 ### Summary
