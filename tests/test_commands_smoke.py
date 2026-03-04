@@ -153,10 +153,15 @@ def test_installed_console_script_can_run_render(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation.md"
+    prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation_runner.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(
         "# Stage: implementation\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
+        encoding="utf-8",
+    )
+    audit_prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation.md"
+    audit_prompt_path.write_text(
+        "# Stage: implementation (audit)\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
         encoding="utf-8",
     )
 

@@ -270,3 +270,104 @@ def test_render_entrypoint_via_python_module(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "stage: design" in result.stdout.lower()
     assert result.stderr == ""
+
+
+def test_render_implementation_audit_and_retry_brief_modes(
+    tmp_path: Path, capsys
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    review_result_path = repo / "experiments" / "plan" / "iter1" / "review_result.json"
+    review_result_path.parent.mkdir(parents=True, exist_ok=True)
+    review_result_path.write_text(
+        json.dumps(
+            {
+                "status": "needs_retry",
+                "blocking_findings": ["Fix dry_run failure in trainer integration."],
+                "required_checks": {
+                    "tests": "pass",
+                    "dry_run": "fail",
+                    "schema": "pass",
+                    "env_smoke": "pass",
+                    "docs_target_update": "pass",
+                },
+                "reviewed_at": "2026-03-04T00:00:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    verification_result_path = repo / ".autolab" / "verification_result.json"
+    verification_result_path.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "message": "verification failed: dry_run command returned non-zero",
+                "details": {
+                    "commands": [
+                        {
+                            "name": "dry_run",
+                            "status": "fail",
+                            "detail": "python -m pkg.train exited with code 1",
+                        }
+                    ]
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        ["render", "--state-file", str(state_path), "--audit"]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Implementation Auditor" in captured.out
+
+    exit_code = commands_module.main(
+        ["render", "--state-file", str(state_path), "--retry-brief"]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Implementation Retry Brief" in captured.out
+    assert "Fix dry_run failure in trainer integration." in captured.out
+
+
+def test_render_retry_brief_fails_for_non_implementation_stage(
+    tmp_path: Path, capsys
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    exit_code = commands_module.main(
+        ["render", "--state-file", str(state_path), "--retry-brief"]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "--retry-brief is only available" in captured.err
+
+
+def test_render_fails_fast_when_implementation_runner_template_missing(
+    tmp_path: Path, capsys
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+    (repo / ".autolab" / "prompts" / "stage_implementation_runner.md").unlink()
+
+    exit_code = commands_module.main(["render", "--state-file", str(state_path)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "implementation runner prompt is missing" in captured.err
+    assert "sync-scaffold --force" in captured.err

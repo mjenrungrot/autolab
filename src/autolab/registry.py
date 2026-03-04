@@ -23,6 +23,7 @@ class StageSpec:
     next_stage: str
     verifier_categories: dict[str, bool]
     optional_tokens: frozenset[str] = field(default_factory=frozenset)
+    runner_prompt_file: str = ""
     required_outputs_any_of: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
     required_outputs_if: tuple[
         tuple[tuple[tuple[str, str], ...], tuple[str, ...]], ...
@@ -102,6 +103,7 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
     return StageSpec(
         name=name,
         prompt_file=str(raw.get("prompt_file", f"stage_{name}.md")),
+        runner_prompt_file=str(raw.get("runner_prompt_file", "")).strip(),
         required_tokens=frozenset(str(t) for t in required_tokens_raw),
         optional_tokens=frozenset(str(t) for t in optional_tokens_raw),
         required_outputs=tuple(required_outputs),
@@ -159,6 +161,15 @@ def load_registry(repo_root: Path) -> dict[str, StageSpec]:
 def registry_prompt_files(registry: dict[str, StageSpec]) -> dict[str, str]:
     """Return a ``STAGE_PROMPT_FILES``-compatible mapping from a registry."""
     return {name: spec.prompt_file for name, spec in registry.items()}
+
+
+def registry_runner_prompt_files(registry: dict[str, StageSpec]) -> dict[str, str]:
+    """Return per-stage runner prompt files for stages that declare one."""
+    return {
+        name: spec.runner_prompt_file
+        for name, spec in registry.items()
+        if spec.runner_prompt_file
+    }
 
 
 def registry_required_tokens(registry: dict[str, StageSpec]) -> dict[str, set[str]]:

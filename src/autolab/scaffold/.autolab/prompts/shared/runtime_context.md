@@ -6,6 +6,12 @@ Autolab resolves stage placeholders before runner execution and writes:
 - `.autolab/prompts/rendered/{{stage}}.md`
 - `.autolab/prompts/rendered/{{stage}}.context.json`
 
+Implementation stage uses a prompt-pack layout:
+- `.autolab/prompts/rendered/implementation.runner.md`
+- `.autolab/prompts/rendered/implementation.context.json`
+- `.autolab/prompts/rendered/implementation.audit.md`
+- `.autolab/prompts/rendered/implementation.retry_brief.md`
+
 Resolved placeholders must be concrete for required tokens and must match `.autolab/state.json`.
 If any required token remains unresolved, this stage must fail before work starts.
 

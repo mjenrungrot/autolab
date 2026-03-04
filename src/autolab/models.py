@@ -87,6 +87,11 @@ class RenderedPromptBundle:
     context_path: Path
     prompt_text: str
     context_payload: dict[str, Any]
+    audit_template_path: Path | None = None
+    audit_path: Path | None = None
+    retry_brief_path: Path | None = None
+    audit_text: str = ""
+    retry_brief_text: str = ""
 
 
 @dataclass(frozen=True)

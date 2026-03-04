@@ -21,6 +21,7 @@ from autolab.constants import (
 )
 from autolab.config import (
     _load_launch_execute_policy,
+    _load_protected_files,
     _load_verifier_policy,
     _resolve_policy_python_bin,
 )
@@ -31,6 +32,7 @@ from autolab.registry import (
     load_registry,
     registry_prompt_files,
     registry_required_tokens,
+    registry_runner_prompt_files,
 )
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
@@ -48,15 +50,33 @@ from autolab.utils import (
 )
 
 
-def _resolve_stage_prompt_path(repo_root: Path, stage: str) -> Path:
+def _resolve_stage_prompt_path(
+    repo_root: Path, stage: str, *, prompt_role: str = "runner"
+) -> Path:
     registry = load_registry(repo_root)
     reg_prompt_files = registry_prompt_files(registry) if registry else {}
-    prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage)
-    if prompt_name is None:
+    reg_runner_prompt_files = registry_runner_prompt_files(registry) if registry else {}
+
+    prompt_name = ""
+    if prompt_role == "audit":
+        prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage, "")
+    elif stage == "implementation":
+        prompt_name = (
+            reg_runner_prompt_files.get(stage) or "stage_implementation_runner.md"
+        )
+    else:
+        prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage, "")
+
+    if prompt_name is None or not str(prompt_name).strip():
         raise StageCheckError(f"no stage prompt mapping is defined for '{stage}'")
     candidate = repo_root / ".autolab" / "prompts" / prompt_name
     if candidate.exists():
         return candidate
+    if stage == "implementation" and prompt_role == "runner":
+        raise StageCheckError(
+            "implementation runner prompt is missing "
+            f"({candidate}). Run `autolab sync-scaffold --force` to restore prompt-pack assets."
+        )
     raise StageCheckError(f"stage prompt is missing for '{stage}' ({candidate})")
 
 
@@ -698,6 +718,33 @@ def _build_prompt_context(
         str(path): int(count)
         for path, count in media_discovery.project_root_counts.items()
     }
+    stage_attempt = int(state.get("stage_attempt", 0) or 0)
+    max_stage_attempts = int(state.get("max_stage_attempts", 0) or 0)
+    remaining_attempts = max(0, max_stage_attempts - stage_attempt)
+    registry = load_registry(repo_root)
+    stage_spec = registry.get(stage) if registry else None
+    stage_metadata: dict[str, Any] = {}
+    if isinstance(stage_spec, StageSpec):
+        stage_metadata = {
+            "prompt_file": stage_spec.prompt_file,
+            "runner_prompt_file": stage_spec.runner_prompt_file,
+            "required_outputs": list(stage_spec.required_outputs),
+            "required_outputs_any_of": [
+                list(group) for group in stage_spec.required_outputs_any_of
+            ],
+            "required_outputs_if": [
+                {
+                    "conditions": {key: value for key, value in conditions},
+                    "outputs": list(outputs),
+                }
+                for conditions, outputs in stage_spec.required_outputs_if
+            ],
+            "required_tokens": sorted(stage_spec.required_tokens),
+            "optional_tokens": sorted(stage_spec.optional_tokens),
+            "verifier_categories": dict(stage_spec.verifier_categories),
+        }
+    protected_files = _load_protected_files(policy, auto_mode=False)
+
     return {
         "generated_at": _utc_now(),
         "stage": stage,
@@ -735,7 +782,153 @@ def _build_prompt_context(
         "project_data_media_count_summary": summarize_root_counts(
             media_discovery.project_root_counts
         ),
+        "retry_counters": {
+            "stage_attempt": stage_attempt,
+            "max_stage_attempts": max_stage_attempts,
+            "remaining_attempts": remaining_attempts,
+        },
+        "protected_files": protected_files,
+        "stage_metadata": stage_metadata,
     }
+
+
+def _sanitize_retry_blocker(text: str, *, max_chars: int = 240) -> str:
+    compact = " ".join(str(text).split())
+    if not compact:
+        return ""
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 3].rstrip() + "..."
+
+
+def _implementation_retry_blockers(
+    repo_root: Path, *, context_payload: dict[str, Any]
+) -> list[str]:
+    blockers: list[str] = []
+    seen: set[str] = set()
+
+    iteration_id = str(context_payload.get("iteration_id", "")).strip()
+    experiment_id = str(context_payload.get("experiment_id", "")).strip()
+    iteration_dir = Path()
+    if iteration_id:
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+
+    review_payload = (
+        _load_json_if_exists(iteration_dir / "review_result.json")
+        if iteration_id and iteration_dir.exists()
+        else None
+    )
+    if isinstance(review_payload, dict):
+        review_status = str(review_payload.get("status", "")).strip()
+        if review_status in {"needs_retry", "failed"}:
+            blockers.append(f"review_result status is '{review_status}'")
+        findings = review_payload.get("blocking_findings")
+        if isinstance(findings, list):
+            for finding in findings:
+                normalized = _sanitize_retry_blocker(str(finding))
+                if normalized:
+                    blockers.append(normalized)
+
+    verification_payload = _load_json_if_exists(
+        repo_root / ".autolab" / "verification_result.json"
+    )
+    if isinstance(verification_payload, dict):
+        if not bool(verification_payload.get("passed", False)):
+            verification_message = _sanitize_retry_blocker(
+                str(verification_payload.get("message", ""))
+            )
+            if verification_message:
+                blockers.append(verification_message)
+        details = verification_payload.get("details")
+        commands = details.get("commands") if isinstance(details, dict) else None
+        if isinstance(commands, list):
+            for command in commands:
+                if not isinstance(command, dict):
+                    continue
+                status = str(command.get("status", "")).strip().lower()
+                if status in {"pass", "ok", "skip"}:
+                    continue
+                name = str(command.get("name", "")).strip() or "verifier"
+                detail = _sanitize_retry_blocker(
+                    str(
+                        command.get("detail")
+                        or command.get("stderr")
+                        or command.get("stdout")
+                        or ""
+                    )
+                )
+                if detail:
+                    blockers.append(f"{name}: {detail}")
+
+    for fallback_source in (
+        context_payload.get("verifier_errors"),
+        context_payload.get("review_feedback"),
+    ):
+        if not isinstance(fallback_source, str):
+            continue
+        for raw_line in fallback_source.splitlines():
+            candidate = _sanitize_retry_blocker(raw_line)
+            if not candidate:
+                continue
+            lowered = candidate.lower()
+            if lowered.startswith("unavailable:"):
+                continue
+            if len(candidate) < 24:
+                continue
+            blockers.append(candidate)
+            if len(blockers) >= 12:
+                break
+        if len(blockers) >= 12:
+            break
+
+    deduped: list[str] = []
+    for blocker in blockers:
+        normalized = blocker.strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _build_implementation_retry_brief(
+    repo_root: Path, *, context_payload: dict[str, Any]
+) -> str:
+    blockers = _implementation_retry_blockers(
+        repo_root, context_payload=context_payload
+    )
+    selected = blockers[:7]
+    while len(selected) < 3:
+        if len(selected) == 0:
+            selected.append(
+                "No prior blocking findings were recorded; treat this as a fresh implementation pass."
+            )
+        elif len(selected) == 1:
+            selected.append(
+                "No additional failing verifier commands were found in `.autolab/verification_result.json`."
+            )
+        else:
+            selected.append(
+                "After edits, run `autolab verify --stage implementation` and record concrete failures in `implementation_plan.md`."
+            )
+
+    lines = [
+        "# Implementation Retry Brief",
+        "",
+        "Use this blocker summary for focused remediation. Do not paste raw logs or transcripts.",
+        "",
+    ]
+    lines.extend(f"- {entry}" for entry in selected)
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
@@ -828,6 +1021,12 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     max_stage_attempts = (
         str(state_snapshot.get("max_stage_attempts", "")).strip() or "-"
     )
+    retry_counters = context_payload.get("retry_counters")
+    if not isinstance(retry_counters, dict):
+        retry_counters = {}
+    remaining_attempts = str(retry_counters.get("remaining_attempts", "")).strip()
+    if not remaining_attempts:
+        remaining_attempts = "-"
     assistant_mode = str(state_snapshot.get("assistant_mode", "")).strip() or "off"
     current_task_id = str(state_snapshot.get("current_task_id", "")).strip() or "none"
     last_run_id = str(state_snapshot.get("last_run_id", "")).strip() or "none"
@@ -869,6 +1068,13 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
             count_parts.append(f"{root}={count}")
         if count_parts:
             project_data_counts_text = ", ".join(count_parts)
+    protected_files_raw = context_payload.get("protected_files")
+    protected_files = (
+        [str(item).strip() for item in protected_files_raw if str(item).strip()]
+        if isinstance(protected_files_raw, list)
+        else []
+    )
+    protected_files_text = ", ".join(protected_files) if protected_files else "none"
 
     return (
         "## Runtime Stage Context\n"
@@ -877,6 +1083,7 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- iteration_path: {iteration_path}\n"
         f"- detected_host_mode: {host_mode}\n"
         f"- stage_attempt: {stage_attempt}/{max_stage_attempts}\n"
+        f"- remaining_stage_attempts: {remaining_attempts}\n"
         f"- assistant_mode: {assistant_mode}\n"
         f"- current_task_id: {current_task_id}\n"
         f"- last_run_id: {last_run_id}\n"
@@ -888,6 +1095,7 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- disallowed_edit_dirs: {disallowed_text}\n"
         f"- project_data_roots: {project_data_roots_text}\n"
         f"- project_data_media_counts: {project_data_counts_text}\n"
+        f"- protected_files: {protected_files_text}\n"
     )
 
 
@@ -996,17 +1204,113 @@ def _render_stage_prompt(
     runner_scope: dict[str, Any] | None = None,
     write_outputs: bool = True,
 ) -> RenderedPromptBundle:
+    def _render_template_text(
+        *,
+        source_path: Path,
+        source_text: str,
+        inject_registry_boilerplate: bool,
+        required_tokens: set[str],
+        token_values: dict[str, str],
+        context_payload: dict[str, Any],
+    ) -> str:
+        template_text = source_text
+        if inject_registry_boilerplate:
+            template_text = _inject_registry_boilerplate(template_text, stage, registry)
+
+        tokens_in_template = sorted(
+            {
+                match.group(1).strip()
+                for match in PROMPT_TOKEN_PATTERN.finditer(template_text)
+            }
+        )
+        unsupported_tokens = sorted(
+            token for token in tokens_in_template if token not in token_values
+        )
+        if unsupported_tokens:
+            _append_log(
+                repo_root,
+                (
+                    "prompt render unsupported tokens "
+                    f"stage={stage} template={source_path} tokens={unsupported_tokens}"
+                ),
+            )
+            raise StageCheckError(
+                f"prompt template has unsupported token(s) for stage '{stage}': {', '.join(unsupported_tokens)}"
+            )
+
+        required_values = {
+            token: str(context_payload.get(token, "")).strip()
+            for token in required_tokens
+        }
+        missing_required = sorted(
+            token
+            for token in tokens_in_template
+            if token in required_tokens and not required_values.get(token, "")
+        )
+        if missing_required:
+            _append_log(
+                repo_root,
+                (
+                    "prompt render missing required tokens "
+                    f"stage={stage} template={source_path} tokens={missing_required}"
+                ),
+            )
+            raise StageCheckError(
+                f"prompt template missing required value(s) for stage '{stage}': {', '.join(missing_required)}"
+            )
+
+        def _replace_token(match: re.Match[str]) -> str:
+            token = match.group(1).strip()
+            value = token_values.get(token, "")
+            text = str(value).strip()
+            if text:
+                return text
+            return f"unavailable: {token}"
+
+        rendered_text = PROMPT_TOKEN_PATTERN.sub(_replace_token, template_text)
+        if "{{stage_context}}" not in template_text:
+            stage_context_block = token_values.get("stage_context", "").strip()
+            if stage_context_block:
+                rendered_text = f"{rendered_text.rstrip()}\n\n{stage_context_block}\n"
+
+        unresolved_tokens = sorted(
+            {
+                match.group(1).strip()
+                for match in PROMPT_TOKEN_PATTERN.finditer(rendered_text)
+            }
+        )
+        unresolved_literals = [
+            literal for literal in PROMPT_LITERAL_TOKENS if literal in rendered_text
+        ]
+        if unresolved_tokens or unresolved_literals:
+            _append_log(
+                repo_root,
+                (
+                    "prompt render unresolved placeholders "
+                    f"stage={stage} template={source_path} tokens={unresolved_tokens} "
+                    f"literals={unresolved_literals}"
+                ),
+            )
+            unresolved_text = (
+                ", ".join([*unresolved_tokens, *unresolved_literals]) or "<unknown>"
+            )
+            raise StageCheckError(
+                f"rendered prompt contains unresolved placeholders for stage '{stage}': {unresolved_text}"
+            )
+
+        return rendered_text
+
     registry = load_registry(repo_root)
 
     try:
-        template_text = template_path.read_text(encoding="utf-8")
-        template_text = _render_prompt_includes(repo_root, template_text, stage=stage)
+        runner_template_text = template_path.read_text(encoding="utf-8")
+        runner_template_text = _render_prompt_includes(
+            repo_root, runner_template_text, stage=stage
+        )
     except Exception as exc:
         raise StageCheckError(
             f"agent runner prompt could not be read at {template_path}: {exc}"
         ) from exc
-
-    template_text = _inject_registry_boilerplate(template_text, stage, registry)
 
     context_payload = _build_prompt_context(
         repo_root,
@@ -1018,96 +1322,76 @@ def _render_stage_prompt(
         context_payload
     )
     token_values = _context_token_values(context_payload)
-
-    tokens_in_template = sorted(
-        {
-            match.group(1).strip()
-            for match in PROMPT_TOKEN_PATTERN.finditer(template_text)
-        }
-    )
-    unsupported_tokens = sorted(
-        token for token in tokens_in_template if token not in token_values
-    )
-    if unsupported_tokens:
-        _append_log(
-            repo_root,
-            f"prompt render unsupported tokens stage={stage} template={template_path} tokens={unsupported_tokens}",
-        )
-        raise StageCheckError(
-            f"prompt template has unsupported token(s) for stage '{stage}': {', '.join(unsupported_tokens)}"
-        )
-
     reg_required = registry_required_tokens(registry) if registry else {}
     required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(
         stage, {"iteration_id"}
     )
-    required_values = {
-        token: str(context_payload.get(token, "")).strip() for token in required_tokens
-    }
-    missing_required = sorted(
-        token
-        for token in tokens_in_template
-        if token in required_tokens and not required_values.get(token, "")
+
+    rendered_text = _render_template_text(
+        source_path=template_path,
+        source_text=runner_template_text,
+        inject_registry_boilerplate=True,
+        required_tokens=required_tokens,
+        token_values=token_values,
+        context_payload=context_payload,
     )
-    if missing_required:
-        _append_log(
-            repo_root,
-            f"prompt render missing required tokens stage={stage} template={template_path} tokens={missing_required}",
-        )
-        raise StageCheckError(
-            f"prompt template missing required value(s) for stage '{stage}': {', '.join(missing_required)}"
-        )
 
-    def _replace_token(match: re.Match[str]) -> str:
-        token = match.group(1).strip()
-        value = token_values.get(token, "")
-        text = str(value).strip()
-        if text:
-            return text
-        return f"unavailable: {token}"
-
-    rendered_text = PROMPT_TOKEN_PATTERN.sub(_replace_token, template_text)
-    if "{{stage_context}}" not in template_text:
-        stage_context_block = token_values.get("stage_context", "").strip()
-        if stage_context_block:
-            rendered_text = f"{rendered_text.rstrip()}\n\n{stage_context_block}\n"
-
-    unresolved_tokens = sorted(
-        {
-            match.group(1).strip()
-            for match in PROMPT_TOKEN_PATTERN.finditer(rendered_text)
-        }
-    )
-    unresolved_literals = [
-        literal for literal in PROMPT_LITERAL_TOKENS if literal in rendered_text
-    ]
-    if unresolved_tokens or unresolved_literals:
-        _append_log(
-            repo_root,
-            (
-                f"prompt render unresolved placeholders stage={stage} template={template_path} "
-                f"tokens={unresolved_tokens} literals={unresolved_literals}"
-            ),
-        )
-        unresolved_text = (
-            ", ".join([*unresolved_tokens, *unresolved_literals]) or "<unknown>"
-        )
-        raise StageCheckError(
-            f"rendered prompt contains unresolved placeholders for stage '{stage}': {unresolved_text}"
-        )
-
+    audit_template_path: Path | None = None
+    audit_text = ""
+    retry_brief_text = ""
     rendered_dir = repo_root / ".autolab" / "prompts" / "rendered"
-    rendered_path = rendered_dir / f"{stage}.md"
-    context_path = rendered_dir / f"{stage}.context.json"
+    if stage == "implementation":
+        rendered_path = rendered_dir / "implementation.runner.md"
+        context_path = rendered_dir / "implementation.context.json"
+        audit_path = rendered_dir / "implementation.audit.md"
+        retry_brief_path = rendered_dir / "implementation.retry_brief.md"
+
+        audit_template_path = _resolve_stage_prompt_path(
+            repo_root, stage, prompt_role="audit"
+        )
+        try:
+            audit_template_text = audit_template_path.read_text(encoding="utf-8")
+            audit_template_text = _render_prompt_includes(
+                repo_root, audit_template_text, stage=stage
+            )
+        except Exception as exc:
+            raise StageCheckError(
+                f"implementation audit prompt could not be read at {audit_template_path}: {exc}"
+            ) from exc
+
+        audit_text = _render_template_text(
+            source_path=audit_template_path,
+            source_text=audit_template_text,
+            inject_registry_boilerplate=True,
+            required_tokens=required_tokens,
+            token_values=token_values,
+            context_payload=context_payload,
+        )
+        retry_brief_text = _build_implementation_retry_brief(
+            repo_root, context_payload=context_payload
+        )
+    else:
+        rendered_path = rendered_dir / f"{stage}.md"
+        context_path = rendered_dir / f"{stage}.context.json"
+        audit_path = None
+        retry_brief_path = None
+
     if write_outputs:
         rendered_dir.mkdir(parents=True, exist_ok=True)
         rendered_path.write_text(rendered_text, encoding="utf-8")
+        if isinstance(audit_path, Path):
+            audit_path.write_text(audit_text, encoding="utf-8")
+        if isinstance(retry_brief_path, Path):
+            retry_brief_path.write_text(retry_brief_text, encoding="utf-8")
 
     context_payload = {
         **context_payload,
         "template_path": str(template_path),
         "rendered_prompt_path": str(rendered_path),
         "rendered_context_path": str(context_path),
+        "audit_template_path": str(audit_template_path) if audit_template_path else "",
+        "rendered_audit_path": str(audit_path) if audit_path else "",
+        "rendered_retry_brief_path": str(retry_brief_path) if retry_brief_path else "",
     }
     if write_outputs:
         _write_json(context_path, context_payload)
@@ -1118,4 +1402,9 @@ def _render_stage_prompt(
         context_path=context_path,
         prompt_text=rendered_text,
         context_payload=context_payload,
+        audit_template_path=audit_template_path,
+        audit_path=audit_path,
+        retry_brief_path=retry_brief_path,
+        audit_text=audit_text,
+        retry_brief_text=retry_brief_text,
     )

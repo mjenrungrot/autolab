@@ -66,6 +66,7 @@ stages:
       runner_eligible: true
   implementation:
     prompt_file: stage_implementation.md
+    runner_prompt_file: stage_implementation_runner.md
     required_tokens: [iteration_id, iteration_path]
     optional_tokens: [review_feedback, verifier_errors]
     required_outputs: [implementation_plan.md]

@@ -127,6 +127,30 @@ def test_snapshot_render_preview_failure_is_nonfatal(
     assert snapshot.recommended_actions[0].action_id == "open_stage_prompt"
 
 
+def test_snapshot_render_preview_includes_audit_and_retry_for_implementation(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="implementation")
+    prompts_dir = repo / ".autolab" / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / "stage_implementation_runner.md").write_text(
+        "# Runner\nstage: {{stage}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_implementation.md").write_text(
+        "# Audit\nstage: {{stage}}\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.render_preview.status == "ok"
+    assert snapshot.render_preview.audit_text
+    assert "Implementation Retry Brief" in snapshot.render_preview.retry_brief_text
+
+
 def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"

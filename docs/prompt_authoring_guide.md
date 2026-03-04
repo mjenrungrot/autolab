@@ -6,6 +6,7 @@ This guide describes how to author scaffold stage prompts under `src/autolab/sca
 
 - Stage files use `stage_<name>.md` (for example `stage_design.md`).
 - Stage metadata is canonical in `.autolab/workflow.yaml` (prompt file mapping, required tokens, verifier capabilities).
+- Stages may optionally declare `runner_prompt_file` in `.autolab/workflow.yaml` when runner-facing prompt text differs from audit contract text.
 - `required_outputs` entries in `.autolab/workflow.yaml` should be concrete relative paths; use `<RUN_ID>` token for run-scoped artifacts (for example `runs/<RUN_ID>/run_manifest.json`).
 - Registry/policy output paths must use angle-bracket pattern tokens (for example `<RUN_ID>`). Prompt-style mustache tokens (for example `{{run_id}}`) are reserved for prompt rendering only.
 - Shared includes live under `prompts/shared/` and are referenced with:
@@ -53,6 +54,13 @@ Autolab writes rendered artifacts to:
 
 - `.autolab/prompts/rendered/<stage>.md`
 - `.autolab/prompts/rendered/<stage>.context.json`
+
+Implementation stage uses a prompt-pack layout:
+
+- `.autolab/prompts/rendered/implementation.runner.md`
+- `.autolab/prompts/rendered/implementation.context.json`
+- `.autolab/prompts/rendered/implementation.audit.md`
+- `.autolab/prompts/rendered/implementation.retry_brief.md`
 
 These files are the exact payload passed to agent runners.
 

@@ -476,6 +476,8 @@ def _load_render_preview(
             template_path=None,
             prompt_text="",
             prompt_excerpt="Render preview unavailable: no stage is selected.",
+            audit_text="",
+            retry_brief_text="",
             context_payload={},
             error_message="no stage is selected",
         )
@@ -490,6 +492,8 @@ def _load_render_preview(
             template_path=None,
             prompt_text="",
             prompt_excerpt=f"Render preview unavailable.\n{message}",
+            audit_text="",
+            retry_brief_text="",
             context_payload={},
             error_message=message,
         )
@@ -513,6 +517,8 @@ def _load_render_preview(
             template_path=template_path,
             prompt_text="",
             prompt_excerpt=f"Render preview failed.\n{message}",
+            audit_text="",
+            retry_brief_text="",
             context_payload={},
             error_message=message,
         )
@@ -523,6 +529,8 @@ def _load_render_preview(
         template_path=template_path,
         prompt_text=bundle.prompt_text,
         prompt_excerpt=_build_render_excerpt(bundle.prompt_text),
+        audit_text=bundle.audit_text,
+        retry_brief_text=bundle.retry_brief_text,
         context_payload=dict(bundle.context_payload),
         error_message="",
     )
@@ -599,6 +607,23 @@ def _build_recommended_actions(
                     reason="Check render context values before running commands.",
                 )
             )
+            if render_preview.audit_text.strip():
+                recommended.append(
+                    RecommendedAction(
+                        action_id="open_rendered_audit",
+                        reason="Review the human-readable audit contract for this stage.",
+                    )
+                )
+            if (
+                current_stage == "implementation"
+                and render_preview.retry_brief_text.strip()
+            ):
+                recommended.append(
+                    RecommendedAction(
+                        action_id="open_retry_brief",
+                        reason="Use the retry brief blockers before making edits.",
+                    )
+                )
             recommended.append(
                 RecommendedAction(
                     action_id="open_stage_prompt",
@@ -867,7 +892,9 @@ def resolve_stage_prompt_path(
 ) -> Path | None:
     _fallback_prompt_filename = STAGE_PROMPT_FILES.get(stage_name)
     try:
-        return _resolve_render_template_path(snapshot.repo_root, stage_name)
+        return _resolve_render_template_path(
+            snapshot.repo_root, stage_name, prompt_role="audit"
+        )
     except Exception:
         if not _fallback_prompt_filename:
             return None

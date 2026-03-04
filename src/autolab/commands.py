@@ -2372,7 +2372,9 @@ def _cmd_render(args: argparse.Namespace) -> int:
     state_for_render["stage"] = stage
 
     try:
-        template_path = _resolve_stage_prompt_path(repo_root, stage)
+        template_path = _resolve_stage_prompt_path(
+            repo_root, stage, prompt_role="runner"
+        )
         bundle = _render_stage_prompt(
             repo_root,
             stage=stage,
@@ -2386,6 +2388,23 @@ def _cmd_render(args: argparse.Namespace) -> int:
         return 1
 
     rendered_text = bundle.prompt_text
+    if bool(getattr(args, "audit", False)):
+        if not bundle.audit_text:
+            print(
+                "autolab render: ERROR --audit is only available for stage 'implementation'",
+                file=sys.stderr,
+            )
+            return 1
+        rendered_text = bundle.audit_text
+    elif bool(getattr(args, "retry_brief", False)):
+        if not bundle.retry_brief_text:
+            print(
+                "autolab render: ERROR --retry-brief is only available for stage 'implementation'",
+                file=sys.stderr,
+            )
+            return 1
+        rendered_text = bundle.retry_brief_text
+
     if rendered_text:
         sys.stdout.write(rendered_text)
     if not rendered_text.endswith("\n"):
@@ -3165,12 +3184,26 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     max_retries = _resolve_stage_max_retries(policy, stage_name)
     python_bin = _resolve_policy_python_bin(policy)
 
-    # Resolve prompt file path
+    # Resolve prompt file paths
     prompt_path = repo_root / ".autolab" / "prompts" / spec.prompt_file
+    runner_prompt_path = prompt_path
+    try:
+        runner_prompt_path = _resolve_stage_prompt_path(
+            repo_root, stage_name, prompt_role="runner"
+        )
+    except StageCheckError:
+        runner_prompt_path = prompt_path
+
     try:
         resolved_prompt_path = prompt_path.relative_to(repo_root).as_posix()
     except ValueError:
         resolved_prompt_path = str(prompt_path)
+    try:
+        resolved_runner_prompt_path = runner_prompt_path.relative_to(
+            repo_root
+        ).as_posix()
+    except ValueError:
+        resolved_runner_prompt_path = str(runner_prompt_path)
 
     # Determine which verifier scripts would run
     verifier_scripts: list[str] = []
@@ -3228,6 +3261,8 @@ def _cmd_explain(args: argparse.Namespace) -> int:
             "stage": stage_name,
             "prompt_file": spec.prompt_file,
             "resolved_prompt_path": resolved_prompt_path,
+            "runner_prompt_file": spec.runner_prompt_file or None,
+            "resolved_runner_prompt_path": resolved_runner_prompt_path,
             "required_tokens": sorted(spec.required_tokens),
             "optional_tokens": sorted(spec.optional_tokens),
             "required_outputs": output_notes,
@@ -3249,6 +3284,9 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         print("")
         print(f"prompt_file: {spec.prompt_file}")
         print(f"resolved_prompt_path: {resolved_prompt_path}")
+        if spec.runner_prompt_file:
+            print(f"runner_prompt_file: {spec.runner_prompt_file}")
+            print(f"resolved_runner_prompt_path: {resolved_runner_prompt_path}")
         print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
         print(f"optional_tokens: {', '.join(sorted(spec.optional_tokens)) or '(none)'}")
         required_outputs_text = (
@@ -3998,6 +4036,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--context",
         action="store_true",
         help="Append resolved prompt context JSON after prompt text.",
+    )
+    render_output_mode = render.add_mutually_exclusive_group()
+    render_output_mode.add_argument(
+        "--audit",
+        action="store_true",
+        help="Render the stage audit contract (implementation stage only).",
+    )
+    render_output_mode.add_argument(
+        "--retry-brief",
+        action="store_true",
+        help="Render the distilled retry blocker brief (implementation stage only).",
     )
     render.set_defaults(handler=_cmd_render)
 

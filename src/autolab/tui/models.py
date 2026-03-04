@@ -83,6 +83,8 @@ class RenderPreview:
     template_path: Path | None
     prompt_text: str
     prompt_excerpt: str
+    audit_text: str = ""
+    retry_brief_text: str = ""
     context_payload: dict[str, Any] = field(default_factory=dict)
     error_message: str = ""
 

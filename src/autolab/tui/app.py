@@ -2371,6 +2371,8 @@ class AutolabCockpitApp(App[None]):
                     yield Button("Open Editor", id="file-open-editor")
                     yield Button("Open Rendered", id="file-open-rendered")
                     yield Button("Open Context", id="file-open-context")
+                    yield Button("Open Audit", id="file-open-audit")
+                    yield Button("Open Retry", id="file-open-retry")
                     yield Button("Open Template", id="file-open-prompt")
                     yield Button("Open State", id="file-open-state")
                     yield Button("Filter: All", id="file-toggle-missing-filter")
@@ -5250,6 +5252,8 @@ class AutolabCockpitApp(App[None]):
             "file-open-editor": "open_selected_artifact_editor",
             "file-open-rendered": "open_rendered_prompt",
             "file-open-context": "open_render_context",
+            "file-open-audit": "open_rendered_audit",
+            "file-open-retry": "open_retry_brief",
             "file-open-prompt": "open_stage_prompt",
             "file-open-state": "open_state_history",
             "file-run-loop": "run_loop",
@@ -5468,6 +5472,34 @@ class AutolabCockpitApp(App[None]):
                 editor_path=None,
                 source_path=None,
                 render_hint="json",
+            )
+            return
+
+        if action_id == "open_rendered_audit":
+            preview = snapshot.render_preview
+            if preview.status != "ok" or not preview.audit_text.strip():
+                self.notify("Rendered audit contract is not available.")
+                return
+            await self._open_text_viewer(
+                title=f"Rendered Audit ({preview.stage})",
+                text=preview.audit_text,
+                editor_path=preview.template_path,
+                source_path=preview.template_path,
+                render_hint="markdown",
+            )
+            return
+
+        if action_id == "open_retry_brief":
+            preview = snapshot.render_preview
+            if preview.status != "ok" or not preview.retry_brief_text.strip():
+                self.notify("Retry brief is not available for this stage.")
+                return
+            await self._open_text_viewer(
+                title=f"Retry Brief ({preview.stage})",
+                text=preview.retry_brief_text,
+                editor_path=None,
+                source_path=None,
+                render_hint="markdown",
             )
             return
 

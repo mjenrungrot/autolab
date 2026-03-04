@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.4
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.5
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -97,19 +97,21 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
 
-**Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. It defaults to `state.stage`. Use `--stage <stage>` to override, and `--context` to append resolved context JSON.
+**Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. It defaults to `state.stage`. Use `--stage <stage>` to override, and `--context` to append resolved context JSON. For `implementation`, default output is the runner prompt; use `--audit` or `--retry-brief` for prompt-pack views.
 
 ```bash
 autolab render
 autolab render --stage implementation
 autolab render --stage design --context
+autolab render --stage implementation --audit
+autolab render --stage implementation --retry-brief
 ```
 
 **Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) with render-aware guidance:
 
 - Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
 - Home can resolve `human_review` directly (`pass|retry|stop`) using the same unlock + confirm flow as other mutating actions.
-- Files supports quick-open for rendered prompt, render context, prompt template, state, and stage artifacts.
+- Files supports quick-open for rendered prompt, render context, rendered audit contract, implementation retry brief, prompt template, state, and stage artifacts.
 - Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
 
@@ -136,7 +138,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 
 - **hypothesis** -- `hypothesis.md`; advances when metric/target/criteria fields are present.
 - **design** -- `design.yaml`; advances when required keys are present.
-- **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`).
+- **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`). Prompt-pack outputs for this stage are rendered under `.autolab/prompts/rendered/` as `implementation.runner.md`, `implementation.context.json`, `implementation.audit.md`, and `implementation.retry_brief.md`.
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
 - **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.
 - **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.
