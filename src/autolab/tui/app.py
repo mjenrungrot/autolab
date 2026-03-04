@@ -2290,6 +2290,7 @@ class AutolabCockpitApp(App[None]):
             "Keys: 1-5 view | [/] cycle views | Home/End list | Enter activate | o open | m mode quick | ? help",
             id="key-hints",
             classes="tone-muted",
+            markup=False,
         )
         with Horizontal(id="nav-row"):
             yield Button("1 Home", id="nav-home", variant="primary")
@@ -4343,13 +4344,13 @@ class AutolabCockpitApp(App[None]):
         commands: list[SystemCommand],
     ) -> list[SystemCommand]:
         deduped: list[SystemCommand] = []
-        seen: set[tuple[str, str]] = set()
+        seen_titles: set[str] = set()
         for command in commands:
-            key = (command.title.casefold(), command.description.casefold())
-            if key in seen:
+            normalized_title = command.title.casefold()
+            if normalized_title in seen_titles:
                 continue
             deduped.append(command)
-            seen.add(key)
+            seen_titles.add(normalized_title)
         return deduped
 
     def action_show_home(self) -> None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.4] - 2026-03-04
+
+### Summary
+
+- Made GitHub Actions CI fail when pytest fails by removing non-blocking test execution.
+- Fixed TUI command palette deduplication to work with current Textual `SystemCommand` fields.
+- Stabilized TUI key-hints rendering and aligned regression tests with current status/output formatting.
+
+<!-- autolab:range v1.2.3..v1.2.4 -->
+
 ## [1.2.3] - 2026-03-04
 
 ### Summary
