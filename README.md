@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.1
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.2
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -47,6 +47,9 @@ Run formatter/style checks locally:
 
 This also syncs the pinned release tag in `README.md` and can sync the current
 `vX.Y.Z` tag to GitHub (`origin`) after each commit on the default branch.
+On default-branch commits, pre-commit now fails hard unless staged `CHANGELOG.md`
+contains a valid section for exactly `v<previous>..v<current>` with a real
+`### Summary` block.
 By default, hooks only run on the default branch and release-tag pruning is disabled
 unless `scripts/sync_release_tags.py --prune` is used explicitly.
 These local hooks are optional; CI workflows under `.github/workflows/` are authoritative.

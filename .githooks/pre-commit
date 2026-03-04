@@ -17,6 +17,39 @@ else
   exit 1
 fi
 
+project_version() {
+  "$python_bin" - "$repo_root/pyproject.toml" <<'PY'
+import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except Exception:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+try:
+    import tomli
+except Exception:  # pragma: no cover
+    tomli = None  # type: ignore[assignment]
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+if tomllib is not None:
+    payload = tomllib.loads(text)
+elif tomli is not None:
+    payload = tomli.loads(text)
+else:
+    raise RuntimeError("python tomllib/tomli is unavailable; use Python 3.11+ or install tomli")
+
+project = payload.get("project")
+if not isinstance(project, dict):
+    raise RuntimeError("pyproject.toml missing [project] table")
+version = str(project.get("version", "")).strip()
+if not version:
+    raise RuntimeError("pyproject.toml missing [project].version")
+print(version)
+PY
+}
+
 if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/mdformat" ]; then
   mdformat_bin="${VIRTUAL_ENV}/bin/mdformat"
 elif [ -x "${repo_root}/.venv/bin/mdformat" ]; then
@@ -90,6 +123,38 @@ fi
 if [ "$current_branch" != "$default_branch" ]; then
   echo "pre-commit: skipping version bump on branch '$current_branch' (default branch: '$default_branch')"
   exit 0
+fi
+
+old_version="$(project_version)"
+new_version="$(
+  "$python_bin" - "$old_version" <<'PY'
+import re
+import sys
+
+match = re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", sys.argv[1].strip())
+if match is None:
+    raise RuntimeError(f"unsupported version '{sys.argv[1]}' in pyproject.toml")
+major, minor, patch = (int(part) for part in match.groups())
+print(f"{major}.{minor}.{patch + 1}")
+PY
+)"
+
+staged_files_for_validation="$(git diff --cached --name-only --diff-filter=ACMR)"
+if ! printf '%s\n' "$staged_files_for_validation" | grep -qx 'CHANGELOG.md'; then
+  echo "pre-commit: ERROR CHANGELOG.md must be staged and updated for v${old_version}..v${new_version}" >&2
+  echo "pre-commit: run: $python_bin scripts/changelog.py scaffold --previous-version ${old_version} --current-version ${new_version}" >&2
+  echo "pre-commit: then edit '### Summary', stage CHANGELOG.md, and retry commit." >&2
+  exit 1
+fi
+
+if ! "$python_bin" scripts/changelog.py validate \
+  --previous-version "$old_version" \
+  --current-version "$new_version" \
+  --from-index; then
+  echo "pre-commit: ERROR changelog validation failed for v${old_version}..v${new_version}" >&2
+  echo "pre-commit: ensure CHANGELOG.md has section [${new_version}] with marker:" >&2
+  echo "pre-commit:   <!-- autolab:range v${old_version}..v${new_version} -->" >&2
+  exit 1
 fi
 
 "$python_bin" scripts/bump_version.py

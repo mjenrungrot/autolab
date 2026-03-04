@@ -31,7 +31,44 @@ jobs:
       - name: Verify golden iteration
         run: |
           python -m autolab verify-golden
+      - name: Resolve release tags
+        id: release_meta
+        run: |
+          current_tag="${GITHUB_REF_NAME}"
+          if ! printf '%s\n' "${current_tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "release: ERROR expected semver tag vMAJOR.MINOR.PATCH, got '${current_tag}'" >&2
+            exit 1
+          fi
+          previous_tag="$(
+            git tag --list 'v*' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | grep -Fxv "${current_tag}" \
+              | tail -n 1
+          )"
+          if [ -z "${previous_tag}" ]; then
+            echo "release: ERROR no previous semver tag found before ${current_tag}" >&2
+            exit 1
+          fi
+          echo "current_tag=${current_tag}" >> "${GITHUB_OUTPUT}"
+          echo "current_version=${current_tag#v}" >> "${GITHUB_OUTPUT}"
+          echo "previous_tag=${previous_tag}" >> "${GITHUB_OUTPUT}"
+          echo "previous_version=${previous_tag#v}" >> "${GITHUB_OUTPUT}"
+      - name: Validate changelog range
+        run: |
+          python scripts/changelog.py validate \
+            --previous-version "${{ steps.release_meta.outputs.previous_version }}" \
+            --current-version "${{ steps.release_meta.outputs.current_version }}" \
+            --changelog CHANGELOG.md
+      - name: Build changelog release notes
+        run: |
+          python scripts/changelog.py render-release-notes \
+            --version "${{ steps.release_meta.outputs.current_version }}" \
+            --current-tag "${{ steps.release_meta.outputs.current_tag }}" \
+            --previous-tag "${{ steps.release_meta.outputs.previous_tag }}" \
+            --changelog CHANGELOG.md \
+            --output release_notes.md
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release_notes.md
