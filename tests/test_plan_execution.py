@@ -52,6 +52,54 @@ def _seed_plan_files(
     graph_payload = {
         "waves": [{"wave": 1, "tasks": [str(task["task_id"]) for task in tasks]}]
     }
+    project_wide_task_ids = sorted(
+        str(task.get("task_id", "")).strip()
+        for task in tasks
+        if str(task.get("scope_kind", "")).strip().lower() == "project_wide"
+    )
+    project_wide_unique_paths = sorted(
+        {
+            str(path).strip()
+            for task in tasks
+            if str(task.get("scope_kind", "")).strip().lower() == "project_wide"
+            for field in ("writes", "touches")
+            for path in (
+                task.get(field, []) if isinstance(task.get(field, []), list) else []
+            )
+            if str(path).strip()
+        }
+    )
+    approval_risk = {
+        "requires_approval": bool(project_wide_task_ids),
+        "trigger_reasons": (
+            ["project_wide_tasks_present"] if project_wide_task_ids else []
+        ),
+        "counts": {
+            "tasks_total": len(tasks),
+            "waves_total": len(graph_payload["waves"]),
+            "project_wide_tasks": len(project_wide_task_ids),
+            "project_wide_unique_paths": len(project_wide_unique_paths),
+            "observed_retries": 0,
+            "stage_attempt": 0,
+        },
+        "project_wide_task_ids": project_wide_task_ids,
+        "project_wide_unique_paths": project_wide_unique_paths,
+        "policy": {
+            "enabled": True,
+            "require_for_project_wide_tasks": True,
+            "max_tasks_without_approval": 6,
+            "max_waves_without_approval": 2,
+            "max_project_wide_paths_without_approval": 3,
+            "require_after_retries": True,
+        },
+    }
+    approval_risk["risk_fingerprint"] = plan_execution.build_risk_fingerprint(
+        approval_risk
+    )
+    plan_hash = plan_execution.build_plan_hash(
+        contract_payload=contract_payload,
+        graph_payload=graph_payload,
+    )
     (autolab_dir / "plan_contract.json").write_text(
         json.dumps(contract_payload),
         encoding="utf-8",
@@ -61,7 +109,14 @@ def _seed_plan_files(
         encoding="utf-8",
     )
     (autolab_dir / "plan_check_result.json").write_text(
-        json.dumps({"schema_version": "1.0", "errors": []}),
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "errors": [],
+                "plan_hash": plan_hash,
+                "approval_risk": approval_risk,
+            }
+        ),
         encoding="utf-8",
     )
     return repo_root, state_path, state, iteration_dir
@@ -74,7 +129,15 @@ def _patch_common_plan_execution(monkeypatch, config: PlanExecutionConfig) -> No
     monkeypatch.setattr(
         plan_execution,
         "check_implementation_plan_contract",
-        lambda *_args, **_kwargs: (True, "ok", {}),
+        lambda repo_root, *_args, **_kwargs: (
+            True,
+            "ok",
+            json.loads(
+                (Path(repo_root) / ".autolab" / "plan_check_result.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        ),
     )
     monkeypatch.setattr(plan_execution, "_collect_change_snapshot", lambda _repo: {})
     monkeypatch.setattr(
@@ -635,7 +698,7 @@ def test_high_risk_plan_requires_approval_before_wave_execution(
     assert not (iteration_dir / "plan_execution_state.json").exists()
 
 
-def test_execute_approved_plan_runs_without_replanning(
+def test_execute_approved_plan_runs_without_replanning_or_rewriting_approval(
     monkeypatch, tmp_path: Path
 ) -> None:
     config = _plan_config(task_retry_max=0, wave_retry_max=0)
@@ -687,6 +750,10 @@ def test_execute_approved_plan_runs_without_replanning(
     )
     assert first.pause_reason == "plan_only"
     record_plan_approval_decision(iteration_dir, status="approved", notes="looks good")
+    approval_json_path = iteration_dir / "plan_approval.json"
+    approval_md_path = iteration_dir / "plan_approval.md"
+    approval_before = approval_json_path.read_text(encoding="utf-8")
+    approval_md_before = approval_md_path.read_text(encoding="utf-8")
 
     second = plan_execution.execute_implementation_plan_step(
         repo_root,
@@ -700,6 +767,166 @@ def test_execute_approved_plan_runs_without_replanning(
     assert second.exit_code == 0
     assert second.proceed_to_evaluate is True
     assert calls == ["runner_execution_report.t1.json"]
+    assert approval_json_path.read_text(encoding="utf-8") == approval_before
+    assert approval_md_path.read_text(encoding="utf-8") == approval_md_before
+    assert approval_json_path not in second.changed_files
+    assert approval_md_path not in second.changed_files
+
+
+def test_execute_approved_plan_requires_current_planning_artifacts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execute-approved-plan should not replan or execute")
+        ),
+    )
+
+    first = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        plan_only=True,
+    )
+    assert first.pause_reason == "plan_only"
+    record_plan_approval_decision(iteration_dir, status="approved", notes="looks good")
+    approval_path = iteration_dir / "plan_approval.json"
+    approval_before = approval_path.read_text(encoding="utf-8")
+    (repo_root / ".autolab" / "plan_graph.json").unlink()
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        execute_approved_plan=True,
+    )
+
+    assert result.exit_code == 1
+    assert result.proceed_to_evaluate is False
+    assert "requires current planning artifacts" in result.summary
+    assert ".autolab/plan_graph.json" in result.summary
+    assert approval_path.read_text(encoding="utf-8") == approval_before
+    assert not (iteration_dir / "plan_execution_state.json").exists()
+
+
+def test_execute_approved_plan_requires_existing_plan_approval_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execute-approved-plan should not synthesize approval state")
+        ),
+    )
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        execute_approved_plan=True,
+    )
+
+    assert result.exit_code == 1
+    assert result.proceed_to_evaluate is False
+    assert "requires a current `plan_approval.json`" in result.summary
+    assert not (iteration_dir / "plan_approval.json").exists()
+    assert not (iteration_dir / "plan_execution_state.json").exists()
+
+
+def test_execute_approved_plan_requires_approved_plan_approval(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execute-approved-plan should not run before approval")
+        ),
+    )
+
+    first = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        plan_only=True,
+    )
+    assert first.pause_reason == "plan_only"
+    approval_path = iteration_dir / "plan_approval.json"
+    approval_before = approval_path.read_text(encoding="utf-8")
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        execute_approved_plan=True,
+    )
+
+    assert result.exit_code == 1
+    assert result.proceed_to_evaluate is False
+    assert "current implementation plan is not approved" in result.summary
+    assert approval_path.read_text(encoding="utf-8") == approval_before
+    assert not (iteration_dir / "plan_execution_state.json").exists()
 
 
 def test_substitute_task_command_supports_scope_root_token() -> None:

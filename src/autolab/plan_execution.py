@@ -1032,6 +1032,44 @@ def execute_implementation_plan_step(
     planning_artifacts_exist = (
         contract_path.exists() and graph_path.exists() and plan_check_path.exists()
     )
+    if execute_approved_plan:
+        missing_artifacts = [
+            path
+            for path in (
+                ".autolab/plan_contract.json" if not contract_path.exists() else "",
+                ".autolab/plan_graph.json" if not graph_path.exists() else "",
+                ".autolab/plan_check_result.json"
+                if not plan_check_path.exists()
+                else "",
+            )
+            if path
+        ]
+        if missing_artifacts:
+            missing_summary = ", ".join(missing_artifacts)
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "`autolab run --execute-approved-plan` requires current "
+                    f"planning artifacts ({missing_summary}); rerun "
+                    "`autolab run --plan-only` or `autolab run`"
+                ),
+                changed_files=tuple(changed_files),
+            )
+        if not existing_approval:
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "`autolab run --execute-approved-plan` requires a current "
+                    "`plan_approval.json`; rerun `autolab run --plan-only`"
+                ),
+                changed_files=tuple(changed_files),
+            )
     approval_retry_requested = (
         str(existing_approval.get("status", "")).strip().lower() == "retry"
         and not execute_approved_plan
@@ -1072,22 +1110,23 @@ def execute_implementation_plan_step(
             )
 
     try:
-        contract_passed, contract_message, _details = (
+        contract_passed, contract_message, contract_details = (
             check_implementation_plan_contract(
                 repo_root,
                 state,
                 stage_override="implementation",
-                write_outputs=True,
+                write_outputs=not execute_approved_plan,
             )
         )
     except PlanContractError as exc:
         raise StageCheckError(str(exc)) from exc
-    changed_files.extend(
-        [
-            repo_root / ".autolab" / "plan_check_result.json",
-            repo_root / ".autolab" / "plan_graph.json",
-        ]
-    )
+    if not execute_approved_plan:
+        changed_files.extend(
+            [
+                repo_root / ".autolab" / "plan_check_result.json",
+                repo_root / ".autolab" / "plan_graph.json",
+            ]
+        )
     if not contract_passed:
         return ImplementationExecutionStepResult(
             handled=True,
@@ -1116,6 +1155,10 @@ def execute_implementation_plan_step(
     task_map = _task_map(contract)
     wave_rows = _wave_rows(graph)
     approval_risk = plan_check.get("approval_risk")
+    plan_hash = str(plan_check.get("plan_hash", "")).strip() or build_plan_hash(
+        contract_payload=contract,
+        graph_payload=graph,
+    )
     if not isinstance(approval_risk, dict):
         approval_risk = _derive_approval_risk_fallback(
             task_map=task_map,
@@ -1124,25 +1167,76 @@ def execute_implementation_plan_step(
             raw_execution_state=raw_state,
             impl_cfg=impl_cfg,
         )
-    plan_hash = str(plan_check.get("plan_hash", "")).strip() or build_plan_hash(
-        contract_payload=contract,
-        graph_payload=graph,
-    )
-    approval_payload = write_plan_approval(
-        iteration_dir,
-        iteration_id=iteration_id,
-        approval_risk=approval_risk,
-        plan_hash=plan_hash,
-    )
-    changed_files.extend([approval_json_path, approval_md_path])
+    if execute_approved_plan:
+        current_approval_risk = contract_details.get("approval_risk")
+        current_plan_hash = str(contract_details.get("plan_hash", "")).strip()
+        if not isinstance(current_approval_risk, dict):
+            current_approval_risk = approval_risk
+        if not current_plan_hash:
+            current_plan_hash = plan_hash
+        current_risk_fingerprint = build_risk_fingerprint(current_approval_risk)
+        stored_risk_fingerprint = build_risk_fingerprint(approval_risk)
+        if (
+            current_plan_hash != plan_hash
+            or current_risk_fingerprint != stored_risk_fingerprint
+        ):
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "current planning artifacts no longer match the approved plan; "
+                    "rerun `autolab run --plan-only` or `autolab run`"
+                ),
+                changed_files=tuple(changed_files),
+            )
+        approval_payload = existing_approval
+        approval_required = bool(approval_risk.get("requires_approval", False))
+        approval_current = approval_is_current(
+            approval_payload,
+            plan_hash=plan_hash,
+            risk_fingerprint=stored_risk_fingerprint,
+            require_approved=approval_required,
+        )
+        if not approval_current:
+            approval_status = str(approval_payload.get("status", "")).strip().lower()
+            if approval_required and approval_status in {"pending", "retry", "stop"}:
+                summary = (
+                    "current implementation plan is not approved; "
+                    "run `autolab approve-plan --status approve` or rerun "
+                    "`autolab run --plan-only`"
+                )
+            else:
+                summary = (
+                    "`autolab run --execute-approved-plan` requires a current "
+                    "`plan_approval.json` matching the existing planning artifacts; "
+                    "rerun `autolab run --plan-only`"
+                )
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=summary,
+                changed_files=tuple(changed_files),
+            )
+    else:
+        approval_payload = write_plan_approval(
+            iteration_dir,
+            iteration_id=iteration_id,
+            approval_risk=approval_risk,
+            plan_hash=plan_hash,
+        )
+        changed_files.extend([approval_json_path, approval_md_path])
 
-    approval_required = bool(approval_payload.get("requires_approval", False))
-    approval_current = approval_is_current(
-        approval_payload,
-        plan_hash=plan_hash,
-        risk_fingerprint=str(approval_payload.get("risk_fingerprint", "")).strip(),
-        require_approved=True,
-    )
+        approval_required = bool(approval_payload.get("requires_approval", False))
+        approval_current = approval_is_current(
+            approval_payload,
+            plan_hash=plan_hash,
+            risk_fingerprint=str(approval_payload.get("risk_fingerprint", "")).strip(),
+            require_approved=True,
+        )
     if plan_only:
         approval_summary = (
             "approval required" if approval_required else "approval not required"

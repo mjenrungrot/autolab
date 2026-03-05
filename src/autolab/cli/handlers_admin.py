@@ -5,6 +5,11 @@ from __future__ import annotations
 import math
 
 from autolab.cli.support import *
+from autolab.agent_surface import (
+    build_agent_surface_guidance,
+    infer_agent_surface_provider,
+    resolve_agent_surface,
+)
 from autolab.sidecar_context import resolve_context_sidecars
 from autolab.sidecar_tools import (
     DISCUSS_COLLECTIONS,
@@ -3236,7 +3241,12 @@ def _build_research_prompt(
     context_resolution: dict[str, Any],
     questions: list[dict[str, Any]],
     sources: list[dict[str, Any]],
+    agent_surface: dict[str, Any],
 ) -> str:
+    agent_guidance = build_agent_surface_guidance(agent_surface)
+    guidance_lines = agent_guidance.get("stage_context_lines")
+    if not isinstance(guidance_lines, list):
+        guidance_lines = []
     return "\n".join(
         [
             "You are an Autolab evidence assistant.",
@@ -3252,6 +3262,12 @@ def _build_research_prompt(
             "Context resolution:",
             "```text",
             str(context_resolution.get("compact_render", "")).strip() or "(none)",
+            "```",
+            "",
+            "Semantic agent surface:",
+            "```text",
+            "\n".join(str(item).strip() for item in guidance_lines if str(item).strip())
+            or "(none)",
             "```",
             "",
             "Questions:",
@@ -3630,11 +3646,25 @@ def _cmd_research(args: argparse.Namespace) -> int:
         context_resolution=target["context_resolution"],
         exclude_path=_sidecar_relpath(repo_root, research_paths["json_path"]),
     )
+    try:
+        preview_argv, _preview_env, _preview_display = _resolve_local_agent_invocation(
+            repo_root,
+            override_env_var="AUTOLAB_RESEARCH_AGENT_COMMAND",
+        )
+    except RuntimeError as exc:
+        print(f"autolab research: ERROR {exc}", file=sys.stderr)
+        return 1
+    research_agent_surface = resolve_agent_surface(
+        repo_root,
+        provider=infer_agent_surface_provider(preview_argv),
+        command_name="research",
+    )
     prompt_text = _build_research_prompt(
         scope_kind=target["scope_kind"],
         context_resolution=target["context_resolution"],
         questions=questions,
         sources=sources,
+        agent_surface=research_agent_surface,
     )
 
     try:

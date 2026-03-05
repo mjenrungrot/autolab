@@ -59,6 +59,15 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
+def _install_codex_skill(repo: Path, skill_name: str) -> None:
+    destination = repo / ".codex" / "skills" / skill_name / "SKILL.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        f"---\nname: {skill_name}\n---\n\n# {skill_name}\n",
+        encoding="utf-8",
+    )
+
+
 def _write_state(repo: Path, *, stage: str) -> dict[str, object]:
     state = {
         "iteration_id": "iter1",
@@ -1600,6 +1609,151 @@ def test_render_implementation_prompt_includes_compact_sidecar_guidance_only(
     assert "effective_discuss" not in bundle.prompt_text
     assert "effective_research" not in bundle.prompt_text
     assert "source_component_id" not in bundle.prompt_text
+
+
+def test_render_implementation_prompt_includes_semantic_agent_surface_when_installed(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    _write_design_with_context_refs(repo)
+    _install_codex_skill(repo, "planner")
+    _install_codex_skill(repo, "plan-checker")
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    surface = bundle.context_payload["agent_surface"]
+    assert surface["provider"] == "codex"
+    assert surface["primary_role"]["id"] == "planner"
+    assert surface["primary_role"]["installed"] is True
+    assert surface["secondary_roles"][0]["id"] == "plan_checker"
+    assert surface["secondary_roles"][0]["installed"] is True
+    assert surface["invocation_hints"] == ["$planner", "$plan-checker"]
+    assert (
+        "semantic_agent_primary: planner ($planner)"
+        in bundle.context_payload["stage_context"]
+    )
+    assert (
+        "semantic_agent_secondary: plan_checker ($plan-checker)"
+        in bundle.context_payload["stage_context"]
+    )
+    assert (
+        "semantic role: planner via $planner" in bundle.context_payload["brief_summary"]
+    )
+    assert (
+        "secondary role: plan_checker via $plan-checker"
+        in bundle.context_payload["brief_summary"]
+    )
+
+
+def test_render_implementation_prompt_falls_back_when_semantic_skill_missing(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    surface = bundle.context_payload["agent_surface"]
+    assert surface["primary_role"]["id"] == "planner"
+    assert surface["primary_role"]["installed"] is False
+    assert surface["invocation_hints"] == []
+    assert (
+        "semantic_agent_primary: planner -" in bundle.context_payload["stage_context"]
+    )
+    assert "$planner" not in bundle.context_payload["stage_context"]
+    assert (
+        "semantic role: planner with inline guidance only"
+        in bundle.context_payload["brief_summary"]
+    )
+
+
+def test_render_implementation_review_prompt_uses_reviewer_semantic_role(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    _install_codex_skill(repo, "reviewer")
+    state = _write_state(repo, stage="implementation_review")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation_review", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation_review",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    surface = bundle.context_payload["agent_surface"]
+    assert surface["primary_role"]["id"] == "reviewer"
+    assert surface["invocation_hints"] == ["$reviewer"]
+    assert (
+        "semantic_agent_primary: reviewer ($reviewer)"
+        in bundle.context_payload["stage_context"]
+    )
+    assert (
+        "semantic role: reviewer via $reviewer"
+        in bundle.context_payload["brief_summary"]
+    )
 
 
 def test_render_stage_prompt_written_context_omits_raw_effective_sidecars(

@@ -32,6 +32,8 @@ class LoopRequest:
     auto_mode: bool = False
     auto_decision: bool = False
     strict_implementation_progress: bool = True
+    plan_only: bool = False
+    execute_approved_plan: bool = False
 
 
 @dataclass(frozen=True)
