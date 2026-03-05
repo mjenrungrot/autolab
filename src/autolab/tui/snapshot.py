@@ -30,6 +30,7 @@ from autolab.tui.models import (
     BacklogExperimentItem,
     BacklogHypothesisItem,
     CockpitSnapshot,
+    HandoffSummary,
     RenderPreview,
     RecommendedAction,
     RunItem,
@@ -73,6 +74,7 @@ _STAGE_ARTIFACTS: dict[str, tuple[str, ...]] = {
 _COMMON_ARTIFACTS: tuple[str, ...] = (
     ".autolab/state.json",
     ".autolab/verification_result.json",
+    ".autolab/handoff.json",
     ".autolab/todo_state.json",
     "docs/todo.md",
 )
@@ -108,6 +110,14 @@ def _coerce_int(
         value = default
     if minimum is not None and value < minimum:
         value = minimum
+    return value
+
+
+def _coerce_optional_int(raw_value: object) -> int | None:
+    try:
+        value = int(raw_value)  # type: ignore[arg-type]
+    except Exception:
+        return None
     return value
 
 
@@ -536,6 +546,87 @@ def _load_render_preview(
     )
 
 
+def _resolve_optional_path(repo_root: Path, raw_path: str) -> Path | None:
+    normalized = str(raw_path).strip()
+    if not normalized:
+        return None
+    candidate = Path(normalized).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    return repo_root / candidate
+
+
+def _load_handoff_summary(repo_root: Path, autolab_dir: Path) -> HandoffSummary | None:
+    payload = _safe_json_load(autolab_dir / "handoff.json")
+    if payload is None:
+        return None
+
+    wave = payload.get("wave")
+    if not isinstance(wave, dict):
+        wave = {}
+    tasks = payload.get("task_status")
+    if not isinstance(tasks, dict):
+        tasks = {}
+    verifier = payload.get("latest_verifier_summary")
+    if not isinstance(verifier, dict):
+        verifier = {}
+    recommended = payload.get("recommended_next_command")
+    if not isinstance(recommended, dict):
+        recommended = {}
+    safe_resume = payload.get("safe_resume_point")
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+
+    handoff_json_path = _resolve_optional_path(
+        repo_root, str(payload.get("handoff_json_path", "")).strip()
+    )
+    if handoff_json_path is None:
+        handoff_json_path = autolab_dir / "handoff.json"
+    handoff_md_path = _resolve_optional_path(
+        repo_root, str(payload.get("handoff_markdown_path", "")).strip()
+    )
+
+    verifier_passed: bool | None
+    if "passed" in verifier:
+        verifier_passed = bool(verifier.get("passed"))
+    else:
+        verifier_passed = None
+
+    blocking_failures = payload.get("blocking_failures")
+    if not isinstance(blocking_failures, list):
+        blocking_failures = []
+    pending_human = payload.get("pending_human_decisions")
+    if not isinstance(pending_human, list):
+        pending_human = []
+
+    return HandoffSummary(
+        handoff_json_path=handoff_json_path,
+        handoff_md_path=handoff_md_path,
+        current_scope=str(payload.get("current_scope", "experiment")).strip()
+        or "experiment",
+        scope_root=str(payload.get("scope_root", "")).strip(),
+        current_stage=str(payload.get("current_stage", "")).strip(),
+        wave_status=str(wave.get("status", "unavailable")).strip() or "unavailable",
+        wave_current=_coerce_optional_int(wave.get("current")),
+        wave_executed=_coerce_int(wave.get("executed"), default=0, minimum=0),
+        wave_total=_coerce_int(wave.get("total"), default=0, minimum=0),
+        task_total=_coerce_int(tasks.get("total"), default=0, minimum=0),
+        task_completed=_coerce_int(tasks.get("completed"), default=0, minimum=0),
+        task_failed=_coerce_int(tasks.get("failed"), default=0, minimum=0),
+        task_blocked=_coerce_int(tasks.get("blocked"), default=0, minimum=0),
+        task_pending=_coerce_int(tasks.get("pending"), default=0, minimum=0),
+        latest_verifier_passed=verifier_passed,
+        blocker_count=len([item for item in blocking_failures if str(item).strip()]),
+        pending_decision_count=len(
+            [item for item in pending_human if str(item).strip()]
+        ),
+        recommended_command=str(recommended.get("command", "")).strip(),
+        safe_resume_status=str(safe_resume.get("status", "blocked")).strip()
+        or "blocked",
+        safe_resume_command=str(safe_resume.get("command", "")).strip(),
+    )
+
+
 def _build_recommended_actions(
     *,
     current_stage: str,
@@ -793,6 +884,16 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         current_experiment_id=experiment_id,
     )
     common_artifacts = _build_common_artifacts(repo_root, iteration_dir)
+    handoff_summary = _load_handoff_summary(repo_root, autolab_dir)
+    if handoff_summary is not None and handoff_summary.handoff_md_path is not None:
+        common_artifacts = (
+            *common_artifacts,
+            ArtifactItem(
+                path=handoff_summary.handoff_md_path,
+                exists=handoff_summary.handoff_md_path.exists(),
+                source="common",
+            ),
+        )
     current_stage_artifacts = artifacts_by_stage.get(current_stage, ())
     recommended_actions = _build_recommended_actions(
         current_stage=current_stage,
@@ -829,6 +930,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         stage_summaries=dict(_STAGE_SUMMARY),
         artifacts_by_stage=artifacts_by_stage,
         common_artifacts=common_artifacts,
+        handoff=handoff_summary,
     )
 
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.7] - 2026-03-04
+
+### Summary
+
+- Added first-class `autolab progress`, `autolab handoff`, and `autolab resume` commands for takeover and safe resume workflows.
+- Introduced machine and human handoff artifacts (`.autolab/handoff.json`, `<scope-root>/handoff.md`) with automatic refresh across verify/run/loop and manual stage-steering exits.
+- Extended TUI Home with a dedicated handoff/resume panel, added handoff schema validation, and updated docs/tests for end-to-end coverage.
+
+<!-- autolab:range v1.2.6..v1.2.7 -->
+
 ## [1.2.6] - 2026-03-04
 
 ### Summary

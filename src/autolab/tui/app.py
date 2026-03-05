@@ -2040,6 +2040,7 @@ class AutolabCockpitApp(App[None]):
     #home-artifacts-card,
     #home-verification-card,
     #home-todos-card,
+    #home-handoff-card,
     #help-text {
       border: round $surface;
       padding: 0 1;
@@ -2319,6 +2320,7 @@ class AutolabCockpitApp(App[None]):
                 yield Static("", id="home-verification-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
+                yield Static("", id="home-handoff-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
                 with Horizontal(id="home-action-filter-row"):
                     yield Static(
@@ -3295,6 +3297,10 @@ class AutolabCockpitApp(App[None]):
         todos_widget.update("Open Tasks\nUnavailable.")
         self._set_tone(todos_widget, "tone-muted")
 
+        handoff_widget = self.query_one("#home-handoff-card", Static)
+        handoff_widget.update("Handoff & Resume\nUnavailable.")
+        self._set_tone(handoff_widget, "tone-muted")
+
         run_widget = self.query_one("#run-details", Static)
         run_widget.update("Run Details\nUnavailable.")
         self._set_tone(run_widget, "tone-muted")
@@ -3508,6 +3514,40 @@ class AutolabCockpitApp(App[None]):
         else:
             todos_widget.update("Open Tasks\n- None detected.")
             self._set_tone(todos_widget, "tone-success")
+
+        handoff_widget = self.query_one("#home-handoff-card", Static)
+        handoff = snapshot.handoff
+        if handoff is None:
+            handoff_widget.update(
+                "Handoff & Resume\n- No handoff snapshot detected.\n- Run `autolab handoff` or `autolab progress`."
+            )
+            self._set_tone(handoff_widget, "tone-muted")
+        else:
+            handoff_lines = [
+                f"- scope: {handoff.current_scope}",
+                f"- scope_root: {handoff.scope_root or '-'}",
+                f"- stage: {handoff.current_stage or snapshot.current_stage}",
+                (
+                    f"- wave: {handoff.wave_status} "
+                    f"(current={handoff.wave_current if handoff.wave_current is not None else '-'} "
+                    f"executed={handoff.wave_executed} total={handoff.wave_total})"
+                ),
+                (
+                    f"- tasks: total={handoff.task_total} completed={handoff.task_completed} "
+                    f"failed={handoff.task_failed} blocked={handoff.task_blocked} pending={handoff.task_pending}"
+                ),
+                f"- blockers: {handoff.blocker_count}",
+                f"- pending_decisions: {handoff.pending_decision_count}",
+                f"- safe_resume: {handoff.safe_resume_status}",
+                f"- next_command: {handoff.recommended_command or '-'}",
+            ]
+            handoff_widget.update("Handoff & Resume\n" + "\n".join(handoff_lines))
+            if handoff.safe_resume_status == "ready":
+                self._set_tone(handoff_widget, "tone-success")
+            elif handoff.pending_decision_count > 0 or handoff.blocker_count > 0:
+                self._set_tone(handoff_widget, "tone-warning")
+            else:
+                self._set_tone(handoff_widget, "tone-info")
 
         action_list = self.query_one("#home-action-list", ListView)
         action_list.clear()

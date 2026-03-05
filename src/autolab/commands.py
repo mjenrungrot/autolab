@@ -49,6 +49,7 @@ from autolab.config import (
 )
 from autolab.run_standard import _run_once_standard
 from autolab.run_assistant import _run_once_assistant
+from autolab.handoff import refresh_handoff
 from autolab.state import (
     _acquire_lock,
     _append_state_history,
@@ -121,7 +122,10 @@ VERIFICATION_SUMMARY_RETENTION_LIMIT = 200
 RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Getting started", ("init", "configure", "status", "docs", "explain")),
+    (
+        "Getting started",
+        ("init", "configure", "status", "progress", "docs", "explain"),
+    ),
     (
         "Run workflow",
         (
@@ -134,6 +138,8 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "lint",
             "review",
             "skip",
+            "handoff",
+            "resume",
         ),
     ),
     ("Backlog steering", ("focus", "todo", "experiment")),
@@ -991,6 +997,180 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _safe_refresh_handoff(state_path: Path) -> tuple[dict[str, Any] | None, str]:
+    try:
+        artifacts = refresh_handoff(state_path)
+    except Exception as exc:
+        return (None, str(exc))
+    return (artifacts.payload, "")
+
+
+def _cmd_progress(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    payload, error = _safe_refresh_handoff(state_path)
+    if payload is None:
+        print(
+            f"autolab progress: ERROR failed to refresh handoff: {error}",
+            file=sys.stderr,
+        )
+        return 1
+
+    verifier = payload.get("latest_verifier_summary", {})
+    if not isinstance(verifier, dict):
+        verifier = {}
+    recommended = payload.get("recommended_next_command", {})
+    if not isinstance(recommended, dict):
+        recommended = {}
+    safe_resume = payload.get("safe_resume_point", {})
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+    blocking = payload.get("blocking_failures", [])
+    if not isinstance(blocking, list):
+        blocking = []
+    pending = payload.get("pending_human_decisions", [])
+    if not isinstance(pending, list):
+        pending = []
+
+    print("autolab progress")
+    print(f"state_file: {state_path}")
+    print(f"generated_at: {payload.get('generated_at', '')}")
+    print(f"iteration_id: {payload.get('iteration_id', '')}")
+    print(f"experiment_id: {payload.get('experiment_id', '')}")
+    print(f"scope: {payload.get('current_scope', 'experiment')}")
+    print(f"stage: {payload.get('current_stage', '')}")
+    print(f"verifier_passed: {bool(verifier.get('passed', False))}")
+    print(f"verifier_message: {verifier.get('message', '')}")
+    print(f"blocking_failures: {len(blocking)}")
+    print(f"pending_human_decisions: {len(pending)}")
+    print(f"recommended_next_command: {recommended.get('command', '')}")
+    print(f"safe_resume_status: {safe_resume.get('status', 'blocked')}")
+    return 0
+
+
+def _cmd_handoff(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    payload, error = _safe_refresh_handoff(state_path)
+    if payload is None:
+        print(
+            f"autolab handoff: ERROR failed to refresh handoff: {error}",
+            file=sys.stderr,
+        )
+        return 1
+    handoff_json_path = Path(
+        str(payload.get("handoff_json_path", ".autolab/handoff.json"))
+    )
+    handoff_md_path = Path(str(payload.get("handoff_markdown_path", "handoff.md")))
+    recommended = payload.get("recommended_next_command", {})
+    if not isinstance(recommended, dict):
+        recommended = {}
+
+    print("autolab handoff")
+    print(f"state_file: {state_path}")
+    print(f"handoff_json: {handoff_json_path}")
+    print(f"handoff_md: {handoff_md_path}")
+    print(f"recommended_next_command: {recommended.get('command', '')}")
+    return 0
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    payload, error = _safe_refresh_handoff(state_path)
+    if payload is None:
+        print(
+            f"autolab resume: ERROR failed to refresh handoff: {error}", file=sys.stderr
+        )
+        return 1
+
+    recommended = payload.get("recommended_next_command", {})
+    if not isinstance(recommended, dict):
+        recommended = {}
+    safe_resume = payload.get("safe_resume_point", {})
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+    command_text = str(recommended.get("command", "")).strip()
+    executable = bool(recommended.get("executable", False))
+    reason = str(recommended.get("reason", "")).strip()
+    status = str(safe_resume.get("status", "blocked")).strip() or "blocked"
+    preconditions = safe_resume.get("preconditions", [])
+    if not isinstance(preconditions, list):
+        preconditions = []
+
+    print("autolab resume")
+    print(f"state_file: {state_path}")
+    print(f"safe_resume_status: {status}")
+    print(f"recommended_command: {command_text}")
+    print(f"reason: {reason}")
+    if preconditions:
+        print("preconditions:")
+        for precondition in preconditions:
+            text = str(precondition).strip()
+            if text:
+                print(f"- {text}")
+
+    if not bool(getattr(args, "apply", False)):
+        print("mode: preview (use --apply to execute when safe)")
+        return 0
+
+    if status != "ready" or not executable:
+        print(
+            "autolab resume: ERROR safe resume point is blocked; resolve preconditions first",
+            file=sys.stderr,
+        )
+        return 1
+    if not command_text:
+        print(
+            "autolab resume: ERROR no recommended command is available", file=sys.stderr
+        )
+        return 1
+
+    try:
+        command_tokens = shlex.split(command_text)
+    except ValueError as exc:
+        print(f"autolab resume: ERROR invalid command: {exc}", file=sys.stderr)
+        return 1
+    if not command_tokens:
+        print("autolab resume: ERROR recommended command is empty", file=sys.stderr)
+        return 1
+    if command_tokens[0] != "autolab":
+        print(
+            "autolab resume: ERROR only autolab commands are executable via --apply",
+            file=sys.stderr,
+        )
+        return 1
+
+    resume_argv = command_tokens[1:]
+    if not resume_argv:
+        print(
+            "autolab resume: ERROR missing subcommand in recommended command",
+            file=sys.stderr,
+        )
+        return 1
+    stateful_subcommands = {
+        "run",
+        "loop",
+        "render",
+        "verify",
+        "status",
+        "focus",
+        "todo",
+        "guardrails",
+        "review",
+        "skip",
+        "lint",
+        "lock",
+        "unlock",
+        "report",
+        "progress",
+        "handoff",
+        "resume",
+    }
+    if resume_argv[0] in stateful_subcommands and "--state-file" not in resume_argv:
+        resume_argv.extend(["--state-file", str(state_path)])
+
+    print(f"apply: executing {' '.join(shlex.quote(token) for token in resume_argv)}")
+    return main(resume_argv)
+
+
 def _cmd_focus(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -1077,6 +1257,12 @@ def _cmd_focus(args: argparse.Namespace) -> int:
             f"iteration={target_iteration_id} experiment={target_experiment_id}"
         ),
     )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab focus: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
 
     print("autolab focus")
     print(f"state_file: {state_path}")
@@ -1380,6 +1566,12 @@ def _cmd_experiment_create(args: argparse.Namespace) -> int:
             f"hypothesis={resolved_hypothesis_id} type=plan created={len(created_entries)}"
         ),
     )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab experiment create: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
 
     print("autolab experiment create")
     print(f"state_file: {state_path}")
@@ -1576,6 +1768,12 @@ def _cmd_experiment_move(args: argparse.Namespace) -> int:
             f"iteration={iteration_id} moved={moved} rewrites={len(rewritten_paths)}"
         ),
     )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab experiment move: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
 
     print("autolab experiment move")
     print(f"state_file: {state_path}")
@@ -2343,6 +2541,12 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     print(f"message: {message}")
     print(f"result: {canonical_result_path}")
     print(f"summary: {summary_path}")
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab verify: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
     if not passed:
         print(f"autolab verify: ERROR {message}", file=sys.stderr)
         return 1
@@ -2473,6 +2677,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"transitioned: {outcome.transitioned}")
             print(f"message: {outcome.message}")
             print(commit_summary)
+            _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+            if _handoff_payload is None:
+                print(
+                    f"autolab run: WARN failed to refresh handoff snapshot: {_handoff_error}",
+                    file=sys.stderr,
+                )
             if outcome.exit_code != 0:
                 print(f"autolab run: ERROR {outcome.message}", file=sys.stderr)
 
@@ -2629,6 +2839,12 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 f"(transitioned={outcome.transitioned}, exit={outcome.exit_code})"
             )
             print(f"iteration {index}: {commit_summary}")
+            _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+            if _handoff_payload is None:
+                print(
+                    f"autolab loop: WARN failed to refresh handoff snapshot: {_handoff_error}",
+                    file=sys.stderr,
+                )
             if outcome.exit_code == 0:
                 consecutive_errors = 0
 
@@ -2843,6 +3059,12 @@ def _cmd_review(args: argparse.Namespace) -> int:
     _persist_agent_result(
         repo_root, status="complete", summary=message, changed_files=[state_path]
     )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab review: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
     _append_log(repo_root, f"review command: {message}")
     print(f"autolab review: {message}")
     return 0
@@ -2972,6 +3194,12 @@ def _cmd_skip(args: argparse.Namespace) -> int:
             summary=f"manual skip from {current_stage} to {target_stage}: {reason}",
         )
         _write_json(state_path, state)
+        _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+        if _handoff_payload is None:
+            print(
+                f"autolab skip: WARN failed to refresh handoff snapshot: {_handoff_error}",
+                file=sys.stderr,
+            )
         _append_log(
             repo_root, f"skip: {current_stage} -> {target_stage} reason={reason}"
         )
@@ -4204,6 +4432,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_cmd_status)
 
+    progress = subparsers.add_parser(
+        "progress",
+        help="Refresh and summarize handoff/progress state",
+    )
+    progress.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    progress.set_defaults(handler=_cmd_progress)
+
     focus = subparsers.add_parser(
         "focus",
         help="Manually retarget workflow focus to a backlog experiment/iteration",
@@ -4413,6 +4652,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional output path for the issue document (default: .autolab/logs/issue_report_<timestamp>.md).",
     )
     report.set_defaults(handler=_cmd_report)
+
+    handoff = subparsers.add_parser(
+        "handoff",
+        help="Write machine/human handoff artifacts for takeover",
+    )
+    handoff.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    handoff.set_defaults(handler=_cmd_handoff)
+
+    resume = subparsers.add_parser(
+        "resume",
+        help="Preview or apply the recommended safe resume command",
+    )
+    resume.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    resume.add_argument(
+        "--apply",
+        action="store_true",
+        help="Execute the recommended command when safe to resume.",
+    )
+    resume.set_defaults(handler=_cmd_resume)
 
     # Phase 6b: review subcommand
     review = subparsers.add_parser("review", help="Record a human review decision")

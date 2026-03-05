@@ -112,6 +112,7 @@ SCHEMAS: dict[str, str] = {
     "todo_focus": "todo_focus.schema.json",
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
+    "handoff": "handoff.schema.json",
     "plan_contract": "plan_contract.schema.json",
     "plan_check_result": "plan_check_result.schema.json",
     "plan_graph": "plan_graph.schema.json",
@@ -587,6 +588,18 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
     return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
 
 
+def _validate_handoff() -> list[str]:
+    """Validate .autolab/handoff.json when present (optional artifact)."""
+    path = REPO_ROOT / ".autolab" / "handoff.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="handoff", path=path)
+
+
 def _validate_plan_contract(state: dict[str, Any], *, stage: str) -> list[str]:
     """Validate implementation plan contract artifacts."""
     if stage not in {"implementation", "implementation_review"}:
@@ -699,6 +712,7 @@ def main() -> int:
     failures.extend(_validate_todo_focus(state))
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
+    failures.extend(_validate_handoff())
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
 
@@ -737,6 +751,7 @@ def main() -> int:
                     "review_result": "Confirm review_result.json has all required_checks keys with valid statuses",
                     "agent_result": "Check .autolab/agent_result.json status is complete|needs_retry|failed",
                     "todo_state": "Validate .autolab/todo_state.json version field is an integer",
+                    "handoff": "Regenerate via `autolab handoff` or verify required handoff fields in .autolab/handoff.json",
                     "metrics": "Ensure metrics.json has schema_version and primary_metric",
                 }
                 for i, failure_text in enumerate(top_n, 1):
