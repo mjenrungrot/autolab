@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.22] - 2026-03-05
+
+### Summary
+
+- Added generated `autolab docs generate` projection views (`project`, `roadmap`, `state`, `requirements`, `sidecar`) sourced from canonical state/backlog/handoff/traceability/context artifacts.
+- Hardened docs-view loading and path handling with repo-contained pointer resolution, non-regular-file rejection, bounded artifact reads, safe numeric coercion, and stricter `--output-dir` containment/error handling.
+- Restored compatibility-first docs behavior by defaulting `docs generate` to `--view registry`, while keeping generated projection views available via explicit `--view` selection and adding expanded regression coverage.
+
+<!-- autolab:range v1.2.21..v1.2.22 -->
+
 ## [1.2.21] - 2026-03-05
 
 ### Summary

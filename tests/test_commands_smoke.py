@@ -38,6 +38,135 @@ def _init_repo_state(tmp_path: Path) -> tuple[Path, Path]:
     return repo, state_path
 
 
+def _write_iteration_docs_fixture(repo: Path, *, iteration_id: str) -> None:
+    iteration_dir = repo / "experiments" / "plan" / iteration_id
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "design.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "id: e_fixture",
+                f"iteration_id: {iteration_id}",
+                "hypothesis_id: h_fixture",
+                "entrypoint:",
+                "  module: pkg.train",
+                "  args: {}",
+                "compute:",
+                "  location: local",
+                "  gpu_count: 0",
+                "metrics:",
+                "  primary:",
+                "    name: accuracy",
+                "    unit: '%'",
+                "    mode: maximize",
+                "  secondary: []",
+                "  success_delta: +0.1",
+                "  aggregation: mean",
+                "  baseline_comparison: vs baseline",
+                "baselines:",
+                "  - name: baseline",
+                "    description: stable baseline",
+                "implementation_requirements:",
+                "  - requirement_id: R10",
+                "    description: Wire parser-compatible metrics export.",
+                "    scope_kind: experiment",
+                "    expected_artifacts: [implementation_plan.md, plan_contract.json]",
+                "extract_parser:",
+                "  kind: command",
+                '  command: "python -m tools.extract_results --run-id {run_id}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (iteration_dir / "plan_contract.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": iteration_id,
+                "stage": "implementation",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "tasks": [
+                    {
+                        "task_id": "T10",
+                        "objective": "Implement requirement R10",
+                        "scope_kind": "experiment",
+                        "depends_on": [],
+                        "reads": [],
+                        "writes": [
+                            f"experiments/plan/{iteration_id}/implementation_plan.md"
+                        ],
+                        "touches": [
+                            f"experiments/plan/{iteration_id}/implementation_plan.md"
+                        ],
+                        "verification_commands": [],
+                        "expected_artifacts": [
+                            "implementation_plan.md",
+                            "plan_contract.json",
+                        ],
+                        "failure_policy": "fail_fast",
+                        "can_run_in_parallel": False,
+                        "covers_requirements": ["R10"],
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (iteration_dir / "traceability_coverage.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "iteration_id": iteration_id,
+                "experiment_id": "e_fixture",
+                "run_id": "run_fixture",
+                "claim": {
+                    "claim_id": "C1",
+                    "text": "fixture claim",
+                    "status": "available",
+                    "source_pointer": f"experiments/plan/{iteration_id}/hypothesis.md",
+                },
+                "decision": {
+                    "status": "available",
+                    "decision": "design",
+                    "rationale": "continue",
+                    "pointer": f"experiments/plan/{iteration_id}/decision_result.json",
+                    "evidence_count": 1,
+                },
+                "links": [
+                    {
+                        "row_id": "C1:R10:T10",
+                        "claim_id": "C1",
+                        "requirement_id": "R10",
+                        "task_id": "T10",
+                        "coverage_status": "covered",
+                        "failure_class": "none",
+                        "failure_reason": "",
+                    }
+                ],
+                "summary": {
+                    "rows_total": 1,
+                    "rows_covered": 1,
+                    "rows_untested": 0,
+                    "rows_failed": 0,
+                    "requirements_total": 1,
+                    "requirements_covered": 1,
+                    "requirements_untested": 0,
+                    "requirements_failed": 0,
+                },
+                "pointers": {},
+                "diagnostics": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -58,10 +187,11 @@ def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     )
 
 
-def test_docs_generate_includes_scope_roots_section(
+def test_docs_generate_registry_view_includes_legacy_sections(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
     (repo / "src").mkdir(exist_ok=True)
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
     policy_text = policy_path.read_text(encoding="utf-8")
@@ -71,12 +201,63 @@ def test_docs_generate_includes_scope_roots_section(
     )
 
     assert (
-        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 0
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "registry"]
+        )
+        == 0
     )
     output = capsys.readouterr().out
+    assert "# Autolab Stage Flow" in output
     assert "## Scope Roots" in output
+    assert "## Artifact Map" in output
+    assert "## Token Reference" in output
+    assert "## Classifications" in output
     assert "configured_project_wide_root" in output
     assert "`src`" in output
+
+
+def test_docs_generate_registry_view_fails_when_workflow_registry_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    assert workflow_path.exists()
+    workflow_path.unlink()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "registry"]
+        )
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "could not load workflow.yaml registry" in err
+
+
+@pytest.mark.parametrize("state_case", ["missing", "invalid"])
+def test_docs_generate_registry_view_degrades_when_state_missing_or_invalid(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    state_case: str,
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    if state_case == "missing":
+        state_path.unlink()
+    else:
+        state_path.write_text("{not valid json", encoding="utf-8")
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "registry"]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert "# Autolab Stage Flow" in captured.out
+    assert "## Artifact Map" in captured.out
+    assert "autolab docs generate: ERROR" not in captured.err
 
 
 def test_docs_generate_fails_with_invalid_project_wide_root(
@@ -84,6 +265,7 @@ def test_docs_generate_fails_with_invalid_project_wide_root(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
     policy_text = policy_path.read_text(encoding="utf-8")
     policy_path.write_text(
@@ -92,10 +274,342 @@ def test_docs_generate_fails_with_invalid_project_wide_root(
     )
 
     assert (
-        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 1
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "registry"]
+        )
+        == 1
     )
     err = capsys.readouterr().err
     assert "scope_roots.project_wide_root" in err
+
+
+def test_docs_generate_default_outputs_registry_view(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 0
+    )
+    output = capsys.readouterr().out
+    assert "# Autolab Stage Flow" in output
+    assert "## Artifact Map" in output
+    assert "# Project View" not in output
+
+
+def test_docs_generate_all_view_keeps_generated_views_available(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "all"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "# Project View" in output
+    assert "# Roadmap View" in output
+    assert "# State View" in output
+    assert "# Requirements View" in output
+    assert "# Sidecar View" in output
+
+
+def test_docs_generate_all_view_headings_are_stable_and_unique(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "all"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    headings = [
+        "# Project View",
+        "# Roadmap View",
+        "# State View",
+        "# Requirements View",
+        "# Sidecar View",
+    ]
+    if "# Autolab Stage Flow" in output:
+        headings.insert(0, "# Autolab Stage Flow")
+    positions: list[int] = []
+    for heading in headings:
+        assert output.count(heading) == 1
+        positions.append(output.index(heading))
+    assert positions == sorted(positions)
+
+
+def test_docs_generate_project_view_reports_missing_traceability_and_context_artifacts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "project"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Diagnostics" in output
+    assert "missing .autolab/traceability_latest.json" in output
+    assert "traceability_coverage.json" in output
+    assert "missing .autolab/context/bundle.json" in output
+    assert "missing .autolab/context/project_map.json" in output
+
+
+def test_docs_generate_state_view_reports_invalid_handoff_json(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    (repo / ".autolab" / "handoff.json").write_text("[]\n", encoding="utf-8")
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "state"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Diagnostics" in output
+    assert "invalid JSON object at .autolab/handoff.json" in output
+
+
+def test_docs_generate_writes_selected_view_to_output_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    output_dir = repo / "generated_docs"
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--view",
+                "state",
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "views_written: 1" in output
+    state_view_path = output_dir / "state.md"
+    assert state_view_path.exists()
+    assert "# State View" in state_view_path.read_text(encoding="utf-8")
+
+
+def test_docs_generate_default_output_dir_writes_all_views_without_markdown_body(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    output_dir = repo / "generated_docs"
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    expected_files = {"registry.md"}
+    written_files = {path.name for path in output_dir.glob("*.md")}
+    assert expected_files.issubset(written_files)
+    assert f"views_written: {len(written_files)}" in output
+    assert "# Project View" not in output
+    assert "# Autolab Stage Flow" not in output
+
+
+def test_docs_generate_rejects_output_dir_outside_repo(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    output_dir = tmp_path / "outside_repo_output"
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--view",
+                "state",
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 1
+    )
+    err = capsys.readouterr().err.lower()
+    assert "output-dir" in err
+    assert "repo" in err
+    assert "outside" in err or "inside" in err or "within" in err
+
+
+def test_docs_generate_sidecar_view_distinguishes_missing_and_invalid_artifact_status(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    (repo / ".autolab" / "handoff.json").write_text("[]\n", encoding="utf-8")
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--view",
+                "sidecar",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "| handoff.json | `.autolab/handoff.json` | invalid |" in output
+    assert (
+        "| traceability_latest.json | `.autolab/traceability_latest.json` | missing |"
+        in output
+    )
+
+
+@pytest.mark.parametrize(
+    ("view", "traceability_path_snippet"),
+    [
+        (
+            "sidecar",
+            "| traceability_coverage.json | `experiments/plan/iter_target/traceability_coverage.json` |",
+        ),
+        (
+            "project",
+            "- traceability_coverage_path: `experiments/plan/iter_target/traceability_coverage.json`",
+        ),
+        (
+            "requirements",
+            "- traceability_coverage_path: `experiments/plan/iter_target/traceability_coverage.json`",
+        ),
+    ],
+)
+def test_docs_generate_iteration_override_prefers_target_traceability_with_mismatch_diagnostic(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    view: str,
+    traceability_path_snippet: str,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _write_iteration_docs_fixture(repo, iteration_id="iter_old")
+    _write_iteration_docs_fixture(repo, iteration_id="iter_target")
+    (repo / ".autolab" / "traceability_latest.json").write_text(
+        json.dumps(
+            {
+                "iteration_id": "iter_old",
+                "traceability_path": "experiments/plan/iter_old/traceability_coverage.json",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--view",
+                view,
+                "--iteration-id",
+                "iter_target",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "iteration_id: `iter_target`" in output
+    assert traceability_path_snippet in output
+    assert (
+        "traceability_latest.traceability_path differs from selected coverage path"
+        in (output)
+    )
+
+
+def test_docs_generate_reports_stale_handoff_iteration_mismatch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    (repo / ".autolab" / "handoff.json").write_text(
+        json.dumps(
+            {
+                "iteration_id": "iter_stale",
+                "handoff_markdown_path": "experiments/plan/iter_stale/handoff.md",
+                "safe_resume_point": {"status": "ready", "command": "autolab verify"},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(
+            [
+                "docs",
+                "generate",
+                "--state-file",
+                str(state_path),
+                "--view",
+                "sidecar",
+                "--iteration-id",
+                "iter_target",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "handoff" in output.lower()
+    assert "iteration_id" in output
+    assert "iter_stale" in output
+    assert "iter_target" in output
 
 
 def test_update_command_routes_to_handler(
