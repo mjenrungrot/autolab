@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.13] - 2026-03-04
+
+### Summary
+
+- Reworked `autolab render` to use explicit view selection (`--view runner|audit|brief|human|context`) and added `--stats` prompt-debug reports.
+- Added prompt-debug diagnostics for line counts, token estimates, largest sections, dropped sections, and warning classes (duplicate headers, sentinel leaks, raw blob injection, stage-irrelevant includes).
+- Updated render/docs/test contracts for read-only behavior, legacy `--audience` hard-fail semantics, and expanded render/debug regression coverage.
+
+<!-- autolab:range v1.2.12..v1.2.13 -->
+
 ## [1.2.12] - 2026-03-04
 
 ### Summary

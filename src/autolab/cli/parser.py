@@ -115,10 +115,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Render a specific stage instead of state.stage.",
     )
     render.add_argument(
-        "--audience",
+        "--view",
         choices=("runner", "audit", "brief", "human", "context"),
-        default="runner",
-        help="Select which rendered packet to print (default: runner).",
+        default=None,
+        help="Select which rendered packet to print (default: runner; with --stats defaults to all views).",
+    )
+    render.add_argument(
+        "--stats",
+        action="store_true",
+        default=False,
+        help="Print prompt-debugging stats instead of rendered packet text.",
     )
     render.set_defaults(handler=_cmd_render)
 

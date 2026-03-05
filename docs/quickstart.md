@@ -108,19 +108,21 @@ Stage prompts live in `.autolab/prompts/stage_*.runner.md`, `.audit.md`,
 `.brief.md`, and `.human.md`. Each prompt:
 
 - Defines the agent's role and objectives for that stage
-- Includes shared guardrails, scope rules, and verification rituals
 - Uses `{{token}}` placeholders resolved at runtime
 
 Edit prompts to match your project's domain (e.g., specific metric names, compute constraints, code structure).
 
 Shared prompt fragments in `.autolab/prompts/shared/` are included via `{{shared:filename.md}}`.
 
-Preview the resolved prompt for the current state or a specific stage without running transitions:
+Runner views stay thin (mission, strict outputs, required inputs, stop conditions, non-negotiables). Verification-policy payloads stay in companion `audit`/`brief`/`human`/`context` views, not `runner`.
+
+Preview the resolved prompt for the current state or a specific stage without running transitions. `autolab render` is read-only and does not write `.autolab/prompts/rendered/*` artifacts:
 
 ```bash
 autolab render
-autolab render --stage implementation
-autolab render --stage design --audience context
+autolab render --stage implementation --view runner
+autolab render --stage design --view context
+autolab render --stage design --view runner --stats
 ```
 
 ## Step 4: Run your first stage
@@ -190,7 +192,7 @@ autolab resume
   prompts/
     stage_*.md            # Per-stage prompt templates
     shared/*.md           # Shared prompt fragments
-    rendered/             # Rendered prompts (generated at runtime)
+    rendered/             # Reserved path; autolab render does not write artifacts here
   schemas/                # JSON schemas for artifacts
   verifiers/              # Verification scripts
 experiments/

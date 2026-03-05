@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
+from autolab.render_debug import ALL_RENDER_VIEWS, build_render_stats_report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,23 +138,37 @@ def _cmd_render(args: argparse.Namespace) -> int:
         print(f"autolab render: ERROR {exc}", file=sys.stderr)
         return 1
 
-    audience = str(getattr(args, "audience", "runner") or "runner").strip().lower()
-    if audience == "runner":
-        rendered_text = bundle.prompt_text
-    elif audience == "audit":
-        rendered_text = bundle.audit_text
-    elif audience == "brief":
-        rendered_text = bundle.brief_text
-    elif audience == "human":
-        rendered_text = bundle.human_text
-    elif audience == "context":
-        rendered_text = json.dumps(bundle.context_payload, indent=2)
-    else:
-        print(
-            f"autolab render: ERROR unsupported audience '{audience}'",
-            file=sys.stderr,
-        )
+    view = str(getattr(args, "view", "") or "").strip().lower()
+    if view and view not in ALL_RENDER_VIEWS:
+        print(f"autolab render: ERROR unsupported view '{view}'", file=sys.stderr)
         return 1
+
+    stats_enabled = bool(getattr(args, "stats", False))
+    if stats_enabled:
+        stats_views = [view] if view else list(ALL_RENDER_VIEWS)
+        rendered_text = build_render_stats_report(
+            stage=stage,
+            bundle=bundle,
+            views=stats_views,
+        )
+    else:
+        selected_view = view or "runner"
+        if selected_view == "runner":
+            rendered_text = bundle.prompt_text
+        elif selected_view == "audit":
+            rendered_text = bundle.audit_text
+        elif selected_view == "brief":
+            rendered_text = bundle.brief_text
+        elif selected_view == "human":
+            rendered_text = bundle.human_text
+        elif selected_view == "context":
+            rendered_text = json.dumps(bundle.context_payload, indent=2)
+        else:
+            print(
+                f"autolab render: ERROR unsupported view '{selected_view}'",
+                file=sys.stderr,
+            )
+            return 1
 
     if rendered_text:
         sys.stdout.write(rendered_text)
