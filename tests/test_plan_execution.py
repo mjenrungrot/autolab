@@ -99,6 +99,7 @@ def test_execute_task_treats_zero_exit_code_as_success(
         tmp_path,
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
+        experiment_id="exp1",
         iteration_path="experiments/plan/iter1",
         iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
         project_wide_root=tmp_path,
@@ -122,6 +123,7 @@ def test_execute_task_runner_timeout_becomes_structured_failure(
         tmp_path,
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
+        experiment_id="exp1",
         iteration_path="experiments/plan/iter1",
         iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
         project_wide_root=tmp_path,
@@ -157,6 +159,7 @@ def test_execute_task_verification_timeout_becomes_structured_failure(
         tmp_path,
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
+        experiment_id="exp1",
         iteration_path="experiments/plan/iter1",
         iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
         project_wide_root=tmp_path,
@@ -169,6 +172,322 @@ def test_execute_task_verification_timeout_becomes_structured_failure(
     assert result["attempts"] == 2
     assert result["retries_used"] == 1
     assert "timed out" in str(result["error"]).lower()
+
+
+def test_execute_task_passes_compact_sidecar_context_to_runner(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture_runner(*_args, **kwargs):
+        captured["task_context"] = kwargs.get("task_context")
+        return {
+            "status": "completed",
+            "exit_code": 0,
+            "changed_paths": [],
+        }
+
+    monkeypatch.setattr(plan_execution, "_invoke_agent_runner", _capture_runner)
+
+    repo_root = tmp_path
+    context_dir = repo_root / ".autolab" / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    iteration_dir = repo_root / "experiments" / "plan" / "iter1"
+    sidecar_dir = iteration_dir / "context" / "sidecars"
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "sidecars" / "project_wide").mkdir(parents=True, exist_ok=True)
+    (context_dir / "project_map.json").write_text(
+        json.dumps({"schema_version": "1.0", "repo_root": str(repo_root)}),
+        encoding="utf-8",
+    )
+    (context_dir / "bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "focus_iteration_id": "iter1",
+                "focus_experiment_id": "exp1",
+                "project_map_path": ".autolab/context/project_map.json",
+                "selected_experiment_delta_path": "experiments/plan/iter1/context_delta.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (iteration_dir / "context_delta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "experiment_id": "exp1",
+                "changed_paths": ["src/model.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "sidecars" / "project_wide" / "research.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "research",
+                "scope_kind": "project_wide",
+                "scope_root": str(repo_root.resolve()),
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "questions": [],
+                "findings": [
+                    {
+                        "id": "pw-research",
+                        "summary": "Project-wide research summary",
+                        "detail": "Use deterministic parser outputs.",
+                    }
+                ],
+                "recommendations": [],
+                "sources": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sidecar_dir / "discuss.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "discuss",
+                "scope_kind": "experiment",
+                "scope_root": str(iteration_dir.resolve()),
+                "iteration_id": "iter1",
+                "experiment_id": "exp1",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "locked_decisions": [],
+                "preferences": [
+                    {
+                        "id": "exp-pref",
+                        "summary": "Keep the experiment patch narrow",
+                        "detail": "Do not expand the scope of the implementation task.",
+                    }
+                ],
+                "constraints": [],
+                "open_questions": [],
+                "promotion_candidates": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (iteration_dir / "design.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "id": "exp1",
+                "iteration_id": "iter1",
+                "hypothesis_id": "h1",
+                "entrypoint": {"module": "pkg.train", "args": {}},
+                "compute": {"location": "local", "gpu_count": 0},
+                "metrics": {
+                    "primary": {"name": "accuracy", "unit": "%", "mode": "maximize"},
+                    "secondary": [],
+                    "success_delta": "+0.1",
+                    "aggregation": "mean",
+                    "baseline_comparison": "vs baseline",
+                },
+                "baselines": [{"name": "baseline", "description": "existing"}],
+                "implementation_requirements": [
+                    {
+                        "requirement_id": "R1",
+                        "description": "Use promoted research context",
+                        "scope_kind": "experiment",
+                        "context_refs": ["project_wide:research:findings:pw-research"],
+                    }
+                ],
+                "extract_parser": {
+                    "kind": "command",
+                    "command": "python -m tools.extract_results --run-id {run_id}",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = plan_execution._execute_task(
+        repo_root,
+        state_path=repo_root / ".autolab" / "state.json",
+        iteration_id="iter1",
+        experiment_id="exp1",
+        iteration_path="experiments/plan/iter1",
+        iteration_dir=iteration_dir,
+        project_wide_root=repo_root,
+        wave=1,
+        task={
+            "task_id": "t1",
+            "verification_commands": [],
+            "context_inputs": [
+                "project_wide:research:findings:pw-research",
+                "experiment:discuss:preferences:exp-pref",
+            ],
+        },
+        task_retry_max=0,
+        require_verification_commands=False,
+    )
+
+    assert result["status"] == "completed"
+    task_context = captured["task_context"]
+    assert isinstance(task_context, dict)
+    sidecar_context = task_context["sidecar_context"]
+    assert sidecar_context["context_inputs"] == [
+        "project_wide:research:findings:pw-research",
+        "experiment:discuss:preferences:exp-pref",
+    ]
+    assert (
+        "project_wide:research:findings:pw-research: Project-wide research summary"
+        in sidecar_context["resolved_inputs"]
+    )
+    assert (
+        "experiment:discuss:preferences:exp-pref: Keep the experiment patch narrow"
+        in sidecar_context["resolved_inputs"]
+    )
+
+
+def test_execute_task_does_not_infer_promoted_context_inputs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture_runner(*_args, **kwargs):
+        captured["task_context"] = kwargs.get("task_context")
+        return {
+            "status": "completed",
+            "exit_code": 0,
+            "changed_paths": [],
+        }
+
+    monkeypatch.setattr(plan_execution, "_invoke_agent_runner", _capture_runner)
+
+    repo_root = tmp_path
+    context_dir = repo_root / ".autolab" / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    iteration_dir = repo_root / "experiments" / "plan" / "iter1"
+    sidecar_dir = iteration_dir / "context" / "sidecars"
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "project_map.json").write_text(
+        json.dumps({"schema_version": "1.0", "repo_root": str(repo_root)}),
+        encoding="utf-8",
+    )
+    (context_dir / "bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "focus_iteration_id": "iter1",
+                "focus_experiment_id": "exp1",
+                "project_map_path": ".autolab/context/project_map.json",
+                "selected_experiment_delta_path": "experiments/plan/iter1/context_delta.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (iteration_dir / "context_delta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "experiment_id": "exp1",
+                "changed_paths": ["src/shared.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sidecar_dir / "discuss.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "discuss",
+                "scope_kind": "experiment",
+                "scope_root": str(iteration_dir.resolve()),
+                "iteration_id": "iter1",
+                "experiment_id": "exp1",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "locked_decisions": [],
+                "preferences": [
+                    {
+                        "id": "exp-pref",
+                        "summary": "Keep the experiment patch narrow",
+                        "detail": "Do not expand the scope of the implementation task.",
+                    }
+                ],
+                "constraints": [],
+                "open_questions": [],
+                "promotion_candidates": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (iteration_dir / "design.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "id": "exp1",
+                "iteration_id": "iter1",
+                "hypothesis_id": "h1",
+                "entrypoint": {"module": "pkg.train", "args": {}},
+                "compute": {"location": "local", "gpu_count": 0},
+                "metrics": {
+                    "primary": {"name": "accuracy", "unit": "%", "mode": "maximize"},
+                    "secondary": [],
+                    "success_delta": "+0.1",
+                    "aggregation": "mean",
+                    "baseline_comparison": "vs baseline",
+                },
+                "baselines": [{"name": "baseline", "description": "existing"}],
+                "implementation_requirements": [
+                    {
+                        "requirement_id": "R_shared",
+                        "description": "Promote the experiment preference only through declared plan refs.",
+                        "scope_kind": "project_wide",
+                        "promoted_constraints": [
+                            {
+                                "id": "pc1",
+                                "source_ref": "experiment:discuss:preferences:exp-pref",
+                                "summary": "Carry the experiment preference into the shared code path.",
+                                "rationale": "Shared work must only consume this when the plan contract declares it.",
+                            }
+                        ],
+                    }
+                ],
+                "extract_parser": {
+                    "kind": "command",
+                    "command": "python -m tools.extract_results --run-id {run_id}",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = plan_execution._execute_task(
+        repo_root,
+        state_path=repo_root / ".autolab" / "state.json",
+        iteration_id="iter1",
+        experiment_id="exp1",
+        iteration_path="experiments/plan/iter1",
+        iteration_dir=iteration_dir,
+        project_wide_root=repo_root,
+        wave=1,
+        task={
+            "task_id": "t1",
+            "scope_kind": "project_wide",
+            "covers_requirements": ["R_shared"],
+            "verification_commands": [],
+        },
+        task_retry_max=0,
+        require_verification_commands=False,
+    )
+
+    assert result["status"] == "completed"
+    task_context = captured["task_context"]
+    assert isinstance(task_context, dict)
+    sidecar_context = task_context["sidecar_context"]
+    assert sidecar_context["context_inputs"] == []
+    assert sidecar_context["resolved_inputs"] == []
 
 
 def test_planning_pass_accepts_zero_exit_code(monkeypatch, tmp_path: Path) -> None:

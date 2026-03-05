@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.25] - 2026-03-05
+
+### Summary
+
+- Added optional `autolab discuss` and `autolab research` commands that capture user intent and scoped evidence into canonical JSON+Markdown sidecars for project-wide and experiment work.
+- Added compact discuss/research context consumption for `design` and `implementation`, plus advisory `design_context_quality.json` reporting so design quality improves when resolved discuss context is used but still works cleanly when sidecars are absent.
+- Hardened sidecar lineage and runtime safety by enforcing resolver-backed context refs, blocking undeclared promoted-context injection into task execution, and stripping raw merged sidecar payloads from runner-facing stage context JSON.
+
+<!-- autolab:range v1.2.24..v1.2.25 -->
+
 ## [1.2.24] - 2026-03-05
 
 ### Summary

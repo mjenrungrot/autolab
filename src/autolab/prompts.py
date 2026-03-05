@@ -40,6 +40,7 @@ from autolab.registry import (
     registry_runner_prompt_files,
 )
 from autolab.sidecar_context import resolve_context_sidecars
+from autolab.sidecar_tools import build_context_guidance
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
@@ -399,17 +400,21 @@ def _extract_design_metric_mode(iteration_dir: Path) -> str:
     return "maximize"
 
 
+def _load_design_yaml_mapping(iteration_dir: Path) -> dict[str, Any]:
+    if yaml is None:
+        return {}
+    design_path = iteration_dir / "design.yaml"
+    if not design_path.exists():
+        return {}
+    try:
+        loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _extract_design_target_delta(iteration_dir: Path) -> str:
-    design_payload = None
-    if yaml is not None:
-        design_path = iteration_dir / "design.yaml"
-        if design_path.exists():
-            try:
-                loaded = yaml.safe_load(design_path.read_text(encoding="utf-8"))
-            except Exception:
-                loaded = None
-            if isinstance(loaded, dict):
-                design_payload = loaded
+    design_payload = _load_design_yaml_mapping(iteration_dir)
     if not isinstance(design_payload, dict):
         return ""
     metrics = design_payload.get("metrics")
@@ -772,6 +777,16 @@ def _build_prompt_context(
         experiment_id=experiment_id,
         scope_kind=str(scope_payload.get("scope_kind", "")).strip(),
     )
+    design_payload = (
+        _load_design_yaml_mapping(iteration_dir)
+        if iteration_id and iteration_dir.exists()
+        else {}
+    )
+    sidecar_guidance = build_context_guidance(
+        context_resolution,
+        stage=stage,
+        design_payload=design_payload,
+    )
     project_data_roots = [str(path) for path in media_discovery.project_roots]
     project_data_media_counts = {
         str(path): int(count)
@@ -864,6 +879,17 @@ def _build_prompt_context(
             "codebase_experiment_delta_summary", ""
         ),
         "context_resolution": context_resolution,
+        "discuss_summary": {
+            "stage_context_lines": list(sidecar_guidance.get("stage_context_lines", []))
+            if isinstance(sidecar_guidance.get("stage_context_lines"), list)
+            else [],
+        },
+        "research_summary": {
+            "brief_items": list(sidecar_guidance.get("brief_items", []))
+            if isinstance(sidecar_guidance.get("brief_items"), list)
+            else [],
+        },
+        "sidecar_guidance": sidecar_guidance,
         "retry_counters": retry_counters,
         "protected_files": protected_files,
         "stage_metadata": stage_metadata,
@@ -926,6 +952,35 @@ def _build_prompt_context(
     }
 
 
+def _sanitize_context_resolution_for_runtime(
+    context_resolution: Any,
+) -> dict[str, Any]:
+    if not isinstance(context_resolution, dict):
+        return {}
+    return {
+        key: value
+        for key, value in context_resolution.items()
+        if key not in {"effective_discuss", "effective_research"}
+    }
+
+
+def _build_runtime_context_payload(
+    context_payload: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_payload = dict(context_payload)
+    sanitized_context_resolution = _sanitize_context_resolution_for_runtime(
+        runtime_payload.get("context_resolution")
+    )
+    runtime_payload["context_resolution"] = sanitized_context_resolution
+    artifacts = runtime_payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        runtime_payload["artifacts"] = {
+            **artifacts,
+            "context_resolution": sanitized_context_resolution,
+        }
+    return runtime_payload
+
+
 def _sanitize_retry_blocker(text: str, *, max_chars: int = 240) -> str:
     compact = " ".join(str(text).split())
     if not compact:
@@ -940,6 +995,15 @@ def _collect_stage_brief_items(
 ) -> list[str]:
     items: list[str] = []
     seen: set[str] = set()
+
+    sidecar_guidance = context_payload.get("sidecar_guidance")
+    if isinstance(sidecar_guidance, dict):
+        sidecar_items = sidecar_guidance.get("brief_items")
+        if isinstance(sidecar_items, list):
+            for item in sidecar_items:
+                candidate = _sanitize_retry_blocker(str(item))
+                if candidate:
+                    items.append(candidate)
 
     iteration_id = str(context_payload.get("iteration_id", "")).strip()
     experiment_id = str(context_payload.get("experiment_id", "")).strip()
@@ -1223,6 +1287,17 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         str(context_payload.get("codebase_experiment_delta_summary", "")).strip()
         or "none"
     )
+    sidecar_guidance = context_payload.get("sidecar_guidance")
+    extra_context_lines: list[str] = []
+    if isinstance(sidecar_guidance, dict):
+        raw_lines = sidecar_guidance.get("stage_context_lines")
+        if isinstance(raw_lines, list):
+            extra_context_lines.extend(
+                str(item).strip() for item in raw_lines if str(item).strip()
+            )
+    extra_context_block = ""
+    if extra_context_lines:
+        extra_context_block = "".join(f"{line}\n" for line in extra_context_lines)
 
     return (
         "## Runtime Stage Context\n"
@@ -1250,6 +1325,7 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- codebase_project_map_summary: {codebase_project_map_summary}\n"
         f"- codebase_experiment_delta_map_path: {codebase_experiment_delta_map_path}\n"
         f"- codebase_experiment_delta_summary: {codebase_experiment_delta_summary}\n"
+        f"{extra_context_block}"
         f"- protected_files: {protected_files_text}\n"
     )
 
@@ -1596,7 +1672,7 @@ def _render_stage_prompt(
         "rendered_human_path": str(human_path),
     }
     if write_outputs:
-        _write_json(context_path, context_payload)
+        _write_json(context_path, _build_runtime_context_payload(context_payload))
 
     return RenderedPromptBundle(
         template_path=template_path,

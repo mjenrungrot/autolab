@@ -129,6 +129,94 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     render.set_defaults(handler=_cmd_render)
 
+    discuss = subparsers.add_parser(
+        "discuss",
+        help="Capture scope-specific decisions, constraints, and unresolved questions",
+    )
+    discuss.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    discuss.add_argument(
+        "--scope",
+        required=True,
+        choices=("project_wide", "experiment"),
+        help="Which scope to capture decisions for.",
+    )
+    discuss.add_argument(
+        "--iteration-id",
+        "--iteration",
+        dest="iteration_id",
+        default="",
+        help="Override experiment iteration_id (default: state.iteration_id).",
+    )
+    discuss.add_argument(
+        "--answers-file",
+        default="",
+        help="Optional JSON answers file for non-interactive discuss execution.",
+    )
+    discuss.add_argument(
+        "--non-interactive",
+        action="store_true",
+        default=False,
+        help="Do not prompt; use --answers-file or current sidecar contents/defaults.",
+    )
+    discuss.add_argument(
+        "--write-question-pack",
+        default="",
+        help="Optional path to export the discuss question pack as JSON.",
+    )
+    discuss.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable result metadata.",
+    )
+    discuss.set_defaults(handler=_cmd_discuss)
+
+    research = subparsers.add_parser(
+        "research",
+        help="Synthesize repo-local evidence into research findings and recommendations",
+    )
+    research.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    research.add_argument(
+        "--scope",
+        required=True,
+        choices=("project_wide", "experiment"),
+        help="Which scope to research for.",
+    )
+    research.add_argument(
+        "--iteration-id",
+        "--iteration",
+        dest="iteration_id",
+        default="",
+        help="Override experiment iteration_id (default: state.iteration_id).",
+    )
+    research.add_argument(
+        "--question",
+        action="append",
+        default=[],
+        help="Optional extra research question (repeatable).",
+    )
+    research.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="LLM command timeout in seconds (default: 240).",
+    )
+    research.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable result metadata.",
+    )
+    research.set_defaults(handler=_cmd_research)
+
     run = subparsers.add_parser("run", help="Run one workflow stage transition")
     run.add_argument(
         "--state-file",

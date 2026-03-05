@@ -51,6 +51,48 @@
         },
         "detail": {
           "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["answered", "unresolved", "deferred"]
+        },
+        "question_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "finding_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "applies_to_stages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["design", "implementation"]
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["project_map", "context_delta", "discuss", "research", "artifact", "user_input"]
+        },
+        "path": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
         }
       },
       "additionalProperties": false

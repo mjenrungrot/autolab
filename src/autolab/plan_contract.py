@@ -11,6 +11,7 @@ except Exception:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 from autolab.registry import load_registry
+from autolab.sidecar_tools import parse_context_ref, resolve_context_ref
 from autolab.state import _resolve_iteration_directory
 
 _ROOT_SCOPED_PREFIXES = (
@@ -115,15 +116,15 @@ def _parse_str_list(
 
 def _extract_design_requirements(
     design_payload: dict[str, Any], *, errors: list[str]
-) -> list[str]:
+) -> dict[str, str]:
     requirements = design_payload.get("implementation_requirements")
     if not isinstance(requirements, list) or not requirements:
         errors.append(
             "design.yaml must include non-empty 'implementation_requirements' for implementation traceability"
         )
-        return []
+        return {}
 
-    requirement_ids: list[str] = []
+    requirement_scope_by_id: dict[str, str] = {}
     seen: set[str] = set()
     for idx, entry in enumerate(requirements):
         if not isinstance(entry, dict):
@@ -151,8 +152,8 @@ def _extract_design_requirements(
                 f"design.yaml implementation_requirements[{idx}] scope_kind must be one of {sorted(_SCOPE_KINDS)}"
             )
         seen.add(req_id)
-        requirement_ids.append(req_id)
-    return requirement_ids
+        requirement_scope_by_id[req_id] = scope_kind
+    return requirement_scope_by_id
 
 
 def _artifact_matches_required(
@@ -283,13 +284,14 @@ def check_implementation_plan_contract(
         )
 
     iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
     if not iteration_id:
         raise PlanContractError("iteration_id is required in state")
 
     iteration_dir, _iteration_type = _resolve_iteration_directory(
         repo_root,
         iteration_id=iteration_id,
-        experiment_id=str(state.get("experiment_id", "")).strip(),
+        experiment_id=experiment_id,
         require_exists=False,
     )
     try:
@@ -321,7 +323,10 @@ def check_implementation_plan_contract(
     warnings: list[str] = []
     rule_results: list[dict[str, str]] = []
 
-    design_requirement_ids = _extract_design_requirements(design_payload, errors=errors)
+    design_requirement_scope = _extract_design_requirements(
+        design_payload, errors=errors
+    )
+    design_requirement_ids = list(design_requirement_scope)
     if design_requirement_ids:
         rule_results.append(
             {
@@ -399,6 +404,7 @@ def check_implementation_plan_contract(
     task_writes: dict[str, list[str]] = {}
     task_expected_artifacts: dict[str, list[str]] = {}
     task_covers_requirements: dict[str, list[str]] = {}
+    task_context_inputs: dict[str, list[str]] = {}
 
     for idx, raw_task in enumerate(tasks_raw):
         if not isinstance(raw_task, dict):
@@ -431,6 +437,11 @@ def check_implementation_plan_contract(
         covers_requirements = _parse_str_list(
             task_id, raw_task, "covers_requirements", errors=errors
         )
+        context_inputs = []
+        if "context_inputs" in raw_task:
+            context_inputs = _parse_str_list(
+                task_id, raw_task, "context_inputs", errors=errors
+            )
         objective = str(raw_task.get("objective", "")).strip()
         if not objective:
             errors.append(f"{task_id}: objective must be non-empty")
@@ -480,6 +491,27 @@ def check_implementation_plan_contract(
                 errors.append(
                     f"{task_id}: project_wide task writes iteration-local paths ({', '.join(sorted(set(illegal_writes)))})"
                 )
+            for context_ref in context_inputs:
+                parsed = parse_context_ref(context_ref)
+                if parsed is None:
+                    errors.append(
+                        f"{task_id}: invalid context_inputs ref '{context_ref}'"
+                    )
+                    continue
+                if (
+                    parsed.get("kind") == "sidecar"
+                    and parsed.get("scope_kind") == "experiment"
+                ):
+                    errors.append(
+                        f"{task_id}: project_wide task may not reference experiment sidecar context '{context_ref}'"
+                    )
+                if (
+                    parsed.get("kind") == "artifact"
+                    and parsed.get("artifact_kind") == "context_delta"
+                ):
+                    errors.append(
+                        f"{task_id}: project_wide task may not reference context_delta"
+                    )
 
         if scope_kind == "experiment":
             outside_paths = [
@@ -493,6 +525,64 @@ def check_implementation_plan_contract(
                 errors.append(
                     f"{task_id}: experiment-scoped task touches project-wide paths ({', '.join(sorted(set(outside_paths)))})"
                 )
+
+        for context_ref in context_inputs:
+            parsed = parse_context_ref(context_ref)
+            if parsed is None:
+                errors.append(f"{task_id}: invalid context_inputs ref '{context_ref}'")
+                continue
+            if (
+                resolve_context_ref(
+                    repo_root,
+                    iteration_id=iteration_id,
+                    experiment_id=experiment_id,
+                    raw_ref=context_ref,
+                    design_payload=design_payload,
+                    scope_kind=scope_kind,
+                )
+                is None
+            ):
+                errors.append(
+                    f"{task_id}: context_inputs ref '{context_ref}' could not be resolved"
+                )
+
+        promotion_source = str(raw_task.get("promotion_source", "")).strip()
+        promotion_scope_ok = raw_task.get("promotion_scope_ok")
+        if promotion_source:
+            parsed = parse_context_ref(promotion_source)
+            if parsed is None:
+                errors.append(
+                    f"{task_id}: promotion_source '{promotion_source}' is invalid"
+                )
+            elif (
+                parsed.get("kind") != "sidecar"
+                or parsed.get("scope_kind") != "experiment"
+            ):
+                errors.append(
+                    f"{task_id}: promotion_source '{promotion_source}' must target an experiment sidecar item"
+                )
+            elif (
+                resolve_context_ref(
+                    repo_root,
+                    iteration_id=iteration_id,
+                    experiment_id=experiment_id,
+                    raw_ref=promotion_source,
+                    design_payload=design_payload,
+                    scope_kind="experiment",
+                )
+                is None
+            ):
+                errors.append(
+                    f"{task_id}: promotion_source '{promotion_source}' could not be resolved"
+                )
+            if not isinstance(promotion_scope_ok, bool) or not promotion_scope_ok:
+                errors.append(
+                    f"{task_id}: promotion_source requires promotion_scope_ok=true"
+                )
+        elif "promotion_scope_ok" in raw_task and not isinstance(
+            promotion_scope_ok, bool
+        ):
+            errors.append(f"{task_id}: promotion_scope_ok must be boolean")
 
         families = _path_families([*reads, *writes, *touches])
         if len(families) > 4:
@@ -511,6 +601,7 @@ def check_implementation_plan_contract(
         task_writes[task_id] = writes
         task_expected_artifacts[task_id] = expected_artifacts
         task_covers_requirements[task_id] = covers_requirements
+        task_context_inputs[task_id] = context_inputs
 
     unknown_dependency_errors = 0
     for task_id, deps in deps_map.items():
@@ -564,6 +655,7 @@ def check_implementation_plan_contract(
             )
 
     missing_requirement_mappings = 0
+    scope_mismatch_requirement_mappings = 0
     if design_requirement_ids:
         requirement_to_tasks: dict[str, list[str]] = {
             req_id: [] for req_id in design_requirement_ids
@@ -584,8 +676,24 @@ def check_implementation_plan_contract(
                 errors.append(
                     f"design requirement '{req_id}' is not mapped by any plan task"
                 )
+                continue
+            expected_scope = design_requirement_scope.get(req_id, "")
+            scope_mismatches = [
+                task_id
+                for task_id in mapped_tasks
+                if task_scope.get(task_id, "") != expected_scope
+            ]
+            if scope_mismatches:
+                scope_mismatch_requirement_mappings += 1
+                errors.append(
+                    f"design requirement '{req_id}' scope_kind={expected_scope} is mapped by wrong-scope task(s): {', '.join(sorted(scope_mismatches))}"
+                )
 
-    if missing_requirement_mappings == 0 and design_requirement_ids:
+    if (
+        missing_requirement_mappings == 0
+        and scope_mismatch_requirement_mappings == 0
+        and design_requirement_ids
+    ):
         rule_results.append(
             {
                 "rule": "design_requirement_mapping",
@@ -598,7 +706,10 @@ def check_implementation_plan_contract(
             {
                 "rule": "design_requirement_mapping",
                 "status": "fail",
-                "detail": f"{missing_requirement_mappings} requirement(s) are unmapped",
+                "detail": (
+                    f"{missing_requirement_mappings} requirement(s) are unmapped; "
+                    f"{scope_mismatch_requirement_mappings} requirement(s) have wrong-scope task mappings"
+                ),
             }
         )
 

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import autolab.commands as commands_module
+import autolab.cli.handlers_admin as handlers_admin
 import pytest
 from autolab.update import UpdateResult
 
@@ -36,6 +37,76 @@ def _init_repo_state(tmp_path: Path) -> tuple[Path, Path]:
         == 0
     )
     return repo, state_path
+
+
+def _write_discuss_research_context(
+    repo: Path,
+    state_path: Path,
+    *,
+    iteration_id: str = "iter_ctx",
+    experiment_id: str = "e_ctx",
+) -> Path:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = iteration_id
+    state["experiment_id"] = experiment_id
+    state["stage"] = "design"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    context_dir = repo / ".autolab" / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    iteration_dir = repo / "experiments" / "plan" / iteration_id
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+
+    (context_dir / "bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "focus_iteration_id": iteration_id,
+                "focus_experiment_id": experiment_id,
+                "project_map_path": ".autolab/context/project_map.json",
+                "selected_experiment_delta_path": f"experiments/plan/{iteration_id}/context_delta.json",
+                "experiment_delta_maps": [
+                    {
+                        "iteration_id": iteration_id,
+                        "experiment_id": experiment_id,
+                        "path": f"experiments/plan/{iteration_id}/context_delta.json",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (context_dir / "project_map.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "scan_mode": "fast_heuristic",
+                "repo_root": str(repo.resolve()),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (iteration_dir / "context_delta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": iteration_id,
+                "experiment_id": experiment_id,
+                "changed_paths": ["src/model.py"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return iteration_dir
 
 
 def _write_iteration_docs_fixture(repo: Path, *, iteration_id: str) -> None:
@@ -1746,6 +1817,480 @@ def test_status_human_review_banner_mentions_human_review_decision(
     captured = capsys.readouterr()
     assert "*** HUMAN REVIEW REQUIRED ***" in captured.out
     assert "record the human review decision" in captured.out
+
+
+def test_discuss_answers_file_writes_experiment_sidecar(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    answers_path = repo / "answers.json"
+    question_pack_path = repo / "question_pack.json"
+    answers_path.write_text(
+        json.dumps(
+            {
+                "responses": {
+                    "locked_decisions": [
+                        {
+                            "id": "ld1",
+                            "summary": "Keep the baseline trainer unchanged",
+                            "detail": "baseline stays fixed",
+                            "status": "bogus",
+                        }
+                    ],
+                    "preferences": ["Prefer narrow diffs | keep reviewable patches"],
+                    "constraints": [
+                        "Do not change benchmark definitions | benchmark contract stays fixed"
+                    ],
+                    "open_questions": [
+                        "Which parser fields are still missing? | parser coverage gap"
+                    ],
+                    "promotion_candidates": [
+                        "Promote parser compatibility | R_shared | needed for shared parser path | project_wide"
+                    ],
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        [
+            "discuss",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--answers-file",
+            str(answers_path),
+            "--write-question-pack",
+            str(question_pack_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    assert result["scope_kind"] == "experiment"
+    assert question_pack_path.exists()
+    sidecar_path = iteration_dir / "context" / "sidecars" / "discuss.json"
+    markdown_path = iteration_dir / "context" / "sidecars" / "discuss.md"
+    assert sidecar_path.exists()
+    assert markdown_path.exists()
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert payload["scope_kind"] == "experiment"
+    assert payload["iteration_id"] == "iter_ctx"
+    assert payload["experiment_id"] == "e_ctx"
+    assert payload["locked_decisions"][0]["status"] == "locked"
+    assert payload["promotion_candidates"][0]["target_scope_kind"] == "project_wide"
+    assert payload["promotion_candidates"][0]["requirement_hint"] == "R_shared"
+
+
+def test_discuss_non_interactive_uses_existing_or_default_answers(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+
+    exit_code = commands_module.main(
+        [
+            "discuss",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--non-interactive",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    sidecar_path = iteration_dir / "context" / "sidecars" / "discuss.json"
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert payload["locked_decisions"] == []
+    assert payload["open_questions"] == []
+
+
+def test_discuss_project_wide_ignores_promotion_candidates_from_answers_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    answers_path = repo / "project_answers.json"
+    answers_path.write_text(
+        json.dumps(
+            {
+                "responses": {
+                    "locked_decisions": [
+                        "Keep the shared parser contract stable | no drift"
+                    ],
+                    "promotion_candidates": [
+                        "This should be ignored | R_ignore | invalid for project-wide discuss | project_wide"
+                    ],
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        [
+            "discuss",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "project_wide",
+            "--answers-file",
+            str(answers_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["scope_kind"] == "project_wide"
+    sidecar_path = (
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "discuss.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert (
+        payload["locked_decisions"][0]["summary"]
+        == "Keep the shared parser contract stable"
+    )
+    assert payload["promotion_candidates"] == []
+
+
+def test_discuss_iteration_override_resolves_target_experiment_identity(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _write_discuss_research_context(
+        repo,
+        state_path,
+        iteration_id="iter_active",
+        experiment_id="exp_active",
+    )
+    other_iteration_dir = _write_discuss_research_context(
+        repo,
+        state_path,
+        iteration_id="iter_other",
+        experiment_id="exp_other",
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = "iter_active"
+    state["experiment_id"] = "exp_active"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        "\n".join(
+            [
+                "hypotheses:",
+                "  - id: h_active",
+                "    status: open",
+                "    title: Active hypothesis",
+                "    success_metric: accuracy",
+                "    target_delta: 0.1",
+                "experiments:",
+                "  - id: exp_active",
+                "    hypothesis_id: h_active",
+                "    status: in_progress",
+                "    type: plan",
+                "    iteration_id: iter_active",
+                "  - id: exp_other",
+                "    hypothesis_id: h_active",
+                "    status: open",
+                "    type: plan",
+                "    iteration_id: iter_other",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _ = capsys.readouterr()
+    answers_path = repo / "override_answers.json"
+    answers_path.write_text(
+        json.dumps(
+            {
+                "responses": {
+                    "locked_decisions": [
+                        "Target the other iteration identity | ensure experiment_id follows iteration"
+                    ]
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        [
+            "discuss",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--iteration-id",
+            "iter_other",
+            "--answers-file",
+            str(answers_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["iteration_id"] == "iter_other"
+    assert result["experiment_id"] == "exp_other"
+    sidecar_path = other_iteration_dir / "context" / "sidecars" / "discuss.json"
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert payload["iteration_id"] == "iter_other"
+    assert payload["experiment_id"] == "exp_other"
+
+
+def test_research_noops_without_questions(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "noop"
+    assert result["reason"] == "no unresolved questions"
+    assert not (iteration_dir / "context" / "sidecars" / "research.json").exists()
+
+
+def test_research_writes_sidecar_with_mocked_local_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    discuss_sidecar_path = iteration_dir / "context" / "sidecars" / "discuss.json"
+    discuss_sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    discuss_sidecar_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "discuss",
+                "scope_kind": "experiment",
+                "scope_root": str(iteration_dir.resolve()),
+                "iteration_id": "iter_ctx",
+                "experiment_id": "e_ctx",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "locked_decisions": [],
+                "preferences": [],
+                "constraints": [],
+                "open_questions": [
+                    {
+                        "id": "oq_parser",
+                        "summary": "Which parser outputs still need evidence?",
+                        "detail": "Determine the minimum supported parser outputs.",
+                        "status": "unresolved",
+                    }
+                ],
+                "promotion_candidates": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def _fake_run_local_agent(*_args, **_kwargs):
+        return (
+            0,
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "id": "finding_parser",
+                            "summary": "The parser should emit deterministic metric keys.",
+                            "detail": "This keeps extraction and design contracts aligned.",
+                            "question_ids": ["oq_parser"],
+                            "source_ids": ["project_map", "context_delta"],
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "id": "rec_parser",
+                            "summary": "Reference the parser compatibility finding in design.",
+                            "detail": "Keep the runner packet compact by referencing the sidecar item.",
+                            "question_ids": ["oq_parser"],
+                            "finding_ids": ["finding_parser"],
+                            "source_ids": ["project_map"],
+                            "applies_to_stages": ["design", "implementation"],
+                        }
+                    ],
+                }
+            ),
+            "",
+            "mock-agent",
+        )
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+    monkeypatch.setattr(commands_module, "_run_local_agent", _fake_run_local_agent)
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    assert result["question_count"] == 1
+    assert result["finding_count"] == 1
+    assert result["recommendation_count"] == 1
+    assert result["llm_command"] == "mock-agent"
+    research_path = iteration_dir / "context" / "sidecars" / "research.json"
+    research_payload = json.loads(research_path.read_text(encoding="utf-8"))
+    assert research_payload["questions"][0]["id"] == "oq_parser"
+    assert research_payload["questions"][0]["status"] == "answered"
+    assert research_payload["findings"][0]["question_ids"] == ["oq_parser"]
+    assert research_payload["recommendations"][0]["finding_ids"] == ["finding_parser"]
+    assert research_payload["recommendations"][0]["applies_to_stages"] == [
+        "design",
+        "implementation",
+    ]
+
+
+def test_discuss_rejects_invalid_question_pack_target(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+
+    exit_code = commands_module.main(
+        [
+            "discuss",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--non-interactive",
+            "--write-question-pack",
+            str(repo / ".autolab"),
+        ]
+    )
+
+    assert exit_code == 1
+    assert "failed writing question pack" in capsys.readouterr().err
+
+
+def test_research_returns_cli_error_for_invalid_agent_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    monkeypatch.setenv("AUTOLAB_RESEARCH_AGENT_COMMAND", '"')
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--question",
+            "What evidence is still missing?",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "could not be parsed" in capsys.readouterr().err
+
+
+def test_research_rejects_invalid_provenance_from_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+
+    def _fake_run_local_agent(*_args, **_kwargs):
+        return (
+            0,
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "id": "finding_parser",
+                            "summary": "Missing provenance",
+                            "detail": "This should fail normalization.",
+                            "question_ids": ["unknown_question"],
+                            "source_ids": ["unknown_source"],
+                        }
+                    ],
+                    "recommendations": [],
+                }
+            ),
+            "",
+            "mock-agent",
+        )
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+    monkeypatch.setattr(commands_module, "_run_local_agent", _fake_run_local_agent)
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+            "--question",
+            "What evidence is still missing?",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "must reference at least one known question_id" in capsys.readouterr().err
+    assert not (iteration_dir / "context" / "sidecars" / "research.json").exists()
 
 
 def test_packaged_golden_iteration_fixture_contract() -> None:

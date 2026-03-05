@@ -300,6 +300,61 @@ def _write_context_resolution_fixture(
     )
 
 
+def _write_design_with_context_refs(repo: Path) -> None:
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    design = {
+        "schema_version": "1.0",
+        "id": "e1",
+        "iteration_id": "iter1",
+        "hypothesis_id": "h1",
+        "entrypoint": {"module": "pkg.train", "args": {}},
+        "compute": {"location": "local", "gpu_count": 0},
+        "metrics": {
+            "primary": {"name": "accuracy", "unit": "%", "mode": "maximize"},
+            "secondary": [],
+            "success_delta": "+0.1",
+            "aggregation": "mean",
+            "baseline_comparison": "vs baseline",
+        },
+        "baselines": [{"name": "baseline", "description": "existing"}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Keep experiment-local training path aligned with research.",
+                "scope_kind": "experiment",
+                "context_refs": [
+                    "project_wide:research:findings:pw-research",
+                    "experiment:research:findings:exp-research",
+                ],
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "Promote the experiment preference into the shared parser contract.",
+                "scope_kind": "project_wide",
+                "promoted_constraints": [
+                    {
+                        "id": "pc1",
+                        "source_ref": "experiment:discuss:preferences:exp-discuss",
+                        "summary": "Respect the experiment-local discuss preference.",
+                        "rationale": "Shared parser changes should preserve the chosen experiment workflow.",
+                    }
+                ],
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+            },
+        ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "python -m tools.extract_results --run-id {run_id}",
+        },
+    }
+    (iteration_dir / "design.yaml").write_text(
+        yaml.safe_dump(design, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
 def _items_by_id(payload: object) -> dict[str, dict[str, object]]:
     if isinstance(payload, dict):
         raw_items: list[object] = []
@@ -1492,4 +1547,106 @@ def test_render_stage_prompt_context_resolution_surfaces_stale_dependency_hashes
     assert any(
         ".autolab/context/project_map.json" in str(item)
         for item in resolution["diagnostics"]
+    )
+
+
+def test_render_implementation_prompt_includes_compact_sidecar_guidance_only(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    _write_design_with_context_refs(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    sidecar_guidance = bundle.context_payload["sidecar_guidance"]
+    assert any(
+        "research_findings: experiment research override; experiment research only"
+        in line
+        for line in sidecar_guidance["stage_context_lines"]
+    )
+    assert (
+        "promoted constraints: R2: Respect the experiment-local discuss preference."
+        in sidecar_guidance["brief_items"]
+    )
+    assert "research_findings:" in bundle.context_payload["stage_context"]
+    assert "promoted_constraints:" in bundle.context_payload["stage_context"]
+    assert (
+        "findings: experiment research override; experiment research only"
+        in bundle.context_payload["brief_summary"]
+    )
+    assert "effective_discuss" not in bundle.prompt_text
+    assert "effective_research" not in bundle.prompt_text
+    assert "source_component_id" not in bundle.prompt_text
+
+
+def test_render_stage_prompt_written_context_omits_raw_effective_sidecars(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    _write_design_with_context_refs(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=True,
+    )
+
+    in_memory_resolution = bundle.context_payload["context_resolution"]
+    assert "effective_discuss" in in_memory_resolution
+    assert "effective_research" in in_memory_resolution
+
+    runtime_context = json.loads(bundle.context_path.read_text(encoding="utf-8"))
+    written_resolution = runtime_context["context_resolution"]
+    assert "effective_discuss" not in written_resolution
+    assert "effective_research" not in written_resolution
+    assert "effective_discuss" not in runtime_context["artifacts"]["context_resolution"]
+    assert (
+        "effective_research" not in runtime_context["artifacts"]["context_resolution"]
+    )
+    assert any(
+        "research_findings: experiment research override; experiment research only"
+        in line
+        for line in runtime_context["sidecar_guidance"]["stage_context_lines"]
     )

@@ -94,6 +94,16 @@ except Exception:  # pragma: no cover
     )
     REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}  # type: ignore[misc]
 
+try:
+    from autolab.validators import _validate_design as _shared_validate_design
+except Exception:  # pragma: no cover
+    _shared_validate_design = None  # type: ignore[assignment]
+
+try:
+    from autolab.utils import _path_fingerprint as _shared_path_fingerprint
+except Exception:  # pragma: no cover
+    _shared_path_fingerprint = None  # type: ignore[assignment]
+
 from verifier_lib import (
     REPO_ROOT,
     STATE_FILE,
@@ -134,6 +144,7 @@ SCHEMAS: dict[str, str] = {
     "codebase_context_bundle": "codebase_context_bundle.schema.json",
     "discuss_sidecar": "discuss_sidecar.schema.json",
     "research_sidecar": "research_sidecar.schema.json",
+    "design_context_quality": "design_context_quality.schema.json",
 }
 
 OBSERVABILITY_REASON_CODES = {
@@ -470,6 +481,16 @@ def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
         and str(payload.get("iteration_id")).strip() != iteration_id
     ):
         failures.append(f"{path} iteration_id mismatch with state")
+    if _shared_validate_design is not None:
+        try:
+            _shared_validate_design(
+                path,
+                iteration_id,
+                repo_root=REPO_ROOT,
+                experiment_id=str(state.get("experiment_id", "")).strip(),
+            )
+        except Exception as exc:
+            failures.append(f"{path} {exc}")
     return failures
 
 
@@ -1334,6 +1355,99 @@ def _expected_sidecar_scope_root(
         return None
 
 
+def _validate_sidecar_contract(path: Path, payload: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+
+    def _collect_ids(collection_name: str) -> set[str]:
+        raw_entries = payload.get(collection_name)
+        if not isinstance(raw_entries, list):
+            return set()
+        return {
+            str(entry.get("id", "")).strip()
+            for entry in raw_entries
+            if isinstance(entry, dict) and str(entry.get("id", "")).strip()
+        }
+
+    sidecar_kind = str(payload.get("sidecar_kind", "")).strip()
+    if sidecar_kind != "research":
+        return failures
+
+    question_ids = _collect_ids("questions")
+    finding_ids = _collect_ids("findings")
+    source_ids = _collect_ids("sources")
+
+    raw_findings = payload.get("findings")
+    if isinstance(raw_findings, list):
+        for index, entry in enumerate(raw_findings):
+            if not isinstance(entry, dict):
+                continue
+            for ref in entry.get("question_ids", []):
+                ref_text = str(ref).strip()
+                if ref_text and ref_text not in question_ids:
+                    failures.append(
+                        f"{path} findings[{index}].question_ids references unknown question id '{ref_text}'"
+                    )
+            for ref in entry.get("source_ids", []):
+                ref_text = str(ref).strip()
+                if ref_text and ref_text not in source_ids:
+                    failures.append(
+                        f"{path} findings[{index}].source_ids references unknown source id '{ref_text}'"
+                    )
+
+    raw_recommendations = payload.get("recommendations")
+    if isinstance(raw_recommendations, list):
+        for index, entry in enumerate(raw_recommendations):
+            if not isinstance(entry, dict):
+                continue
+            for field, known_ids in (
+                ("question_ids", question_ids),
+                ("finding_ids", finding_ids),
+                ("source_ids", source_ids),
+            ):
+                for ref in entry.get(field, []):
+                    ref_text = str(ref).strip()
+                    if ref_text and ref_text not in known_ids:
+                        failures.append(
+                            f"{path} recommendations[{index}].{field} references unknown id '{ref_text}'"
+                        )
+
+    raw_sources = payload.get("sources")
+    if isinstance(raw_sources, list):
+        for index, entry in enumerate(raw_sources):
+            if not isinstance(entry, dict):
+                continue
+            source_path = str(entry.get("path", "")).strip()
+            source_fingerprint = str(entry.get("fingerprint", "")).strip()
+            if not source_path and not source_fingerprint:
+                continue
+            resolved_path = _resolve_repo_contained_path(source_path)
+            if resolved_path is None:
+                failures.append(
+                    f"{path} sources[{index}].path must resolve inside repo root"
+                )
+                continue
+            if not resolved_path.exists() or not resolved_path.is_file():
+                failures.append(
+                    f"{path} sources[{index}].path does not exist as a file"
+                )
+                continue
+            if not source_fingerprint:
+                failures.append(
+                    f"{path} sources[{index}].fingerprint is required when path is set"
+                )
+                continue
+            if _shared_path_fingerprint is not None:
+                actual_fingerprint = _shared_path_fingerprint(
+                    REPO_ROOT,
+                    resolved_path.relative_to(REPO_ROOT).as_posix(),
+                )
+                if actual_fingerprint != source_fingerprint:
+                    failures.append(
+                        f"{path} sources[{index}].fingerprint does not match {resolved_path.relative_to(REPO_ROOT).as_posix()}"
+                    )
+    return failures
+
+
 def _validate_context_sidecars(state: dict[str, Any]) -> list[str]:
     """Validate optional discuss/research sidecars when present."""
     failures: list[str] = []
@@ -1361,6 +1475,7 @@ def _validate_context_sidecars(state: dict[str, Any]) -> list[str]:
                 path_label=f"{path} generated_at",
             )
         )
+        failures.extend(_validate_sidecar_contract(path, payload))
 
         payload_scope_kind = str(payload.get("scope_kind", "")).strip()
         if payload_scope_kind and payload_scope_kind != expected_scope_kind:
@@ -1540,6 +1655,42 @@ def _validate_plan_checker_outputs(state: dict[str, Any], *, stage: str) -> list
     return errors
 
 
+def _validate_design_context_quality(state: dict[str, Any], *, stage: str) -> list[str]:
+    if stage != "design":
+        return []
+    path = _iteration_dir(state) / "design_context_quality.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    failures = _schema_validate(
+        payload,
+        schema_key="design_context_quality",
+        path=path,
+    )
+    failures.extend(
+        _validate_timestamp(
+            payload.get("generated_at"),
+            path_label=f"{path} generated_at",
+        )
+    )
+    if (
+        str(payload.get("iteration_id", "")).strip()
+        and str(payload.get("iteration_id", "")).strip()
+        != str(state.get("iteration_id", "")).strip()
+    ):
+        failures.append(f"{path} iteration_id mismatch")
+    if (
+        str(payload.get("experiment_id", "")).strip()
+        and str(payload.get("experiment_id", "")).strip()
+        != str(state.get("experiment_id", "")).strip()
+    ):
+        failures.append(f"{path} experiment_id mismatch")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1607,6 +1758,7 @@ def main() -> int:
     failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
+    failures.extend(_validate_design_context_quality(state, stage=stage))
 
     warnings: list[str] = []
     traceability_issues = []

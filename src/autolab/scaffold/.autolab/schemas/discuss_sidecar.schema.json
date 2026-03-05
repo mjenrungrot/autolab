@@ -52,6 +52,20 @@
         },
         "detail": {
           "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["locked", "preferred", "constraint", "unresolved", "promote"]
+        },
+        "target_scope_kind": {
+          "type": "string",
+          "enum": ["project_wide", "experiment"]
+        },
+        "requirement_hint": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
         }
       },
       "additionalProperties": false

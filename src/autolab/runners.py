@@ -493,6 +493,7 @@ def _build_minimal_task_runner_prompt(
     touches = task_packet.get("touches", [])
     expected_artifacts = task_packet.get("expected_artifacts", [])
     verification_commands = task_packet.get("verification_commands", [])
+    context_inputs = task_packet.get("context_inputs", [])
 
     def _render_list(values: Any) -> str:
         if not isinstance(values, list):
@@ -512,7 +513,8 @@ def _build_minimal_task_runner_prompt(
         "## DECLARED SURFACES\n"
         f"- reads: {_render_list(reads)}\n"
         f"- writes: {_render_list(writes)}\n"
-        f"- touches: {_render_list(touches)}\n\n"
+        f"- touches: {_render_list(touches)}\n"
+        f"- context_inputs: {_render_list(context_inputs)}\n\n"
         "## OUTPUTS (STRICT)\n"
         f"- expected_artifacts: {_render_list(expected_artifacts)}\n\n"
         "## STOP CONDITIONS\n"
@@ -521,6 +523,7 @@ def _build_minimal_task_runner_prompt(
         "- Stop if you cannot satisfy declared verification intent.\n\n"
         "## NON-NEGOTIABLES\n"
         f"- Use `{context_path}` as structured runtime context.\n"
+        "- If `task_context.sidecar_context` is present, honor it instead of loading raw sidecar files.\n"
         "- Keep edits minimal and confined to this task only.\n"
         "- Do not execute unrelated cleanups or refactors.\n\n"
         "## TASK-LEVEL VERIFICATION INTENT\n"
