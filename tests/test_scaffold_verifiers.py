@@ -2147,7 +2147,7 @@ def test_allowed_edit_dirs_field_name_in_context(tmp_path: Path) -> None:
         "host_mode": "local",
         "state_snapshot": {"stage_attempt": 0, "max_stage_attempts": 3},
         "runner_scope": {
-            "mode": "iteration_plus_core",
+            "mode": "scope_root_plus_core",
             "workspace_dir": "/w",
             "allowed_edit_dirs": ["src", "tests"],
         },

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.19] - 2026-03-05
+
+### Summary
+
+- Added configurable `scope_roots.project_wide_root` and routed project-wide scope resolution through it for runner task execution, handoff, prompt render context, and docs generation.
+- Replaced runner edit-scope modes with scope-root-aware modes (`scope_root_plus_core`, `scope_root_only`) and added explicit scope-root runtime surfaces (`{scope_root}`, `AUTOLAB_SCOPE_ROOT`).
+- Expanded regression coverage for scope-root policy validation, project-wide handoff/render behavior, runner project-wide scope enforcement, and scope-root-aware implementation execution helpers.
+
+<!-- autolab:range v1.2.18..v1.2.19 -->
+
 ## [1.2.18] - 2026-03-05
 
 ### Summary

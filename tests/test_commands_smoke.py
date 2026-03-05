@@ -58,6 +58,27 @@ def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     )
 
 
+def test_docs_generate_includes_scope_roots_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    (repo / "src").mkdir(exist_ok=True)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_text = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        policy_text + "\nscope_roots:\n  project_wide_root: src\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Scope Roots" in output
+    assert "configured_project_wide_root" in output
+    assert "`src`" in output
+
+
 def test_update_command_routes_to_handler(
     monkeypatch,
 ) -> None:
@@ -275,6 +296,41 @@ def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
     resume_out = capsys.readouterr().out
     assert "autolab resume" in resume_out
     assert "mode: preview" in resume_out
+
+
+def test_handoff_uses_configured_project_wide_root(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    (repo / "src").mkdir(exist_ok=True)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_text = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        policy_text + "\nscope_roots:\n  project_wide_root: src\n",
+        encoding="utf-8",
+    )
+    plan_contract = {
+        "schema_version": "1.0",
+        "tasks": [
+            {"task_id": "T1", "scope_kind": "project_wide"},
+        ],
+    }
+    (repo / ".autolab" / "plan_contract.json").write_text(
+        json.dumps(plan_contract, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    _ = capsys.readouterr()
+    payload = json.loads(
+        (repo / ".autolab" / "handoff.json").read_text(encoding="utf-8")
+    )
+    assert payload["current_scope"] == "project_wide"
+    assert payload["scope_root"] == str((repo / "src").resolve())
+    assert payload["handoff_markdown_path"] == str(
+        (repo / "src" / "handoff.md").resolve()
+    )
 
 
 def test_resume_apply_executes_recommended_command_when_ready(

@@ -19,7 +19,7 @@ Use this skill when running Autolab with `agent_runner.runner: claude`.
 
 - Keep `agent_runner.runner: claude` in `.autolab/verifier_policy.yaml`.
 - Use explicit timeout settings (`agent_runner.timeout_seconds`).
-- Use `iteration_plus_core` edit scope for normal work, `iteration_only` for strict isolation.
+- Use `scope_root_plus_core` edit scope for normal work, `scope_root_only` for strict isolation.
 - Do not enable `claude_dangerously_skip_permissions` unless execution is fully trusted/non-interactive.
 
 ## Stage Flow

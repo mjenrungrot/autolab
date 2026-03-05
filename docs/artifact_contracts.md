@@ -38,6 +38,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `compute.location` must be `"local"` or `"slurm"`
   - `baselines` must be non-empty
   - `implementation_requirements` must be non-empty and include `scope_kind`
+  - project-wide task execution uses `scope_roots.project_wide_root` from `.autolab/verifier_policy.yaml`
   - `extract_parser` is required (kind `python` or `command`)
   - `walltime_estimate` format: `HH:MM:SS`
   - `memory_estimate` format: `<number>[KMGT]B` (e.g. `64GB`)
@@ -235,7 +236,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Format**: Markdown
 - **Content**: Human-readable handoff summary (scope, stage, wave/task status, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
 - **Scope-root resolution**:
-  - `project_wide` -> repository root
+  - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: human takeover workflows and incident handoff review

@@ -95,6 +95,8 @@ def test_execute_task_treats_zero_exit_code_as_success(
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
         iteration_path="experiments/plan/iter1",
+        iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
+        project_wide_root=tmp_path,
         wave=1,
         task={"task_id": "t1", "verification_commands": []},
         task_retry_max=0,
@@ -116,6 +118,8 @@ def test_execute_task_runner_timeout_becomes_structured_failure(
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
         iteration_path="experiments/plan/iter1",
+        iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
+        project_wide_root=tmp_path,
         wave=1,
         task={"task_id": "t1", "verification_commands": []},
         task_retry_max=1,
@@ -149,6 +153,8 @@ def test_execute_task_verification_timeout_becomes_structured_failure(
         state_path=tmp_path / "state.json",
         iteration_id="iter1",
         iteration_path="experiments/plan/iter1",
+        iteration_dir=tmp_path / "experiments" / "plan" / "iter1",
+        project_wide_root=tmp_path,
         wave=1,
         task={"task_id": "t1", "verification_commands": ["python -m pytest -q"]},
         task_retry_max=1,
@@ -206,6 +212,33 @@ def test_planning_pass_accepts_zero_exit_code(monkeypatch, tmp_path: Path) -> No
     assert result.agent_status == "complete"
     assert result.exit_code == 0
     assert "planning pass failed" not in result.summary
+
+
+def test_substitute_task_command_supports_scope_root_token() -> None:
+    rendered = plan_execution._substitute_task_command(
+        "echo {scope_root} {{scope_root}} <SCOPE_ROOT>",
+        iteration_id="iter1",
+        iteration_path="experiments/plan/iter1",
+        task_id="T1",
+        scope_root="/tmp/scope",
+    )
+    assert rendered == "echo /tmp/scope /tmp/scope /tmp/scope"
+
+
+def test_expected_artifacts_accept_scope_root_relative_paths(tmp_path: Path) -> None:
+    scope_root = tmp_path / "src"
+    scope_root.mkdir(parents=True)
+    (scope_root / "out.txt").write_text("ok\n", encoding="utf-8")
+    iteration_dir = tmp_path / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True)
+
+    missing = plan_execution._task_expected_artifacts_missing(
+        repo_root=tmp_path,
+        iteration_dir=iteration_dir,
+        scope_root=scope_root,
+        task={"expected_artifacts": ["out.txt"]},
+    )
+    assert missing == []
 
 
 def test_failure_mode_fail_fast_halts_remaining_wave_tasks(

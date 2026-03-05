@@ -158,7 +158,7 @@ def _configure_runner_environment(
         command="fake-runner",
         stages=("implementation",),
         edit_scope=AgentRunnerEditScopeConfig(
-            mode="iteration_only",
+            mode="scope_root_only",
             core_dirs=(),
             ensure_iteration_dir=False,
         ),
@@ -289,7 +289,7 @@ def test_protected_file_violation_includes_remediation_hint(
         command="fake-runner",
         stages=("implementation",),
         edit_scope=AgentRunnerEditScopeConfig(
-            mode="iteration_plus_core",
+            mode="scope_root_plus_core",
             core_dirs=(".autolab",),
             ensure_iteration_dir=False,
         ),
@@ -351,6 +351,7 @@ def test_substitute_runner_command_supports_audit_brief_and_human_tokens() -> No
         prompt_human_path=Path("/tmp/implementation.human.md"),
         iteration_id="iter1",
         workspace_dir=Path("/tmp/workspace"),
+        scope_root=Path("/tmp/scope_root"),
         core_add_dirs="",
     )
     assert "--audit /tmp/implementation.audit.md" in rendered
@@ -384,7 +385,7 @@ def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
         ),
         stages=("implementation",),
         edit_scope=AgentRunnerEditScopeConfig(
-            mode="iteration_only",
+            mode="scope_root_only",
             core_dirs=(),
             ensure_iteration_dir=False,
         ),
@@ -461,6 +462,10 @@ def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
     assert task_context_payload["task"]["task_id"] == "T1"
     assert task_context_payload["task_context"]["wave"] == 1
     assert "allowed_edit_dirs" in task_context_payload["runner_scope"]
+    assert task_context_payload["runner_scope"]["scope_kind"] == "experiment"
+    assert task_context_payload["runner_scope"]["scope_root"] == str(
+        repo_root / "experiments" / "plan" / "iter1"
+    )
 
     assert "Task packet mode is active." in audit_path.read_text(encoding="utf-8")
     assert "Task packet mode is active." in brief_path.read_text(encoding="utf-8")
@@ -474,6 +479,9 @@ def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
     assert argv[argv.index("--brief") + 1] == str(brief_path)
     assert argv[argv.index("--human") + 1] == str(human_path)
     assert "Stage: implementation (runner task)" in launched.stdin.text
+    assert launched.env["AUTOLAB_SCOPE_ROOT"] == str(
+        repo_root / "experiments" / "plan" / "iter1"
+    )
 
 
 def test_task_packet_rendered_paths_are_unique_per_invocation(
@@ -536,3 +544,59 @@ def test_task_packet_rendered_paths_are_unique_per_invocation(
         "AUTOLAB_PROMPT_HUMAN_PATH",
     ):
         assert first[key] != second[key]
+
+
+def test_project_wide_task_uses_configured_scope_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "src").mkdir(parents=True, exist_ok=True)
+    policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        "scope_roots:\n  project_wide_root: src\n",
+        encoding="utf-8",
+    )
+    state_path = _configure_runner_environment(
+        monkeypatch,
+        repo_root,
+        process_factory=_CaptureProcess,
+    )
+    _CaptureProcess.launched.clear()
+    monkeypatch.setattr(
+        runners,
+        "_resolve_runner_workspace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("project_wide tasks should not resolve iteration workspace")
+        ),
+    )
+
+    task_packet = {
+        "task_id": "Tpw",
+        "objective": "Project-wide update under configured scope root.",
+        "scope_kind": "project_wide",
+        "depends_on": [],
+        "reads": ["src/config.yaml"],
+        "writes": ["src/config.yaml"],
+        "touches": ["src/config.yaml"],
+        "expected_artifacts": ["src/config.yaml"],
+        "verification_commands": [],
+    }
+    result = runners._invoke_agent_runner(
+        repo_root,
+        state_path=state_path,
+        stage="implementation",
+        iteration_id="iter1",
+        run_agent_mode="policy",
+        task_packet=task_packet,
+    )
+
+    assert result["status"] == "completed"
+    launched = _CaptureProcess.launched[0]
+    assert launched.env["AUTOLAB_SCOPE_ROOT"] == str(repo_root / "src")
+    assert launched.env["AUTOLAB_WORKSPACE_DIR"] == str(repo_root / "src")
+    context_path = Path(launched.env["AUTOLAB_PROMPT_CONTEXT_PATH"])
+    context_payload = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context_payload["runner_scope"]["scope_kind"] == "project_wide"
+    assert context_payload["runner_scope"]["scope_root"] == str(repo_root / "src")

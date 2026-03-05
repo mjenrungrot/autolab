@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from autolab.cli.support import *
+from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
@@ -404,6 +405,48 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    policy = _load_verifier_policy(repo_root)
+    scope_roots = policy.get("scope_roots")
+    if not isinstance(scope_roots, dict):
+        scope_roots = {}
+    configured_project_wide_root = (
+        str(scope_roots.get("project_wide_root", ".")).strip() or "."
+    )
+    try:
+        resolved_project_wide_root = _resolve_project_wide_root(
+            repo_root,
+            scope_roots=scope_roots,
+        )
+    except StageCheckError as exc:
+        print(f"autolab docs generate: ERROR {exc}", file=sys.stderr)
+        return 1
+    detected_scope_kind = "unknown"
+    effective_scope_root = resolved_project_wide_root
+    try:
+        state = _normalize_state(_load_state(state_path))
+        detected_scope_kind, effective_scope_root, _iteration_dir = (
+            _resolve_scope_context(
+                repo_root,
+                iteration_id=str(state.get("iteration_id", "")).strip(),
+                experiment_id=str(state.get("experiment_id", "")).strip(),
+            )
+        )
+    except Exception:
+        pass
+    try:
+        resolved_project_wide_root_text = (
+            resolved_project_wide_root.relative_to(repo_root).as_posix() or "."
+        )
+    except ValueError:
+        resolved_project_wide_root_text = str(resolved_project_wide_root)
+    try:
+        effective_scope_root_text = effective_scope_root.relative_to(
+            repo_root
+        ).as_posix()
+        if not effective_scope_root_text:
+            effective_scope_root_text = "."
+    except ValueError:
+        effective_scope_root_text = str(effective_scope_root)
 
     # 1. Stage flow diagram
     print("# Autolab Stage Flow")
@@ -426,7 +469,16 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     print(" | ".join(flow_parts))
     print("")
 
-    # 2. Artifact map
+    # 2. Scope roots
+    print("## Scope Roots")
+    print("")
+    print(f"- configured_project_wide_root: `{configured_project_wide_root}`")
+    print(f"- resolved_project_wide_root: `{resolved_project_wide_root_text}`")
+    print(f"- detected_scope_kind: `{detected_scope_kind}`")
+    print(f"- effective_scope_root: `{effective_scope_root_text}`")
+    print("")
+
+    # 3. Artifact map
     print("## Artifact Map")
     print("")
     print("| Stage | Required Outputs |")
@@ -444,7 +496,7 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
         print(f"| {name} | {outputs} |")
     print("")
 
-    # 3. Token reference
+    # 4. Token reference
     print("## Token Reference")
     print("")
     print("| Stage | Required Tokens |")
@@ -458,7 +510,7 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
         print(f"| {name} | {tokens} |")
     print("")
 
-    # 4. Classifications
+    # 5. Classifications
     print("## Classifications")
     print("")
     print("| Stage | Active | Terminal | Decision | Runner Eligible |")

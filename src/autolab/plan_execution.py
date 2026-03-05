@@ -13,6 +13,7 @@ from autolab.config import _load_plan_execution_config
 from autolab.models import StageCheckError
 from autolab.plan_contract import PlanContractError, check_implementation_plan_contract
 from autolab.runners import _invoke_agent_runner
+from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
@@ -336,6 +337,7 @@ def _task_expected_artifacts_missing(
     *,
     repo_root: Path,
     iteration_dir: Path,
+    scope_root: Path,
     task: dict[str, Any],
 ) -> list[str]:
     missing: list[str] = []
@@ -352,7 +354,11 @@ def _task_expected_artifacts_missing(
             candidates.append(artifact_path)
         else:
             candidates.extend(
-                [repo_root / artifact_path, iteration_dir / artifact_path]
+                [
+                    scope_root / artifact_path,
+                    iteration_dir / artifact_path,
+                    repo_root / artifact_path,
+                ]
             )
         if any(candidate.exists() for candidate in candidates):
             continue
@@ -366,6 +372,7 @@ def _substitute_task_command(
     iteration_id: str,
     iteration_path: str,
     task_id: str,
+    scope_root: str,
 ) -> str:
     substituted = str(command)
     replacements = {
@@ -378,6 +385,9 @@ def _substitute_task_command(
         "{{task_id}}": task_id,
         "{task_id}": task_id,
         "<TASK_ID>": task_id,
+        "{{scope_root}}": scope_root,
+        "{scope_root}": scope_root,
+        "<SCOPE_ROOT>": scope_root,
     }
     for token, value in replacements.items():
         substituted = substituted.replace(token, value)
@@ -390,6 +400,7 @@ def _run_task_verification_commands(
     task: dict[str, Any],
     iteration_id: str,
     iteration_path: str,
+    scope_root: str,
 ) -> tuple[bool, str]:
     task_id = str(task.get("task_id", "")).strip() or "task"
     commands = task.get("verification_commands", [])
@@ -401,6 +412,7 @@ def _run_task_verification_commands(
             iteration_id=iteration_id,
             iteration_path=iteration_path,
             task_id=task_id,
+            scope_root=scope_root,
         )
         if not command:
             continue
@@ -446,12 +458,18 @@ def _execute_task(
     state_path: Path,
     iteration_id: str,
     iteration_path: str,
+    iteration_dir: Path,
+    project_wide_root: Path,
     wave: int,
     task: dict[str, Any],
     task_retry_max: int,
     require_verification_commands: bool,
 ) -> dict[str, Any]:
     task_id = str(task.get("task_id", "")).strip() or "task"
+    task_scope_kind = str(task.get("scope_kind", "")).strip().lower()
+    task_scope_root = (
+        project_wide_root if task_scope_kind == "project_wide" else iteration_dir
+    )
     manual_only_rationale = str(task.get("manual_only_rationale", "")).strip()
     attempts = 0
     last_error = ""
@@ -501,6 +519,7 @@ def _execute_task(
                     task=task,
                     iteration_id=iteration_id,
                     iteration_path=iteration_path,
+                    scope_root=task_scope_root.as_posix(),
                 )
             except subprocess.TimeoutExpired as exc:
                 verified, verify_error = (
@@ -657,6 +676,7 @@ def execute_implementation_plan_step(
         iteration_path = iteration_dir.relative_to(repo_root).as_posix()
     except ValueError:
         iteration_path = iteration_dir.as_posix()
+    project_wide_root = _resolve_project_wide_root(repo_root)
 
     changed_files: list[Path] = []
 
@@ -835,6 +855,8 @@ def execute_implementation_plan_step(
                 state_path=state_path,
                 iteration_id=iteration_id,
                 iteration_path=iteration_path,
+                iteration_dir=iteration_dir,
+                project_wide_root=project_wide_root,
                 wave=wave_number,
                 task=task,
                 task_retry_max=impl_cfg.task_retry_max,
@@ -878,6 +900,8 @@ def execute_implementation_plan_step(
                     state_path=state_path,
                     iteration_id=iteration_id,
                     iteration_path=iteration_path,
+                    iteration_dir=iteration_dir,
+                    project_wide_root=project_wide_root,
                     wave=wave_number,
                     task=task,
                     task_retry_max=impl_cfg.task_retry_max,
@@ -930,6 +954,11 @@ def execute_implementation_plan_step(
             missing_artifacts = _task_expected_artifacts_missing(
                 repo_root=repo_root,
                 iteration_dir=iteration_dir,
+                scope_root=(
+                    project_wide_root
+                    if str(task.get("scope_kind", "")).strip().lower() == "project_wide"
+                    else iteration_dir
+                ),
                 task=task,
             )
             if missing_artifacts:

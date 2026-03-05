@@ -5,6 +5,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from autolab.config import _load_agent_runner_config
 from autolab.constants import (
     ALL_STAGES,
     ACTIVE_STAGES,
@@ -15,6 +16,7 @@ from autolab.prompts import (
     _render_stage_prompt,
     _resolve_stage_prompt_path as _resolve_render_template_path,
 )
+from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
 from autolab.state import (
     _load_backlog_yaml,
     _load_state,
@@ -513,12 +515,31 @@ def _load_render_preview(
     state_for_render = dict(state)
     state_for_render["stage"] = stage_name
     try:
+        scope_kind, scope_root, _iteration_dir = _resolve_scope_context(
+            repo_root,
+            iteration_id=str(state.get("iteration_id", "")).strip(),
+            experiment_id=str(state.get("experiment_id", "")).strip(),
+        )
+        project_wide_root = _resolve_project_wide_root(repo_root)
+        runner_config = _load_agent_runner_config(repo_root)
+        allowed_edit_dirs = (
+            list(runner_config.edit_scope.core_dirs)
+            if runner_config.edit_scope.mode == "scope_root_plus_core"
+            else []
+        )
         bundle = _render_stage_prompt(
             repo_root,
             stage=stage_name,
             state=state_for_render,
             template_path=template_path,
-            runner_scope=None,
+            runner_scope={
+                "mode": runner_config.edit_scope.mode,
+                "scope_kind": scope_kind,
+                "scope_root": str(scope_root),
+                "project_wide_root": str(project_wide_root),
+                "workspace_dir": str(scope_root),
+                "allowed_edit_dirs": allowed_edit_dirs,
+            },
             write_outputs=False,
         )
     except Exception as exc:

@@ -431,6 +431,54 @@ def test_load_agent_runner_config_uses_codex_dangerous_preset_from_env(
     assert runner.codex_dangerously_bypass_approvals_and_sandbox is True
 
 
+def test_load_agent_runner_config_accepts_scope_root_only_mode(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "agent_runner": {
+            "enabled": True,
+            "runner": "codex",
+            "stages": ["implementation"],
+            "edit_scope": {
+                "mode": "scope_root_only",
+                "core_dirs": ["src", "docs"],
+                "ensure_iteration_dir": True,
+            },
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    runner = _load_agent_runner_config(repo)
+
+    assert runner.edit_scope.mode == "scope_root_only"
+    assert runner.edit_scope.core_dirs == ()
+
+
+def test_load_agent_runner_config_rejects_legacy_iteration_scope_modes(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "agent_runner": {
+            "enabled": True,
+            "runner": "codex",
+            "stages": ["implementation"],
+            "edit_scope": {"mode": "iteration_plus_core"},
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(StageCheckError, match="agent_runner\\.edit_scope\\.mode"):
+        _load_agent_runner_config(repo)
+
+
 def _write_plan_execution_policy(repo: Path, implementation: dict[str, object]) -> None:
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
     policy_path.parent.mkdir(parents=True, exist_ok=True)
