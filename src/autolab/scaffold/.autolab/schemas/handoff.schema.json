@@ -20,43 +20,41 @@
     "files_changed_since_last_green_point",
     "recommended_next_command",
     "safe_resume_point",
+    "wave_observability",
     "last_green_at",
     "baseline_snapshot",
     "handoff_json_path",
     "handoff_markdown_path"
   ],
-  "properties": {
-    "schema_version": {
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timestamp": {
       "type": "string",
-      "const": "1.0"
+      "format": "date-time"
     },
-    "generated_at": {
+    "taskReasonCode": {
       "type": "string",
-      "minLength": 1
+      "enum": [
+        "completed",
+        "dependency_blocked",
+        "fail_fast_skipped",
+        "wave_retry_pending",
+        "runner_failed",
+        "verification_failed",
+        "expected_artifacts_missing",
+        "out_of_contract_edits",
+        "task_exception",
+        "missing_task_result",
+        "pending",
+        "unknown"
+      ]
     },
-    "state_file": {
-      "type": "string",
-      "minLength": 1
-    },
-    "iteration_id": {
-      "type": "string"
-    },
-    "experiment_id": {
-      "type": "string"
-    },
-    "current_scope": {
-      "type": "string",
-      "enum": ["experiment", "project_wide"]
-    },
-    "scope_root": {
-      "type": "string",
-      "minLength": 1
-    },
-    "current_stage": {
-      "type": "string",
-      "minLength": 1
-    },
-    "wave": {
+    "waveHeader": {
       "type": "object",
       "required": ["status", "current", "executed", "total"],
       "properties": {
@@ -79,7 +77,7 @@
       },
       "additionalProperties": false
     },
-    "task_status": {
+    "taskSummary": {
       "type": "object",
       "required": [
         "status",
@@ -88,6 +86,8 @@
         "failed",
         "blocked",
         "pending",
+        "skipped",
+        "deferred",
         "task_details"
       ],
       "properties": {
@@ -115,6 +115,14 @@
           "type": "integer",
           "minimum": 0
         },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deferred": {
+          "type": "integer",
+          "minimum": 0
+        },
         "task_details": {
           "type": "array",
           "items": {
@@ -124,12 +132,12 @@
       },
       "additionalProperties": false
     },
-    "latest_verifier_summary": {
+    "latestVerifier": {
       "type": "object",
       "required": ["generated_at", "stage_effective", "passed", "message"],
       "properties": {
         "generated_at": {
-          "type": "string"
+          "$ref": "#/$defs/timestamp"
         },
         "stage_effective": {
           "type": "string"
@@ -143,25 +151,7 @@
       },
       "additionalProperties": false
     },
-    "blocking_failures": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "pending_human_decisions": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "files_changed_since_last_green_point": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "recommended_next_command": {
+    "commandRef": {
       "type": "object",
       "required": ["command", "reason", "executable"],
       "properties": {
@@ -179,7 +169,7 @@
       },
       "additionalProperties": false
     },
-    "safe_resume_point": {
+    "safeResume": {
       "type": "object",
       "required": ["command", "status", "preconditions"],
       "properties": {
@@ -192,13 +182,580 @@
           "enum": ["ready", "blocked"]
         },
         "preconditions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "$ref": "#/$defs/stringList"
         }
       },
       "additionalProperties": false
+    },
+    "waveAttempt": {
+      "type": "object",
+      "required": [
+        "attempt",
+        "status",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "retry_reason",
+        "detail"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed", "failed", "blocked"]
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_reason": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceSummary": {
+      "type": "object",
+      "required": [
+        "runner_status",
+        "runner_exit_code",
+        "verification_status",
+        "files_changed_count",
+        "expected_artifacts_missing_count",
+        "text"
+      ],
+      "properties": {
+        "runner_status": {
+          "type": "string"
+        },
+        "runner_exit_code": {
+          "type": ["integer", "null"]
+        },
+        "verification_status": {
+          "type": "string"
+        },
+        "files_changed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expected_artifacts_missing_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "waveTaskDetail": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "status",
+        "wave",
+        "attempts",
+        "retries_used",
+        "last_error",
+        "scope_kind",
+        "files_changed",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "timing_available",
+        "reason_code",
+        "reason_detail",
+        "blocked_by",
+        "runner_report_path",
+        "runner_status",
+        "runner_exit_code",
+        "verification_status",
+        "verification_commands",
+        "expected_artifacts_missing",
+        "evidence_summary",
+        "critical_path"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed", "failed", "blocked"]
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retries_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_error": {
+          "type": "string"
+        },
+        "scope_kind": {
+          "type": "string"
+        },
+        "files_changed": {
+          "$ref": "#/$defs/stringList"
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "timing_available": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/taskReasonCode"
+        },
+        "reason_detail": {
+          "type": "string"
+        },
+        "blocked_by": {
+          "$ref": "#/$defs/stringList"
+        },
+        "runner_report_path": {
+          "type": "string"
+        },
+        "runner_status": {
+          "type": "string"
+        },
+        "runner_exit_code": {
+          "type": ["integer", "null"]
+        },
+        "verification_status": {
+          "type": "string"
+        },
+        "verification_commands": {
+          "$ref": "#/$defs/stringList"
+        },
+        "expected_artifacts_missing": {
+          "$ref": "#/$defs/stringList"
+        },
+        "evidence_summary": {
+          "$ref": "#/$defs/evidenceSummary"
+        },
+        "critical_path": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "waveDetail": {
+      "type": "object",
+      "required": [
+        "wave",
+        "status",
+        "attempts",
+        "retries_used",
+        "tasks",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "last_attempt_duration_seconds",
+        "timing_available",
+        "attempt_history",
+        "retry_reasons",
+        "out_of_contract_paths",
+        "completed_task_ids",
+        "failed_task_ids",
+        "blocked_task_ids",
+        "skipped_task_ids",
+        "deferred_task_ids",
+        "pending_task_ids",
+        "retry_pending",
+        "critical_path"
+      ],
+      "properties": {
+        "wave": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed", "failed", "blocked"]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retries_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks": {
+          "$ref": "#/$defs/stringList"
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "last_attempt_duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "timing_available": {
+          "type": "boolean"
+        },
+        "attempt_history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waveAttempt"
+          }
+        },
+        "retry_reasons": {
+          "$ref": "#/$defs/stringList"
+        },
+        "out_of_contract_paths": {
+          "$ref": "#/$defs/stringList"
+        },
+        "completed_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "failed_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "blocked_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "skipped_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "deferred_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "pending_task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "retry_pending": {
+          "type": "boolean"
+        },
+        "critical_path": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "criticalPath": {
+      "type": "object",
+      "required": [
+        "status",
+        "mode",
+        "task_ids",
+        "wave_ids",
+        "duration_seconds",
+        "weight",
+        "basis_note"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable"]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "structural",
+            "measured_partial",
+            "measured_complete",
+            "unavailable"
+          ]
+        },
+        "task_ids": {
+          "$ref": "#/$defs/stringList"
+        },
+        "wave_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0
+        },
+        "basis_note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fileConflict": {
+      "type": "object",
+      "required": [
+        "kind",
+        "wave",
+        "tasks",
+        "paths",
+        "conflict_group",
+        "detail"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "same_wave_write_conflict",
+            "same_wave_conflict_group_collision",
+            "out_of_contract_edits"
+          ]
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks": {
+          "$ref": "#/$defs/stringList"
+        },
+        "paths": {
+          "$ref": "#/$defs/stringList"
+        },
+        "conflict_group": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "observabilitySummary": {
+      "type": "object",
+      "required": [
+        "waves_total",
+        "waves_executed",
+        "tasks_total",
+        "tasks_completed",
+        "tasks_failed",
+        "tasks_blocked",
+        "tasks_pending",
+        "tasks_skipped",
+        "tasks_deferred",
+        "retrying_waves",
+        "conflict_count"
+      ],
+      "properties": {
+        "waves_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waves_executed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_blocked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tasks_deferred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retrying_waves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conflict_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourcePaths": {
+      "type": "object",
+      "required": [
+        "plan_graph_path",
+        "plan_check_result_path",
+        "plan_execution_state_path",
+        "plan_execution_summary_path"
+      ],
+      "properties": {
+        "plan_graph_path": {
+          "type": "string"
+        },
+        "plan_check_result_path": {
+          "type": "string"
+        },
+        "plan_execution_state_path": {
+          "type": "string"
+        },
+        "plan_execution_summary_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "waveObservability": {
+      "type": "object",
+      "required": [
+        "status",
+        "wave_summary",
+        "task_summary",
+        "summary",
+        "critical_path",
+        "file_conflicts",
+        "waves",
+        "tasks",
+        "diagnostics",
+        "source_paths"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable"]
+        },
+        "wave_summary": {
+          "$ref": "#/$defs/waveHeader"
+        },
+        "task_summary": {
+          "$ref": "#/$defs/taskSummary"
+        },
+        "summary": {
+          "$ref": "#/$defs/observabilitySummary"
+        },
+        "critical_path": {
+          "$ref": "#/$defs/criticalPath"
+        },
+        "file_conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileConflict"
+          }
+        },
+        "waves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waveDetail"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waveTaskDetail"
+          }
+        },
+        "diagnostics": {
+          "$ref": "#/$defs/stringList"
+        },
+        "source_paths": {
+          "$ref": "#/$defs/sourcePaths"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "state_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "current_scope": {
+      "type": "string",
+      "enum": ["experiment", "project_wide"]
+    },
+    "scope_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "wave": {
+      "$ref": "#/$defs/waveHeader"
+    },
+    "task_status": {
+      "$ref": "#/$defs/taskSummary"
+    },
+    "latest_verifier_summary": {
+      "$ref": "#/$defs/latestVerifier"
+    },
+    "blocking_failures": {
+      "$ref": "#/$defs/stringList"
+    },
+    "pending_human_decisions": {
+      "$ref": "#/$defs/stringList"
+    },
+    "files_changed_since_last_green_point": {
+      "$ref": "#/$defs/stringList"
+    },
+    "recommended_next_command": {
+      "$ref": "#/$defs/commandRef"
+    },
+    "safe_resume_point": {
+      "$ref": "#/$defs/safeResume"
+    },
+    "wave_observability": {
+      "$ref": "#/$defs/waveObservability"
     },
     "last_green_at": {
       "type": "string"

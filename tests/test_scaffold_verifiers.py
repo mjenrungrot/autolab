@@ -176,6 +176,158 @@ def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None
 
 def _write_handoff(repo: Path, *, valid: bool = True) -> None:
     path = repo / ".autolab" / "handoff.json"
+    wave_observability = {
+        "status": "available",
+        "wave_summary": {
+            "status": "available",
+            "current": 1,
+            "executed": 1,
+            "total": 1,
+        },
+        "task_summary": {
+            "status": "available",
+            "total": 1,
+            "completed": 1,
+            "failed": 0,
+            "blocked": 0,
+            "pending": 0,
+            "skipped": 0,
+            "deferred": 0,
+            "task_details": [
+                {
+                    "task_id": "T1",
+                    "status": "completed",
+                    "wave": 1,
+                    "attempts": 1,
+                    "retries_used": 0,
+                    "last_error": "",
+                    "scope_kind": "experiment",
+                    "files_changed": [],
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "duration_seconds": 1.0,
+                    "timing_available": True,
+                    "reason_code": "completed",
+                    "reason_detail": "",
+                    "blocked_by": [],
+                    "runner_report_path": ".autolab/runner_execution_report.T1.json",
+                    "runner_status": "completed",
+                    "runner_exit_code": 0,
+                    "verification_status": "passed",
+                    "verification_commands": [],
+                    "expected_artifacts_missing": [],
+                    "evidence_summary": {
+                        "runner_status": "completed",
+                        "runner_exit_code": 0,
+                        "verification_status": "passed",
+                        "files_changed_count": 0,
+                        "expected_artifacts_missing_count": 0,
+                        "text": "runner=completed verify=passed files=0 missing_artifacts=0",
+                    },
+                    "critical_path": True,
+                }
+            ],
+        },
+        "summary": {
+            "waves_total": 1,
+            "waves_executed": 1,
+            "tasks_total": 1,
+            "tasks_completed": 1,
+            "tasks_failed": 0,
+            "tasks_blocked": 0,
+            "tasks_pending": 0,
+            "tasks_skipped": 0,
+            "tasks_deferred": 0,
+            "retrying_waves": 0,
+            "conflict_count": 0,
+        },
+        "critical_path": {
+            "status": "available",
+            "mode": "measured_complete",
+            "task_ids": ["T1"],
+            "wave_ids": [1],
+            "duration_seconds": 1.0,
+            "weight": 1.0,
+            "basis_note": "measured path using recorded task durations",
+        },
+        "file_conflicts": [],
+        "waves": [
+            {
+                "wave": 1,
+                "status": "completed",
+                "attempts": 1,
+                "retries_used": 0,
+                "tasks": ["T1"],
+                "started_at": "2026-01-01T00:00:00Z",
+                "completed_at": "2026-01-01T00:00:01Z",
+                "duration_seconds": 1.0,
+                "last_attempt_duration_seconds": 1.0,
+                "timing_available": True,
+                "attempt_history": [
+                    {
+                        "attempt": 1,
+                        "status": "completed",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "completed_at": "2026-01-01T00:00:01Z",
+                        "duration_seconds": 1.0,
+                        "retry_reason": "",
+                        "detail": "",
+                    }
+                ],
+                "retry_reasons": [],
+                "out_of_contract_paths": [],
+                "completed_task_ids": ["T1"],
+                "failed_task_ids": [],
+                "blocked_task_ids": [],
+                "skipped_task_ids": [],
+                "deferred_task_ids": [],
+                "pending_task_ids": [],
+                "retry_pending": False,
+                "critical_path": True,
+            }
+        ],
+        "tasks": [
+            {
+                "task_id": "T1",
+                "status": "completed",
+                "wave": 1,
+                "attempts": 1,
+                "retries_used": 0,
+                "last_error": "",
+                "scope_kind": "experiment",
+                "files_changed": [],
+                "started_at": "2026-01-01T00:00:00Z",
+                "completed_at": "2026-01-01T00:00:01Z",
+                "duration_seconds": 1.0,
+                "timing_available": True,
+                "reason_code": "completed",
+                "reason_detail": "",
+                "blocked_by": [],
+                "runner_report_path": ".autolab/runner_execution_report.T1.json",
+                "runner_status": "completed",
+                "runner_exit_code": 0,
+                "verification_status": "passed",
+                "verification_commands": [],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "completed",
+                    "runner_exit_code": 0,
+                    "verification_status": "passed",
+                    "files_changed_count": 0,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "runner=completed verify=passed files=0 missing_artifacts=0",
+                },
+                "critical_path": True,
+            }
+        ],
+        "diagnostics": [],
+        "source_paths": {
+            "plan_graph_path": ".autolab/plan_graph.json",
+            "plan_check_result_path": ".autolab/plan_check_result.json",
+            "plan_execution_state_path": "experiments/plan/iter1/plan_execution_state.json",
+            "plan_execution_summary_path": "experiments/plan/iter1/plan_execution_summary.json",
+        },
+    }
     payload: dict[str, object] = {
         "schema_version": "1.0",
         "generated_at": "2026-01-01T00:00:00Z",
@@ -193,6 +345,8 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
             "failed": 0,
             "blocked": 0,
             "pending": 0,
+            "skipped": 0,
+            "deferred": 0,
             "task_details": [],
         },
         "latest_verifier_summary": {
@@ -214,6 +368,7 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
             "status": "ready",
             "preconditions": [],
         },
+        "wave_observability": wave_observability,
         "last_green_at": "2026-01-01T00:00:00Z",
         "baseline_snapshot": {},
         "handoff_json_path": str(path),
@@ -224,6 +379,43 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
     if not valid:
         payload.pop("safe_resume_point", None)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _valid_plan_execution_task_detail(
+    *, reason_code: str = "completed", task_id: str = "T1"
+) -> dict[str, object]:
+    return {
+        "task_id": task_id,
+        "status": "completed",
+        "wave": 1,
+        "attempts": 1,
+        "retries_used": 0,
+        "last_error": "",
+        "scope_kind": "experiment",
+        "files_changed": [],
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:00:01Z",
+        "duration_seconds": 1.0,
+        "timing_available": True,
+        "reason_code": reason_code,
+        "reason_detail": "",
+        "blocked_by": [],
+        "runner_report_path": ".autolab/runner_execution_report.T1.json",
+        "runner_status": "completed",
+        "runner_exit_code": 0,
+        "verification_status": "passed",
+        "verification_commands": [],
+        "expected_artifacts_missing": [],
+        "evidence_summary": {
+            "runner_status": "completed",
+            "runner_exit_code": 0,
+            "verification_status": "passed",
+            "files_changed_count": 0,
+            "expected_artifacts_missing_count": 0,
+            "text": "ok",
+        },
+        "critical_path": True,
+    }
 
 
 def _run_schema_checks(
@@ -2000,12 +2192,47 @@ def test_schema_checks_pass_with_valid_plan_execution_summary(tmp_path: Path) ->
     _write_review_result(repo, include_docs_check=True)
     summary = {
         "schema_version": "1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "stage": "implementation",
         "iteration_id": "iter1",
         "plan_file": "experiments/plan/iter1/implementation_plan.md",
-        "tasks_total": 4,
-        "tasks_completed": 4,
+        "contract_hash": "abc123",
+        "run_unit": "wave",
+        "tasks_total": 1,
+        "tasks_completed": 1,
         "tasks_failed": 0,
         "tasks_blocked": 0,
+        "tasks_pending": 0,
+        "tasks_skipped": 0,
+        "tasks_deferred": 0,
+        "waves_total": 1,
+        "waves_executed": 1,
+        "wave_details": [],
+        "task_details": [],
+        "critical_path": {
+            "status": "available",
+            "mode": "structural",
+            "task_ids": ["T1"],
+            "wave_ids": [1],
+            "duration_seconds": 0.0,
+            "weight": 1.0,
+            "basis_note": "structural path from dependency graph with unit task weights",
+        },
+        "file_conflicts": [],
+        "diagnostics": [],
+        "observability_summary": {
+            "waves_total": 1,
+            "waves_executed": 1,
+            "tasks_total": 1,
+            "tasks_completed": 1,
+            "tasks_failed": 0,
+            "tasks_blocked": 0,
+            "tasks_pending": 0,
+            "tasks_skipped": 0,
+            "tasks_deferred": 0,
+            "retrying_waves": 0,
+            "conflict_count": 0,
+        },
     }
     path = repo / "experiments" / "plan" / "iter1" / "plan_execution_summary.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2015,6 +2242,270 @@ def test_schema_checks_pass_with_valid_plan_execution_summary(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fail_for_invalid_plan_execution_summary_reason_code(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    summary = {
+        "schema_version": "1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "stage": "implementation",
+        "iteration_id": "iter1",
+        "plan_file": "experiments/plan/iter1/implementation_plan.md",
+        "contract_hash": "abc123",
+        "run_unit": "wave",
+        "tasks_total": 1,
+        "tasks_completed": 1,
+        "tasks_failed": 0,
+        "tasks_blocked": 0,
+        "tasks_pending": 0,
+        "tasks_skipped": 0,
+        "tasks_deferred": 0,
+        "waves_total": 1,
+        "waves_executed": 1,
+        "wave_details": [],
+        "task_details": [
+            _valid_plan_execution_task_detail(reason_code="not_a_real_reason")
+        ],
+        "critical_path": {
+            "status": "available",
+            "mode": "measured_complete",
+            "task_ids": ["T1"],
+            "wave_ids": [1],
+            "duration_seconds": 1.0,
+            "weight": 1.0,
+            "basis_note": "measured task duration",
+        },
+        "file_conflicts": [],
+        "diagnostics": [],
+        "observability_summary": {
+            "waves_total": 1,
+            "waves_executed": 1,
+            "tasks_total": 1,
+            "tasks_completed": 1,
+            "tasks_failed": 0,
+            "tasks_blocked": 0,
+            "tasks_pending": 0,
+            "tasks_skipped": 0,
+            "tasks_deferred": 0,
+            "retrying_waves": 0,
+            "conflict_count": 0,
+        },
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_execution_summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "reason_code" in result.stdout
+
+
+def test_schema_checks_pass_with_valid_plan_execution_state(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    state_payload = {
+        "schema_version": "1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:01Z",
+        "stage": "implementation",
+        "iteration_id": "iter1",
+        "contract_path": ".autolab/plan_contract.json",
+        "contract_hash": "abc123",
+        "plan_file": "experiments/plan/iter1/implementation_plan.md",
+        "run_unit": "wave",
+        "waves_total": 1,
+        "task_status": {"T1": "completed"},
+        "task_attempt_counts": {"T1": 1},
+        "task_retry_counts": {"T1": 0},
+        "task_last_error": {"T1": ""},
+        "task_files_changed": {"T1": []},
+        "task_started_at": {"T1": "2026-01-01T00:00:00Z"},
+        "task_completed_at": {"T1": "2026-01-01T00:00:01Z"},
+        "task_duration_seconds": {"T1": 1.0},
+        "task_reason_code": {"T1": "completed"},
+        "task_reason_detail": {"T1": ""},
+        "task_runner_report_path": {"T1": ".autolab/runner_execution_report.T1.json"},
+        "task_verification_status": {"T1": "passed"},
+        "task_verification_commands": {"T1": []},
+        "task_expected_artifacts_missing": {"T1": []},
+        "task_blocked_by": {"T1": []},
+        "wave_retry_counts": {"1": 0},
+        "wave_status": {"1": "completed"},
+        "wave_started_at": {"1": "2026-01-01T00:00:00Z"},
+        "wave_completed_at": {"1": "2026-01-01T00:00:01Z"},
+        "wave_duration_seconds": {"1": 1.0},
+        "wave_attempt_history": {
+            "1": [
+                {
+                    "attempt": 1,
+                    "status": "completed",
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "duration_seconds": 1.0,
+                    "retry_reason": "",
+                    "detail": "",
+                }
+            ]
+        },
+        "wave_retry_reasons": {"1": []},
+        "wave_out_of_contract_paths": {"1": []},
+        "current_wave": 1,
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_execution_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fail_for_unknown_plan_execution_state_task_id(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    state_payload = {
+        "schema_version": "1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:01Z",
+        "stage": "implementation",
+        "iteration_id": "iter1",
+        "contract_path": ".autolab/plan_contract.json",
+        "contract_hash": "abc123",
+        "plan_file": "experiments/plan/iter1/implementation_plan.md",
+        "run_unit": "wave",
+        "waves_total": 1,
+        "task_status": {"T1": "completed", "T99": "completed"},
+        "task_attempt_counts": {"T1": 1},
+        "task_retry_counts": {"T1": 0},
+        "task_last_error": {"T1": ""},
+        "task_files_changed": {"T1": []},
+        "task_started_at": {"T1": "2026-01-01T00:00:00Z"},
+        "task_completed_at": {"T1": "2026-01-01T00:00:01Z"},
+        "task_duration_seconds": {"T1": 1.0},
+        "task_reason_code": {"T1": "completed"},
+        "task_reason_detail": {"T1": ""},
+        "task_runner_report_path": {"T1": ".autolab/runner_execution_report.T1.json"},
+        "task_verification_status": {"T1": "passed"},
+        "task_verification_commands": {"T1": []},
+        "task_expected_artifacts_missing": {"T1": []},
+        "task_blocked_by": {"T1": []},
+        "wave_retry_counts": {"1": 0},
+        "wave_status": {"1": "completed"},
+        "wave_started_at": {"1": "2026-01-01T00:00:00Z"},
+        "wave_completed_at": {"1": "2026-01-01T00:00:01Z"},
+        "wave_duration_seconds": {"1": 1.0},
+        "wave_attempt_history": {
+            "1": [
+                {
+                    "attempt": 1,
+                    "status": "completed",
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "duration_seconds": 1.0,
+                    "retry_reason": "",
+                    "detail": "",
+                }
+            ]
+        },
+        "wave_retry_reasons": {"1": []},
+        "wave_out_of_contract_paths": {"1": []},
+        "current_wave": 1,
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_execution_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "unknown task_id 'T99'" in result.stdout
+
+
+def test_schema_checks_fail_for_invalid_plan_execution_state_timestamp(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    state_payload = {
+        "schema_version": "1.0",
+        "generated_at": "not-a-timestamp",
+        "updated_at": "2026-01-01T00:00:01Z",
+        "stage": "implementation",
+        "iteration_id": "iter1",
+        "contract_path": ".autolab/plan_contract.json",
+        "contract_hash": "abc123",
+        "plan_file": "experiments/plan/iter1/implementation_plan.md",
+        "run_unit": "wave",
+        "waves_total": 1,
+        "task_status": {"T1": "completed"},
+        "task_attempt_counts": {"T1": 1},
+        "task_retry_counts": {"T1": 0},
+        "task_last_error": {"T1": ""},
+        "task_files_changed": {"T1": []},
+        "task_started_at": {"T1": "2026-01-01T00:00:00Z"},
+        "task_completed_at": {"T1": "2026-01-01T00:00:01Z"},
+        "task_duration_seconds": {"T1": 1.0},
+        "task_reason_code": {"T1": "completed"},
+        "task_reason_detail": {"T1": ""},
+        "task_runner_report_path": {"T1": ".autolab/runner_execution_report.T1.json"},
+        "task_verification_status": {"T1": "passed"},
+        "task_verification_commands": {"T1": []},
+        "task_expected_artifacts_missing": {"T1": []},
+        "task_blocked_by": {"T1": []},
+        "wave_retry_counts": {"1": 0},
+        "wave_status": {"1": "completed"},
+        "wave_started_at": {"1": "2026-01-01T00:00:00Z"},
+        "wave_completed_at": {"1": "2026-01-01T00:00:01Z"},
+        "wave_duration_seconds": {"1": 1.0},
+        "wave_attempt_history": {
+            "1": [
+                {
+                    "attempt": 1,
+                    "status": "completed",
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "duration_seconds": 1.0,
+                    "retry_reason": "",
+                    "detail": "",
+                }
+            ]
+        },
+        "wave_retry_reasons": {"1": []},
+        "wave_out_of_contract_paths": {"1": []},
+        "current_wave": 1,
+    }
+    path = repo / "experiments" / "plan" / "iter1" / "plan_execution_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "date-time" in result.stdout
+
+
+def test_schema_checks_validate_plan_checker_outputs_in_review_stage(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    (repo / ".autolab" / "plan_graph.json").write_text(
+        json.dumps({"waves": "not-a-list"}, indent=2),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "plan_graph.json schema violation" in result.stdout
 
 
 # ---------------------------------------------------------------------------

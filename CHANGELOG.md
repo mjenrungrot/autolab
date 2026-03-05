@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.23] - 2026-03-05
+
+### Summary
+
+- Added end-to-end wave observability across `autolab progress`, generated docs views, handoff, and the TUI, including critical path, per-wave timings, retries, blocked/deferred/skipped tasks, file-conflict detail, and per-task evidence.
+- Hardened observability correctness by filtering stale iteration-mismatched artifacts, modeling critical paths with wave barriers, and separating current retry state from historical retry history.
+- Tightened observability contracts with richer execution artifacts plus stricter schema/verifier coverage for task ids, reason codes, timestamps, and review-stage plan graph/check outputs.
+
+<!-- autolab:range v1.2.22..v1.2.23 -->
+
 ## [1.2.22] - 2026-03-05
 
 ### Summary

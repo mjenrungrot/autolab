@@ -17,12 +17,97 @@
     "task_retry_counts",
     "task_last_error",
     "task_files_changed",
+    "task_started_at",
+    "task_completed_at",
+    "task_duration_seconds",
+    "task_reason_code",
+    "task_reason_detail",
+    "task_runner_report_path",
+    "task_verification_status",
+    "task_verification_commands",
+    "task_expected_artifacts_missing",
+    "task_blocked_by",
     "wave_retry_counts",
     "wave_status",
+    "wave_started_at",
+    "wave_completed_at",
+    "wave_duration_seconds",
+    "wave_attempt_history",
+    "wave_retry_reasons",
+    "wave_out_of_contract_paths",
     "current_wave",
     "generated_at",
     "updated_at"
   ],
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "taskReasonCode": {
+      "type": "string",
+      "enum": [
+        "",
+        "completed",
+        "dependency_blocked",
+        "fail_fast_skipped",
+        "wave_retry_pending",
+        "runner_failed",
+        "verification_failed",
+        "expected_artifacts_missing",
+        "out_of_contract_edits",
+        "task_exception",
+        "missing_task_result",
+        "pending",
+        "unknown"
+      ]
+    },
+    "waveAttempt": {
+      "type": "object",
+      "required": [
+        "attempt",
+        "status",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "retry_reason",
+        "detail"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "completed", "failed", "blocked"]
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_reason": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "properties": {
     "schema_version": {
       "type": "string",
@@ -86,10 +171,68 @@
     "task_files_changed": {
       "type": "object",
       "additionalProperties": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        }
+        "$ref": "#/$defs/stringList"
+      }
+    },
+    "task_started_at": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/timestamp"
+      }
+    },
+    "task_completed_at": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/timestamp"
+      }
+    },
+    "task_duration_seconds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "task_reason_code": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/taskReasonCode"
+      }
+    },
+    "task_reason_detail": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "task_runner_report_path": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "task_verification_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "task_verification_commands": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringList"
+      }
+    },
+    "task_expected_artifacts_missing": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringList"
+      }
+    },
+    "task_blocked_by": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringList"
       }
     },
     "wave_retry_counts": {
@@ -106,17 +249,55 @@
         "enum": ["pending", "completed", "failed", "blocked"]
       }
     },
+    "wave_started_at": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/timestamp"
+      }
+    },
+    "wave_completed_at": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/timestamp"
+      }
+    },
+    "wave_duration_seconds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "wave_attempt_history": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/waveAttempt"
+        }
+      }
+    },
+    "wave_retry_reasons": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringList"
+      }
+    },
+    "wave_out_of_contract_paths": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringList"
+      }
+    },
     "current_wave": {
       "type": "integer",
       "minimum": 1
     },
     "generated_at": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/timestamp"
     },
     "updated_at": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/timestamp"
     }
   },
   "additionalProperties": false

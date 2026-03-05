@@ -233,6 +233,34 @@ def _safe_refresh_handoff(state_path: Path) -> tuple[dict[str, Any] | None, str]
     return (artifacts.payload, "")
 
 
+def _observe_non_empty_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            output.append(text)
+    return output
+
+
+def _observe_format_list(value: Any, *, blank: str = "-") -> str:
+    items = _observe_non_empty_strings(value)
+    return ", ".join(items) if items else blank
+
+
+def _observe_format_seconds(value: Any, *, blank: str = "n/a") -> str:
+    if value in ("", None):
+        return blank
+    try:
+        numeric = float(value)
+    except Exception:
+        return blank
+    if abs(numeric - round(numeric)) < 1e-9:
+        return f"{numeric:.1f}s"
+    return f"{numeric:.3f}".rstrip("0").rstrip(".") + "s"
+
+
 def _cmd_progress(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     payload, error = _safe_refresh_handoff(state_path)
@@ -258,6 +286,24 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     pending = payload.get("pending_human_decisions", [])
     if not isinstance(pending, list):
         pending = []
+    wave_observability = payload.get("wave_observability", {})
+    if not isinstance(wave_observability, dict):
+        wave_observability = {}
+    critical_path = wave_observability.get("critical_path", {})
+    if not isinstance(critical_path, dict):
+        critical_path = {}
+    observability_waves = wave_observability.get("waves", [])
+    if not isinstance(observability_waves, list):
+        observability_waves = []
+    observability_tasks = wave_observability.get("tasks", [])
+    if not isinstance(observability_tasks, list):
+        observability_tasks = []
+    file_conflicts = wave_observability.get("file_conflicts", [])
+    if not isinstance(file_conflicts, list):
+        file_conflicts = []
+    observability_diagnostics = wave_observability.get("diagnostics", [])
+    if not isinstance(observability_diagnostics, list):
+        observability_diagnostics = []
 
     print("autolab progress")
     print(f"state_file: {state_path}")
@@ -272,6 +318,163 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     print(f"pending_human_decisions: {len(pending)}")
     print(f"recommended_next_command: {recommended.get('command', '')}")
     print(f"safe_resume_status: {safe_resume.get('status', 'blocked')}")
+    critical_wave_ids = _observe_non_empty_strings(critical_path.get("wave_ids", []))
+    critical_task_ids = _observe_non_empty_strings(critical_path.get("task_ids", []))
+    print("critical_path:")
+    print(
+        "  "
+        + (
+            f"status={critical_path.get('status', 'unavailable')} "
+            f"mode={critical_path.get('mode', 'unavailable')} "
+            f"duration={_observe_format_seconds(critical_path.get('duration_seconds', 0), blank='0.0s')} "
+            f"weight={critical_path.get('weight', 0)} "
+            f"waves={len(critical_wave_ids)} "
+            f"tasks={len(critical_task_ids)}"
+        )
+    )
+    print(f"  basis: {critical_path.get('basis_note', '') or 'n/a'}")
+    print(f"  wave_ids: {_observe_format_list(critical_wave_ids)}")
+    print(f"  task_ids: {_observe_format_list(critical_task_ids)}")
+    if observability_waves:
+        print("wave_details:")
+        for entry in observability_waves:
+            if not isinstance(entry, dict):
+                continue
+            print(
+                "  "
+                + (
+                    f"wave={entry.get('wave', '?')} status={entry.get('status', 'unknown')} "
+                    f"tasks={len(_observe_non_empty_strings(entry.get('tasks')))} "
+                    f"attempts={entry.get('attempts', 0)} retries={entry.get('retries_used', 0)} "
+                    f"retry_pending={'yes' if bool(entry.get('retry_pending')) else 'no'} "
+                    f"critical_path={'yes' if bool(entry.get('critical_path')) else 'no'} "
+                    f"timing={_observe_format_seconds(entry.get('duration_seconds', 0), blank='n/a')} "
+                    f"last_attempt={_observe_format_seconds(entry.get('last_attempt_duration_seconds', 0), blank='n/a')}"
+                )
+            )
+            print(
+                "    window: "
+                f"{entry.get('started_at', '') or '-'} -> {entry.get('completed_at', '') or '-'}"
+            )
+            print(f"    task_ids: {_observe_format_list(entry.get('tasks'))}")
+            retry_reasons = entry.get("retry_reasons", [])
+            if isinstance(retry_reasons, list) and retry_reasons:
+                print(
+                    "    retry_reasons: "
+                    + ", ".join(
+                        str(item).strip() for item in retry_reasons if str(item).strip()
+                    )
+                )
+            failed_task_ids = entry.get("failed_task_ids", [])
+            if isinstance(failed_task_ids, list) and failed_task_ids:
+                print(
+                    "    failed_tasks: "
+                    + ", ".join(
+                        str(item).strip()
+                        for item in failed_task_ids
+                        if str(item).strip()
+                    )
+                )
+            blocked_task_ids = entry.get("blocked_task_ids", [])
+            if isinstance(blocked_task_ids, list) and blocked_task_ids:
+                print(
+                    "    blocked_tasks: "
+                    + ", ".join(
+                        str(item).strip()
+                        for item in blocked_task_ids
+                        if str(item).strip()
+                    )
+                )
+            deferred_task_ids = entry.get("deferred_task_ids", [])
+            if isinstance(deferred_task_ids, list) and deferred_task_ids:
+                print(
+                    "    deferred_tasks: "
+                    + ", ".join(
+                        str(item).strip()
+                        for item in deferred_task_ids
+                        if str(item).strip()
+                    )
+                )
+            skipped_task_ids = entry.get("skipped_task_ids", [])
+            if isinstance(skipped_task_ids, list) and skipped_task_ids:
+                print(
+                    "    skipped_tasks: "
+                    + ", ".join(
+                        str(item).strip()
+                        for item in skipped_task_ids
+                        if str(item).strip()
+                    )
+                )
+            pending_task_ids = entry.get("pending_task_ids", [])
+            if isinstance(pending_task_ids, list) and pending_task_ids:
+                print(
+                    "    pending_tasks: "
+                    + ", ".join(
+                        str(item).strip()
+                        for item in pending_task_ids
+                        if str(item).strip()
+                    )
+                )
+    if file_conflicts:
+        print("file_conflicts:")
+        for entry in file_conflicts:
+            if not isinstance(entry, dict):
+                continue
+            print(
+                "  "
+                + (
+                    f"wave={entry.get('wave', '?')} kind={entry.get('kind', 'conflict')} "
+                    f"tasks={','.join(str(item) for item in entry.get('tasks', []) if str(item).strip()) or '-'} "
+                    f"detail={entry.get('detail', '')}"
+                )
+            )
+    if observability_tasks:
+        print("task_evidence:")
+        shown = 0
+        for entry in observability_tasks:
+            if not isinstance(entry, dict):
+                continue
+            evidence = entry.get("evidence_summary", {})
+            if not isinstance(evidence, dict):
+                evidence = {}
+            print(
+                "  "
+                + (
+                    f"task={entry.get('task_id', '')} wave={entry.get('wave', '?')} "
+                    f"status={entry.get('status', 'unknown')} "
+                    f"attempts={entry.get('attempts', 0)} retries={entry.get('retries_used', 0)} "
+                    f"critical_path={'yes' if bool(entry.get('critical_path')) else 'no'} "
+                    f"timing={_observe_format_seconds(entry.get('duration_seconds', 0), blank='n/a')} "
+                    f"verify={entry.get('verification_status', 'not_run') or 'not_run'}"
+                )
+            )
+            reason_code = str(entry.get("reason_code", "")).strip()
+            reason_detail = str(entry.get("reason_detail", "")).strip()
+            if reason_code or reason_detail:
+                reason_text = reason_code or "unknown"
+                if reason_detail:
+                    reason_text = (
+                        f"{reason_code} ({reason_detail})"
+                        if reason_code
+                        else reason_detail
+                    )
+                print(f"    reason: {reason_text}")
+            blocked_by = _observe_non_empty_strings(entry.get("blocked_by"))
+            if blocked_by:
+                print(f"    blocked_by: {', '.join(blocked_by)}")
+            print(f"    evidence: {evidence.get('text', '') or 'n/a'}")
+            shown += 1
+            if shown >= 12:
+                remaining = len(observability_tasks) - shown
+                if remaining > 0:
+                    print(f"  ... and {remaining} more")
+                break
+    if observability_diagnostics:
+        print("observability_diagnostics:")
+        for entry in observability_diagnostics:
+            text = str(entry).strip()
+            if text:
+                print(f"  - {text}")
     return 0
 
 

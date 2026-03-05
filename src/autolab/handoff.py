@@ -19,6 +19,7 @@ from autolab.utils import (
     _utc_now,
     _write_json,
 )
+from autolab.wave_observability import build_wave_observability
 
 
 _HANDOFF_FILENAME = "handoff.json"
@@ -228,75 +229,15 @@ def _detect_scope(
     )
 
 
-def _compute_wave_and_tasks(
+def _compute_wave_observability(
+    *,
+    repo_root: Path,
     iteration_dir: Path | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    unavailable_wave = {
-        "status": "unavailable",
-        "current": None,
-        "executed": 0,
-        "total": 0,
-    }
-    unavailable_tasks = {
-        "status": "unavailable",
-        "total": 0,
-        "completed": 0,
-        "failed": 0,
-        "blocked": 0,
-        "pending": 0,
-        "task_details": [],
-    }
-    if iteration_dir is None:
-        return (unavailable_wave, unavailable_tasks)
-    payload = _load_json_if_exists(iteration_dir / "plan_execution_summary.json")
-    if not isinstance(payload, dict):
-        return (unavailable_wave, unavailable_tasks)
-
-    total = int(payload.get("tasks_total", 0) or 0)
-    completed = int(payload.get("tasks_completed", 0) or 0)
-    failed = int(payload.get("tasks_failed", 0) or 0)
-    blocked = int(payload.get("tasks_blocked", 0) or 0)
-    pending = max(0, total - completed - failed - blocked)
-    raw_task_details = payload.get("task_details")
-    task_details = raw_task_details if isinstance(raw_task_details, list) else []
-    max_wave = 0
-    executed_wave = 0
-    pending_wave = 0
-    for detail in task_details:
-        if not isinstance(detail, dict):
-            continue
-        try:
-            wave = int(detail.get("wave", 0) or 0)
-        except Exception:
-            wave = 0
-        if wave > max_wave:
-            max_wave = wave
-        status = str(detail.get("status", "")).strip().lower()
-        if status in {"completed", "failed", "blocked"} and wave > executed_wave:
-            executed_wave = wave
-        if status in {"pending", "in_progress"}:
-            if pending_wave == 0 or (wave > 0 and wave < pending_wave):
-                pending_wave = wave
-
-    declared_waves = int(payload.get("waves_executed", 0) or 0)
-    total_waves = max(max_wave, declared_waves)
-    current_wave = pending_wave if pending_wave > 0 else (executed_wave or None)
-    wave_summary = {
-        "status": "available",
-        "current": current_wave,
-        "executed": executed_wave or declared_waves,
-        "total": total_waves,
-    }
-    task_summary = {
-        "status": "available",
-        "total": total,
-        "completed": completed,
-        "failed": failed,
-        "blocked": blocked,
-        "pending": pending,
-        "task_details": task_details,
-    }
-    return (wave_summary, task_summary)
+) -> dict[str, Any]:
+    return build_wave_observability(
+        repo_root,
+        iteration_dir=iteration_dir,
+    )
 
 
 def _pending_human_decisions(
@@ -393,6 +334,16 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     ]
     recommended = _safe_dict(payload.get("recommended_next_command"))
     safe_resume = _safe_dict(payload.get("safe_resume_point"))
+    wave_observability = _safe_dict(payload.get("wave_observability"))
+    critical_path = _safe_dict(wave_observability.get("critical_path"))
+    observability_waves = _safe_list(wave_observability.get("waves"))
+    observability_conflicts = _safe_list(wave_observability.get("file_conflicts"))
+    observability_tasks = _safe_list(wave_observability.get("tasks"))
+    observability_diagnostics = [
+        str(item).strip()
+        for item in _safe_list(wave_observability.get("diagnostics"))
+        if str(item).strip()
+    ]
 
     lines = [
         "# Autolab Handoff",
@@ -415,16 +366,109 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         f"- tasks.failed: `{tasks.get('failed', 0)}`",
         f"- tasks.blocked: `{tasks.get('blocked', 0)}`",
         f"- tasks.pending: `{tasks.get('pending', 0)}`",
-        "",
-        "## Verification",
-        "",
-        f"- generated_at: `{verifier.get('generated_at', '')}`",
-        f"- stage_effective: `{verifier.get('stage_effective', '')}`",
-        f"- passed: `{verifier.get('passed', False)}`",
-        f"- message: {verifier.get('message', '')}",
-        "",
-        "## Blocking Failures",
+        f"- tasks.skipped: `{tasks.get('skipped', 0)}`",
+        f"- tasks.deferred: `{tasks.get('deferred', 0)}`",
     ]
+
+    if critical_path:
+        lines.extend(
+            [
+                "",
+                "## Critical Path",
+                "",
+                f"- status: `{critical_path.get('status', 'unavailable')}`",
+                f"- mode: `{critical_path.get('mode', 'unavailable')}`",
+                f"- weight: `{critical_path.get('weight', 0)}`",
+                f"- duration_seconds: `{critical_path.get('duration_seconds', 0)}`",
+                f"- waves: `{', '.join(str(item) for item in _safe_list(critical_path.get('wave_ids')) if str(item).strip()) or '-'}`",
+                f"- tasks: `{', '.join(str(item) for item in _safe_list(critical_path.get('task_ids')) if str(item).strip()) or '-'}`",
+                f"- basis: {critical_path.get('basis_note', '')}",
+            ]
+        )
+
+    lines.extend(["", "## Wave Details", ""])
+    if observability_waves:
+        for entry in observability_waves:
+            if not isinstance(entry, dict):
+                continue
+            lines.extend(
+                [
+                    (
+                        f"- wave {entry.get('wave', '?')}: status={entry.get('status', 'unknown')} "
+                        f"duration={entry.get('duration_seconds', 0)}s retries={entry.get('retries_used', 0)}"
+                        + (
+                            " retry_pending=yes"
+                            if bool(entry.get("retry_pending"))
+                            else ""
+                        )
+                        + (
+                            " critical_path=yes"
+                            if bool(entry.get("critical_path"))
+                            else ""
+                        )
+                    ),
+                    f"  tasks: {', '.join(str(item) for item in _safe_list(entry.get('tasks')) if str(item).strip()) or '-'}",
+                    f"  retry_reasons.current: {', '.join(str(item) for item in _safe_list(entry.get('current_retry_reasons')) if str(item).strip()) or 'none'}",
+                    f"  retry_reasons.history: {', '.join(str(item) for item in _safe_list(entry.get('retry_reasons')) if str(item).strip()) or 'none'}",
+                    f"  blocked_tasks: {', '.join(str(item) for item in _safe_list(entry.get('blocked_task_ids')) if str(item).strip()) or 'none'}",
+                    f"  deferred_tasks: {', '.join(str(item) for item in _safe_list(entry.get('deferred_task_ids')) if str(item).strip()) or 'none'}",
+                    f"  skipped_tasks: {', '.join(str(item) for item in _safe_list(entry.get('skipped_task_ids')) if str(item).strip()) or 'none'}",
+                    f"  out_of_contract_paths: {', '.join(str(item) for item in _safe_list(entry.get('out_of_contract_paths')) if str(item).strip()) or 'none'}",
+                ]
+            )
+    else:
+        lines.append("- unavailable")
+
+    lines.extend(["", "## File Conflicts", ""])
+    if observability_conflicts:
+        for entry in observability_conflicts:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                (
+                    f"- wave {entry.get('wave', '?')}: {entry.get('kind', 'conflict')} "
+                    f"tasks={', '.join(str(item) for item in _safe_list(entry.get('tasks')) if str(item).strip()) or '-'} "
+                    f"paths={', '.join(str(item) for item in _safe_list(entry.get('paths')) if str(item).strip()) or '-'} "
+                    f"group={entry.get('conflict_group', '') or '-'} "
+                    f"detail={entry.get('detail', '')}"
+                )
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Task Evidence", ""])
+    evidence_rows = 0
+    for entry in observability_tasks:
+        if not isinstance(entry, dict):
+            continue
+        evidence = _safe_dict(entry.get("evidence_summary"))
+        lines.append(
+            (
+                f"- {entry.get('task_id', '')}: status={entry.get('status', 'unknown')} "
+                f"reason={entry.get('reason_code', '')} "
+                f"evidence={evidence.get('text', '') or 'n/a'}"
+            )
+        )
+        evidence_rows += 1
+        if evidence_rows >= 20:
+            remaining = len(observability_tasks) - evidence_rows
+            if remaining > 0:
+                lines.append(f"- ... and {remaining} more task evidence rows")
+            break
+
+    lines.extend(
+        [
+            "",
+            "## Verification",
+            "",
+            f"- generated_at: `{verifier.get('generated_at', '')}`",
+            f"- stage_effective: `{verifier.get('stage_effective', '')}`",
+            f"- passed: `{verifier.get('passed', False)}`",
+            f"- message: {verifier.get('message', '')}",
+            "",
+            "## Blocking Failures",
+        ]
+    )
     if blockers:
         lines.extend(f"- {entry}" for entry in blockers)
     else:
@@ -465,6 +509,12 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         )
     else:
         lines.append("- safe_resume_preconditions: none")
+
+    lines.extend(["", "## Observability Diagnostics"])
+    if observability_diagnostics:
+        lines.extend(f"- {entry}" for entry in observability_diagnostics)
+    else:
+        lines.append("- none")
 
     lines.extend(
         [
@@ -529,7 +579,12 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         block_reason_payload=block_reason,
     )
 
-    wave_summary, task_summary = _compute_wave_and_tasks(iteration_dir)
+    wave_observability = _compute_wave_observability(
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
+    )
+    wave_summary = _safe_dict(wave_observability.get("wave_summary"))
+    task_summary = _safe_dict(wave_observability.get("task_summary"))
     handoff_md_path = scope_root / _HANDOFF_MD_FILENAME
     handoff_json_path = autolab_dir / _HANDOFF_FILENAME
 
@@ -557,6 +612,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "current_stage": stage,
         "wave": wave_summary,
         "task_status": task_summary,
+        "wave_observability": wave_observability,
         "latest_verifier_summary": latest_verification_summary,
         "blocking_failures": blocking_failures,
         "pending_human_decisions": pending_decisions,

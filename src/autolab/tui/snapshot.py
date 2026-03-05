@@ -27,6 +27,7 @@ from autolab.state import (
 )
 from autolab.todo_sync import list_open_tasks
 from autolab.utils import _is_backlog_status_completed
+from autolab.wave_observability import build_wave_observability
 from autolab.tui.models import (
     ArtifactItem,
     BacklogExperimentItem,
@@ -623,6 +624,22 @@ def _load_handoff_summary(repo_root: Path, autolab_dir: Path) -> HandoffSummary 
     pending_human = payload.get("pending_human_decisions")
     if not isinstance(pending_human, list):
         pending_human = []
+    wave_observability = payload.get("wave_observability")
+    if not isinstance(wave_observability, dict):
+        iteration_id = str(payload.get("iteration_id", "")).strip()
+        experiment_id = str(payload.get("experiment_id", "")).strip()
+        iteration_dir = None
+        if iteration_id:
+            iteration_dir, _ = _resolve_iteration_directory(
+                repo_root,
+                iteration_id=iteration_id,
+                experiment_id=experiment_id,
+                require_exists=False,
+            )
+        wave_observability = build_wave_observability(
+            repo_root,
+            iteration_dir=iteration_dir,
+        )
 
     return HandoffSummary(
         handoff_json_path=handoff_json_path,
@@ -649,6 +666,7 @@ def _load_handoff_summary(repo_root: Path, autolab_dir: Path) -> HandoffSummary 
         safe_resume_status=str(safe_resume.get("status", "blocked")).strip()
         or "blocked",
         safe_resume_command=str(safe_resume.get("command", "")).strip(),
+        wave_observability=wave_observability,
     )
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 import shlex
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from autolab.utils import (
     _utc_now,
     _write_json,
 )
+from autolab.wave_observability import build_wave_observability
 
 
 _SYSTEM_ALLOWED_PREFIXES: tuple[str, ...] = (
@@ -205,8 +207,24 @@ def _initial_execution_state(
         "task_retry_counts": {task_id: 0 for task_id in sorted(tasks)},
         "task_last_error": {task_id: "" for task_id in sorted(tasks)},
         "task_files_changed": {task_id: [] for task_id in sorted(tasks)},
+        "task_started_at": {task_id: "" for task_id in sorted(tasks)},
+        "task_completed_at": {task_id: "" for task_id in sorted(tasks)},
+        "task_duration_seconds": {task_id: 0.0 for task_id in sorted(tasks)},
+        "task_reason_code": {task_id: "" for task_id in sorted(tasks)},
+        "task_reason_detail": {task_id: "" for task_id in sorted(tasks)},
+        "task_runner_report_path": {task_id: "" for task_id in sorted(tasks)},
+        "task_verification_status": {task_id: "" for task_id in sorted(tasks)},
+        "task_verification_commands": {task_id: [] for task_id in sorted(tasks)},
+        "task_expected_artifacts_missing": {task_id: [] for task_id in sorted(tasks)},
+        "task_blocked_by": {task_id: [] for task_id in sorted(tasks)},
         "wave_retry_counts": {str(row["wave"]): 0 for row in wave_rows},
         "wave_status": {str(row["wave"]): "pending" for row in wave_rows},
+        "wave_started_at": {str(row["wave"]): "" for row in wave_rows},
+        "wave_completed_at": {str(row["wave"]): "" for row in wave_rows},
+        "wave_duration_seconds": {str(row["wave"]): 0.0 for row in wave_rows},
+        "wave_attempt_history": {str(row["wave"]): [] for row in wave_rows},
+        "wave_retry_reasons": {str(row["wave"]): [] for row in wave_rows},
+        "wave_out_of_contract_paths": {str(row["wave"]): [] for row in wave_rows},
         "current_wave": 1,
     }
 
@@ -255,14 +273,26 @@ def _coerce_execution_state(
     state["updated_at"] = _utc_now()
 
     def _ensure_status_map(key: str, default_value: Any) -> dict[str, Any]:
+        def _clone_default() -> Any:
+            if isinstance(default_value, list):
+                return list(default_value)
+            if isinstance(default_value, dict):
+                return dict(default_value)
+            return default_value
+
         raw_map = state.get(key)
         normalized: dict[str, Any] = {}
         if isinstance(raw_map, dict):
             for task_id in sorted(tasks):
-                normalized[task_id] = raw_map.get(task_id, default_value)
+                value = raw_map.get(task_id, _clone_default())
+                if isinstance(value, list):
+                    value = list(value)
+                elif isinstance(value, dict):
+                    value = dict(value)
+                normalized[task_id] = value
         else:
             for task_id in sorted(tasks):
-                normalized[task_id] = default_value
+                normalized[task_id] = _clone_default()
         state[key] = normalized
         return normalized
 
@@ -271,6 +301,16 @@ def _coerce_execution_state(
     _ensure_status_map("task_retry_counts", 0)
     _ensure_status_map("task_last_error", "")
     _ensure_status_map("task_files_changed", [])
+    _ensure_status_map("task_started_at", "")
+    _ensure_status_map("task_completed_at", "")
+    _ensure_status_map("task_duration_seconds", 0.0)
+    _ensure_status_map("task_reason_code", "")
+    _ensure_status_map("task_reason_detail", "")
+    _ensure_status_map("task_runner_report_path", "")
+    _ensure_status_map("task_verification_status", "")
+    _ensure_status_map("task_verification_commands", [])
+    _ensure_status_map("task_expected_artifacts_missing", [])
+    _ensure_status_map("task_blocked_by", [])
 
     raw_wave_retry = state.get("wave_retry_counts")
     wave_retry_counts: dict[str, int] = {}
@@ -298,6 +338,39 @@ def _coerce_execution_state(
         for row in wave_rows:
             wave_status[str(row["wave"])] = "pending"
     state["wave_status"] = wave_status
+
+    def _ensure_wave_map(key: str, default_value: Any) -> dict[str, Any]:
+        def _clone_default() -> Any:
+            if isinstance(default_value, list):
+                return list(default_value)
+            if isinstance(default_value, dict):
+                return dict(default_value)
+            return default_value
+
+        raw_map = state.get(key)
+        normalized: dict[str, Any] = {}
+        if isinstance(raw_map, dict):
+            for row in wave_rows:
+                wave_key = str(row["wave"])
+                value = raw_map.get(wave_key, _clone_default())
+                if isinstance(value, list):
+                    value = list(value)
+                elif isinstance(value, dict):
+                    value = dict(value)
+                normalized[wave_key] = value
+        else:
+            for row in wave_rows:
+                wave_key = str(row["wave"])
+                normalized[wave_key] = _clone_default()
+        state[key] = normalized
+        return normalized
+
+    _ensure_wave_map("wave_started_at", "")
+    _ensure_wave_map("wave_completed_at", "")
+    _ensure_wave_map("wave_duration_seconds", 0.0)
+    _ensure_wave_map("wave_attempt_history", [])
+    _ensure_wave_map("wave_retry_reasons", [])
+    _ensure_wave_map("wave_out_of_contract_paths", [])
     return state
 
 
@@ -411,25 +484,10 @@ def _substitute_task_command(
 def _run_task_verification_commands(
     *,
     repo_root: Path,
-    task: dict[str, Any],
-    iteration_id: str,
-    iteration_path: str,
-    scope_root: str,
+    task_id: str,
+    commands: list[str],
 ) -> tuple[bool, str]:
-    task_id = str(task.get("task_id", "")).strip() or "task"
-    commands = task.get("verification_commands", [])
-    if not isinstance(commands, list):
-        return (False, f"{task_id}: verification_commands must be a list")
-    for raw_command in commands:
-        command = _substitute_task_command(
-            str(raw_command).strip(),
-            iteration_id=iteration_id,
-            iteration_path=iteration_path,
-            task_id=task_id,
-            scope_root=scope_root,
-        )
-        if not command:
-            continue
+    for command in commands:
         try:
             argv = shlex.split(command)
         except ValueError as exc:
@@ -485,9 +543,30 @@ def _execute_task(
         project_wide_root if task_scope_kind == "project_wide" else iteration_dir
     )
     manual_only_rationale = str(task.get("manual_only_rationale", "")).strip()
+    raw_verification_commands = task.get("verification_commands", [])
+    rendered_verification_commands: list[str] = []
+    if isinstance(raw_verification_commands, list):
+        for raw_command in raw_verification_commands:
+            command = _substitute_task_command(
+                str(raw_command).strip(),
+                iteration_id=iteration_id,
+                iteration_path=iteration_path,
+                task_id=task_id,
+                scope_root=task_scope_root.as_posix(),
+            )
+            if command:
+                rendered_verification_commands.append(command)
     attempts = 0
     last_error = ""
     last_files_changed: list[str] = []
+    verification_status = "not_run"
+    runner_report_path = f".autolab/runner_execution_report.{task_id}.json"
+    runner_status = "skipped"
+    runner_exit_code: int | None = 0
+    reason_code = ""
+    reason_detail = ""
+    started_at = _utc_now()
+    started_at_monotonic = time.monotonic()
     max_attempts = max(1, task_retry_max + 1)
     while attempts < max_attempts:
         attempts += 1
@@ -505,35 +584,44 @@ def _execute_task(
                     "attempt": attempts,
                     "max_attempts": max_attempts,
                 },
-                report_name=f"runner_execution_report.{task_id}.json",
+                report_name=Path(runner_report_path).name,
             )
         except subprocess.TimeoutExpired as exc:
             last_error = f"{task_id}: runner execution timed out: {exc}"
+            runner_status = "timeout"
+            runner_exit_code = None
+            reason_code = "runner_failed"
+            reason_detail = last_error
             continue
         except Exception as exc:
             last_error = f"{task_id}: runner execution error: {exc}"
+            runner_status = "error"
+            runner_exit_code = None
+            reason_code = "runner_failed"
+            reason_detail = last_error
             continue
         last_files_changed = [
             _normalize_path(path) for path in runner_result.get("changed_paths", [])
         ]
         runner_status = str(runner_result.get("status", "")).strip().lower()
-        runner_exit = _coerce_exit_code(runner_result.get("exit_code"), default=1)
+        raw_runner_exit = runner_result.get("exit_code")
+        runner_exit_code = int(raw_runner_exit) if raw_runner_exit is not None else None
+        runner_exit = _coerce_exit_code(raw_runner_exit, default=1)
         if runner_status != "completed" or runner_exit != 0:
             last_error = (
                 f"{task_id}: runner execution failed "
                 f"(status={runner_status or 'unknown'}, exit_code={runner_exit})"
             )
+            reason_code = "runner_failed"
+            reason_detail = last_error
             continue
 
-        verification_commands = task.get("verification_commands", [])
-        if isinstance(verification_commands, list) and verification_commands:
+        if rendered_verification_commands:
             try:
                 verified, verify_error = _run_task_verification_commands(
                     repo_root=repo_root,
-                    task=task,
-                    iteration_id=iteration_id,
-                    iteration_path=iteration_path,
-                    scope_root=task_scope_root.as_posix(),
+                    task_id=task_id,
+                    commands=rendered_verification_commands,
                 )
             except subprocess.TimeoutExpired as exc:
                 verified, verify_error = (
@@ -547,11 +635,22 @@ def _execute_task(
                 )
             if not verified:
                 last_error = verify_error
+                verification_status = "failed"
+                reason_code = "verification_failed"
+                reason_detail = verify_error
                 continue
+            verification_status = "passed"
         elif require_verification_commands and not manual_only_rationale:
             last_error = f"{task_id}: verification_commands required by policy when manual_only_rationale is absent"
+            verification_status = "required_missing"
+            reason_code = "verification_failed"
+            reason_detail = last_error
             continue
+        else:
+            verification_status = "not_run"
 
+        completed_at = _utc_now()
+        duration_seconds = round(time.monotonic() - started_at_monotonic, 3)
         return {
             "task_id": task_id,
             "status": "completed",
@@ -559,8 +658,22 @@ def _execute_task(
             "retries_used": max(0, attempts - 1),
             "error": "",
             "files_changed": sorted(set(last_files_changed)),
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": max(0.0, duration_seconds),
+            "reason_code": "completed",
+            "reason_detail": "",
+            "runner_report_path": runner_report_path,
+            "runner_status": runner_status,
+            "runner_exit_code": runner_exit_code,
+            "verification_status": verification_status,
+            "verification_commands": list(rendered_verification_commands),
+            "expected_artifacts_missing": [],
+            "blocked_by": [],
         }
 
+    completed_at = _utc_now()
+    duration_seconds = round(time.monotonic() - started_at_monotonic, 3)
     return {
         "task_id": task_id,
         "status": "failed",
@@ -568,75 +681,107 @@ def _execute_task(
         "retries_used": max(0, attempts - 1),
         "error": last_error or f"{task_id}: execution failed",
         "files_changed": sorted(set(last_files_changed)),
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "duration_seconds": max(0.0, duration_seconds),
+        "reason_code": reason_code or "task_exception",
+        "reason_detail": reason_detail or last_error or f"{task_id}: execution failed",
+        "runner_report_path": runner_report_path,
+        "runner_status": runner_status,
+        "runner_exit_code": runner_exit_code,
+        "verification_status": verification_status,
+        "verification_commands": list(rendered_verification_commands),
+        "expected_artifacts_missing": [],
+        "blocked_by": [],
     }
+
+
+def _append_wave_attempt(
+    state_payload: dict[str, Any],
+    *,
+    wave_key: str,
+    started_at: str,
+    completed_at: str,
+    duration_seconds: float,
+    status: str,
+    retry_reason: str = "",
+    detail: str = "",
+) -> None:
+    raw_history = state_payload.get("wave_attempt_history")
+    if not isinstance(raw_history, dict):
+        raw_history = {}
+        state_payload["wave_attempt_history"] = raw_history
+    attempts = raw_history.get(wave_key)
+    if not isinstance(attempts, list):
+        attempts = []
+        raw_history[wave_key] = attempts
+    attempt_number = len(attempts) + 1
+    attempts.append(
+        {
+            "attempt": attempt_number,
+            "status": status,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": round(max(0.0, duration_seconds), 3),
+            "retry_reason": retry_reason,
+            "detail": detail,
+        }
+    )
+    wave_started_map = state_payload.get("wave_started_at")
+    if (
+        isinstance(wave_started_map, dict)
+        and not str(wave_started_map.get(wave_key, "")).strip()
+    ):
+        wave_started_map[wave_key] = started_at
+    wave_completed_map = state_payload.get("wave_completed_at")
+    if isinstance(wave_completed_map, dict):
+        wave_completed_map[wave_key] = completed_at
+    wave_duration_map = state_payload.get("wave_duration_seconds")
+    if isinstance(wave_duration_map, dict):
+        prior = 0.0
+        try:
+            prior = float(wave_duration_map.get(wave_key, 0.0) or 0.0)
+        except Exception:
+            prior = 0.0
+        wave_duration_map[wave_key] = round(prior + max(0.0, duration_seconds), 3)
+    wave_retry_counts = state_payload.get("wave_retry_counts")
+    if isinstance(wave_retry_counts, dict):
+        wave_retry_counts[wave_key] = max(0, len(attempts) - 1)
+
+
+def _wave_retry_reasons_for_tasks(
+    *,
+    wave_task_ids: list[str],
+    state_payload: dict[str, Any],
+) -> list[str]:
+    reason_codes = state_payload.get("task_reason_code")
+    if not isinstance(reason_codes, dict):
+        return []
+    reasons: list[str] = []
+    for task_id in wave_task_ids:
+        reason_code = str(reason_codes.get(task_id, "")).strip()
+        if not reason_code or reason_code == "completed":
+            continue
+        if reason_code not in reasons:
+            reasons.append(reason_code)
+    return reasons
 
 
 def _build_execution_summary(
     *,
+    repo_root: Path,
+    iteration_dir: Path,
     iteration_id: str,
     plan_file: str,
     contract_hash: str,
+    contract_payload: dict[str, Any],
+    graph_payload: dict[str, Any],
+    plan_check_payload: dict[str, Any],
     wave_rows: list[dict[str, Any]],
     state_payload: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    task_status = state_payload.get("task_status", {})
-    task_attempt_counts = state_payload.get("task_attempt_counts", {})
-    task_retry_counts = state_payload.get("task_retry_counts", {})
-    task_last_error = state_payload.get("task_last_error", {})
-    task_files_changed = state_payload.get("task_files_changed", {})
-    wave_status = state_payload.get("wave_status", {})
-    wave_retry_counts = state_payload.get("wave_retry_counts", {})
-
-    completed = 0
-    failed = 0
-    blocked = 0
-    details: list[dict[str, Any]] = []
-    for row in wave_rows:
-        wave = int(row["wave"])
-        for task_id in row["tasks"]:
-            status = str(task_status.get(task_id, "pending")).strip() or "pending"
-            if status == "completed":
-                completed += 1
-            elif status == "failed":
-                failed += 1
-            elif status == "blocked":
-                blocked += 1
-            details.append(
-                {
-                    "task_id": task_id,
-                    "status": status,
-                    "wave": wave,
-                    "attempts": int(task_attempt_counts.get(task_id, 0) or 0),
-                    "retries_used": int(task_retry_counts.get(task_id, 0) or 0),
-                    "last_error": str(task_last_error.get(task_id, "")).strip(),
-                    "files_changed": task_files_changed.get(task_id, []),
-                    "scope_kind": str(
-                        task_map.get(task_id, {}).get("scope_kind", "")
-                    ).strip(),
-                }
-            )
-
-    total = len(task_map)
-    pending = max(0, total - completed - failed - blocked)
-    waves_executed = 0
-    wave_details: list[dict[str, Any]] = []
-    for row in wave_rows:
-        wave = int(row["wave"])
-        key = str(wave)
-        status = str(wave_status.get(key, "pending")).strip() or "pending"
-        if status == "completed":
-            waves_executed = max(waves_executed, wave)
-        wave_details.append(
-            {
-                "wave": wave,
-                "status": status,
-                "attempts": int(wave_retry_counts.get(key, 0) or 0),
-                "tasks": list(row["tasks"]),
-            }
-        )
-
-    return {
+    base_summary = {
         "schema_version": "1.0",
         "generated_at": _utc_now(),
         "stage": "implementation",
@@ -644,16 +789,58 @@ def _build_execution_summary(
         "plan_file": plan_file,
         "contract_hash": contract_hash,
         "run_unit": "wave",
-        "tasks_total": total,
-        "tasks_completed": completed,
-        "tasks_failed": failed,
-        "tasks_blocked": blocked,
-        "tasks_pending": pending,
+        "tasks_total": len(task_map),
+        "tasks_completed": 0,
+        "tasks_failed": 0,
+        "tasks_blocked": 0,
+        "tasks_pending": 0,
         "waves_total": len(wave_rows),
-        "waves_executed": waves_executed,
-        "wave_details": wave_details,
-        "task_details": details,
+        "waves_executed": 0,
+        "wave_details": [],
+        "task_details": [],
     }
+    observability = build_wave_observability(
+        repo_root,
+        iteration_dir=iteration_dir,
+        contract_payload=contract_payload,
+        graph_payload=graph_payload,
+        plan_check_payload=plan_check_payload,
+        execution_state_payload=state_payload,
+        execution_summary_payload=base_summary,
+    )
+    summary = observability.get("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+    wave_summary = observability.get("wave_summary", {})
+    if not isinstance(wave_summary, dict):
+        wave_summary = {}
+    task_summary = observability.get("task_summary", {})
+    if not isinstance(task_summary, dict):
+        task_summary = {}
+    base_summary.update(
+        {
+            "tasks_total": int(
+                task_summary.get("total", len(task_map)) or len(task_map)
+            ),
+            "tasks_completed": int(task_summary.get("completed", 0) or 0),
+            "tasks_failed": int(task_summary.get("failed", 0) or 0),
+            "tasks_blocked": int(task_summary.get("blocked", 0) or 0),
+            "tasks_pending": int(task_summary.get("pending", 0) or 0),
+            "tasks_skipped": int(task_summary.get("skipped", 0) or 0),
+            "tasks_deferred": int(task_summary.get("deferred", 0) or 0),
+            "waves_total": int(
+                wave_summary.get("total", len(wave_rows)) or len(wave_rows)
+            ),
+            "waves_executed": int(wave_summary.get("executed", 0) or 0),
+            "wave_details": observability.get("waves", []),
+            "task_details": observability.get("tasks", []),
+            "critical_path": observability.get("critical_path", {}),
+            "file_conflicts": observability.get("file_conflicts", []),
+            "diagnostics": observability.get("diagnostics", []),
+            "observability_summary": summary,
+        }
+    )
+    return base_summary
 
 
 def execute_implementation_plan_step(
@@ -760,15 +947,21 @@ def execute_implementation_plan_step(
 
     contract_path = repo_root / ".autolab" / "plan_contract.json"
     graph_path = repo_root / ".autolab" / "plan_graph.json"
+    plan_check_path = repo_root / ".autolab" / "plan_check_result.json"
     if not contract_path.exists():
         raise StageCheckError(
             "missing .autolab/plan_contract.json after contract check"
         )
     if not graph_path.exists():
         raise StageCheckError("missing .autolab/plan_graph.json after contract check")
+    if not plan_check_path.exists():
+        raise StageCheckError(
+            "missing .autolab/plan_check_result.json after contract check"
+        )
 
     contract = _load_json_dict(contract_path)
     graph = _load_json_dict(graph_path)
+    plan_check = _load_json_dict(plan_check_path)
     contract_hash = _json_hash(contract)
     task_map = _task_map(contract)
     wave_rows = _wave_rows(graph)
@@ -791,9 +984,14 @@ def execute_implementation_plan_step(
     next_wave = _next_wave(wave_rows=wave_rows, task_status=task_status)
     if next_wave is None:
         summary_payload = _build_execution_summary(
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
             iteration_id=iteration_id,
             plan_file=f"{iteration_path}/implementation_plan.md",
             contract_hash=contract_hash,
+            contract_payload=contract,
+            graph_payload=graph,
+            plan_check_payload=plan_check,
             wave_rows=wave_rows,
             state_payload=state_payload,
             task_map=task_map,
@@ -820,24 +1018,63 @@ def execute_implementation_plan_step(
     if not wave_tasks:
         raise StageCheckError(f"wave {wave_number} has no valid tasks")
 
+    wave_key = str(wave_number)
+    wave_attempt_started_at = _utc_now()
+    wave_attempt_started_at_monotonic = time.monotonic()
+    state_payload["wave_out_of_contract_paths"][wave_key] = []
+
     ready_tasks: list[dict[str, Any]] = []
     for task in wave_tasks:
         task_id = str(task.get("task_id", "")).strip()
         if str(task_status.get(task_id, "pending")).strip() == "completed":
             continue
         if not _task_ready(task=task, task_status=task_status):
+            depends_on = task.get("depends_on", [])
+            unresolved_dependencies: list[str] = []
+            if isinstance(depends_on, list):
+                for dependency in depends_on:
+                    dep_id = str(dependency).strip()
+                    if not dep_id:
+                        continue
+                    if str(task_status.get(dep_id, "")).strip() != "completed":
+                        unresolved_dependencies.append(dep_id)
             task_status[task_id] = "blocked"
             state_payload["task_status"] = task_status
+            state_payload["task_reason_code"][task_id] = "dependency_blocked"
+            state_payload["task_reason_detail"][task_id] = (
+                f"{task_id}: blocked by unresolved dependencies "
+                f"({', '.join(sorted(unresolved_dependencies))})"
+            )
+            state_payload["task_blocked_by"][task_id] = unresolved_dependencies
             continue
         ready_tasks.append(task)
 
     if not ready_tasks:
         state_payload["wave_status"][str(wave_number)] = "blocked"
+        wave_attempt_completed_at = _utc_now()
+        wave_attempt_duration_seconds = round(
+            time.monotonic() - wave_attempt_started_at_monotonic,
+            3,
+        )
+        _append_wave_attempt(
+            state_payload,
+            wave_key=wave_key,
+            started_at=wave_attempt_started_at,
+            completed_at=wave_attempt_completed_at,
+            duration_seconds=wave_attempt_duration_seconds,
+            status="blocked",
+            detail="wave blocked by unresolved dependencies",
+        )
         state_payload["updated_at"] = _utc_now()
         summary_payload = _build_execution_summary(
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
             iteration_id=iteration_id,
             plan_file=f"{iteration_path}/implementation_plan.md",
             contract_hash=contract_hash,
+            contract_payload=contract,
+            graph_payload=graph,
+            plan_check_payload=plan_check,
             wave_rows=wave_rows,
             state_payload=state_payload,
             task_map=task_map,
@@ -904,6 +1141,21 @@ def execute_implementation_plan_step(
                         f"{halted_task_id} failed"
                     ),
                     "files_changed": [],
+                    "started_at": "",
+                    "completed_at": "",
+                    "duration_seconds": 0.0,
+                    "reason_code": "fail_fast_skipped",
+                    "reason_detail": (
+                        f"{task_id}: skipped because fail_fast halted wave after "
+                        f"{halted_task_id} failed"
+                    ),
+                    "runner_report_path": "",
+                    "runner_status": "not_run",
+                    "runner_exit_code": None,
+                    "verification_status": "not_run",
+                    "verification_commands": [],
+                    "expected_artifacts_missing": [],
+                    "blocked_by": [],
                 }
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -935,6 +1187,18 @@ def execute_implementation_plan_step(
                         "retries_used": 0,
                         "error": f"{task_id}: task execution error: {exc}",
                         "files_changed": [],
+                        "started_at": "",
+                        "completed_at": "",
+                        "duration_seconds": 0.0,
+                        "reason_code": "task_exception",
+                        "reason_detail": f"{task_id}: task execution error: {exc}",
+                        "runner_report_path": f".autolab/runner_execution_report.{task_id}.json",
+                        "runner_status": "error",
+                        "runner_exit_code": None,
+                        "verification_status": "not_run",
+                        "verification_commands": [],
+                        "expected_artifacts_missing": [],
+                        "blocked_by": [],
                     }
                 task_results[task_id] = task_result
 
@@ -949,6 +1213,18 @@ def execute_implementation_plan_step(
                 "retries_used": 0,
                 "error": f"{task_id}: missing task result",
                 "files_changed": [],
+                "started_at": "",
+                "completed_at": "",
+                "duration_seconds": 0.0,
+                "reason_code": "missing_task_result",
+                "reason_detail": f"{task_id}: missing task result",
+                "runner_report_path": f".autolab/runner_execution_report.{task_id}.json",
+                "runner_status": "missing",
+                "runner_exit_code": None,
+                "verification_status": "not_run",
+                "verification_commands": [],
+                "expected_artifacts_missing": [],
+                "blocked_by": [],
             }
         state_payload["task_attempt_counts"][task_id] = int(
             task_result.get("attempts", 0) or 0
@@ -961,6 +1237,40 @@ def execute_implementation_plan_step(
         ).strip()
         state_payload["task_files_changed"][task_id] = list(
             task_result.get("files_changed", [])
+        )
+        state_payload["task_started_at"][task_id] = str(
+            task_result.get("started_at", "")
+        ).strip()
+        state_payload["task_completed_at"][task_id] = str(
+            task_result.get("completed_at", "")
+        ).strip()
+        try:
+            state_payload["task_duration_seconds"][task_id] = round(
+                float(task_result.get("duration_seconds", 0.0) or 0.0),
+                3,
+            )
+        except Exception:
+            state_payload["task_duration_seconds"][task_id] = 0.0
+        state_payload["task_reason_code"][task_id] = str(
+            task_result.get("reason_code", "")
+        ).strip()
+        state_payload["task_reason_detail"][task_id] = str(
+            task_result.get("reason_detail", "")
+        ).strip()
+        state_payload["task_runner_report_path"][task_id] = str(
+            task_result.get("runner_report_path", "")
+        ).strip()
+        state_payload["task_verification_status"][task_id] = str(
+            task_result.get("verification_status", "")
+        ).strip()
+        state_payload["task_verification_commands"][task_id] = list(
+            task_result.get("verification_commands", [])
+        )
+        state_payload["task_expected_artifacts_missing"][task_id] = list(
+            task_result.get("expected_artifacts_missing", [])
+        )
+        state_payload["task_blocked_by"][task_id] = list(
+            task_result.get("blocked_by", [])
         )
         task_result_status = str(task_result.get("status", "")).strip()
         task_success = task_result_status == "completed"
@@ -979,9 +1289,18 @@ def execute_implementation_plan_step(
                 task_success = False
                 error_text = f"{task_id}: expected_artifacts missing ({', '.join(sorted(missing_artifacts))})"
                 state_payload["task_last_error"][task_id] = error_text
+                state_payload["task_reason_code"][task_id] = (
+                    "expected_artifacts_missing"
+                )
+                state_payload["task_reason_detail"][task_id] = error_text
+                state_payload["task_expected_artifacts_missing"][task_id] = list(
+                    missing_artifacts
+                )
                 task_result_status = "failed"
         if task_success:
             state_payload["task_status"][task_id] = "completed"
+            state_payload["task_reason_code"][task_id] = "completed"
+            state_payload["task_reason_detail"][task_id] = ""
         elif task_result_status == "pending":
             state_payload["task_status"][task_id] = "pending"
         else:
@@ -1005,6 +1324,7 @@ def execute_implementation_plan_step(
             repo_root,
             f"implementation wave {wave_number}: out-of-contract edits detected ({preview})",
         )
+        state_payload["wave_out_of_contract_paths"][wave_key] = list(out_of_contract)
         for task_id in wave_task_ids:
             if (
                 str(state_payload["task_status"].get(task_id, "")).strip()
@@ -1014,29 +1334,79 @@ def execute_implementation_plan_step(
                 state_payload["task_last_error"][task_id] = (
                     "out-of-contract edits detected in wave delta"
                 )
+                state_payload["task_reason_code"][task_id] = "out_of_contract_edits"
+                state_payload["task_reason_detail"][task_id] = (
+                    "out-of-contract edits detected in wave delta"
+                )
 
     wave_failed = any(
         str(state_payload["task_status"].get(task_id, "")).strip() != "completed"
         for task_id in wave_task_ids
     )
-    wave_key = str(wave_number)
+    wave_attempt_completed_at = _utc_now()
+    wave_attempt_duration_seconds = round(
+        time.monotonic() - wave_attempt_started_at_monotonic,
+        3,
+    )
     if wave_failed:
-        retry_count = int(state_payload["wave_retry_counts"].get(wave_key, 0) or 0) + 1
-        state_payload["wave_retry_counts"][wave_key] = retry_count
+        retry_reasons = _wave_retry_reasons_for_tasks(
+            wave_task_ids=wave_task_ids,
+            state_payload=state_payload,
+        )
         state_payload["wave_status"][wave_key] = "failed"
-        if retry_count <= impl_cfg.wave_retry_max:
+        existing_retry_reasons = state_payload["wave_retry_reasons"].get(wave_key, [])
+        if not isinstance(existing_retry_reasons, list):
+            existing_retry_reasons = []
+        for reason_code in retry_reasons:
+            if reason_code not in existing_retry_reasons:
+                existing_retry_reasons.append(reason_code)
+        state_payload["wave_retry_reasons"][wave_key] = existing_retry_reasons
+        _append_wave_attempt(
+            state_payload,
+            wave_key=wave_key,
+            started_at=wave_attempt_started_at,
+            completed_at=wave_attempt_completed_at,
+            duration_seconds=wave_attempt_duration_seconds,
+            status="failed",
+            retry_reason=", ".join(retry_reasons),
+            detail=f"wave {wave_number} failed",
+        )
+        retries_used = int(state_payload["wave_retry_counts"].get(wave_key, 0) or 0)
+        next_retry_number = retries_used + 1
+        if retries_used < impl_cfg.wave_retry_max:
             for task_id in wave_task_ids:
                 if (
                     str(state_payload["task_status"].get(task_id, "")).strip()
                     == "failed"
                 ):
+                    prior_reason_code = str(
+                        state_payload["task_reason_code"].get(task_id, "")
+                    ).strip()
+                    prior_reason_detail = (
+                        str(
+                            state_payload["task_reason_detail"].get(task_id, "")
+                        ).strip()
+                        or str(
+                            state_payload["task_last_error"].get(task_id, "")
+                        ).strip()
+                    )
                     state_payload["task_status"][task_id] = "pending"
+                    state_payload["task_reason_code"][task_id] = "wave_retry_pending"
+                    state_payload["task_reason_detail"][task_id] = (
+                        f"retry scheduled after {prior_reason_code or 'failure'}: "
+                        f"{prior_reason_detail}"
+                    )
             state_payload["current_wave"] = wave_number
             state_payload["updated_at"] = _utc_now()
             summary_payload = _build_execution_summary(
+                repo_root=repo_root,
+                iteration_dir=iteration_dir,
                 iteration_id=iteration_id,
                 plan_file=f"{iteration_path}/implementation_plan.md",
                 contract_hash=contract_hash,
+                contract_payload=contract,
+                graph_payload=graph,
+                plan_check_payload=plan_check,
                 wave_rows=wave_rows,
                 state_payload=state_payload,
                 task_map=task_map,
@@ -1051,16 +1421,21 @@ def execute_implementation_plan_step(
                 exit_code=1,
                 summary=(
                     f"implementation wave {wave_number}/{len(wave_rows)} failed; "
-                    f"retrying wave ({retry_count}/{impl_cfg.wave_retry_max})"
+                    f"retrying wave ({next_retry_number}/{impl_cfg.wave_retry_max})"
                 ),
                 changed_files=tuple(changed_files),
             )
 
         state_payload["updated_at"] = _utc_now()
         summary_payload = _build_execution_summary(
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
             iteration_id=iteration_id,
             plan_file=f"{iteration_path}/implementation_plan.md",
             contract_hash=contract_hash,
+            contract_payload=contract,
+            graph_payload=graph,
+            plan_check_payload=plan_check,
             wave_rows=wave_rows,
             state_payload=state_payload,
             task_map=task_map,
@@ -1075,19 +1450,33 @@ def execute_implementation_plan_step(
             exit_code=1,
             summary=(
                 f"implementation wave {wave_number}/{len(wave_rows)} retry budget exhausted "
-                f"({retry_count}/{impl_cfg.wave_retry_max}); escalating to {impl_cfg.on_wave_retry_exhausted}"
+                f"({retries_used}/{impl_cfg.wave_retry_max}); escalating to {impl_cfg.on_wave_retry_exhausted}"
             ),
             changed_files=tuple(changed_files),
             next_stage=impl_cfg.on_wave_retry_exhausted,
         )
 
     state_payload["wave_status"][wave_key] = "completed"
+    _append_wave_attempt(
+        state_payload,
+        wave_key=wave_key,
+        started_at=wave_attempt_started_at,
+        completed_at=wave_attempt_completed_at,
+        duration_seconds=wave_attempt_duration_seconds,
+        status="completed",
+        detail=f"wave {wave_number} completed",
+    )
     state_payload["current_wave"] = wave_number + 1
     state_payload["updated_at"] = _utc_now()
     summary_payload = _build_execution_summary(
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
         iteration_id=iteration_id,
         plan_file=f"{iteration_path}/implementation_plan.md",
         contract_hash=contract_hash,
+        contract_payload=contract,
+        graph_payload=graph,
+        plan_check_payload=plan_check,
         wave_rows=wave_rows,
         state_payload=state_payload,
         task_map=task_map,

@@ -94,6 +94,50 @@ def _query_matches(raw_text: str, query: str) -> bool:
     return all(term in haystack for term in normalized_query.split())
 
 
+def _coerce_text(raw_value: object, *, default: str = "") -> str:
+    text = str(raw_value).strip()
+    return text or default
+
+
+def _coerce_int(raw_value: object, *, default: int = 0) -> int:
+    try:
+        return int(raw_value)  # type: ignore[arg-type]
+    except Exception:
+        return default
+
+
+def _coerce_text_list(raw_value: object) -> tuple[str, ...]:
+    if not isinstance(raw_value, list):
+        return ()
+    values: list[str] = []
+    for item in raw_value:
+        text = str(item).strip()
+        if text:
+            values.append(text)
+    return tuple(values)
+
+
+def _normalize_wave_key(raw_value: object) -> str:
+    text = _coerce_text(raw_value)
+    if not text:
+        return ""
+    try:
+        return str(int(text))  # type: ignore[arg-type]
+    except Exception:
+        return text
+
+
+def _format_seconds_label(raw_value: object) -> str:
+    text = _coerce_text(raw_value, default="0")
+    try:
+        value = float(text)  # type: ignore[arg-type]
+    except Exception:
+        return text
+    if value.is_integer():
+        return f"{int(value)}s"
+    return f"{value:g}s"
+
+
 class UnlockSafetyScreen(ModalScreen[bool]):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
@@ -1816,7 +1860,14 @@ class ExperimentMoveScreen(ModalScreen[tuple[str, str, str] | None]):
 
 
 class AutolabCockpitApp(App[None]):
-    _MODE_ORDER: tuple[ViewMode, ...] = ("home", "runs", "files", "console", "help")
+    _MODE_ORDER: tuple[ViewMode, ...] = (
+        "home",
+        "runs",
+        "files",
+        "console",
+        "waves",
+        "help",
+    )
     _FILE_SOURCE_SCOPES: tuple[str, ...] = ("all", "stage", "common")
     _RUN_STATUS_FILTER_OPTIONS: tuple[str, ...] = (
         "all",
@@ -2052,6 +2103,10 @@ class AutolabCockpitApp(App[None]):
     #home-verification-card,
     #home-todos-card,
     #home-handoff-card,
+    #waves-summary-card,
+    #waves-graph-card,
+    #waves-detail-card,
+    #waves-conflicts-card,
     #help-text {
       border: round $surface;
       padding: 0 1;
@@ -2173,7 +2228,8 @@ class AutolabCockpitApp(App[None]):
         ("2", "show_runs", "Runs"),
         ("3", "show_files", "Files"),
         ("4", "show_console", "Console"),
-        ("5", "show_help", "Help"),
+        ("5", "show_waves", "Waves"),
+        ("6", "show_help", "Help"),
         ("h", "show_command_history", "History"),
         ("left_square_bracket", "show_previous_view", "Prev View"),
         ("right_square_bracket", "show_next_view", "Next View"),
@@ -2248,6 +2304,8 @@ class AutolabCockpitApp(App[None]):
         self._run_status_filter: str = ""
         self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_run_index = 0
+        self._visible_waves: tuple[dict[str, Any], ...] = ()
+        self._selected_wave_index = 0
         self._visible_runs: tuple[RunItem, ...] = ()
         self._selected_artifact_index = 0
         self._visible_runs: tuple[RunItem, ...] = ()
@@ -2299,7 +2357,7 @@ class AutolabCockpitApp(App[None]):
             yield Static("Command: n/a", id="status-command")
             yield Static("", id="status-running")
         yield Static(
-            "Keys: 1-5 view | [/] cycle views | Home/End list | Enter activate | o open | m mode quick | ? help",
+            "Keys: 1-6 view | [/] cycle views | Home/End list | Enter activate | o open | m mode quick | ? help",
             id="key-hints",
             classes="tone-muted",
             markup=False,
@@ -2309,7 +2367,8 @@ class AutolabCockpitApp(App[None]):
             yield Button("2 Runs", id="nav-runs")
             yield Button("3 Files", id="nav-files")
             yield Button("4 Console", id="nav-console")
-            yield Button("5 Help", id="nav-help")
+            yield Button("5 Waves", id="nav-waves")
+            yield Button("6 Help", id="nav-help")
             yield Button("Toggle Advanced", id="toggle-advanced")
         with Vertical(id="workspace"):
             with Vertical(id="home-view", classes="view-panel"):
@@ -2429,6 +2488,13 @@ class AutolabCockpitApp(App[None]):
                     wrap=self._console_wrap,
                     highlight=False,
                 )
+            with Vertical(id="waves-view", classes="view-panel"):
+                yield Static("Waves", classes="view-title")
+                yield Static("", id="waves-summary-card", markup=False)
+                yield Static("", id="waves-graph-card", markup=False)
+                yield ListView(id="waves-list")
+                yield Static("", id="waves-detail-card", markup=False)
+                yield Static("", id="waves-conflicts-card", markup=False)
             with Vertical(id="help-view", classes="view-panel"):
                 yield Static("Help", classes="view-title")
                 yield Static("", id="help-text", markup=False)
@@ -2456,7 +2522,8 @@ class AutolabCockpitApp(App[None]):
             "2": "runs",
             "3": "files",
             "4": "console",
-            "5": "help",
+            "5": "waves",
+            "6": "help",
         }
         next_mode = mode_by_key.get(event.key)
         if next_mode is None:
@@ -2811,7 +2878,7 @@ class AutolabCockpitApp(App[None]):
         console_filter_state = "on" if self._console_filter_query else "off"
         error_filter_state = "on" if self._console_show_errors_only else "off"
         parts = [
-            "1-5 view",
+            "1-6 view",
             "[ / ] cycle",
             "Enter activate",
             "Home/End list",
@@ -2942,6 +3009,10 @@ class AutolabCockpitApp(App[None]):
             index = self._selected_artifact_index
             prefix = "Files"
             total_all = len(self._all_artifacts)
+        elif self._mode == "waves":
+            total = len(self._visible_waves)
+            index = self._selected_wave_index
+            prefix = "Waves"
         else:
             return "Selection: n/a"
 
@@ -3206,6 +3277,7 @@ class AutolabCockpitApp(App[None]):
             "runs": "#runs-view",
             "files": "#files-view",
             "console": "#console-view",
+            "waves": "#waves-view",
             "help": "#help-view",
         }
         for key, selector in panel_by_mode.items():
@@ -3216,6 +3288,7 @@ class AutolabCockpitApp(App[None]):
             "runs": "#nav-runs",
             "files": "#nav-files",
             "console": "#nav-console",
+            "waves": "#nav-waves",
             "help": "#nav-help",
         }
         for key, selector in button_by_mode.items():
@@ -3234,6 +3307,8 @@ class AutolabCockpitApp(App[None]):
             self.query_one("#artifact-list", ListView).focus()
         elif self._mode == "console":
             self.query_one("#console-log", RichLog).focus()
+        elif self._mode == "waves":
+            self.query_one("#waves-list", ListView).focus()
         else:
             self.query_one("#help-text", Static).focus()
 
@@ -3255,6 +3330,8 @@ class AutolabCockpitApp(App[None]):
         self._home_action_ids = ()
         self._home_action_index = 0
         self._selected_run_index = 0
+        self._selected_wave_index = 0
+        self._visible_waves = ()
         self._visible_runs = ()
         self._selected_artifact_index = 0
         self._visible_runs = ()
@@ -3274,6 +3351,10 @@ class AutolabCockpitApp(App[None]):
         artifact_list = self.query_one("#artifact-list", ListView)
         artifact_list.clear()
         artifact_list.append(ListItem(Label("(snapshot unavailable)")))
+
+        waves_list = self.query_one("#waves-list", ListView)
+        waves_list.clear()
+        waves_list.append(ListItem(Label("(snapshot unavailable)")))
 
         stage_widget = self.query_one("#home-stage-card", Static)
         stage_widget.update("Stage\nUnavailable.")
@@ -3321,6 +3402,22 @@ class AutolabCockpitApp(App[None]):
         files_widget.update("Files\nUnavailable.")
         self._set_tone(files_widget, "tone-muted")
 
+        waves_summary_widget = self.query_one("#waves-summary-card", Static)
+        waves_summary_widget.update("Wave Summary\nUnavailable.")
+        self._set_tone(waves_summary_widget, "tone-muted")
+
+        waves_graph_widget = self.query_one("#waves-graph-card", Static)
+        waves_graph_widget.update("Wave Graph\nUnavailable.")
+        self._set_tone(waves_graph_widget, "tone-muted")
+
+        waves_detail_widget = self.query_one("#waves-detail-card", Static)
+        waves_detail_widget.update("Wave Details\nUnavailable.")
+        self._set_tone(waves_detail_widget, "tone-muted")
+
+        waves_conflicts_widget = self.query_one("#waves-conflicts-card", Static)
+        waves_conflicts_widget.update("File Conflicts\nUnavailable.")
+        self._set_tone(waves_conflicts_widget, "tone-muted")
+
     def _refresh_snapshot_impl(self, *, from_auto: bool = False) -> bool:
         try:
             self._snapshot = load_cockpit_snapshot(self._state_path)
@@ -3342,6 +3439,7 @@ class AutolabCockpitApp(App[None]):
         self._populate_home_view()
         self._populate_run_list()
         self._populate_artifact_list()
+        self._populate_waves_view()
         self._last_snapshot_refresh_at = time.time()
         self._update_ui_chrome()
         return True
@@ -3623,6 +3721,166 @@ class AutolabCockpitApp(App[None]):
             action_list.index = self._home_action_index
         else:
             self._home_action_index = 0
+
+    def _update_waves_detail(self) -> None:
+        detail_widget = self.query_one("#waves-detail-card", Static)
+        conflicts_widget = self.query_one("#waves-conflicts-card", Static)
+        snapshot = self._snapshot
+        if snapshot is None or snapshot.handoff is None:
+            detail_widget.update("Wave Details\nUnavailable.")
+            conflicts_widget.update("File Conflicts\nUnavailable.")
+            self._set_tone(detail_widget, "tone-muted")
+            self._set_tone(conflicts_widget, "tone-muted")
+            return
+
+        observability = snapshot.handoff.wave_observability
+        if not isinstance(observability, dict):
+            observability = {}
+
+        wave = self._selected_wave()
+        if wave is None:
+            detail_widget.update("Wave Details\nNo wave observability data available.")
+            conflict_lines, conflicts_tone = self._build_wave_conflict_lines(
+                observability, None
+            )
+            conflicts_widget.update("\n".join(conflict_lines))
+            self._set_tone(detail_widget, "tone-muted")
+            self._set_tone(conflicts_widget, conflicts_tone)
+            return
+
+        detail_lines = self._build_wave_detail_lines(observability, wave)
+        detail_widget.update("\n".join(detail_lines))
+        self._set_tone(
+            detail_widget,
+            "tone-warning"
+            if _coerce_text(wave.get("status"), default="unknown")
+            in {"failed", "blocked"}
+            else "tone-info",
+        )
+
+        conflict_lines, conflicts_tone = self._build_wave_conflict_lines(
+            observability, wave
+        )
+        self._set_tone(conflicts_widget, conflicts_tone)
+        conflicts_widget.update("\n".join(conflict_lines))
+
+    def _populate_waves_view(self) -> None:
+        summary_widget = self.query_one("#waves-summary-card", Static)
+        graph_widget = self.query_one("#waves-graph-card", Static)
+        waves_list = self.query_one("#waves-list", ListView)
+        preserve_selected_wave_key = self._selected_wave_key()
+        waves_list.clear()
+        self._visible_waves = ()
+
+        snapshot = self._snapshot
+        if snapshot is None or snapshot.handoff is None:
+            summary_widget.update("Wave Summary\nNo handoff snapshot detected.")
+            graph_widget.update(
+                "Wave Graph\nRun `autolab progress` to refresh wave observability."
+            )
+            self._set_tone(summary_widget, "tone-muted")
+            self._set_tone(graph_widget, "tone-muted")
+            self._selected_wave_index = 0
+            self._update_waves_detail()
+            waves_list.append(ListItem(Label("(wave observability unavailable)")))
+            return
+
+        observability = snapshot.handoff.wave_observability
+        if not isinstance(observability, dict):
+            observability = {}
+        summary = observability.get("summary", {})
+        if not isinstance(summary, dict):
+            summary = {}
+        critical_path = observability.get("critical_path", {})
+        if not isinstance(critical_path, dict):
+            critical_path = {}
+        critical_path_wave_ids = critical_path.get("wave_ids", [])
+        if not isinstance(critical_path_wave_ids, list):
+            critical_path_wave_ids = []
+        waves = observability.get("waves", [])
+        if not isinstance(waves, list):
+            waves = []
+        self._visible_waves = tuple(entry for entry in waves if isinstance(entry, dict))
+
+        summary_lines = [
+            "Wave Summary",
+            f"- status: {_coerce_text(observability.get('status'), default='unavailable')}",
+            (
+                f"- waves: total={summary.get('waves_total', 0)} "
+                f"executed={summary.get('waves_executed', 0)} retrying={summary.get('retrying_waves', 0)}"
+            ),
+            (
+                f"- tasks: total={summary.get('tasks_total', 0)} completed={summary.get('tasks_completed', 0)} "
+                f"failed={summary.get('tasks_failed', 0)} blocked={summary.get('tasks_blocked', 0)} "
+                f"pending={summary.get('tasks_pending', 0)} skipped={summary.get('tasks_skipped', 0)} "
+                f"deferred={summary.get('tasks_deferred', 0)}"
+            ),
+            f"- conflicts: {summary.get('conflict_count', 0)}",
+            (
+                f"- critical_path: {critical_path.get('mode', 'unavailable')} "
+                f"(waves={','.join(str(item) for item in critical_path_wave_ids if str(item).strip()) or '-'})"
+            ),
+        ]
+        summary_widget.update("\n".join(summary_lines))
+        self._set_tone(
+            summary_widget,
+            "tone-warning"
+            if _coerce_int(summary.get("conflict_count"), default=0)
+            else "tone-info",
+        )
+
+        critical_waves = {
+            _normalize_wave_key(item)
+            for item in critical_path_wave_ids
+            if _normalize_wave_key(item)
+        }
+        graph_lines = ["Wave Graph"]
+        if self._visible_waves:
+            for entry in self._visible_waves:
+                wave_id = _coerce_text(entry.get("wave"), default="?")
+                marker = (
+                    "*"
+                    if _normalize_wave_key(entry.get("wave")) in critical_waves
+                    else "-"
+                )
+                status = _coerce_text(entry.get("status"), default="unknown")
+                tasks = list(_coerce_text_list(entry.get("tasks")))
+                graph_lines.append(
+                    f"{marker} wave {wave_id} [{status}] -> {', '.join(tasks) or '(none)'}"
+                )
+        else:
+            graph_lines.append("- no wave graph available")
+        graph_widget.update("\n".join(graph_lines))
+        self._set_tone(graph_widget, "tone-info")
+
+        if self._visible_waves:
+            selected_index = 0
+            if preserve_selected_wave_key:
+                for index, entry in enumerate(self._visible_waves):
+                    if (
+                        _normalize_wave_key(entry.get("wave"))
+                        == preserve_selected_wave_key
+                    ):
+                        selected_index = index
+                        break
+            self._selected_wave_index = selected_index
+            for entry in self._visible_waves:
+                wave_id = _coerce_text(entry.get("wave"), default="?")
+                status = _coerce_text(entry.get("status"), default="unknown")
+                retries = _coerce_text(entry.get("retries_used"), default="0")
+                duration = _format_seconds_label(entry.get("duration_seconds"))
+                label = Label(
+                    f"wave {wave_id}: {status} | duration={duration} | retries={retries}"
+                )
+                label.add_class(
+                    "tone-warning" if status in {"failed", "blocked"} else "tone-info"
+                )
+                waves_list.append(ListItem(label))
+            waves_list.index = self._selected_wave_index
+        else:
+            self._selected_wave_index = 0
+            waves_list.append(ListItem(Label("(wave observability unavailable)")))
+        self._update_waves_detail()
 
     def _populate_run_list(
         self, *, preserve_selected_run_id: str | None = None
@@ -3954,7 +4212,7 @@ class AutolabCockpitApp(App[None]):
             "Autolab TUI\n"
             "\n"
             "Keyboard\n"
-            "- Global: 1-5 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
+            "- Global: 1-6 switch views, Tab/Shift+Tab move focus, Enter activate.\n"
             "- Lists: Home/End jump to first or last list item.\n"
             "- Safety: u unlock/lock, x toggle advanced, q quit.\n"
             "- Utilities: r refresh, a auto-refresh on/off, s stop active loop,\n"
@@ -3979,9 +4237,10 @@ class AutolabCockpitApp(App[None]):
             "- Files: artifacts plus rendered prompt/context/template quick-open.\n"
             "- Files advanced: focus experiment, create experiment, move experiment.\n"
             "- Console: live command output with optional error-only filtering.\n"
+            "- Waves: wave graph, critical path, retries, conflicts, and evidence.\n"
             "\n"
             "Keys\n"
-            "- 1-5: jump directly to Home/Runs/Files/Console/Help.\n"
+            "- 1-6: jump directly to Home/Runs/Files/Console/Waves/Help.\n"
             "- [ and ]: cycle views.\n"
             "- Enter: activate selected list item.\n"
             "- v/t/y: cycle run sorting order (recent, oldest, status).\n"
@@ -4071,6 +4330,11 @@ class AutolabCockpitApp(App[None]):
                     "Go to Console view",
                     "Switch to live command output.",
                     self.action_show_console,
+                ),
+                SystemCommand(
+                    "Go to Waves view",
+                    "Inspect wave graph, retries, conflicts, and critical path.",
+                    self.action_show_waves,
                 ),
                 SystemCommand(
                     "Go to Help view",
@@ -4419,6 +4683,9 @@ class AutolabCockpitApp(App[None]):
     def action_show_console(self) -> None:
         self._switch_mode("console")
 
+    def action_show_waves(self) -> None:
+        self._switch_mode("waves")
+
     def action_show_help(self) -> None:
         self._switch_mode("help")
 
@@ -4463,6 +4730,172 @@ class AutolabCockpitApp(App[None]):
             if item.path == selected_path:
                 return item
         return None
+
+    def _selected_wave(self) -> dict[str, Any] | None:
+        if not self._visible_waves:
+            return None
+        self._selected_wave_index = min(
+            max(self._selected_wave_index, 0),
+            len(self._visible_waves) - 1,
+        )
+        return self._visible_waves[self._selected_wave_index]
+
+    def _selected_wave_key(self) -> str:
+        wave = self._selected_wave()
+        if wave is None:
+            return ""
+        return _normalize_wave_key(wave.get("wave"))
+
+    def _selected_wave_task_rows(
+        self, observability: dict[str, Any], wave: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        tasks = observability.get("tasks", [])
+        if not isinstance(tasks, list):
+            return []
+        selected_wave_key = _normalize_wave_key(wave.get("wave"))
+        return [
+            entry
+            for entry in tasks
+            if isinstance(entry, dict)
+            and _normalize_wave_key(entry.get("wave")) == selected_wave_key
+        ]
+
+    def _selected_wave_conflicts(
+        self, observability: dict[str, Any], wave: dict[str, Any] | None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        conflicts = observability.get("file_conflicts", [])
+        if not isinstance(conflicts, list):
+            return ([], [])
+        selected_wave_key = (
+            _normalize_wave_key(wave.get("wave")) if isinstance(wave, dict) else ""
+        )
+        visible_wave_keys = {
+            _normalize_wave_key(entry.get("wave"))
+            for entry in self._visible_waves
+            if _normalize_wave_key(entry.get("wave"))
+        }
+
+        selected_wave_conflicts: list[dict[str, Any]] = []
+        global_conflicts: list[dict[str, Any]] = []
+        for entry in conflicts:
+            if not isinstance(entry, dict):
+                continue
+            conflict_wave_key = _normalize_wave_key(entry.get("wave"))
+            if selected_wave_key and conflict_wave_key == selected_wave_key:
+                selected_wave_conflicts.append(entry)
+                continue
+            if (
+                not conflict_wave_key
+                or conflict_wave_key == "0"
+                or conflict_wave_key not in visible_wave_keys
+            ):
+                global_conflicts.append(entry)
+        return (selected_wave_conflicts, global_conflicts)
+
+    def _build_wave_detail_lines(
+        self, observability: dict[str, Any], wave: dict[str, Any]
+    ) -> list[str]:
+        task_rows = self._selected_wave_task_rows(observability, wave)
+        detail_lines = [
+            "Wave Details",
+            f"- wave: {_coerce_text(wave.get('wave'), default='?')}",
+            f"- status: {_coerce_text(wave.get('status'), default='unknown')}",
+            f"- duration_seconds: {_coerce_text(wave.get('duration_seconds'), default='0')}",
+            f"- retries: {_coerce_text(wave.get('retries_used'), default='0')}",
+            (
+                "- retry_reasons: "
+                + (", ".join(_coerce_text_list(wave.get("retry_reasons"))) or "none")
+            ),
+            (
+                "- blocked_tasks: "
+                + (", ".join(_coerce_text_list(wave.get("blocked_task_ids"))) or "none")
+            ),
+            (
+                "- deferred_tasks: "
+                + (
+                    ", ".join(_coerce_text_list(wave.get("deferred_task_ids")))
+                    or "none"
+                )
+            ),
+            (
+                "- skipped_tasks: "
+                + (", ".join(_coerce_text_list(wave.get("skipped_task_ids"))) or "none")
+            ),
+            "- task evidence:",
+        ]
+        if task_rows:
+            for entry in task_rows[:8]:
+                evidence = entry.get("evidence_summary", {})
+                if not isinstance(evidence, dict):
+                    evidence = {}
+                detail_lines.append(
+                    f"  - {_coerce_text(entry.get('task_id'))}: "
+                    f"{_coerce_text(entry.get('status'), default='unknown')} "
+                    f"[{_coerce_text(entry.get('reason_code'))}] "
+                    f"{_coerce_text(evidence.get('text'), default='n/a')}"
+                )
+            remaining = len(task_rows) - min(len(task_rows), 8)
+            if remaining > 0:
+                detail_lines.append(f"  - ... and {remaining} more")
+        else:
+            detail_lines.append("  - none")
+        return detail_lines
+
+    def _build_wave_conflict_lines(
+        self, observability: dict[str, Any], wave: dict[str, Any] | None
+    ) -> tuple[list[str], str]:
+        selected_wave_conflicts, global_conflicts = self._selected_wave_conflicts(
+            observability, wave
+        )
+        conflict_lines = ["File Conflicts"]
+
+        def _append_conflicts(
+            entries: list[dict[str, Any]], *, prefix: str = ""
+        ) -> None:
+            for entry in entries[:8]:
+                kind = _coerce_text(entry.get("kind"), default="conflict")
+                detail = _coerce_text(entry.get("detail"))
+                line = f"{kind}: {detail}" if detail else kind
+                conflict_lines.append(f"- {prefix}{line}")
+            remaining = len(entries) - min(len(entries), 8)
+            if remaining > 0:
+                suffix = f"{prefix.rstrip()}" if prefix else ""
+                conflict_lines.append(f"- ... and {remaining} more {suffix}".rstrip())
+
+        if selected_wave_conflicts:
+            _append_conflicts(selected_wave_conflicts)
+        if global_conflicts:
+            _append_conflicts(global_conflicts, prefix="[global/unmapped] ")
+
+        if not selected_wave_conflicts and not global_conflicts:
+            if wave is None:
+                conflict_lines.append("- none reported")
+            else:
+                conflict_lines.append("- none for selected wave")
+            return (conflict_lines, "tone-success")
+        return (conflict_lines, "tone-warning")
+
+    def _build_wave_inspector_lines(self) -> tuple[str, ...]:
+        snapshot = self._snapshot
+        if snapshot is None or snapshot.handoff is None:
+            return ("Wave observability is unavailable.",)
+        observability = snapshot.handoff.wave_observability
+        if not isinstance(observability, dict):
+            observability = {}
+        wave = self._selected_wave()
+        if wave is None:
+            conflict_lines, _tone = self._build_wave_conflict_lines(observability, None)
+            return (
+                "No wave selected in this view.",
+                *conflict_lines,
+            )
+        return tuple(
+            [
+                *self._build_wave_detail_lines(observability, wave),
+                "",
+                *self._build_wave_conflict_lines(observability, wave)[0],
+            ]
+        )
 
     def _build_console_inspector_lines(self) -> tuple[str, ...]:
         if self._running_intent is not None:
@@ -4583,6 +5016,9 @@ class AutolabCockpitApp(App[None]):
         elif self._mode == "console":
             lines = self._build_console_inspector_lines()
             title = "Console selection inspector"
+        elif self._mode == "waves":
+            lines = self._build_wave_inspector_lines()
+            title = "Wave selection inspector"
         else:
             self.notify("Selection inspector is unavailable in this view.")
             return
@@ -5016,6 +5452,15 @@ class AutolabCockpitApp(App[None]):
             self._apply_list_selection(list_id="artifact-list", selected_index=0)
             list_view.index = 0
             list_view.focus()
+            return
+        if self._mode == "waves":
+            if not self._visible_waves:
+                return
+            self._selected_wave_index = 0
+            list_view = self.query_one("#waves-list", ListView)
+            self._apply_list_selection(list_id="waves-list", selected_index=0)
+            list_view.index = 0
+            list_view.focus()
 
     def action_list_last(self) -> None:
         if self._mode == "home":
@@ -5045,6 +5490,16 @@ class AutolabCockpitApp(App[None]):
             list_view = self.query_one("#artifact-list", ListView)
             self._selected_artifact_index = index
             self._apply_list_selection(list_id="artifact-list", selected_index=index)
+            list_view.index = index
+            list_view.focus()
+            return
+        if self._mode == "waves":
+            if not self._visible_waves:
+                return
+            index = len(self._visible_waves) - 1
+            list_view = self.query_one("#waves-list", ListView)
+            self._selected_wave_index = index
+            self._apply_list_selection(list_id="waves-list", selected_index=index)
             list_view.index = index
             list_view.focus()
 
@@ -5187,6 +5642,9 @@ class AutolabCockpitApp(App[None]):
         elif list_id == "run-list":
             self._selected_run_index = selected_index
             self._update_run_details()
+        elif list_id == "waves-list":
+            self._selected_wave_index = selected_index
+            self._update_waves_detail()
         elif list_id == "artifact-list":
             self._selected_artifact_index = selected_index
             self._update_files_context()
@@ -5255,6 +5713,9 @@ class AutolabCockpitApp(App[None]):
             return
         if button_id == "nav-console":
             self._switch_mode("console")
+            return
+        if button_id == "nav-waves":
+            self._switch_mode("waves")
             return
         if button_id == "nav-help":
             self._switch_mode("help")
@@ -5339,6 +5800,9 @@ class AutolabCockpitApp(App[None]):
                 label="runs-open-manifest",
                 flow_factory=lambda: self._execute_action("open_selected_run_manifest"),
             )
+            return
+
+        if list_id == "waves-list":
             return
 
         if list_id == "artifact-list":
