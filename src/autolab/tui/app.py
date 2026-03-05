@@ -1906,10 +1906,25 @@ class AutolabCockpitApp(App[None]):
     }
 
     #status-rail {
-      height: auto;
+      height: 3;
       margin: 0 1;
       padding: 0 1;
       border: round $accent;
+      overflow-x: hidden;
+      overflow-y: hidden;
+    }
+
+    #status-safety,
+    #status-mode,
+    #status-advanced,
+    #status-autorefresh,
+    #status-selection,
+    #status-updated,
+    #status-snapshot,
+    #status-console,
+    #status-command,
+    #status-running {
+      height: 1;
     }
 
     #status-safety {
@@ -1918,10 +1933,6 @@ class AutolabCockpitApp(App[None]):
 
     #status-mode {
       width: 16;
-    }
-
-    #status-autorefresh {
-      width: 17;
     }
 
     #status-advanced {

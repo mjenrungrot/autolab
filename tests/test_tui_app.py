@@ -1562,6 +1562,32 @@ def test_key_hints_are_mode_aware_and_track_wrap_state(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_status_rail_stays_compact_in_narrow_viewports(tmp_path: Path) -> None:
+    async def _assert_layout(size: tuple[int, int]) -> None:
+        repo_root = tmp_path / f"repo_{size[0]}x{size[1]}"
+        state_path = _write_state_file(repo_root, stage="stop")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=size) as pilot:
+            await pilot.pause()
+
+            status_rail = app.query_one("#status-rail", app_module.Horizontal)
+            key_hints = app.query_one("#key-hints", app_module.Static)
+            nav_row = app.query_one("#nav-row", app_module.Horizontal)
+            workspace = app.query_one("#workspace", app_module.Vertical)
+
+            # Keep the status strip to a single content line (plus border).
+            assert status_rail.region.height <= 3
+            assert key_hints.region.y <= 6
+            assert nav_row.region.y <= 10
+            assert workspace.region.y <= 16
+
+    async def _run() -> None:
+        await _assert_layout((170, 45))
+        await _assert_layout((120, 40))
+
+    asyncio.run(_run())
+
+
 def test_auto_refresh_binding_toggles_indicator_and_interval_refresh(
     tmp_path: Path, monkeypatch
 ) -> None:
