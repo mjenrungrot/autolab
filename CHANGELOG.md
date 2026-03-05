@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.8] - 2026-03-04
+
+### Summary
+
+- Added a true brownfield bootstrap path via `autolab init --from-existing` that scans existing repositories and seeds Autolab context.
+- Introduced scope-aware context inheritance artifacts (`project_map`, `context_delta`, and `bundle`) and surfaced them in runtime stage context for prompt consumers.
+- Extended schema/verifier coverage plus docs/tests for brownfield context artifacts and `init` onboarding behavior.
+
+<!-- autolab:range v1.2.7..v1.2.8 -->
+
 ## [1.2.7] - 2026-03-04
 
 ### Summary

@@ -78,6 +78,7 @@ from autolab.state import (
 )
 from autolab.todo_sync import list_open_tasks, mark_task_completed, mark_task_removed
 from autolab.update import run_update
+from autolab.brownfield_bootstrap import run_brownfield_bootstrap
 from autolab.utils import (
     _append_log,
     _collect_change_snapshot,
@@ -2321,6 +2322,8 @@ def _cmd_init(args: argparse.Namespace) -> int:
     backlog_path = autolab_dir / "backlog.yaml"
     verifier_policy_path = autolab_dir / "verifier_policy.yaml"
     agent_result_path = autolab_dir / "agent_result.json"
+    from_existing = bool(getattr(args, "from_existing", False))
+    brownfield_result = None
     scaffold_copied = 0
     scaffold_skipped = 0
 
@@ -2387,6 +2390,24 @@ def _cmd_init(args: argparse.Namespace) -> int:
         created,
         experiment_type=init_experiment_type,
     )
+    if from_existing:
+        try:
+            brownfield_result = run_brownfield_bootstrap(
+                repo_root,
+                state_path=state_path,
+                backlog_path=backlog_path,
+                policy_path=verifier_policy_path,
+            )
+        except Exception as exc:
+            print(
+                f"autolab init: ERROR brownfield bootstrap failed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        for path in brownfield_result.changed_files:
+            if path not in created:
+                created.append(path)
+        iteration_id = brownfield_result.focus_iteration_id or iteration_id
     try:
         init_state = _normalize_state(_load_state(state_path))
     except StateError:
@@ -2407,8 +2428,29 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"created_entries: {len(created)}")
     print(f"scaffold_copied_files: {scaffold_copied}")
     print(f"scaffold_skipped_files: {scaffold_skipped}")
+    print(f"from_existing: {str(from_existing).lower()}")
+    if brownfield_result is not None:
+        print(f"brownfield_focus_iteration_id: {brownfield_result.focus_iteration_id}")
+        print(
+            f"brownfield_focus_experiment_id: {brownfield_result.focus_experiment_id}"
+        )
+        print(f"brownfield_backlog_action: {brownfield_result.backlog_action}")
+        print(
+            "brownfield_policy_seeded: "
+            f"{str(bool(brownfield_result.policy_seeded)).lower()}"
+        )
+        print(f"brownfield_project_map: {brownfield_result.project_map_path}")
+        print(
+            "brownfield_experiment_delta_map: "
+            f"{brownfield_result.experiment_delta_map_path}"
+        )
+        print(f"brownfield_context_bundle: {brownfield_result.context_bundle_path}")
     for path in created:
         print(f"- {path}")
+    if brownfield_result is not None and brownfield_result.warnings:
+        print("\nBrownfield warnings:")
+        for warning in brownfield_result.warnings:
+            print(f"- {warning}")
 
     # Phase 7c: placeholder detection reminder
     print("\nReminder: Review and customize the following before your first run:")
@@ -4196,6 +4238,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--state-file",
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    init.add_argument(
+        "--from-existing",
+        action="store_true",
+        help="Bootstrap context/backlog/policy from an existing repository layout.",
     )
     init_interactive = init.add_mutually_exclusive_group()
     init_interactive.add_argument(

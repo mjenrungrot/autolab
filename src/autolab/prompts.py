@@ -483,6 +483,85 @@ def _suggest_decision_from_metrics(
     return (None, evidence)
 
 
+def _normalize_bundle_path(repo_root: Path, raw_path: str) -> str:
+    candidate = str(raw_path or "").strip()
+    if not candidate:
+        return ""
+    path = Path(candidate).expanduser()
+    if path.is_absolute():
+        try:
+            return path.relative_to(repo_root).as_posix()
+        except ValueError:
+            return candidate
+    return candidate.replace("\\", "/")
+
+
+def _load_codebase_context_bundle(
+    repo_root: Path,
+    *,
+    iteration_id: str,
+    experiment_id: str,
+) -> dict[str, str]:
+    defaults = {
+        "codebase_project_map_path": "",
+        "codebase_project_map_summary": "",
+        "codebase_experiment_delta_map_path": "",
+        "codebase_experiment_delta_summary": "",
+    }
+    bundle_path = repo_root / ".autolab" / "context" / "bundle.json"
+    bundle_payload = _load_json_if_exists(bundle_path)
+    if not isinstance(bundle_payload, dict):
+        return defaults
+
+    project_map_path = _normalize_bundle_path(
+        repo_root, str(bundle_payload.get("project_map_path", ""))
+    )
+    project_map_summary = str(bundle_payload.get("project_map_summary", "")).strip()
+
+    selected_delta_path = _normalize_bundle_path(
+        repo_root, str(bundle_payload.get("selected_experiment_delta_path", ""))
+    )
+    selected_delta_summary = str(
+        bundle_payload.get("selected_experiment_delta_summary", "")
+    ).strip()
+
+    delta_maps = bundle_payload.get("experiment_delta_maps")
+    if isinstance(delta_maps, list):
+        exact_match: dict[str, Any] | None = None
+        iteration_match: dict[str, Any] | None = None
+        normalized_iteration_id = str(iteration_id or "").strip()
+        normalized_experiment_id = str(experiment_id or "").strip()
+        for entry in delta_maps:
+            if not isinstance(entry, dict):
+                continue
+            entry_iteration = str(entry.get("iteration_id", "")).strip()
+            entry_experiment = str(entry.get("experiment_id", "")).strip()
+            if (
+                normalized_iteration_id
+                and normalized_experiment_id
+                and entry_iteration == normalized_iteration_id
+                and entry_experiment == normalized_experiment_id
+            ):
+                exact_match = entry
+                break
+            if normalized_iteration_id and entry_iteration == normalized_iteration_id:
+                if iteration_match is None:
+                    iteration_match = entry
+        selected_entry = exact_match or iteration_match
+        if isinstance(selected_entry, dict):
+            selected_delta_path = _normalize_bundle_path(
+                repo_root, str(selected_entry.get("path", ""))
+            )
+            selected_delta_summary = str(selected_entry.get("summary", "")).strip()
+
+    return {
+        "codebase_project_map_path": project_map_path,
+        "codebase_project_map_summary": project_map_summary,
+        "codebase_experiment_delta_map_path": selected_delta_path,
+        "codebase_experiment_delta_summary": selected_delta_summary,
+    }
+
+
 def _build_prompt_context(
     repo_root: Path,
     *,
@@ -713,6 +792,11 @@ def _build_prompt_context(
         repo_root,
         iteration_dir=iteration_dir if iteration_id else None,
     )
+    codebase_context_bundle = _load_codebase_context_bundle(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+    )
     project_data_roots = [str(path) for path in media_discovery.project_roots]
     project_data_media_counts = {
         str(path): int(count)
@@ -781,6 +865,18 @@ def _build_prompt_context(
         "project_data_media_counts": project_data_media_counts,
         "project_data_media_count_summary": summarize_root_counts(
             media_discovery.project_root_counts
+        ),
+        "codebase_project_map_path": codebase_context_bundle.get(
+            "codebase_project_map_path", ""
+        ),
+        "codebase_project_map_summary": codebase_context_bundle.get(
+            "codebase_project_map_summary", ""
+        ),
+        "codebase_experiment_delta_map_path": codebase_context_bundle.get(
+            "codebase_experiment_delta_map_path", ""
+        ),
+        "codebase_experiment_delta_summary": codebase_context_bundle.get(
+            "codebase_experiment_delta_summary", ""
         ),
         "retry_counters": {
             "stage_attempt": stage_attempt,
@@ -1075,6 +1171,20 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         else []
     )
     protected_files_text = ", ".join(protected_files) if protected_files else "none"
+    codebase_project_map_path = (
+        str(context_payload.get("codebase_project_map_path", "")).strip() or "none"
+    )
+    codebase_project_map_summary = (
+        str(context_payload.get("codebase_project_map_summary", "")).strip() or "none"
+    )
+    codebase_experiment_delta_map_path = (
+        str(context_payload.get("codebase_experiment_delta_map_path", "")).strip()
+        or "none"
+    )
+    codebase_experiment_delta_summary = (
+        str(context_payload.get("codebase_experiment_delta_summary", "")).strip()
+        or "none"
+    )
 
     return (
         "## Runtime Stage Context\n"
@@ -1095,6 +1205,10 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- disallowed_edit_dirs: {disallowed_text}\n"
         f"- project_data_roots: {project_data_roots_text}\n"
         f"- project_data_media_counts: {project_data_counts_text}\n"
+        f"- codebase_project_map_path: {codebase_project_map_path}\n"
+        f"- codebase_project_map_summary: {codebase_project_map_summary}\n"
+        f"- codebase_experiment_delta_map_path: {codebase_experiment_delta_map_path}\n"
+        f"- codebase_experiment_delta_summary: {codebase_experiment_delta_summary}\n"
         f"- protected_files: {protected_files_text}\n"
     )
 

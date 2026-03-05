@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodebaseExperimentDeltaMap",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "iteration_id",
+    "experiment_id",
+    "inherits_project_map",
+    "iteration_path",
+    "experiment_type",
+    "adds"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inherits_project_map": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_type": {
+      "type": "string",
+      "enum": ["plan", "in_progress", "done"]
+    },
+    "adds": {
+      "type": "object",
+      "required": [
+        "available_artifacts",
+        "assumptions",
+        "concerns",
+        "latest_run"
+      ],
+      "properties": {
+        "available_artifacts": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "concerns": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "latest_run": {
+          "type": "object",
+          "required": ["run_id", "status", "timestamp"],
+          "properties": {
+            "run_id": {"type": "string"},
+            "status": {"type": "string"},
+            "timestamp": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
