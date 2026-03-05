@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.24] - 2026-03-05
+
+### Summary
+
+- Added a scope-aware sidecar resolver and provenance engine that powers `autolab render --view context`, showing exactly which `project_map`, `context_delta`, and project-wide or experiment sidecars were loaded and why.
+- Added optional discuss/research sidecar schemas plus verifier enforcement for dependency fingerprints, scope-root identity, and experiment identity on experiment-scoped sidecars.
+- Hardened context resolution against wrong-experiment bundle pointers and invalid sidecar metadata, with diagnostics and regression coverage for stale or out-of-scope artifacts.
+
+<!-- autolab:range v1.2.23..v1.2.24 -->
+
 ## [1.2.23] - 2026-03-05
 
 ### Summary

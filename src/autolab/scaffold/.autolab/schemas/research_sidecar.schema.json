@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchSidecar",
+  "description": "Optional structured research context for project-wide or experiment-scoped workflows.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sidecar_kind",
+    "scope_kind",
+    "scope_root",
+    "generated_at",
+    "questions",
+    "findings",
+    "recommendations",
+    "sources"
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dependencyRef": {
+      "type": "object",
+      "required": ["path", "fingerprint"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "summaryItem": {
+      "type": "object",
+      "required": ["id", "summary"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "sidecar_kind": {
+      "type": "string",
+      "const": "research"
+    },
+    "scope_kind": {
+      "type": "string",
+      "enum": ["project_wide", "experiment"]
+    },
+    "scope_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "derived_from": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dependencyRef"
+      }
+    },
+    "stale_if": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dependencyRef"
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summaryItem"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summaryItem"
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summaryItem"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summaryItem"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "scope_kind": {
+            "const": "project_wide"
+          }
+        },
+        "required": ["scope_kind"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": ["iteration_id"]
+            },
+            {
+              "required": ["experiment_id"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "scope_kind": {
+            "const": "experiment"
+          }
+        },
+        "required": ["scope_kind"]
+      },
+      "then": {
+        "required": ["iteration_id", "experiment_id"]
+      }
+    }
+  ],
+  "additionalProperties": false
+}
