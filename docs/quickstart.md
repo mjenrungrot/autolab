@@ -20,8 +20,8 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 
 ## Command map (grouped)
 
-- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -133,14 +133,28 @@ autolab verify --stage hypothesis
 autolab lint --stage hypothesis
 ```
 
+## Step 6: Capture handoff and safe resume context
+
+```bash
+# Refresh and print concise takeover state
+autolab progress
+
+# Emit machine + human handoff artifacts
+autolab handoff
+
+# Preview safe resume command (or execute with --apply)
+autolab resume
+```
+
 ## What's next
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
-- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
+- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; Home includes a dedicated Handoff & Resume card; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review decision**: `autolab review --status=pass|retry|stop`
+- **Takeover artifacts**: `autolab progress`, `autolab handoff`, `autolab resume --apply`
 - **Retarget state focus**: `autolab focus --experiment-id e1`
 - **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
 - **Create a new experiment**: `autolab experiment create --experiment-id e2 --iteration-id iter2`
@@ -154,6 +168,7 @@ autolab lint --stage hypothesis
   backlog.yaml            # Experiment/hypothesis backlog
   verifier_policy.yaml    # Verification and runner policy
   agent_result.json       # Last agent execution result
+  handoff.json            # Machine handoff + safe resume snapshot
   todo_state.json         # Task tracking state
   prompts/
     stage_*.md            # Per-stage prompt templates
@@ -163,6 +178,7 @@ autolab lint --stage hypothesis
   verifiers/              # Verification scripts
 experiments/
   plan/<iteration_id>/    # Iteration artifacts
+    handoff.md            # Human-readable handoff snapshot (scope-root)
     hypothesis.md
     design.yaml
     implementation_plan.md

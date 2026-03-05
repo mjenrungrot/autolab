@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -22,6 +23,19 @@ def _load_toml(path: Path) -> dict:
 
         payload = tomli.loads(path.read_text(encoding="utf-8"))
     return payload
+
+
+def _init_repo_state(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+    return repo, state_path
 
 
 def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
@@ -187,8 +201,11 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "  Maintenance:" in help_text
     assert "init" in help_text
     assert "configure" in help_text
+    assert "progress" in help_text
     assert "run" in help_text
     assert "loop" in help_text
+    assert "handoff" in help_text
+    assert "resume" in help_text
     assert "tui" in help_text
     assert "render" in help_text
     assert "todo" in help_text
@@ -197,6 +214,121 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "report" in help_text
     assert "Record a human review decision" in help_text
     assert "Recommended onboarding flow:" in help_text
+
+
+def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    progress_out = capsys.readouterr().out
+    assert "autolab progress" in progress_out
+    assert "recommended_next_command:" in progress_out
+
+    handoff_json_path = repo / ".autolab" / "handoff.json"
+    assert handoff_json_path.exists()
+    handoff_payload = json.loads(handoff_json_path.read_text(encoding="utf-8"))
+    assert handoff_payload["current_scope"] in {"experiment", "project_wide"}
+    assert handoff_payload["current_stage"] == "hypothesis"
+    assert "recommended_next_command" in handoff_payload
+    handoff_md_path = Path(handoff_payload["handoff_markdown_path"])
+    assert handoff_md_path.exists()
+
+    assert commands_module.main(["handoff", "--state-file", str(state_path)]) == 0
+    handoff_out = capsys.readouterr().out
+    assert "autolab handoff" in handoff_out
+    assert "handoff_json:" in handoff_out
+    assert "handoff_md:" in handoff_out
+
+    assert commands_module.main(["resume", "--state-file", str(state_path)]) == 0
+    resume_out = capsys.readouterr().out
+    assert "autolab resume" in resume_out
+    assert "mode: preview" in resume_out
+
+
+def test_resume_apply_executes_recommended_command_when_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_path = tmp_path / "repo" / ".autolab" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text("{}", encoding="utf-8")
+    resolved_state_path = state_path.expanduser().resolve()
+    payload = {
+        "recommended_next_command": {
+            "command": "autolab verify --stage design",
+            "reason": "retry verification",
+            "executable": True,
+        },
+        "safe_resume_point": {
+            "command": "autolab verify --stage design",
+            "status": "ready",
+            "preconditions": [],
+        },
+    }
+    captured: dict[str, list[str]] = {}
+
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda _state_path: (payload, ""),
+    )
+
+    def _fake_main(argv: list[str] | None = None) -> int:
+        captured["argv"] = list(argv or [])
+        return 17
+
+    monkeypatch.setattr(commands_module, "main", _fake_main)
+
+    exit_code = commands_module._cmd_resume(
+        argparse.Namespace(state_file=str(state_path), apply=True)
+    )
+
+    assert exit_code == 17
+    assert captured["argv"] == [
+        "verify",
+        "--stage",
+        "design",
+        "--state-file",
+        str(resolved_state_path),
+    ]
+
+
+def test_resume_apply_rejects_non_autolab_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state_path = tmp_path / "repo" / ".autolab" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text("{}", encoding="utf-8")
+    payload = {
+        "recommended_next_command": {
+            "command": "python -m pytest -q",
+            "reason": "not allowed by resume executor",
+            "executable": True,
+        },
+        "safe_resume_point": {
+            "command": "python -m pytest -q",
+            "status": "ready",
+            "preconditions": [],
+        },
+    }
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda _state_path: (payload, ""),
+    )
+
+    exit_code = commands_module._cmd_resume(
+        argparse.Namespace(state_file=str(state_path), apply=True)
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "only autolab commands are executable" in captured.err
 
 
 def test_review_subcommand_help_uses_human_review_terminology(

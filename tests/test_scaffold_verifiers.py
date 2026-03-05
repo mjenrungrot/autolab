@@ -169,6 +169,58 @@ def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _write_handoff(repo: Path, *, valid: bool = True) -> None:
+    path = repo / ".autolab" / "handoff.json"
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "state_file": str(repo / ".autolab" / "state.json"),
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "current_scope": "experiment",
+        "scope_root": str(repo / "experiments" / "plan" / "iter1"),
+        "current_stage": "implementation_review",
+        "wave": {"status": "available", "current": 1, "executed": 1, "total": 1},
+        "task_status": {
+            "status": "available",
+            "total": 1,
+            "completed": 1,
+            "failed": 0,
+            "blocked": 0,
+            "pending": 0,
+            "task_details": [],
+        },
+        "latest_verifier_summary": {
+            "generated_at": "2026-01-01T00:00:00Z",
+            "stage_effective": "implementation_review",
+            "passed": True,
+            "message": "verification passed",
+        },
+        "blocking_failures": [],
+        "pending_human_decisions": [],
+        "files_changed_since_last_green_point": [],
+        "recommended_next_command": {
+            "command": "autolab run",
+            "reason": "continue workflow",
+            "executable": True,
+        },
+        "safe_resume_point": {
+            "command": "autolab run",
+            "status": "ready",
+            "preconditions": [],
+        },
+        "last_green_at": "2026-01-01T00:00:00Z",
+        "baseline_snapshot": {},
+        "handoff_json_path": str(path),
+        "handoff_markdown_path": str(
+            repo / "experiments" / "plan" / "iter1" / "handoff.md"
+        ),
+    }
+    if not valid:
+        payload.pop("safe_resume_point", None)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _run_schema_checks(
     repo: Path, *, stage: str | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -315,6 +367,28 @@ def test_schema_checks_pass_for_valid_review_payload(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_validates_optional_handoff_schema(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_handoff(repo, valid=True)
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fails_for_invalid_handoff_schema(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_handoff(repo, valid=False)
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert ".autolab/handoff.json schema violation" in result.stdout
 
 
 def test_schema_checks_pass_with_runtime_state_history_keys(tmp_path: Path) -> None:

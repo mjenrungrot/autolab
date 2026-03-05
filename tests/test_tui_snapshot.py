@@ -52,6 +52,82 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
     assert "design" in {item.name for item in snapshot.stage_items}
 
 
+def test_snapshot_loads_handoff_summary_when_available(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="implementation")
+
+    handoff_md_path = repo / "experiments" / "plan" / "iter1" / "handoff.md"
+    handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_md_path.write_text("# handoff\n", encoding="utf-8")
+
+    handoff_payload = {
+        "schema_version": "1.0",
+        "generated_at": "2026-02-01T00:00:00Z",
+        "state_file": str(state_path),
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "current_scope": "experiment",
+        "scope_root": str(handoff_md_path.parent),
+        "current_stage": "implementation",
+        "wave": {"status": "available", "current": 2, "executed": 1, "total": 4},
+        "task_status": {
+            "status": "available",
+            "total": 5,
+            "completed": 2,
+            "failed": 1,
+            "blocked": 0,
+            "pending": 2,
+            "task_details": [],
+        },
+        "latest_verifier_summary": {
+            "generated_at": "2026-02-01T00:00:00Z",
+            "stage_effective": "implementation",
+            "passed": False,
+            "message": "one check failed",
+        },
+        "blocking_failures": ["schema_checks failed"],
+        "pending_human_decisions": [],
+        "files_changed_since_last_green_point": ["src/module.py"],
+        "recommended_next_command": {
+            "command": "autolab verify --stage implementation",
+            "reason": "fix blockers",
+            "executable": True,
+        },
+        "safe_resume_point": {
+            "command": "autolab verify --stage implementation",
+            "status": "ready",
+            "preconditions": [],
+        },
+        "last_green_at": "2026-02-01T00:00:00Z",
+        "baseline_snapshot": {},
+        "handoff_json_path": str(repo / ".autolab" / "handoff.json"),
+        "handoff_markdown_path": str(handoff_md_path),
+    }
+    handoff_json_path = repo / ".autolab" / "handoff.json"
+    handoff_json_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_json_path.write_text(
+        json.dumps(handoff_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.handoff is not None
+    assert snapshot.handoff.current_scope == "experiment"
+    assert snapshot.handoff.wave_current == 2
+    assert snapshot.handoff.wave_total == 4
+    assert snapshot.handoff.task_total == 5
+    assert snapshot.handoff.task_failed == 1
+    assert snapshot.handoff.blocker_count == 1
+    assert (
+        snapshot.handoff.recommended_command == "autolab verify --stage implementation"
+    )
+    assert snapshot.handoff.safe_resume_status == "ready"
+    common_paths = {item.path for item in snapshot.common_artifacts}
+    assert handoff_md_path in common_paths
+
+
 def test_snapshot_recommends_open_verification_result_when_available(
     tmp_path: Path,
 ) -> None:

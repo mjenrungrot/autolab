@@ -155,6 +155,34 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced when**: Active experiment is completed in backlog
 - **Action**: Re-open experiment in backlog to resume
 
+## handoff.json
+
+- **Path**: `.autolab/handoff.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/handoff.schema.json`
+- **Required fields**:
+  - `schema_version`, `generated_at`, `state_file`
+  - `iteration_id`, `experiment_id`, `current_scope`, `scope_root`, `current_stage`
+  - `wave`, `task_status`
+  - `latest_verifier_summary`, `blocking_failures`, `pending_human_decisions`
+  - `files_changed_since_last_green_point`
+  - `recommended_next_command`, `safe_resume_point`
+  - `last_green_at`, `baseline_snapshot`
+  - `handoff_json_path`, `handoff_markdown_path`
+- **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
+- **Consumed by**: `autolab resume`, `autolab tui` Home handoff panel, takeover automation
+
+## handoff.md
+
+- **Path**: `<scope-root>/handoff.md`
+- **Format**: Markdown
+- **Content**: Human-readable handoff summary (scope, stage, wave/task status, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
+- **Scope-root resolution**:
+  - `project_wide` -> repository root
+  - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
+- **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
+- **Consumed by**: human takeover workflows and incident handoff review
+
 ## Pattern Paths vs Runtime Paths
 
 Throughout this document and in `workflow.yaml`, paths containing angle-bracket tokens like `<RUN_ID>`, `<ITERATION_ID>`, or `<type>` are **pattern paths** -- templates that are resolved at runtime.

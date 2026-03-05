@@ -15,12 +15,18 @@ from autolab.tui.models import (
 _RUN_AGENT_MODES = {"policy", "force_on", "force_off"}
 _VERIFY_EXPECTED_WRITES = (
     ".autolab/verification_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/logs/verification_*.json",
     ".autolab/logs/orchestrator.log",
 )
 _RUN_EXPECTED_WRITES = (
     ".autolab/state.json",
     ".autolab/agent_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/logs/orchestrator.log",
     ".autolab/todo_state.json",
     "docs/todo.md",
@@ -28,11 +34,17 @@ _RUN_EXPECTED_WRITES = (
 _REVIEW_EXPECTED_WRITES = (
     ".autolab/state.json",
     ".autolab/agent_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/logs/orchestrator.log",
     ".autolab/backlog.yaml",
 )
 _LOOP_EXPECTED_WRITES_BASE = (
     ".autolab/state.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/logs/orchestrator.log",
     ".autolab/todo_state.json",
     "docs/todo.md",
@@ -54,6 +66,9 @@ _LOCK_BREAK_EXPECTED_WRITES = (
 _FOCUS_EXPECTED_WRITES = (
     ".autolab/state.json",
     ".autolab/agent_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/todo_state.json",
     ".autolab/todo_focus.json",
     "docs/todo.md",
@@ -62,6 +77,9 @@ _FOCUS_EXPECTED_WRITES = (
 _EXPERIMENT_BASE_EXPECTED_WRITES = (
     ".autolab/state.json",
     ".autolab/agent_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
     ".autolab/backlog.yaml",
     ".autolab/todo_state.json",
     ".autolab/todo_focus.json",

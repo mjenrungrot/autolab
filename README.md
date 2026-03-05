@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.6
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.7
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -87,8 +87,8 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Command categories (onboarding-first).**
 
-- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`.
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -96,6 +96,8 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
+
+**Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `skip`, `focus`, and `experiment move`).
 
 **Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. It defaults to `state.stage`. Use `--stage <stage>` to override, and `--context` to append resolved context JSON. For `implementation`, default output is the runner prompt; use `--audit` or `--retry-brief` for prompt-pack views.
 
@@ -110,6 +112,7 @@ autolab render --stage implementation --retry-brief
 **Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) with render-aware guidance:
 
 - Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
+- Home includes a dedicated "Handoff & Resume" card (scope, wave/task status, blockers/decisions, recommended next command, safe resume status).
 - Home can resolve `human_review` directly (`pass|retry|stop`) using the same unlock + confirm flow as other mutating actions.
 - Files supports quick-open for rendered prompt, render context, rendered audit contract, implementation retry brief, prompt template, state, and stage artifacts.
 - Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.

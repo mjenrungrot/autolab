@@ -169,6 +169,12 @@ def test_verify_command_writes_summary_artifact(tmp_path: Path) -> None:
     )
     assert canonical["passed"] is True
     assert canonical["stage_effective"] == "design"
+    handoff_payload = json.loads(
+        (repo / ".autolab" / "handoff.json").read_text(encoding="utf-8")
+    )
+    assert handoff_payload["current_stage"] == "design"
+    handoff_md_path = Path(handoff_payload["handoff_markdown_path"])
+    assert handoff_md_path.exists()
 
 
 def test_verify_command_prunes_old_summary_artifacts(tmp_path: Path) -> None:

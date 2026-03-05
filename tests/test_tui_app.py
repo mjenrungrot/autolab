@@ -100,6 +100,61 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_handoff_snapshot(repo_root: Path, state_path: Path) -> None:
+    handoff_md_path = repo_root / "experiments" / "plan" / "iter1" / "handoff.md"
+    handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_md_path.write_text("# Autolab Handoff\n", encoding="utf-8")
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": "2026-03-01T00:00:00Z",
+        "state_file": str(state_path),
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "current_scope": "experiment",
+        "scope_root": str(handoff_md_path.parent),
+        "current_stage": "design",
+        "wave": {"status": "available", "current": 1, "executed": 1, "total": 2},
+        "task_status": {
+            "status": "available",
+            "total": 4,
+            "completed": 2,
+            "failed": 0,
+            "blocked": 1,
+            "pending": 1,
+            "task_details": [],
+        },
+        "latest_verifier_summary": {
+            "generated_at": "2026-03-01T00:00:00Z",
+            "stage_effective": "design",
+            "passed": True,
+            "message": "ok",
+        },
+        "blocking_failures": ["blocker"],
+        "pending_human_decisions": [],
+        "files_changed_since_last_green_point": ["README.md"],
+        "recommended_next_command": {
+            "command": "autolab run",
+            "reason": "continue",
+            "executable": True,
+        },
+        "safe_resume_point": {
+            "command": "autolab run",
+            "status": "ready",
+            "preconditions": [],
+        },
+        "last_green_at": "2026-03-01T00:00:00Z",
+        "baseline_snapshot": {},
+        "handoff_json_path": str(repo_root / ".autolab" / "handoff.json"),
+        "handoff_markdown_path": str(handoff_md_path),
+    }
+    handoff_json_path = repo_root / ".autolab" / "handoff.json"
+    handoff_json_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_json_path.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_run_manifest(
     repo_root: Path,
     run_id: str,
@@ -2668,6 +2723,23 @@ def test_home_todos_card_shows_open_tasks(tmp_path: Path) -> None:
             assert "Open Tasks" in rendered
             assert "[critical]" in rendered
             assert "Fix failing benchmark assertions" in rendered
+
+    asyncio.run(_run())
+
+
+def test_home_handoff_card_shows_resume_summary(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="design")
+        _write_handoff_snapshot(repo_root, state_path)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            handoff = app.query_one("#home-handoff-card", app_module.Static)
+            rendered = str(handoff.render())
+            assert "Handoff & Resume" in rendered
+            assert "safe_resume: ready" in rendered
+            assert "next_command: autolab run" in rendered
 
     asyncio.run(_run())
 

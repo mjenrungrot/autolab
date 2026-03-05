@@ -156,6 +156,30 @@ class RecommendedAction:
 
 
 @dataclass(frozen=True)
+class HandoffSummary:
+    handoff_json_path: Path | None
+    handoff_md_path: Path | None
+    current_scope: str
+    scope_root: str
+    current_stage: str
+    wave_status: str
+    wave_current: int | None
+    wave_executed: int
+    wave_total: int
+    task_total: int
+    task_completed: int
+    task_failed: int
+    task_blocked: int
+    task_pending: int
+    latest_verifier_passed: bool | None
+    blocker_count: int
+    pending_decision_count: int
+    recommended_command: str
+    safe_resume_status: str
+    safe_resume_command: str
+
+
+@dataclass(frozen=True)
 class CockpitSnapshot:
     repo_root: Path
     state_path: Path
@@ -182,3 +206,4 @@ class CockpitSnapshot:
         default_factory=dict
     )
     common_artifacts: tuple[ArtifactItem, ...] = ()
+    handoff: HandoffSummary | None = None

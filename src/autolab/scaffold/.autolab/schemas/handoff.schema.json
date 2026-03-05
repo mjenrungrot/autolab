@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Handoff Snapshot",
+  "description": "Machine-readable handoff and safe-resume snapshot.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "state_file",
+    "iteration_id",
+    "experiment_id",
+    "current_scope",
+    "scope_root",
+    "current_stage",
+    "wave",
+    "task_status",
+    "latest_verifier_summary",
+    "blocking_failures",
+    "pending_human_decisions",
+    "files_changed_since_last_green_point",
+    "recommended_next_command",
+    "safe_resume_point",
+    "last_green_at",
+    "baseline_snapshot",
+    "handoff_json_path",
+    "handoff_markdown_path"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "current_scope": {
+      "type": "string",
+      "enum": ["experiment", "project_wide"]
+    },
+    "scope_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "wave": {
+      "type": "object",
+      "required": ["status", "current", "executed", "total"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable"]
+        },
+        "current": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "executed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "task_status": {
+      "type": "object",
+      "required": [
+        "status",
+        "total",
+        "completed",
+        "failed",
+        "blocked",
+        "pending",
+        "task_details"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "unavailable"]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "task_details": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "latest_verifier_summary": {
+      "type": "object",
+      "required": ["generated_at", "stage_effective", "passed", "message"],
+      "properties": {
+        "generated_at": {
+          "type": "string"
+        },
+        "stage_effective": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "blocking_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pending_human_decisions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files_changed_since_last_green_point": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_next_command": {
+      "type": "object",
+      "required": ["command", "reason", "executable"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "safe_resume_point": {
+      "type": "object",
+      "required": ["command", "status", "preconditions"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ready", "blocked"]
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "last_green_at": {
+      "type": "string"
+    },
+    "baseline_snapshot": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "handoff_json_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "handoff_markdown_path": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}
