@@ -999,6 +999,7 @@ def _outcome_payload(outcome: RunOutcome) -> dict[str, Any]:
         "transitioned": outcome.transitioned,
         "stage_before": outcome.stage_before,
         "stage_after": outcome.stage_after,
+        "pause_reason": outcome.pause_reason,
     }
 
 

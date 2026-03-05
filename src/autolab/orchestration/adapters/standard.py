@@ -19,4 +19,6 @@ class StandardModeAdapter:
             auto_decision=request.auto_decision,
             auto_mode=request.auto_mode,
             strict_implementation_progress=request.strict_implementation_progress,
+            plan_only=request.plan_only,
+            execute_approved_plan=request.execute_approved_plan,
         )

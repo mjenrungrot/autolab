@@ -36,6 +36,8 @@ class OrchestrationEngine:
                     auto_mode=request.auto_mode,
                     auto_decision=request.auto_decision,
                     strict_implementation_progress=request.strict_implementation_progress,
+                    plan_only=request.plan_only,
+                    execute_approved_plan=request.execute_approved_plan,
                 )
             )
             outcomes.append(outcome)

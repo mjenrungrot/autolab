@@ -27,7 +27,7 @@ baselines:
 implementation_requirements:
   - requirement_id: R1
     description: Add calibrated augmentation schedule configuration and training wiring.
-    scope_kind: experiment
+    scope_kind: project_wide
     expected_artifacts: [implementation_plan.md, plan_contract.json]
   - requirement_id: R2
     description: Add deterministic seed handling for augmentation schedule tests.

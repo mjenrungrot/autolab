@@ -37,6 +37,9 @@
       "type": "string",
       "format": "date-time"
     },
+    "optionalTimestamp": {
+      "type": "string"
+    },
     "taskReasonCode": {
       "type": "string",
       "enum": [
@@ -187,6 +190,71 @@
       },
       "additionalProperties": false
     },
+    "planApproval": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "generated_at",
+        "iteration_id",
+        "status",
+        "requires_approval",
+        "plan_hash",
+        "risk_fingerprint",
+        "trigger_reasons",
+        "counts",
+        "reviewed_by",
+        "reviewed_at",
+        "notes",
+        "source_paths"
+      ],
+      "properties": {
+        "schema_version": {"type": "string", "const": "1.0"},
+        "generated_at": {"$ref": "#/$defs/timestamp"},
+        "iteration_id": {"type": "string", "minLength": 1},
+        "status": {
+          "type": "string",
+          "enum": ["not_required", "pending", "approved", "retry", "stop", "superseded"]
+        },
+        "requires_approval": {"type": "boolean"},
+        "plan_hash": {"type": "string", "minLength": 1},
+        "risk_fingerprint": {"type": "string", "minLength": 1},
+        "trigger_reasons": {"$ref": "#/$defs/stringList"},
+        "counts": {
+          "type": "object",
+          "required": [
+            "tasks_total",
+            "waves_total",
+            "project_wide_tasks",
+            "project_wide_unique_paths",
+            "observed_retries",
+            "stage_attempt"
+          ],
+          "properties": {
+            "tasks_total": {"type": "integer", "minimum": 0},
+            "waves_total": {"type": "integer", "minimum": 0},
+            "project_wide_tasks": {"type": "integer", "minimum": 0},
+            "project_wide_unique_paths": {"type": "integer", "minimum": 0},
+            "observed_retries": {"type": "integer", "minimum": 0},
+            "stage_attempt": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "reviewed_by": {"type": "string"},
+        "reviewed_at": {"type": "string"},
+        "notes": {"type": "string"},
+        "source_paths": {
+          "type": "object",
+          "required": ["plan_contract", "plan_graph", "plan_check_result"],
+          "properties": {
+            "plan_contract": {"type": "string", "minLength": 1},
+            "plan_graph": {"type": "string", "minLength": 1},
+            "plan_check_result": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "waveAttempt": {
       "type": "object",
       "required": [
@@ -208,10 +276,10 @@
           "enum": ["pending", "completed", "failed", "blocked"]
         },
         "started_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "completed_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "duration_seconds": {
           "type": "number",
@@ -318,10 +386,10 @@
           "$ref": "#/$defs/stringList"
         },
         "started_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "completed_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "duration_seconds": {
           "type": "number",
@@ -381,6 +449,7 @@
         "timing_available",
         "attempt_history",
         "retry_reasons",
+        "current_retry_reasons",
         "out_of_contract_paths",
         "completed_task_ids",
         "failed_task_ids",
@@ -412,10 +481,10 @@
           "$ref": "#/$defs/stringList"
         },
         "started_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "completed_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "duration_seconds": {
           "type": "number",
@@ -435,6 +504,9 @@
           }
         },
         "retry_reasons": {
+          "$ref": "#/$defs/stringList"
+        },
+        "current_retry_reasons": {
           "$ref": "#/$defs/stringList"
         },
         "out_of_contract_paths": {
@@ -753,6 +825,9 @@
     },
     "safe_resume_point": {
       "$ref": "#/$defs/safeResume"
+    },
+    "plan_approval": {
+      "$ref": "#/$defs/planApproval"
     },
     "wave_observability": {
       "$ref": "#/$defs/waveObservability"

@@ -17,6 +17,13 @@ except Exception:  # pragma: no cover
 
 from autolab.config import _load_plan_execution_config
 from autolab.models import StageCheckError
+from autolab.plan_approval import (
+    approval_is_current,
+    build_plan_hash,
+    build_risk_fingerprint,
+    load_plan_approval,
+    write_plan_approval,
+)
 from autolab.plan_contract import PlanContractError, check_implementation_plan_contract
 from autolab.runners import _invoke_agent_runner
 from autolab.sidecar_tools import build_task_context_guidance
@@ -50,6 +57,7 @@ class ImplementationExecutionStepResult:
     summary: str
     changed_files: tuple[Path, ...]
     next_stage: str | None = None
+    pause_reason: str = ""
 
 
 def _normalize_path(value: str) -> str:
@@ -73,6 +81,102 @@ def _task_failure_policy(task: dict[str, Any]) -> str:
 def _json_hash(payload: dict[str, Any]) -> str:
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
+def _derive_approval_risk_fallback(
+    *,
+    task_map: dict[str, dict[str, Any]],
+    wave_rows: list[dict[str, Any]],
+    state: dict[str, Any],
+    raw_execution_state: dict[str, Any] | None,
+    impl_cfg: Any,
+) -> dict[str, Any]:
+    approval_cfg = getattr(impl_cfg, "approval", None)
+    project_wide_task_ids = sorted(
+        task_id
+        for task_id, task in task_map.items()
+        if str(task.get("scope_kind", "")).strip().lower() == "project_wide"
+    )
+    project_wide_unique_paths = sorted(
+        {
+            _normalize_path(path)
+            for task in task_map.values()
+            if str(task.get("scope_kind", "")).strip().lower() == "project_wide"
+            for field in ("writes", "touches")
+            for path in (
+                task.get(field, []) if isinstance(task.get(field, []), list) else []
+            )
+            if _normalize_path(path)
+        }
+    )
+    observed_retries = 0
+    if isinstance(raw_execution_state, dict):
+        for field in ("task_retry_counts", "wave_retry_counts"):
+            raw_counts = raw_execution_state.get(field)
+            if not isinstance(raw_counts, dict):
+                continue
+            for value in raw_counts.values():
+                try:
+                    observed_retries += max(int(value or 0), 0)
+                except Exception:
+                    continue
+    try:
+        stage_attempt = max(int(state.get("stage_attempt", 0) or 0), 0)
+    except Exception:
+        stage_attempt = 0
+    trigger_reasons: list[str] = []
+    if approval_cfg is not None and getattr(approval_cfg, "enabled", False):
+        if (
+            getattr(approval_cfg, "require_for_project_wide_tasks", False)
+            and project_wide_task_ids
+        ):
+            trigger_reasons.append("project_wide_tasks_present")
+        if len(task_map) > int(getattr(approval_cfg, "max_tasks_without_approval", 6)):
+            trigger_reasons.append("task_count_exceeds_threshold")
+        if len(wave_rows) > int(getattr(approval_cfg, "max_waves_without_approval", 2)):
+            trigger_reasons.append("wave_count_exceeds_threshold")
+        if len(project_wide_unique_paths) > int(
+            getattr(approval_cfg, "max_project_wide_paths_without_approval", 3)
+        ):
+            trigger_reasons.append("project_wide_blast_radius_exceeds_threshold")
+        if getattr(approval_cfg, "require_after_retries", True) and (
+            observed_retries > 0 or stage_attempt > 0
+        ):
+            trigger_reasons.append("prior_retries_observed")
+    approval_risk = {
+        "requires_approval": bool(trigger_reasons),
+        "trigger_reasons": trigger_reasons,
+        "counts": {
+            "tasks_total": len(task_map),
+            "waves_total": len(wave_rows),
+            "project_wide_tasks": len(project_wide_task_ids),
+            "project_wide_unique_paths": len(project_wide_unique_paths),
+            "observed_retries": observed_retries,
+            "stage_attempt": stage_attempt,
+        },
+        "project_wide_task_ids": project_wide_task_ids,
+        "project_wide_unique_paths": project_wide_unique_paths,
+        "policy": {
+            "enabled": bool(getattr(approval_cfg, "enabled", False)),
+            "require_for_project_wide_tasks": bool(
+                getattr(approval_cfg, "require_for_project_wide_tasks", False)
+            ),
+            "max_tasks_without_approval": int(
+                getattr(approval_cfg, "max_tasks_without_approval", 6)
+            ),
+            "max_waves_without_approval": int(
+                getattr(approval_cfg, "max_waves_without_approval", 2)
+            ),
+            "max_project_wide_paths_without_approval": int(
+                getattr(approval_cfg, "max_project_wide_paths_without_approval", 3)
+            ),
+            "require_after_retries": bool(
+                getattr(approval_cfg, "require_after_retries", True)
+            ),
+        },
+    }
+    approval_risk["risk_fingerprint"] = build_risk_fingerprint(approval_risk)
+    return approval_risk
 
 
 def _load_design_yaml_mapping(iteration_dir: Path) -> dict[str, Any]:
@@ -879,6 +983,8 @@ def execute_implementation_plan_step(
     state: dict[str, Any],
     run_agent_mode: str,
     auto_mode: bool = False,
+    plan_only: bool = False,
+    execute_approved_plan: bool = False,
 ) -> ImplementationExecutionStepResult:
     plan_execution = _load_plan_execution_config(repo_root)
     impl_cfg = plan_execution.implementation
@@ -910,14 +1016,32 @@ def execute_implementation_plan_step(
 
     changed_files: list[Path] = []
 
+    contract_path = repo_root / ".autolab" / "plan_contract.json"
+    graph_path = repo_root / ".autolab" / "plan_graph.json"
+    plan_check_path = repo_root / ".autolab" / "plan_check_result.json"
     execution_state_path = _execution_state_path(iteration_dir)
     summary_path = _execution_summary_path(iteration_dir)
+    approval_json_path = iteration_dir / "plan_approval.json"
+    approval_md_path = iteration_dir / "plan_approval.md"
     raw_state: dict[str, Any] | None = None
     if execution_state_path.exists():
         loaded = _load_json_dict(execution_state_path)
         raw_state = loaded
 
-    if raw_state is None:
+    existing_approval = load_plan_approval(iteration_dir)
+    planning_artifacts_exist = (
+        contract_path.exists() and graph_path.exists() and plan_check_path.exists()
+    )
+    approval_retry_requested = (
+        str(existing_approval.get("status", "")).strip().lower() == "retry"
+        and not execute_approved_plan
+    )
+    planning_needed = not planning_artifacts_exist
+    if approval_retry_requested:
+        planning_needed = True
+        raw_state = None
+
+    if planning_needed:
         planning_result = _invoke_agent_runner(
             repo_root,
             state_path=state_path,
@@ -974,9 +1098,6 @@ def execute_implementation_plan_step(
             changed_files=tuple(changed_files),
         )
 
-    contract_path = repo_root / ".autolab" / "plan_contract.json"
-    graph_path = repo_root / ".autolab" / "plan_graph.json"
-    plan_check_path = repo_root / ".autolab" / "plan_check_result.json"
     if not contract_path.exists():
         raise StageCheckError(
             "missing .autolab/plan_contract.json after contract check"
@@ -994,6 +1115,78 @@ def execute_implementation_plan_step(
     contract_hash = _json_hash(contract)
     task_map = _task_map(contract)
     wave_rows = _wave_rows(graph)
+    approval_risk = plan_check.get("approval_risk")
+    if not isinstance(approval_risk, dict):
+        approval_risk = _derive_approval_risk_fallback(
+            task_map=task_map,
+            wave_rows=wave_rows,
+            state=state,
+            raw_execution_state=raw_state,
+            impl_cfg=impl_cfg,
+        )
+    plan_hash = str(plan_check.get("plan_hash", "")).strip() or build_plan_hash(
+        contract_payload=contract,
+        graph_payload=graph,
+    )
+    approval_payload = write_plan_approval(
+        iteration_dir,
+        iteration_id=iteration_id,
+        approval_risk=approval_risk,
+        plan_hash=plan_hash,
+    )
+    changed_files.extend([approval_json_path, approval_md_path])
+
+    approval_required = bool(approval_payload.get("requires_approval", False))
+    approval_current = approval_is_current(
+        approval_payload,
+        plan_hash=plan_hash,
+        risk_fingerprint=str(approval_payload.get("risk_fingerprint", "")).strip(),
+        require_approved=True,
+    )
+    if plan_only:
+        approval_summary = (
+            "approval required" if approval_required else "approval not required"
+        )
+        return ImplementationExecutionStepResult(
+            handled=True,
+            proceed_to_evaluate=False,
+            agent_status="complete",
+            exit_code=0,
+            summary=(
+                f"implementation plan prepared ({approval_summary}); "
+                "review with `autolab approve-plan --status approve|retry|stop` "
+                "or continue with `autolab run`"
+            ),
+            changed_files=tuple(changed_files),
+            pause_reason="plan_only",
+        )
+    if execute_approved_plan and approval_required and not approval_current:
+        return ImplementationExecutionStepResult(
+            handled=True,
+            proceed_to_evaluate=False,
+            agent_status="failed",
+            exit_code=1,
+            summary=(
+                "current implementation plan is not approved; "
+                "run `autolab approve-plan --status approve` or rerun `autolab run --plan-only`"
+            ),
+            changed_files=tuple(changed_files),
+        )
+    if approval_required and not approval_current:
+        return ImplementationExecutionStepResult(
+            handled=True,
+            proceed_to_evaluate=False,
+            agent_status="pending_approval",
+            exit_code=0,
+            summary=(
+                "implementation plan approval required before execution; "
+                "run `autolab approve-plan --status approve`, "
+                "`autolab approve-plan --status retry`, or "
+                "`autolab run --execute-approved-plan` after approval"
+            ),
+            changed_files=tuple(changed_files),
+            pause_reason="plan_approval_required",
+        )
 
     state_payload = _coerce_execution_state(
         iteration_id=iteration_id,

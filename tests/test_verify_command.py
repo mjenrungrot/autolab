@@ -739,9 +739,52 @@ def test_design_context_quality_verifier_fails_when_generated_report_breaks_sche
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "fail"
     assert any(
-        "design_context_quality.json schema violation" in error
+        error.startswith("design_context_quality.json schema violation")
         for error in payload["errors"]
     )
+
+
+def test_design_context_quality_verifier_normalizes_schema_exception_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    monkeypatch.chdir(repo)
+
+    verifier_path = repo / ".autolab" / "verifiers" / "design_context_quality.py"
+    spec = importlib.util.spec_from_file_location(
+        "autolab_design_context_quality_verifier_schema_exception_test",
+        verifier_path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def _fake_build_design_context_quality(*_args, **_kwargs):
+        raise RuntimeError(
+            "schema violation at $.score.value: 'bad' is not of type 'integer'"
+        )
+
+    monkeypatch.setattr(
+        module, "build_design_context_quality", _fake_build_design_context_quality
+    )
+
+    exit_code = module.main(["--stage", "design", "--json"])
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail"
+    assert payload["errors"] == [
+        "design_context_quality.json schema violation at $.score.value: "
+        "'bad' is not of type 'integer'"
+    ]
 
 
 def test_verification_dry_run_iteration_placeholder_blocks_shell_injection(

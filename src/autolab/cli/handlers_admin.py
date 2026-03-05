@@ -1140,6 +1140,17 @@ def _docs_collect_context(
             plan_execution_summary_error,
         ) = _docs_load_json_mapping(repo_root, plan_execution_summary_path)
 
+    plan_approval_path = (
+        iteration_dir / "plan_approval.json" if iteration_dir is not None else None
+    )
+    plan_approval_payload = None
+    plan_approval_error = "plan approval path is unavailable"
+    if plan_approval_path is not None:
+        plan_approval_payload, plan_approval_error = _docs_load_json_mapping(
+            repo_root,
+            plan_approval_path,
+        )
+
     plan_graph_path = repo_root / ".autolab" / "plan_graph.json"
     plan_graph_payload, plan_graph_error = _docs_load_json_mapping(
         repo_root,
@@ -1176,6 +1187,18 @@ def _docs_collect_context(
     if stale_plan_execution_summary_error:
         plan_execution_summary_error = stale_plan_execution_summary_error
         observability_context_diagnostics.append(stale_plan_execution_summary_error)
+
+    (
+        plan_approval_payload,
+        stale_plan_approval_error,
+    ) = _docs_validate_iteration_scoped_observability_payload(
+        artifact_name="plan_approval.json",
+        payload=plan_approval_payload,
+        iteration_id=iteration_id,
+    )
+    if stale_plan_approval_error:
+        plan_approval_error = stale_plan_approval_error
+        observability_context_diagnostics.append(stale_plan_approval_error)
 
     observability_context_diagnostics.extend(
         _docs_compare_observability_execution_payloads(
@@ -1315,6 +1338,9 @@ def _docs_collect_context(
             "plan_execution_summary_path": plan_execution_summary_path,
             "plan_execution_summary_payload": plan_execution_summary_payload,
             "plan_execution_summary_error": plan_execution_summary_error,
+            "plan_approval_path": plan_approval_path,
+            "plan_approval_payload": plan_approval_payload,
+            "plan_approval_error": plan_approval_error,
             "plan_graph_path": plan_graph_path,
             "plan_graph_payload": plan_graph_payload,
             "plan_graph_error": plan_graph_error,
@@ -1731,6 +1757,9 @@ def _render_docs_project_view(context: dict[str, Any]) -> str:
     context_bundle = context.get("context_bundle_payload")
     if not isinstance(context_bundle, dict):
         context_bundle = {}
+    plan_approval = context.get("plan_approval_payload")
+    if not isinstance(plan_approval, dict):
+        plan_approval = {}
 
     lines: list[str] = [
         "# Project View",
@@ -1798,6 +1827,35 @@ def _render_docs_project_view(context: dict[str, Any]) -> str:
             f"- focus_experiment_id: `{context_bundle.get('focus_experiment_id', '')}`",
         ]
     )
+    if plan_approval:
+        counts = plan_approval.get("counts")
+        if not isinstance(counts, dict):
+            counts = {}
+        trigger_reasons = [
+            str(item).strip()
+            for item in plan_approval.get("trigger_reasons", [])
+            if str(item).strip()
+        ]
+        lines.extend(
+            [
+                "",
+                "## Plan Approval",
+                f"- status: `{plan_approval.get('status', '')}`",
+                f"- requires_approval: `{bool(plan_approval.get('requires_approval', False))}`",
+                (
+                    "- counts: "
+                    f"tasks={_docs_safe_int(counts.get('tasks_total', 0), 0)}, "
+                    f"waves={_docs_safe_int(counts.get('waves_total', 0), 0)}, "
+                    f"project_wide_tasks={_docs_safe_int(counts.get('project_wide_tasks', 0), 0)}, "
+                    f"project_wide_paths={_docs_safe_int(counts.get('project_wide_unique_paths', 0), 0)}, "
+                    f"retries={_docs_safe_int(counts.get('observed_retries', 0), 0)}"
+                ),
+                (
+                    "- trigger_reasons: "
+                    + (", ".join(trigger_reasons) if trigger_reasons else "none")
+                ),
+            ]
+        )
     _docs_append_wave_observability_sections(
         lines,
         context=context,
@@ -1815,6 +1873,7 @@ def _render_docs_project_view(context: dict[str, Any]) -> str:
         "context_delta_error",
         "plan_execution_state_error",
         "plan_execution_summary_error",
+        "plan_approval_error",
         "plan_graph_error",
         "plan_check_result_error",
     ):
@@ -1947,6 +2006,9 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
     pending_decisions = handoff_payload.get("pending_human_decisions")
     if not isinstance(pending_decisions, list):
         pending_decisions = []
+    plan_approval = context.get("plan_approval_payload")
+    if not isinstance(plan_approval, dict):
+        plan_approval = {}
     wave_observability = _docs_wave_observability(context)
     wave_summary = wave_observability.get("wave_summary")
     if not isinstance(wave_summary, dict):
@@ -1977,11 +2039,46 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
         f"- recommended_next_command: `{recommended.get('command', '')}`",
         f"- blockers: {len(blocking_failures)}",
         f"- pending_human_decisions: {len(pending_decisions)}",
-        "",
-        "## Wave and Task Status",
-        f"- wave: status={wave_summary.get('status', wave.get('status', 'unavailable'))}, current={wave_summary.get('current', wave.get('current', '-'))}, executed={wave_summary.get('executed', wave.get('executed', 0))}, total={wave_summary.get('total', wave.get('total', 0))}",
-        f"- tasks: status={task_summary.get('status', task_status.get('status', 'unavailable'))}, total={task_summary.get('total', task_status.get('total', 0))}, completed={task_summary.get('completed', task_status.get('completed', 0))}, failed={task_summary.get('failed', task_status.get('failed', 0))}, blocked={task_summary.get('blocked', task_status.get('blocked', 0))}, pending={task_summary.get('pending', task_status.get('pending', 0))}, skipped={task_summary.get('skipped', 0)}, deferred={task_summary.get('deferred', 0)}",
     ]
+    if plan_approval:
+        counts = plan_approval.get("counts")
+        if not isinstance(counts, dict):
+            counts = {}
+        trigger_reasons = [
+            str(item).strip()
+            for item in plan_approval.get("trigger_reasons", [])
+            if str(item).strip()
+        ]
+        lines.extend(
+            [
+                "",
+                "## Plan Approval",
+                f"- status: `{plan_approval.get('status', '')}`",
+                f"- requires_approval: `{bool(plan_approval.get('requires_approval', False))}`",
+                f"- plan_hash: `{plan_approval.get('plan_hash', '')}`",
+                f"- risk_fingerprint: `{plan_approval.get('risk_fingerprint', '')}`",
+                (
+                    "- counts: "
+                    f"tasks={_docs_safe_int(counts.get('tasks_total', 0), 0)}, "
+                    f"waves={_docs_safe_int(counts.get('waves_total', 0), 0)}, "
+                    f"project_wide_tasks={_docs_safe_int(counts.get('project_wide_tasks', 0), 0)}, "
+                    f"project_wide_paths={_docs_safe_int(counts.get('project_wide_unique_paths', 0), 0)}, "
+                    f"retries={_docs_safe_int(counts.get('observed_retries', 0), 0)}"
+                ),
+                (
+                    "- trigger_reasons: "
+                    + (", ".join(trigger_reasons) if trigger_reasons else "none")
+                ),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Wave and Task Status",
+            f"- wave: status={wave_summary.get('status', wave.get('status', 'unavailable'))}, current={wave_summary.get('current', wave.get('current', '-'))}, executed={wave_summary.get('executed', wave.get('executed', 0))}, total={wave_summary.get('total', wave.get('total', 0))}",
+            f"- tasks: status={task_summary.get('status', task_status.get('status', 'unavailable'))}, total={task_summary.get('total', task_status.get('total', 0))}, completed={task_summary.get('completed', task_status.get('completed', 0))}, failed={task_summary.get('failed', task_status.get('failed', 0))}, blocked={task_summary.get('blocked', task_status.get('blocked', 0))}, pending={task_summary.get('pending', task_status.get('pending', 0))}, skipped={task_summary.get('skipped', 0)}, deferred={task_summary.get('deferred', 0)}",
+        ]
+    )
     _docs_append_wave_observability_sections(
         lines,
         context=context,
@@ -2001,6 +2098,7 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
     for key in (
         "plan_execution_state_error",
         "plan_execution_summary_error",
+        "plan_approval_error",
         "plan_graph_error",
         "plan_check_result_error",
     ):
@@ -2324,6 +2422,23 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
             ),
             critical_path=_docs_markdown_escape(
                 str(critical_path.get("mode", "unavailable"))
+            )
+            or "n/a",
+        ),
+        "| plan_approval.json | `{path}` | {status} | status={approval_status} |".format(
+            path=_docs_relpath(repo_root, context.get("plan_approval_path")),
+            status=_status_from_error(
+                context.get("plan_approval_payload")
+                if isinstance(context.get("plan_approval_payload"), dict)
+                else {},
+                str(context.get("plan_approval_error", "")),
+            ),
+            approval_status=_docs_markdown_escape(
+                str(
+                    context.get("plan_approval_payload", {}).get("status", "")
+                    if isinstance(context.get("plan_approval_payload"), dict)
+                    else ""
+                )
             )
             or "n/a",
         ),

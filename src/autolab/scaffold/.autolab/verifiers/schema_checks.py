@@ -138,6 +138,7 @@ SCHEMAS: dict[str, str] = {
     "handoff": "handoff.schema.json",
     "plan_contract": "plan_contract.schema.json",
     "plan_check_result": "plan_check_result.schema.json",
+    "plan_approval": "plan_approval.schema.json",
     "plan_graph": "plan_graph.schema.json",
     "codebase_project_map": "codebase_project_map.schema.json",
     "codebase_experiment_delta": "codebase_experiment_delta.schema.json",
@@ -1217,6 +1218,7 @@ def _validate_handoff(state: dict[str, Any]) -> list[str]:
                             path_label=(
                                 f"{path} wave_observability.task_summary.task_details[{index}].started_at"
                             ),
+                            allow_empty=True,
                         )
                     )
                     failures.extend(
@@ -1225,6 +1227,7 @@ def _validate_handoff(state: dict[str, Any]) -> list[str]:
                             path_label=(
                                 f"{path} wave_observability.task_summary.task_details[{index}].completed_at"
                             ),
+                            allow_empty=True,
                         )
                     )
                     task_id = str(row.get("task_id", "")).strip()
@@ -1250,12 +1253,14 @@ def _validate_handoff(state: dict[str, Any]) -> list[str]:
                     _validate_timestamp(
                         row.get("started_at"),
                         path_label=f"{path} wave_observability.waves[{wave_index}].started_at",
+                        allow_empty=True,
                     )
                 )
                 failures.extend(
                     _validate_timestamp(
                         row.get("completed_at"),
                         path_label=f"{path} wave_observability.waves[{wave_index}].completed_at",
+                        allow_empty=True,
                     )
                 )
                 attempt_history = row.get("attempt_history")
@@ -1655,6 +1660,41 @@ def _validate_plan_checker_outputs(state: dict[str, Any], *, stage: str) -> list
     return errors
 
 
+def _validate_plan_approval(state: dict[str, Any], *, stage: str) -> list[str]:
+    if stage not in {"implementation", "implementation_review"}:
+        return []
+    iteration_dir = _iteration_dir(state)
+    path = iteration_dir / "plan_approval.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    failures = _schema_validate(payload, schema_key="plan_approval", path=path)
+    failures.extend(
+        _validate_timestamp(
+            payload.get("generated_at"),
+            path_label=f"{path} generated_at",
+        )
+    )
+    reviewed_at = str(payload.get("reviewed_at", "")).strip()
+    if reviewed_at:
+        failures.extend(
+            _validate_timestamp(
+                reviewed_at,
+                path_label=f"{path} reviewed_at",
+            )
+        )
+    if (
+        str(payload.get("iteration_id", "")).strip()
+        and str(payload.get("iteration_id", "")).strip()
+        != str(state.get("iteration_id", "")).strip()
+    ):
+        failures.append(f"{path} iteration_id mismatch")
+    return failures
+
+
 def _validate_design_context_quality(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage != "design":
         return []
@@ -1758,6 +1798,7 @@ def main() -> int:
     failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
+    failures.extend(_validate_plan_approval(state, stage=stage))
     failures.extend(_validate_design_context_quality(state, stage=stage))
 
     warnings: list[str] = []

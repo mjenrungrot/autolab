@@ -657,6 +657,81 @@ def test_handoff_markdown_surfaces_current_retry_and_conflict_path_detail() -> N
     assert "paths=src/shared.py" in markdown
 
 
+def test_refresh_handoff_omits_missing_plan_approval_and_keeps_design_verify_order(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = _base_state(stage="design")
+    state_path = repo / ".autolab" / "state.json"
+    _write_json(state_path, state)
+
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    design_payload = {
+        "schema_version": "1.0",
+        "id": "e1",
+        "iteration_id": "iter1",
+        "hypothesis_id": "h1",
+        "entrypoint": {"module": "pkg.train", "args": {}},
+        "compute": {"location": "local", "cpus": 1, "gpus": 0},
+        "metrics": {"primary": {"name": "accuracy", "mode": "maximize"}},
+        "baselines": [{"name": "baseline", "value": 0.0}],
+        "implementation_requirements": [],
+    }
+    (iteration_dir / "design.yaml").write_text(
+        yaml.safe_dump(design_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    _write_json(
+        repo / ".autolab" / "logs" / "verification_20260305T000000Z_hypothesis.json",
+        {
+            "generated_at": "2026-03-05T00:00:00Z",
+            "stage_effective": "hypothesis",
+            "passed": True,
+            "message": "hypothesis verification passed",
+        },
+    )
+    _write_json(
+        repo / ".autolab" / "logs" / "verification_20260305T000100Z_design.json",
+        {
+            "generated_at": "2026-03-05T00:01:00Z",
+            "stage_effective": "design",
+            "passed": False,
+            "message": "design verification failed",
+        },
+    )
+    _write_json(
+        repo / ".autolab" / "verification_result.json",
+        {
+            "generated_at": "2026-03-05T00:01:00Z",
+            "iteration_id": "iter1",
+            "experiment_id": "e1",
+            "state_stage": "design",
+            "stage_requested": "design",
+            "stage_effective": "design",
+            "passed": False,
+            "message": "design verification failed",
+            "details": {"commands": []},
+        },
+    )
+
+    artifacts = handoff.refresh_handoff(state_path)
+    serialized = json.loads(artifacts.handoff_json_path.read_text(encoding="utf-8"))
+
+    assert "plan_approval" not in artifacts.payload
+    assert "plan_approval" not in serialized
+    assert artifacts.payload["latest_verifier_summary"]["stage_effective"] == "design"
+    assert (
+        artifacts.payload["recommended_next_command"]["command"]
+        == "autolab verify --stage design"
+    )
+    assert artifacts.payload["safe_resume_point"]["preconditions"] == [
+        "Resolve failing verification commands."
+    ]
+
+
 @pytest.mark.parametrize(
     ("stage", "expected_next"),
     (

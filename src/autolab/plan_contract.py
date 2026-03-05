@@ -10,6 +10,8 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
+from autolab.config import _load_plan_execution_config
+from autolab.plan_approval import build_plan_hash, build_risk_fingerprint
 from autolab.registry import load_registry
 from autolab.sidecar_tools import parse_context_ref, resolve_context_ref
 from autolab.state import _resolve_iteration_directory
@@ -116,7 +118,7 @@ def _parse_str_list(
 
 def _extract_design_requirements(
     design_payload: dict[str, Any], *, errors: list[str]
-) -> dict[str, str]:
+) -> dict[str, dict[str, Any]]:
     requirements = design_payload.get("implementation_requirements")
     if not isinstance(requirements, list) or not requirements:
         errors.append(
@@ -124,7 +126,7 @@ def _extract_design_requirements(
         )
         return {}
 
-    requirement_scope_by_id: dict[str, str] = {}
+    requirement_specs: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
     for idx, entry in enumerate(requirements):
         if not isinstance(entry, dict):
@@ -151,9 +153,71 @@ def _extract_design_requirements(
             errors.append(
                 f"design.yaml implementation_requirements[{idx}] scope_kind must be one of {sorted(_SCOPE_KINDS)}"
             )
+        promoted_constraints: list[dict[str, str]] = []
+        raw_promoted_constraints = entry.get("promoted_constraints", [])
+        if raw_promoted_constraints is None:
+            raw_promoted_constraints = []
+        if not isinstance(raw_promoted_constraints, list):
+            errors.append(
+                f"design.yaml implementation_requirements[{idx}] promoted_constraints must be a list"
+            )
+            raw_promoted_constraints = []
+        for promoted_index, raw_promoted in enumerate(raw_promoted_constraints):
+            if not isinstance(raw_promoted, dict):
+                errors.append(
+                    "design.yaml implementation_requirements"
+                    f"[{idx}] promoted_constraints[{promoted_index}] must be a mapping"
+                )
+                continue
+            promoted_id = str(raw_promoted.get("id", "")).strip()
+            source_ref = str(raw_promoted.get("source_ref", "")).strip()
+            if not promoted_id:
+                errors.append(
+                    "design.yaml implementation_requirements"
+                    f"[{idx}] promoted_constraints[{promoted_index}] missing id"
+                )
+                continue
+            if not source_ref:
+                errors.append(
+                    "design.yaml implementation_requirements"
+                    f"[{idx}] promoted_constraints[{promoted_index}] missing source_ref"
+                )
+                continue
+            promoted_constraints.append(
+                {
+                    "id": promoted_id,
+                    "source_ref": source_ref,
+                }
+            )
         seen.add(req_id)
-        requirement_scope_by_id[req_id] = scope_kind
-    return requirement_scope_by_id
+        requirement_specs[req_id] = {
+            "scope_kind": scope_kind,
+            "promoted_constraints": promoted_constraints,
+        }
+    return requirement_specs
+
+
+def _load_observed_retries(iteration_dir: Path) -> int:
+    execution_state_path = iteration_dir / "plan_execution_state.json"
+    if not execution_state_path.exists():
+        return 0
+    try:
+        payload = _load_json_dict(
+            execution_state_path, "plan_execution_state.json approval-risk source"
+        )
+    except PlanContractError:
+        return 0
+    observed_retries = 0
+    for field in ("task_retry_counts", "wave_retry_counts"):
+        raw_counts = payload.get(field)
+        if not isinstance(raw_counts, dict):
+            continue
+        for value in raw_counts.values():
+            try:
+                observed_retries += max(int(value or 0), 0)
+            except Exception:
+                continue
+    return observed_retries
 
 
 def _artifact_matches_required(
@@ -323,10 +387,10 @@ def check_implementation_plan_contract(
     warnings: list[str] = []
     rule_results: list[dict[str, str]] = []
 
-    design_requirement_scope = _extract_design_requirements(
+    design_requirement_specs = _extract_design_requirements(
         design_payload, errors=errors
     )
-    design_requirement_ids = list(design_requirement_scope)
+    design_requirement_ids = list(design_requirement_specs)
     if design_requirement_ids:
         rule_results.append(
             {
@@ -405,6 +469,9 @@ def check_implementation_plan_contract(
     task_expected_artifacts: dict[str, list[str]] = {}
     task_covers_requirements: dict[str, list[str]] = {}
     task_context_inputs: dict[str, list[str]] = {}
+    task_promotion_source: dict[str, str] = {}
+    task_promotion_scope_ok: dict[str, bool] = {}
+    task_promoted_refs: dict[str, list[str]] = {}
 
     for idx, raw_task in enumerate(tasks_raw):
         if not isinstance(raw_task, dict):
@@ -442,6 +509,7 @@ def check_implementation_plan_contract(
             context_inputs = _parse_str_list(
                 task_id, raw_task, "context_inputs", errors=errors
             )
+        promoted_refs: list[str] = []
         objective = str(raw_task.get("objective", "")).strip()
         if not objective:
             errors.append(f"{task_id}: objective must be non-empty")
@@ -531,6 +599,8 @@ def check_implementation_plan_contract(
             if parsed is None:
                 errors.append(f"{task_id}: invalid context_inputs ref '{context_ref}'")
                 continue
+            if parsed.get("kind") == "promoted":
+                promoted_refs.append(context_ref)
             if (
                 resolve_context_ref(
                     repo_root,
@@ -602,6 +672,9 @@ def check_implementation_plan_contract(
         task_expected_artifacts[task_id] = expected_artifacts
         task_covers_requirements[task_id] = covers_requirements
         task_context_inputs[task_id] = context_inputs
+        task_promotion_source[task_id] = promotion_source
+        task_promotion_scope_ok[task_id] = bool(promotion_scope_ok)
+        task_promoted_refs[task_id] = promoted_refs
 
     unknown_dependency_errors = 0
     for task_id, deps in deps_map.items():
@@ -677,7 +750,9 @@ def check_implementation_plan_contract(
                     f"design requirement '{req_id}' is not mapped by any plan task"
                 )
                 continue
-            expected_scope = design_requirement_scope.get(req_id, "")
+            expected_scope = str(
+                design_requirement_specs.get(req_id, {}).get("scope_kind", "")
+            ).strip()
             scope_mismatches = [
                 task_id
                 for task_id in mapped_tasks
@@ -709,6 +784,151 @@ def check_implementation_plan_contract(
                 "detail": (
                     f"{missing_requirement_mappings} requirement(s) are unmapped; "
                     f"{scope_mismatch_requirement_mappings} requirement(s) have wrong-scope task mappings"
+                ),
+            }
+        )
+
+    promotion_requirement_rows: list[dict[str, Any]] = []
+    promotion_failures = 0
+    task_illegal_promoted_refs = 0
+    promoted_source_mismatches = 0
+    for task_id, promoted_refs in task_promoted_refs.items():
+        for promoted_ref in promoted_refs:
+            parsed = parse_context_ref(promoted_ref)
+            if parsed is None:
+                continue
+            requirement_id = str(parsed.get("requirement_id", "")).strip()
+            if not requirement_id:
+                continue
+            if requirement_id not in task_covers_requirements.get(task_id, []):
+                task_illegal_promoted_refs += 1
+                errors.append(
+                    f"{task_id}: promoted context ref '{promoted_ref}' requires covers_requirements to include '{requirement_id}'"
+                )
+        if promoted_refs and task_scope.get(task_id, "") == "project_wide":
+            if not task_promotion_scope_ok.get(task_id, False):
+                task_illegal_promoted_refs += 1
+                errors.append(
+                    f"{task_id}: project_wide task consuming promoted context requires promotion_scope_ok=true"
+                )
+
+    for req_id, requirement_spec in design_requirement_specs.items():
+        expected_scope = str(requirement_spec.get("scope_kind", "")).strip()
+        promoted_constraints = requirement_spec.get("promoted_constraints", [])
+        if expected_scope != "project_wide" or not isinstance(
+            promoted_constraints, list
+        ):
+            continue
+        required_promoted_refs = [
+            f"promoted:{req_id}:{str(item.get('id', '')).strip()}"
+            for item in promoted_constraints
+            if str(item.get("id", "")).strip()
+        ]
+        covering_task_ids = sorted(
+            task_id
+            for task_id, covered_requirements in task_covers_requirements.items()
+            if req_id in covered_requirements
+            and task_scope.get(task_id, "") == "project_wide"
+        )
+        consumed_promoted_refs = sorted(
+            {
+                context_ref
+                for task_id in covering_task_ids
+                for context_ref in task_promoted_refs.get(task_id, [])
+                if context_ref.startswith(f"promoted:{req_id}:")
+            }
+        )
+        missing_promoted_refs = sorted(
+            ref for ref in required_promoted_refs if ref not in consumed_promoted_refs
+        )
+        illegal_task_refs = sorted(
+            task_id
+            for task_id, promoted_refs in task_promoted_refs.items()
+            if any(ref.startswith(f"promoted:{req_id}:") for ref in promoted_refs)
+            and req_id not in task_covers_requirements.get(task_id, [])
+        )
+        status = "pass"
+        if not covering_task_ids:
+            promotion_failures += 1
+            status = "fail"
+            errors.append(
+                f"project_wide requirement '{req_id}' with promoted_constraints must be covered by at least one project_wide task"
+            )
+        if missing_promoted_refs:
+            promotion_failures += 1
+            status = "fail"
+            errors.append(
+                f"project_wide requirement '{req_id}' missing promoted context inputs: {', '.join(missing_promoted_refs)}"
+            )
+        if illegal_task_refs:
+            promotion_failures += 1
+            status = "fail"
+            errors.append(
+                f"project_wide requirement '{req_id}' has illegal promoted context consumers: {', '.join(illegal_task_refs)}"
+            )
+        promotion_requirement_rows.append(
+            {
+                "requirement_id": req_id,
+                "scope_kind": expected_scope,
+                "status": status,
+                "promoted_constraint_ids": [
+                    str(item.get("id", "")).strip()
+                    for item in promoted_constraints
+                    if str(item.get("id", "")).strip()
+                ],
+                "covering_task_ids": covering_task_ids,
+                "consumed_promoted_refs": consumed_promoted_refs,
+                "missing_promoted_refs": missing_promoted_refs,
+                "illegal_task_refs": illegal_task_refs,
+            }
+        )
+    for task_id, promotion_source in task_promotion_source.items():
+        if not promotion_source:
+            continue
+        consumed_source_refs: set[str] = set()
+        for promoted_ref in task_promoted_refs.get(task_id, []):
+            parsed = parse_context_ref(promoted_ref)
+            if parsed is None:
+                continue
+            requirement_id = str(parsed.get("requirement_id", "")).strip()
+            promoted_id = str(parsed.get("item_id", "")).strip()
+            requirement_spec = design_requirement_specs.get(requirement_id, {})
+            promoted_constraints = requirement_spec.get("promoted_constraints", [])
+            if not isinstance(promoted_constraints, list):
+                continue
+            for promoted_constraint in promoted_constraints:
+                if str(promoted_constraint.get("id", "")).strip() != promoted_id:
+                    continue
+                source_ref = str(promoted_constraint.get("source_ref", "")).strip()
+                if source_ref:
+                    consumed_source_refs.add(source_ref)
+        if promotion_source not in consumed_source_refs:
+            promoted_source_mismatches += 1
+            errors.append(
+                f"{task_id}: promotion_source '{promotion_source}' must match a consumed promoted constraint source_ref"
+            )
+
+    if (
+        promotion_failures == 0
+        and task_illegal_promoted_refs == 0
+        and promoted_source_mismatches == 0
+    ):
+        rule_results.append(
+            {
+                "rule": "promotion_completeness",
+                "status": "pass",
+                "detail": "promoted cross-scope constraints are fully covered by declared project_wide tasks",
+            }
+        )
+    else:
+        rule_results.append(
+            {
+                "rule": "promotion_completeness",
+                "status": "fail",
+                "detail": (
+                    f"{promotion_failures} promoted requirement coverage issue(s), "
+                    f"{task_illegal_promoted_refs} illegal promoted context usage issue(s), "
+                    f"{promoted_source_mismatches} promotion_source mismatch(es)"
                 ),
             }
         )
@@ -852,6 +1072,84 @@ def check_implementation_plan_contract(
         ],
         "waves": wave_rows,
     }
+    plan_hash = build_plan_hash(
+        contract_payload=contract_source if isinstance(contract_source, dict) else {},
+        graph_payload=graph_payload,
+    )
+
+    try:
+        approval_cfg = _load_plan_execution_config(repo_root).implementation.approval
+    except Exception as exc:  # pragma: no cover - config parsing exercised elsewhere
+        raise PlanContractError(str(exc)) from exc
+
+    observed_retries = _load_observed_retries(iteration_dir)
+    try:
+        stage_attempt = max(int(state.get("stage_attempt", 0) or 0), 0)
+    except Exception:
+        stage_attempt = 0
+    project_wide_task_ids = sorted(
+        task_id
+        for task_id, scope_kind in task_scope.items()
+        if scope_kind == "project_wide"
+    )
+    project_wide_unique_paths = sorted(
+        {
+            path
+            for task_id, surfaces in task_surfaces.items()
+            if task_scope.get(task_id, "") == "project_wide"
+            for path in surfaces
+            if path
+        }
+    )
+    trigger_reasons: list[str] = []
+    if approval_cfg.enabled:
+        if approval_cfg.require_for_project_wide_tasks and project_wide_task_ids:
+            trigger_reasons.append("project_wide_tasks_present")
+        if len(tasks) > approval_cfg.max_tasks_without_approval:
+            trigger_reasons.append("task_count_exceeds_threshold")
+        if len(wave_rows) > approval_cfg.max_waves_without_approval:
+            trigger_reasons.append("wave_count_exceeds_threshold")
+        if (
+            len(project_wide_unique_paths)
+            > approval_cfg.max_project_wide_paths_without_approval
+        ):
+            trigger_reasons.append("project_wide_blast_radius_exceeds_threshold")
+        if approval_cfg.require_after_retries and (
+            stage_attempt > 0 or observed_retries > 0
+        ):
+            trigger_reasons.append("prior_retries_observed")
+    approval_risk = {
+        "requires_approval": bool(trigger_reasons),
+        "trigger_reasons": trigger_reasons,
+        "counts": {
+            "tasks_total": len(tasks),
+            "waves_total": len(wave_rows),
+            "project_wide_tasks": len(project_wide_task_ids),
+            "project_wide_unique_paths": len(project_wide_unique_paths),
+            "observed_retries": observed_retries,
+            "stage_attempt": stage_attempt,
+        },
+        "project_wide_task_ids": project_wide_task_ids,
+        "project_wide_unique_paths": project_wide_unique_paths,
+        "policy": {
+            "enabled": approval_cfg.enabled,
+            "require_for_project_wide_tasks": approval_cfg.require_for_project_wide_tasks,
+            "max_tasks_without_approval": approval_cfg.max_tasks_without_approval,
+            "max_waves_without_approval": approval_cfg.max_waves_without_approval,
+            "max_project_wide_paths_without_approval": approval_cfg.max_project_wide_paths_without_approval,
+            "require_after_retries": approval_cfg.require_after_retries,
+        },
+        "plan_hash": plan_hash,
+    }
+    approval_risk["risk_fingerprint"] = build_risk_fingerprint(approval_risk)
+    promotion_checks = {
+        "status": "pass"
+        if promotion_failures == 0
+        and task_illegal_promoted_refs == 0
+        and promoted_source_mismatches == 0
+        else "fail",
+        "requirements": promotion_requirement_rows,
+    }
 
     passed = not errors
     try:
@@ -870,6 +1168,9 @@ def check_implementation_plan_contract(
         "errors": errors,
         "warnings": warnings,
         "rule_results": rule_results,
+        "plan_hash": plan_hash,
+        "promotion_checks": promotion_checks,
+        "approval_risk": approval_risk,
         "artifacts": {
             "contract_path": ".autolab/plan_contract.json",
             "snapshot_path": _normalize_path(snapshot_rel),
@@ -902,6 +1203,9 @@ def check_implementation_plan_contract(
         "rule_results": rule_results,
         "check_result": check_result_payload,
         "plan_graph": graph_payload,
+        "plan_hash": plan_hash,
+        "promotion_checks": promotion_checks,
+        "approval_risk": approval_risk,
     }
 
     if passed:

@@ -34,6 +34,12 @@ from autolab.constants import (
     DEFAULT_PLAN_EXECUTION_RUN_UNIT,
     DEFAULT_PLAN_EXECUTION_TASK_RETRY_MAX,
     DEFAULT_PLAN_EXECUTION_WAVE_RETRY_MAX,
+    DEFAULT_PLAN_APPROVAL_ENABLED,
+    DEFAULT_PLAN_APPROVAL_REQUIRE_FOR_PROJECT_WIDE_TASKS,
+    DEFAULT_PLAN_APPROVAL_MAX_TASKS_WITHOUT_APPROVAL,
+    DEFAULT_PLAN_APPROVAL_MAX_WAVES_WITHOUT_APPROVAL,
+    DEFAULT_PLAN_APPROVAL_MAX_PROJECT_WIDE_PATHS_WITHOUT_APPROVAL,
+    DEFAULT_PLAN_APPROVAL_REQUIRE_AFTER_RETRIES,
     PLAN_EXECUTION_FAILURE_MODES,
     PLAN_EXECUTION_RUN_UNITS,
     RUNNER_ELIGIBLE_STAGES,
@@ -47,6 +53,7 @@ from autolab.models import (
     GuardrailConfig,
     LaunchRuntimeConfig,
     MeaningfulChangeConfig,
+    PlanApprovalPolicyConfig,
     PlanExecutionConfig,
     PlanExecutionImplementationConfig,
     SlurmMonitorRuntimeConfig,
@@ -348,37 +355,35 @@ def _load_plan_execution_config(repo_root: Path) -> PlanExecutionConfig:
             f"{sorted(PLAN_EXECUTION_RUN_UNITS)}"
         )
 
-    def _parse_int_setting(field: str, *, default: int) -> int:
-        raw_value = implementation.get(field)
+    def _parse_int_setting(
+        field: str,
+        *,
+        default: int,
+        source: dict[str, Any] | None = None,
+        error_prefix: str = "plan_execution.implementation",
+    ) -> int:
+        raw_value = (source or implementation).get(field)
         if raw_value is None:
             return default
         if isinstance(raw_value, bool):
-            raise StageCheckError(
-                f"plan_execution.implementation.{field} must be an integer"
-            )
+            raise StageCheckError(f"{error_prefix}.{field} must be an integer")
         if isinstance(raw_value, int):
             return raw_value
         if isinstance(raw_value, float):
             if not raw_value.is_integer():
-                raise StageCheckError(
-                    f"plan_execution.implementation.{field} must be an integer"
-                )
+                raise StageCheckError(f"{error_prefix}.{field} must be an integer")
             return int(raw_value)
         if isinstance(raw_value, str):
             candidate = raw_value.strip()
             if not candidate:
-                raise StageCheckError(
-                    f"plan_execution.implementation.{field} must be an integer"
-                )
+                raise StageCheckError(f"{error_prefix}.{field} must be an integer")
             try:
                 return int(candidate)
             except Exception as exc:
                 raise StageCheckError(
-                    f"plan_execution.implementation.{field} must be an integer"
+                    f"{error_prefix}.{field} must be an integer"
                 ) from exc
-        raise StageCheckError(
-            f"plan_execution.implementation.{field} must be an integer"
-        )
+        raise StageCheckError(f"{error_prefix}.{field} must be an integer")
 
     max_parallel_tasks = _parse_int_setting(
         "max_parallel_tasks",
@@ -443,6 +448,57 @@ def _load_plan_execution_config(repo_root: Path) -> PlanExecutionConfig:
         default=DEFAULT_PLAN_EXECUTION_REQUIRE_VERIFICATION_COMMANDS,
     )
 
+    approval = implementation.get("approval")
+    if approval is None:
+        approval = {}
+    if not isinstance(approval, dict):
+        raise StageCheckError(
+            "plan_execution.implementation.approval must be a mapping"
+        )
+
+    approval_enabled = _coerce_bool(
+        approval.get("enabled"),
+        default=DEFAULT_PLAN_APPROVAL_ENABLED,
+    )
+    require_for_project_wide_tasks = _coerce_bool(
+        approval.get("require_for_project_wide_tasks"),
+        default=DEFAULT_PLAN_APPROVAL_REQUIRE_FOR_PROJECT_WIDE_TASKS,
+    )
+    max_tasks_without_approval = _parse_int_setting(
+        "max_tasks_without_approval",
+        default=DEFAULT_PLAN_APPROVAL_MAX_TASKS_WITHOUT_APPROVAL,
+        source=approval,
+        error_prefix="plan_execution.implementation.approval",
+    )
+    if max_tasks_without_approval < 1:
+        raise StageCheckError(
+            "plan_execution.implementation.approval.max_tasks_without_approval must be >= 1"
+        )
+    max_waves_without_approval = _parse_int_setting(
+        "max_waves_without_approval",
+        default=DEFAULT_PLAN_APPROVAL_MAX_WAVES_WITHOUT_APPROVAL,
+        source=approval,
+        error_prefix="plan_execution.implementation.approval",
+    )
+    if max_waves_without_approval < 1:
+        raise StageCheckError(
+            "plan_execution.implementation.approval.max_waves_without_approval must be >= 1"
+        )
+    max_project_wide_paths_without_approval = _parse_int_setting(
+        "max_project_wide_paths_without_approval",
+        default=DEFAULT_PLAN_APPROVAL_MAX_PROJECT_WIDE_PATHS_WITHOUT_APPROVAL,
+        source=approval,
+        error_prefix="plan_execution.implementation.approval",
+    )
+    if max_project_wide_paths_without_approval < 0:
+        raise StageCheckError(
+            "plan_execution.implementation.approval.max_project_wide_paths_without_approval must be >= 0"
+        )
+    require_after_retries = _coerce_bool(
+        approval.get("require_after_retries"),
+        default=DEFAULT_PLAN_APPROVAL_REQUIRE_AFTER_RETRIES,
+    )
+
     return PlanExecutionConfig(
         implementation=PlanExecutionImplementationConfig(
             enabled=enabled,
@@ -453,6 +509,14 @@ def _load_plan_execution_config(repo_root: Path) -> PlanExecutionConfig:
             failure_mode=failure_mode,
             on_wave_retry_exhausted=on_wave_retry_exhausted,
             require_verification_commands=require_verification_commands,
+            approval=PlanApprovalPolicyConfig(
+                enabled=approval_enabled,
+                require_for_project_wide_tasks=require_for_project_wide_tasks,
+                max_tasks_without_approval=max_tasks_without_approval,
+                max_waves_without_approval=max_waves_without_approval,
+                max_project_wide_paths_without_approval=max_project_wide_paths_without_approval,
+                require_after_retries=require_after_retries,
+            ),
         )
     )
 

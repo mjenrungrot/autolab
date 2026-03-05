@@ -667,6 +667,8 @@ def _run_once_standard(
     commit_task_id: str = "",
     commit_cycle_stage: str = "",
     strict_implementation_progress: bool = True,
+    plan_only: bool = False,
+    execute_approved_plan: bool = False,
 ) -> RunOutcome:
     repo_root = _resolve_repo_root(state_path)
     pre_sync_changed: list[Path] = []
@@ -1292,6 +1294,8 @@ def _run_once_standard(
                             state=state,
                             run_agent_mode=run_agent_mode,
                             auto_mode=auto_mode,
+                            plan_only=plan_only,
+                            execute_approved_plan=execute_approved_plan,
                         )
                         pre_sync_changed.extend(
                             list(implementation_exec_result.changed_files)
@@ -1352,6 +1356,7 @@ def _run_once_standard(
             stage_before=stage_before,
             stage_after=stage_after,
             message=implementation_exec_result.summary,
+            pause_reason=implementation_exec_result.pause_reason,
         )
         post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root,
@@ -1377,6 +1382,7 @@ def _run_once_standard(
             stage_before=outcome.stage_before,
             stage_after=outcome.stage_after,
             message=summary,
+            pause_reason=outcome.pause_reason,
         )
 
     if stage_before == "launch":

@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from autolab.constants import ACTIVE_STAGES, DECISION_STAGES
+from autolab.plan_approval import (
+    approval_next_commands,
+    approval_requires_action,
+    load_plan_approval,
+)
 from autolab.scope import _detect_scope_kind_from_plan_contract, _resolve_scope_context
 from autolab.state import (
     _normalize_state,
@@ -245,6 +250,7 @@ def _pending_human_decisions(
     state: dict[str, Any],
     iteration_dir: Path | None,
     block_reason_payload: dict[str, Any],
+    plan_approval: dict[str, Any],
 ) -> list[str]:
     stage = str(state.get("stage", "")).strip()
     decisions: list[str] = []
@@ -259,6 +265,11 @@ def _pending_human_decisions(
     action_required = str(block_reason_payload.get("action_required", "")).strip()
     if action_required:
         decisions.append(action_required)
+    if approval_requires_action(plan_approval):
+        decisions.append(
+            "Approve, retry, or stop the implementation plan before wave execution."
+        )
+        decisions.extend(approval_next_commands(plan_approval))
     return _unique_list(decisions)
 
 
@@ -268,11 +279,16 @@ def _recommended_command(
     blockers: list[str],
     pending_decisions: list[str],
     latest_verification: dict[str, Any],
+    plan_approval: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     stage = str(state.get("stage", "")).strip()
     if stage == "human_review":
         command = "autolab review --status=<pass|retry|stop>"
         reason = "Current stage is human_review and requires an explicit decision."
+        executable = False
+    elif approval_requires_action(plan_approval):
+        command = "autolab approve-plan --status approve"
+        reason = "Implementation plan approval is required before wave execution can continue."
         executable = False
     elif stage == "decide_repeat" and pending_decisions:
         command = "autolab run --decision=<hypothesis|design|stop|human_review>"
@@ -334,6 +350,7 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     ]
     recommended = _safe_dict(payload.get("recommended_next_command"))
     safe_resume = _safe_dict(payload.get("safe_resume_point"))
+    plan_approval = _safe_dict(payload.get("plan_approval"))
     wave_observability = _safe_dict(payload.get("wave_observability"))
     critical_path = _safe_dict(wave_observability.get("critical_path"))
     observability_waves = _safe_list(wave_observability.get("waves"))
@@ -369,6 +386,40 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         f"- tasks.skipped: `{tasks.get('skipped', 0)}`",
         f"- tasks.deferred: `{tasks.get('deferred', 0)}`",
     ]
+
+    if plan_approval:
+        counts = _safe_dict(plan_approval.get("counts"))
+        trigger_reasons = [
+            str(item).strip()
+            for item in _safe_list(plan_approval.get("trigger_reasons"))
+            if str(item).strip()
+        ]
+        lines.extend(
+            [
+                "",
+                "## Plan Approval",
+                "",
+                f"- status: `{plan_approval.get('status', '')}`",
+                f"- requires_approval: `{bool(plan_approval.get('requires_approval', False))}`",
+                f"- plan_hash: `{plan_approval.get('plan_hash', '')}`",
+                f"- risk_fingerprint: `{plan_approval.get('risk_fingerprint', '')}`",
+                (
+                    "- counts: "
+                    f"tasks={int(counts.get('tasks_total', 0) or 0)}, "
+                    f"waves={int(counts.get('waves_total', 0) or 0)}, "
+                    f"project_wide_tasks={int(counts.get('project_wide_tasks', 0) or 0)}, "
+                    f"project_wide_paths={int(counts.get('project_wide_unique_paths', 0) or 0)}, "
+                    f"retries={int(counts.get('observed_retries', 0) or 0)}"
+                ),
+            ]
+        )
+        if trigger_reasons:
+            lines.append("- trigger_reasons:")
+            lines.extend(f"  - {item}" for item in trigger_reasons)
+        next_commands = approval_next_commands(plan_approval)
+        if next_commands:
+            lines.append("- next_commands:")
+            lines.extend(f"  - {item}" for item in next_commands)
 
     if critical_path:
         lines.extend(
@@ -559,6 +610,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     guardrail_breach = _safe_dict(
         _load_json_if_exists(autolab_dir / "guardrail_breach.json")
     )
+    plan_approval = load_plan_approval(iteration_dir) if iteration_dir else {}
 
     blocking_failures = []
     blocking_failures.extend(_verification_blockers(repo_root))
@@ -577,6 +629,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         state=state,
         iteration_dir=iteration_dir,
         block_reason_payload=block_reason,
+        plan_approval=plan_approval,
     )
 
     wave_observability = _compute_wave_observability(
@@ -593,6 +646,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         blockers=blocking_failures,
         pending_decisions=pending_decisions,
         latest_verification=latest_verification,
+        plan_approval=plan_approval,
     )
     latest_verification_summary = {
         "generated_at": str(latest_verification.get("generated_at", "")).strip(),
@@ -624,6 +678,8 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "handoff_json_path": str(handoff_json_path),
         "handoff_markdown_path": str(handoff_md_path),
     }
+    if plan_approval:
+        payload["plan_approval"] = plan_approval
     _write_json(handoff_json_path, payload)
     handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_md_path.write_text(_render_handoff_markdown(payload), encoding="utf-8")
