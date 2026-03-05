@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.9] - 2026-03-04
+
+### Summary
+
+- Refactored the CLI monolith into a split `autolab.cli` package with dedicated handler/parser modules while preserving command behavior.
+- Introduced a typed orchestration layer (`RunRequest`, `LoopRequest`, `OrchestrationEngine`, and mode adapters) and moved standard/assistant runtimes under `autolab.orchestration`.
+- Converted legacy entry modules (`commands.py`, `run_standard.py`, `run_assistant.py`) into compatibility shims to retain existing imports and test monkeypatch hooks.
+
+<!-- autolab:range v1.2.8..v1.2.9 -->
+
 ## [1.2.8] - 2026-03-04
 
 ### Summary
