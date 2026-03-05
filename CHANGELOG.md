@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.15] - 2026-03-04
+
+### Summary
+
+- Hardened default-branch pre-commit versioning by requiring `README.md`'s pinned install tag to match the current `pyproject.toml` version before bumping.
+- Added regression coverage for stale README-tag detection and updated hook docs to describe the new version-freshness check.
+
+<!-- autolab:range v1.2.14..v1.2.15 -->
+
 ## [1.2.14] - 2026-03-04
 
 ### Summary

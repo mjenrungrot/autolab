@@ -77,6 +77,30 @@ version = "0.0.9"
     assert readme_path.read_text(encoding="utf-8") == original_readme
 
 
+def test_bump_version_errors_when_readme_tag_is_stale(tmp_path: Path) -> None:
+    module = _load_bump_module()
+
+    pyproject_path = tmp_path / "pyproject.toml"
+    readme_path = tmp_path / "README.md"
+    original_pyproject = """[project]
+name = "autolab"
+version = "2.0.0"
+"""
+    original_readme = """python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.9.9
+"""
+    pyproject_path.write_text(original_pyproject, encoding="utf-8")
+    readme_path.write_text(original_readme, encoding="utf-8")
+
+    try:
+        module.bump_version(pyproject_path, readme_path, dry_run=False)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "expected v2.0.0, found v1.9.9" in str(exc)
+
+    assert pyproject_path.read_text(encoding="utf-8") == original_pyproject
+    assert readme_path.read_text(encoding="utf-8") == original_readme
+
+
 def test_bump_version_uses_tomli_fallback_when_tomllib_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
