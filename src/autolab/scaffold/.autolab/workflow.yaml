@@ -55,6 +55,8 @@ stages:
     human_prompt_file: stage_design.human.md
     required_tokens: [iteration_id, iteration_path, hypothesis_id]
     optional_tokens: [available_memory_gb, experiment_id, recommended_memory_estimate]
+    # design.yaml contract now includes extract_parser so extraction failures surface
+    # during design schema validation instead of late-stage runtime failure.
     required_outputs: [design.yaml]
     next_stage: implementation
     verifier_categories:
@@ -140,7 +142,7 @@ stages:
       active: true
       terminal: false
       decision: false
-      runner_eligible: true
+      runner_eligible: false
   slurm_monitor:
     prompt_file: stage_slurm_monitor.audit.md
     runner_prompt_file: stage_slurm_monitor.runner.md
@@ -165,7 +167,7 @@ stages:
       active: true
       terminal: false
       decision: false
-      runner_eligible: true
+      runner_eligible: false
   extract_results:
     prompt_file: stage_extract_results.audit.md
     runner_prompt_file: stage_extract_results.runner.md
@@ -173,6 +175,8 @@ stages:
     human_prompt_file: stage_extract_results.human.md
     required_tokens: [iteration_id, iteration_path, run_id]
     optional_tokens: [run_group, replicate_count]
+    # extract_results contract: metrics + summary are required outputs. Summary must
+    # be written by the parser hook or by configured summary.llm_command fallback.
     required_outputs: [runs/<RUN_ID>/metrics.json, analysis/summary.md]
     next_stage: update_docs
     verifier_categories:
@@ -187,7 +191,7 @@ stages:
       active: true
       terminal: false
       decision: false
-      runner_eligible: true
+      runner_eligible: false
   update_docs:
     prompt_file: stage_update_docs.audit.md
     runner_prompt_file: stage_update_docs.runner.md

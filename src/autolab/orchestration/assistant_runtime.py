@@ -5,7 +5,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from autolab.constants import ACTIVE_STAGES, TERMINAL_STAGES
+from autolab.constants import (
+    ACTIVE_STAGES,
+    TERMINAL_STAGES,
+    TODO_DOC_SYNC_POST_STAGES,
+    TODO_DOC_SYNC_PRE_STAGES,
+)
 from autolab.models import RunOutcome, StateError
 from autolab.config import (
     _load_assistant_auto_complete_policy,
@@ -51,6 +56,36 @@ from autolab.todo_sync import (
     mark_task_completed,
     select_open_task,
 )
+
+
+def _assistant_todo_pre_sync(
+    repo_root: Path,
+    state: dict[str, Any] | None,
+    *,
+    host_mode: str | None = None,
+) -> tuple[list[Path], str]:
+    stage = ""
+    if isinstance(state, dict):
+        stage = str(state.get("stage", "")).strip()
+    if stage not in TODO_DOC_SYNC_PRE_STAGES:
+        return ([], "")
+    return _safe_todo_pre_sync(repo_root, state, host_mode=host_mode)
+
+
+def _assistant_todo_post_sync(
+    repo_root: Path,
+    state: dict[str, Any] | None,
+    *,
+    run_outcome: dict[str, Any] | None = None,
+) -> tuple[list[Path], str]:
+    stage_before = ""
+    if isinstance(run_outcome, dict):
+        stage_before = str(run_outcome.get("stage_before", "")).strip()
+    if not stage_before and isinstance(state, dict):
+        stage_before = str(state.get("stage", "")).strip()
+    if stage_before not in TODO_DOC_SYNC_POST_STAGES:
+        return ([], "")
+    return _safe_todo_post_sync(repo_root, state, run_outcome=run_outcome)
 
 
 def _append_task_ledger(
@@ -335,7 +370,7 @@ def _run_once_assistant(
         state["task_change_baseline"] = {}
         state["stage_attempt"] = 0
         _write_json(state_path, state)
-        pre_sync_changed, _ = _safe_todo_pre_sync(
+        pre_sync_changed, _ = _assistant_todo_pre_sync(
             repo_root, state, host_mode=detected_host_mode
         )
         _write_block_reason(
@@ -352,7 +387,7 @@ def _run_once_assistant(
             stage_after="stop",
             message=message,
         )
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _assistant_todo_post_sync(
             repo_root,
             state,
             run_outcome=_outcome_payload(outcome),
@@ -395,7 +430,7 @@ def _run_once_assistant(
         )
 
     preflight_changed = _assistant_seed_segment_list_if_needed(repo_root, state)
-    pre_sync_changed, _ = _safe_todo_pre_sync(
+    pre_sync_changed, _ = _assistant_todo_pre_sync(
         repo_root, state, host_mode=detected_host_mode
     )
     stage_before = str(state.get("stage", ""))
@@ -433,7 +468,7 @@ def _run_once_assistant(
             summary=message,
         )
         _write_json(state_path, state)
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _assistant_todo_post_sync(
             repo_root,
             state,
             run_outcome={

@@ -43,11 +43,13 @@ from autolab.models import (
     AgentRunnerConfig,
     AgentRunnerEditScopeConfig,
     AutoCommitConfig,
+    ExtractRuntimeConfig,
     GuardrailConfig,
     LaunchRuntimeConfig,
     MeaningfulChangeConfig,
     PlanExecutionConfig,
     PlanExecutionImplementationConfig,
+    SlurmMonitorRuntimeConfig,
     StageCheckError,
     StrictModeConfig,
     _coerce_bool,
@@ -225,6 +227,11 @@ def _load_launch_runtime_config(repo_root: Path) -> LaunchRuntimeConfig:
         launch = {}
 
     execute = _coerce_bool(launch.get("execute"), default=True)
+    script_generation = (
+        str(launch.get("script_generation", "missing_only")).strip().lower()
+    )
+    if script_generation not in {"missing_only", "always"}:
+        script_generation = "missing_only"
 
     local_timeout_seconds = _coerce_float(
         launch.get("local_timeout_seconds"), default=900.0
@@ -241,6 +248,7 @@ def _load_launch_runtime_config(repo_root: Path) -> LaunchRuntimeConfig:
 
     return LaunchRuntimeConfig(
         execute=execute,
+        script_generation=script_generation,
         local_timeout_seconds=local_timeout_seconds,
         slurm_submit_timeout_seconds=slurm_submit_timeout_seconds,
     )
@@ -249,6 +257,70 @@ def _load_launch_runtime_config(repo_root: Path) -> LaunchRuntimeConfig:
 def _load_launch_execute_policy(repo_root: Path) -> bool:
     """Return whether launch stage is allowed to execute commands/submit jobs."""
     return _load_launch_runtime_config(repo_root).execute
+
+
+def _load_slurm_monitor_runtime_config(repo_root: Path) -> SlurmMonitorRuntimeConfig:
+    policy = _load_verifier_policy(repo_root)
+    slurm = policy.get("slurm")
+    if not isinstance(slurm, dict):
+        slurm = {}
+    monitor = slurm.get("monitor")
+    if not isinstance(monitor, dict):
+        monitor = {}
+
+    poll_command_template = str(monitor.get("poll_command_template", "")).strip()
+    poll_timeout_seconds = _coerce_float(
+        monitor.get("poll_timeout_seconds"), default=30.0
+    )
+    if poll_timeout_seconds <= 0:
+        poll_timeout_seconds = 30.0
+
+    sync_command_template = str(monitor.get("sync_command_template", "")).strip()
+    sync_timeout_seconds = _coerce_float(
+        monitor.get("sync_timeout_seconds"), default=180.0
+    )
+    if sync_timeout_seconds <= 0:
+        sync_timeout_seconds = 180.0
+
+    return SlurmMonitorRuntimeConfig(
+        poll_command_template=poll_command_template,
+        poll_timeout_seconds=poll_timeout_seconds,
+        sync_command_template=sync_command_template,
+        sync_timeout_seconds=sync_timeout_seconds,
+    )
+
+
+def _load_extract_runtime_config(repo_root: Path) -> ExtractRuntimeConfig:
+    policy = _load_verifier_policy(repo_root)
+    extract = policy.get("extract_results")
+    if not isinstance(extract, dict):
+        extract = {}
+
+    parser_block = extract.get("parser")
+    if not isinstance(parser_block, dict):
+        parser_block = {}
+    require_parser_hook = _coerce_bool(parser_block.get("require_hook"), default=False)
+
+    summary_block = extract.get("summary")
+    if not isinstance(summary_block, dict):
+        summary_block = {}
+    summary_mode = str(summary_block.get("mode", "llm_on_demand")).strip().lower()
+    if summary_mode not in {"llm_on_demand", "none"}:
+        summary_mode = "llm_on_demand"
+
+    summary_llm_command = str(summary_block.get("llm_command", "")).strip()
+    summary_llm_timeout_seconds = _coerce_float(
+        summary_block.get("llm_timeout_seconds"), default=300.0
+    )
+    if summary_llm_timeout_seconds <= 0:
+        summary_llm_timeout_seconds = 300.0
+
+    return ExtractRuntimeConfig(
+        require_parser_hook=require_parser_hook,
+        summary_mode=summary_mode,
+        summary_llm_command=summary_llm_command,
+        summary_llm_timeout_seconds=summary_llm_timeout_seconds,
+    )
 
 
 def _load_plan_execution_config(repo_root: Path) -> PlanExecutionConfig:
@@ -547,6 +619,7 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         )
 
     raw_stages = runner_section.get("stages")
+    dropped_unsupported_stages: list[str] = []
     if raw_stages is None:
         stages = list(DEFAULT_AGENT_RUNNER_STAGES)
     else:
@@ -556,11 +629,25 @@ def _load_agent_runner_config(repo_root: Path) -> AgentRunnerConfig:
         for raw_stage in raw_stages:
             stage = str(raw_stage).strip()
             if stage not in RUNNER_ELIGIBLE_STAGES:
-                raise StageCheckError(
-                    f"agent_runner.stages includes unsupported stage '{stage}'"
-                )
+                if enabled:
+                    raise StageCheckError(
+                        f"agent_runner.stages includes unsupported stage '{stage}'"
+                    )
+                dropped_unsupported_stages.append(stage)
+                continue
             if stage not in stages:
                 stages.append(stage)
+    if dropped_unsupported_stages and not enabled:
+        dropped_rendered = ", ".join(
+            repr(stage) for stage in dropped_unsupported_stages
+        )
+        print(
+            (
+                "warning: dropped unsupported agent_runner.stages entries while "
+                f"agent_runner.enabled=false: {dropped_rendered}"
+            ),
+            file=sys.stderr,
+        )
     if enabled and not stages:
         raise StageCheckError(
             "agent_runner.stages must include at least one active stage"

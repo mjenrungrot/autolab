@@ -32,11 +32,13 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Path**: `experiments/<type>/<iteration_id>/design.yaml`
 - **Format**: YAML
 - **Schema**: `.autolab/schemas/design.schema.json`
-- **Required fields**: `schema_version`, `id`, `iteration_id`, `hypothesis_id`, `entrypoint`, `compute`, `metrics`, `baselines`
+- **Required fields**: `schema_version`, `id`, `iteration_id`, `hypothesis_id`, `entrypoint`, `compute`, `metrics`, `baselines`, `implementation_requirements`, `extract_parser`
 - **Key constraints**:
   - `schema_version` must be string `"1.0"`
   - `compute.location` must be `"local"` or `"slurm"`
   - `baselines` must be non-empty
+  - `implementation_requirements` must be non-empty and include `scope_kind`
+  - `extract_parser` is required (kind `python` or `command`)
   - `walltime_estimate` format: `HH:MM:SS`
   - `memory_estimate` format: `<number>[KMGT]B` (e.g. `64GB`)
 - **Producing stage**: design
@@ -108,6 +110,9 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Path**: `experiments/<type>/<iteration_id>/analysis/summary.md`
 - **Format**: Markdown
 - **Content**: Run interpretation, metric results, missing evidence accounting
+- **Contract**:
+  - parser-first: `design.yaml.extract_parser` writes summary directly
+  - fallback: configure `.autolab/verifier_policy.yaml -> extract_results.summary.llm_command` when using `mode: llm_on_demand`
 - **Producing stage**: extract_results
 - **Consuming stages**: update_docs, decide_repeat
 

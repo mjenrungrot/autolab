@@ -126,7 +126,10 @@ agent_runner:
 Not all stages support runner invocation. Eligible stages:
 
 - `hypothesis`, `design`, `implementation`, `implementation_review`
-- `launch`, `slurm_monitor`, `extract_results`, `update_docs`, `decide_repeat`
+- `update_docs`, `decide_repeat`
+
+Deterministic runtime cutover: `launch`, `slurm_monitor`, and `extract_results` are
+orchestrator-owned and not runner-eligible.
 
 Terminal stages (`human_review`, `stop`) are not runner-eligible.
 
@@ -137,8 +140,11 @@ agent_runner:
   stages:
     - implementation
     - implementation_review
-    - extract_results
+    - update_docs
 ```
+
+Migration note: legacy `agent_runner.stages` values that include deterministic
+stages should be removed during scaffold/policy upgrades.
 
 ## CLI Overrides
 

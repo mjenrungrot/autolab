@@ -13,6 +13,7 @@ Examples: `src/autolab/example_golden_iterations/.autolab/state.json`, `src/auto
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:memory_brief.md}}
 {{shared:run_artifacts.md}}
 
 ## INPUTS TO INSPECT

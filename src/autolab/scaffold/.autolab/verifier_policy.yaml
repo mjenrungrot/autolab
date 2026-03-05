@@ -182,6 +182,10 @@ launch:
   # When false, launch stage should generate/validate artifacts without executing
   # local commands or submitting jobs.
   execute: true
+  # Launch script synthesis behavior:
+  # missing_only -> generate launch scripts only when absent
+  # always       -> regenerate launch scripts on every launch stage run
+  script_generation: missing_only
   # Default local timeout tuned for quick small-example testing.
   local_timeout_seconds: 900
   # Keep SLURM submit probing short; long-running execution is monitored in slurm_monitor.
@@ -192,6 +196,33 @@ slurm:
   # slurm_monitor -> status=synced after successful sync
   # extract_results -> finalize run_manifest.status=completed when metrics extraction succeeds
   lifecycle_strict: true
+  monitor:
+    # One-shot scheduler poll command. Leave blank to skip polling.
+    # Available template variables:
+    #   {job_id} {run_id} {iteration_id} {iteration_path} {run_dir} {repo_root}
+    poll_command_template: ""
+    poll_timeout_seconds: 30
+    # Optional one-shot sync command after a completed scheduler state.
+    # Available template variables are the same as poll_command_template.
+    sync_command_template: ""
+    sync_timeout_seconds: 180
+
+extract_results:
+  parser:
+    # Contract: design.yaml must declare extract_parser. With schema v1.0 this now
+    # fails at design-stage schema validation instead of deferring to extract_results.
+    require_hook: true
+  summary:
+    # Contract: extract_results must end with non-empty analysis/summary.md.
+    # - Parser-first path: parser writes analysis/summary.md directly.
+    # - LLM fallback path: when mode=llm_on_demand and summary is missing, Autolab
+    #   invokes llm_command; leave llm_command empty only if parser always writes summary.
+    # llm_on_demand -> invoke llm_command only when analysis/summary.md is missing
+    mode: llm_on_demand
+    # Available template variables:
+    #   {run_id} {iteration_id} {iteration_path} {run_dir} {repo_root}
+    llm_command: ""
+    llm_timeout_seconds: 300
 # ---------------------------------------------------------------------------
 # Per-stage retry policy
 # ---------------------------------------------------------------------------
@@ -233,13 +264,14 @@ agent_runner:
   codex_dangerously_bypass_approvals_and_sandbox: true
   # command is auto-set from runner preset; override with a custom command to use a specific tool
   stages:
+    # Runner cutover note:
+    # launch/slurm_monitor/extract_results are deterministic runtime stages and are
+    # no longer valid runner stages. Keep this list limited to runner-eligible stages.
+    # Legacy configs that still include deterministic stages must be migrated.
     - hypothesis
     - design
     - implementation
     - implementation_review
-    - launch
-    - slurm_monitor
-    - extract_results
     - update_docs
   edit_scope:
     mode: iteration_plus_core

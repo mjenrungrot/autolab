@@ -1724,10 +1724,10 @@ class TestSlurmSyncStatusValues:
 
 
 class TestLongRunningRetryBudget:
-    """Long-running SLURM jobs remain in monitor without launch retry exhaustion."""
+    """Long-running SLURM jobs in monitor escalate when deterministic progress stalls."""
 
     def test_repeated_sync_failures_exhaust_budget(self, tmp_path: Path) -> None:
-        """Repeated pending sync should keep stage at slurm_monitor without retries."""
+        """Repeated pending sync with no monitor hooks should trigger deterministic stall failure."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -1751,11 +1751,13 @@ class TestLongRunningRetryBudget:
         assert persisted["stage"] == "slurm_monitor"
         assert persisted["stage_attempt"] == 0
 
-        # Attempt 3: still waiting, no exhaustion
+        # Attempt 3: deterministic stall is surfaced as stage failure
         outcome = _run(state_path)
-        assert outcome.exit_code == 0
+        assert outcome.exit_code == 1
+        assert "cannot make deterministic progress" in outcome.message
         persisted = _read_state(repo)
         assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 1
 
     def test_update_docs_cycle_limit_with_slurm(self, tmp_path: Path) -> None:
         """extract → update_docs cycle count guardrail works with SLURM runs."""
@@ -2660,6 +2662,32 @@ class TestImplementationExecutionGating:
 
         assert outcome.exit_code == 0
         assert outcome.stage_after == "implementation_review"
+
+
+class TestDeterministicStageForceOnGuard:
+    @pytest.mark.parametrize(
+        "stage_name",
+        ("launch", "slurm_monitor", "extract_results"),
+    )
+    def test_force_on_rejected_for_deterministic_stage(
+        self, tmp_path: Path, stage_name: str
+    ) -> None:
+        repo, state_path, _ = _setup_repo(tmp_path, stage=stage_name)
+
+        with mock.patch(
+            "autolab.run_standard._validate_stage_readiness",
+            return_value=(True, "ready", {}),
+        ):
+            outcome = _run(state_path, run_agent_mode="force_on")
+
+        assert outcome.exit_code == 1
+        assert (
+            f"run_agent_mode=force_on is incompatible with deterministic stage '{stage_name}'"
+            in outcome.message
+        )
+        persisted = _read_state(repo)
+        assert persisted["stage"] == stage_name
+        assert persisted["stage_attempt"] == 1
 
 
 # ===========================================================================

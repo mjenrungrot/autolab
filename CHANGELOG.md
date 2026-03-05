@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.16] - 2026-03-05
+
+### Summary
+
+- De-LLM'd operational execution paths by adding deterministic runtimes for `launch`, `slurm_monitor`, and `extract_results`, including multi-run monitor aggregation and task-level runtime evidence handling.
+- Hardened parser and command execution surfaces with stricter policy controls, safer command templating, run/path containment checks, and timeout-aware hook execution.
+- Tightened prompt/runtime contracts: `design.yaml` now requires `extract_parser`, deterministic stages reject `run_agent_mode=force_on`, and dual-memory guidance moved from universal runtime prose to stage-opted compact memory briefs with orchestration-scoped todo/doc reconciliation.
+
+<!-- autolab:range v1.2.15..v1.2.16 -->
+
 ## [1.2.15] - 2026-03-04
 
 ### Summary

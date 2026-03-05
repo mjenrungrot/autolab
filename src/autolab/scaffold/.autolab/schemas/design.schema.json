@@ -11,7 +11,8 @@
     "compute",
     "metrics",
     "baselines",
-    "implementation_requirements"
+    "implementation_requirements",
+    "extract_parser"
   ],
   "properties": {
     "schema_version": {"type": "string", "const": "1.0"},
@@ -129,6 +130,28 @@
         },
         "additionalProperties": false
       }
+    },
+    "extract_parser": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["python", "command"]},
+        "module": {"type": "string", "minLength": 1},
+        "callable": {"type": "string", "minLength": 1},
+        "command": {"type": "string", "minLength": 1},
+        "working_dir": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "python"}}},
+          "then": {"required": ["module"]}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "command"}}},
+          "then": {"required": ["command"]}
+        }
+      ],
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

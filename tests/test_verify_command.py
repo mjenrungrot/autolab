@@ -110,6 +110,10 @@ def _write_design(repo: Path) -> None:
                 "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
             }
         ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "python3 -m scripts.extract_results --run-id {run_id} --iteration-path {iteration_path}",
+        },
         "variants": [{"name": "proposed", "changes": {}}],
     }
     path = repo / "experiments" / "plan" / "iter1" / "design.yaml"

@@ -8,6 +8,7 @@ import yaml
 
 from autolab.config import (
     _load_agent_runner_config,
+    _load_extract_runtime_config,
     _load_guardrail_config,
     _load_launch_execute_policy,
     _load_launch_runtime_config,
@@ -15,6 +16,7 @@ from autolab.config import (
     _load_plan_execution_config,
     _load_protected_files,
     _resolve_policy_python_bin,
+    _load_slurm_monitor_runtime_config,
     _load_slurm_lifecycle_strict_policy,
     _load_strict_mode_config,
 )
@@ -232,6 +234,22 @@ def test_load_launch_runtime_config_reads_custom_values(tmp_path: Path) -> None:
     assert config.slurm_submit_timeout_seconds == 45.0
 
 
+def test_load_launch_runtime_config_reads_script_generation_mode(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        "launch:\n  script_generation: always\n",
+        encoding="utf-8",
+    )
+
+    config = _load_launch_runtime_config(repo)
+    assert config.script_generation == "always"
+
+
 def test_load_launch_runtime_config_non_positive_timeout_falls_back_to_defaults(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +271,77 @@ def test_load_launch_runtime_config_non_positive_timeout_falls_back_to_defaults(
 
     assert config.local_timeout_seconds == 900.0
     assert config.slurm_submit_timeout_seconds == 30.0
+
+
+def test_load_slurm_monitor_runtime_config_defaults(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    config = _load_slurm_monitor_runtime_config(repo)
+    assert config.poll_command_template == ""
+    assert config.poll_timeout_seconds == 30.0
+    assert config.sync_command_template == ""
+    assert config.sync_timeout_seconds == 180.0
+
+
+def test_load_slurm_monitor_runtime_config_reads_values(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        (
+            "slurm:\n"
+            "  monitor:\n"
+            '    poll_command_template: "squeue -j {job_id}"\n'
+            "    poll_timeout_seconds: 12\n"
+            '    sync_command_template: "rsync data"\n'
+            "    sync_timeout_seconds: 99\n"
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_slurm_monitor_runtime_config(repo)
+    assert config.poll_command_template == "squeue -j {job_id}"
+    assert config.poll_timeout_seconds == 12.0
+    assert config.sync_command_template == "rsync data"
+    assert config.sync_timeout_seconds == 99.0
+
+
+def test_load_extract_runtime_config_defaults(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    config = _load_extract_runtime_config(repo)
+    assert config.require_parser_hook is False
+    assert config.summary_mode == "llm_on_demand"
+    assert config.summary_llm_command == ""
+    assert config.summary_llm_timeout_seconds == 300.0
+
+
+def test_load_extract_runtime_config_reads_values(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        (
+            "extract_results:\n"
+            "  parser:\n"
+            "    require_hook: true\n"
+            "  summary:\n"
+            "    mode: none\n"
+            '    llm_command: "python summary.py"\n'
+            "    llm_timeout_seconds: 42\n"
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_extract_runtime_config(repo)
+    assert config.require_parser_hook is True
+    assert config.summary_mode == "none"
+    assert config.summary_llm_command == "python summary.py"
+    assert config.summary_llm_timeout_seconds == 42.0
 
 
 def test_load_slurm_lifecycle_strict_policy_defaults_true(tmp_path: Path) -> None:

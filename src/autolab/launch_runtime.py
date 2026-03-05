@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,12 +15,19 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
-from autolab.config import _load_launch_runtime_config
+from autolab.config import (
+    _load_launch_runtime_config,
+    _load_slurm_monitor_runtime_config,
+    _load_verifier_policy,
+    _resolve_policy_command,
+    _resolve_policy_python_bin,
+)
 from autolab.constants import (
     COMPLETION_LIKE_STATUSES,
     IN_PROGRESS_STATUSES,
     RUN_MANIFEST_STATUSES,
     SLURM_JOB_LIST_PATH,
+    SYNC_SUCCESS_STATUSES,
 )
 from autolab.models import StageCheckError
 from autolab.slurm_job_list import append_entry_idempotent, canonical_slurm_job_bullet
@@ -27,6 +35,7 @@ from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
     _collect_slurm_env_metadata,
+    _detect_priority_host_mode,
     _get_slurm_allocation_resources,
     _is_slurm_interactive_session,
     _manifest_timestamp,
@@ -37,11 +46,27 @@ from autolab.utils import (
 SBATCH_JOB_ID_PATTERN = re.compile(
     r"submitted\s+batch\s+job\s+(?P<job_id>\d+)", flags=re.IGNORECASE
 )
+_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SHELL_META_PATTERN = re.compile(r"[|&;<>()$`]")
+_SLURM_JOB_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_SLURM_TIME_PATTERN = re.compile(r"^[0-9:-]+$")
+_SLURM_MEMORY_PATTERN = re.compile(r"^[A-Za-z0-9.]+$")
+_SLURM_PARTITION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_SLURM_QOS_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_SLURM_GPU_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass(frozen=True)
 class LaunchExecutionResult:
     run_id: str
+    sync_status: str
+    changed_files: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class SlurmMonitorExecutionResult:
+    run_id: str
+    status: str
     sync_status: str
     changed_files: tuple[Path, ...]
 
@@ -58,6 +83,85 @@ def _normalize_status(value: str, *, fallback: str) -> str:
     if status in RUN_MANIFEST_STATUSES:
         return status
     return fallback
+
+
+def _validate_run_id(run_id: str) -> str:
+    value = str(run_id).strip()
+    if not value:
+        raise StageCheckError("run_id is required")
+    if not _RUN_ID_PATTERN.fullmatch(value):
+        raise StageCheckError(
+            "run_id contains unsafe characters; use [A-Za-z0-9._-] and avoid path separators"
+        )
+    return value
+
+
+def _ensure_path_within(base_dir: Path, candidate: Path, *, field: str) -> Path:
+    base_resolved = base_dir.resolve(strict=False)
+    candidate_resolved = candidate.resolve(strict=False)
+    try:
+        candidate_resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise StageCheckError(
+            f"{field} must stay within {base_resolved} (got {candidate_resolved})"
+        ) from exc
+    return candidate
+
+
+def _resolve_run_dir(iteration_dir: Path, run_id: str) -> Path:
+    normalized_run_id = _validate_run_id(run_id)
+    runs_dir = iteration_dir / "runs"
+    run_dir = runs_dir / normalized_run_id
+    return _ensure_path_within(runs_dir, run_dir, field="run directory")
+
+
+def _sanitize_slurm_directive_value(
+    field_name: str, raw_value: Any, *, pattern: re.Pattern[str]
+) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    if "\n" in value or "\r" in value:
+        raise StageCheckError(
+            f"design.compute.{field_name} must not contain newlines or directive separators"
+        )
+    if not pattern.fullmatch(value):
+        raise StageCheckError(
+            f"design.compute.{field_name} contains unsupported characters for SLURM directives"
+        )
+    return value
+
+
+def _render_template_command(template: str, variables: dict[str, str]) -> str:
+    escaped_variables = {
+        key: shlex.quote(str(value)) for key, value in variables.items()
+    }
+    try:
+        return template.format_map(escaped_variables)
+    except Exception as exc:
+        raise StageCheckError(
+            f"invalid monitor command template '{template}': {exc}"
+        ) from exc
+
+
+def _template_command_argv(
+    template: str,
+    variables: dict[str, str],
+    *,
+    context: str,
+) -> list[str]:
+    rendered = _render_template_command(template, variables)
+    if _SHELL_META_PATTERN.search(rendered):
+        raise StageCheckError(
+            f"{context} contains shell metacharacters; use an argv-safe command template"
+        )
+    try:
+        argv = shlex.split(rendered)
+    except ValueError as exc:
+        raise StageCheckError(f"{context} could not be parsed: {exc}") from exc
+    if not argv:
+        raise StageCheckError(f"{context} resolved to an empty command")
+    return argv
 
 
 def _parse_job_id(text: str) -> str:
@@ -139,6 +243,200 @@ def _load_design_payload(iteration_dir: Path) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         raise StageCheckError("design.yaml must contain a mapping")
     return loaded
+
+
+def _entrypoint_command(
+    design_payload: dict[str, Any], *, python_bin: str = "python3"
+) -> str:
+    entrypoint = design_payload.get("entrypoint")
+    if not isinstance(entrypoint, dict):
+        raise StageCheckError("design.yaml entrypoint must be a mapping")
+    cli = str(entrypoint.get("cli", "")).strip()
+    if cli:
+        return cli
+
+    module = str(entrypoint.get("module", "")).strip()
+    if not module:
+        raise StageCheckError("design.yaml entrypoint.module must be set")
+
+    args = entrypoint.get("args")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise StageCheckError("design.yaml entrypoint.args must be a mapping")
+
+    command_parts: list[str] = [python_bin, "-m", module]
+    for raw_key in sorted(args.keys()):
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        value = args.get(raw_key)
+        flag = f"--{key.replace('_', '-')}"
+        if isinstance(value, bool):
+            if value:
+                command_parts.append(flag)
+            continue
+        if value is None:
+            continue
+        if isinstance(value, list):
+            for entry in value:
+                command_parts.append(flag)
+                command_parts.append(str(entry))
+            continue
+        if isinstance(value, dict):
+            command_parts.append(flag)
+            command_parts.append(json.dumps(value, sort_keys=True))
+            continue
+        command_parts.append(flag)
+        command_parts.append(str(value))
+    return " ".join(shlex.quote(part) for part in command_parts)
+
+
+def _render_local_launch_script(command: str) -> str:
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "\n"
+        'RUN_ID="${AUTOLAB_RUN_ID:-${RUN_ID:-}}"\n'
+        'if [[ -z "${RUN_ID}" ]]; then\n'
+        '  echo "AUTOLAB launch error: RUN_ID/AUTOLAB_RUN_ID is required" >&2\n'
+        "  exit 2\n"
+        "fi\n"
+        'RUN_DIR="runs/${RUN_ID}"\n'
+        'mkdir -p "${RUN_DIR}"\n'
+        'touch "${RUN_DIR}/launch.touch"\n'
+        f"{command}\n"
+    )
+
+
+def _render_slurm_launch_script(
+    command: str,
+    *,
+    design_payload: dict[str, Any],
+    iteration_id: str,
+) -> str:
+    compute = design_payload.get("compute")
+    if not isinstance(compute, dict):
+        compute = {}
+
+    job_name = _sanitize_slurm_directive_value(
+        "iteration_id",
+        f"autolab-{iteration_id}",
+        pattern=_SLURM_JOB_NAME_PATTERN,
+    )
+    directives: list[str] = [f"#SBATCH --job-name={job_name}"]
+    walltime = _sanitize_slurm_directive_value(
+        "walltime",
+        compute.get("walltime_estimate") or compute.get("walltime") or "",
+        pattern=_SLURM_TIME_PATTERN,
+    )
+    if walltime:
+        directives.append(f"#SBATCH --time={walltime}")
+    memory = _sanitize_slurm_directive_value(
+        "memory",
+        compute.get("memory_estimate") or compute.get("memory") or "",
+        pattern=_SLURM_MEMORY_PATTERN,
+    )
+    if memory:
+        directives.append(f"#SBATCH --mem={memory}")
+    try:
+        cpus = int(compute.get("cpus", 0) or 0)
+    except Exception:
+        cpus = 0
+    if cpus > 0:
+        directives.append(f"#SBATCH --cpus-per-task={cpus}")
+    try:
+        gpu_count = int(compute.get("gpu_count", compute.get("gpus", 0)) or 0)
+    except Exception:
+        gpu_count = 0
+    if gpu_count > 0:
+        gpu_type = _sanitize_slurm_directive_value(
+            "gpu_type",
+            compute.get("gpu_type", ""),
+            pattern=_SLURM_GPU_TYPE_PATTERN,
+        )
+        gres_value = f"gpu:{gpu_type}:{gpu_count}" if gpu_type else f"gpu:{gpu_count}"
+        directives.append(f"#SBATCH --gres={gres_value}")
+    partition = _sanitize_slurm_directive_value(
+        "partition",
+        compute.get("partition", ""),
+        pattern=_SLURM_PARTITION_PATTERN,
+    )
+    if partition:
+        directives.append(f"#SBATCH --partition={partition}")
+    qos = _sanitize_slurm_directive_value(
+        "qos",
+        compute.get("qos", ""),
+        pattern=_SLURM_QOS_PATTERN,
+    )
+    if qos:
+        directives.append(f"#SBATCH --qos={qos}")
+
+    directive_block = "\n".join(directives)
+    return (
+        "#!/usr/bin/env bash\n"
+        f"{directive_block}\n"
+        "set -euo pipefail\n"
+        "\n"
+        'RUN_ID="${AUTOLAB_RUN_ID:-${RUN_ID:-}}"\n'
+        'if [[ -z "${RUN_ID}" ]]; then\n'
+        '  echo "AUTOLAB launch error: RUN_ID/AUTOLAB_RUN_ID is required" >&2\n'
+        "  exit 2\n"
+        "fi\n"
+        'RUN_DIR="runs/${RUN_ID}"\n'
+        'mkdir -p "${RUN_DIR}"\n'
+        'touch "${RUN_DIR}/launch.touch"\n'
+        f"{command}\n"
+    )
+
+
+def _ensure_executable(path: Path) -> None:
+    try:
+        current_mode = path.stat().st_mode
+        path.chmod(current_mode | 0o111)
+    except Exception:
+        return
+
+
+def _ensure_launch_scripts(
+    *,
+    repo_root: Path,
+    iteration_dir: Path,
+    iteration_id: str,
+    design_payload: dict[str, Any],
+    script_generation_mode: str,
+    changed_files: list[Path],
+) -> None:
+    if script_generation_mode not in {"missing_only", "always"}:
+        script_generation_mode = "missing_only"
+
+    policy = _load_verifier_policy(repo_root)
+    python_bin = _resolve_policy_python_bin(policy)
+    command = _entrypoint_command(design_payload, python_bin=python_bin)
+    launch_dir = iteration_dir / "launch"
+    launch_dir.mkdir(parents=True, exist_ok=True)
+
+    local_script = launch_dir / "run_local.sh"
+    slurm_script = launch_dir / "run_slurm.sbatch"
+
+    def _should_generate(path: Path) -> bool:
+        if script_generation_mode == "always":
+            return True
+        return not path.exists()
+
+    if _should_generate(local_script):
+        local_text = _render_local_launch_script(command)
+        if _write_text_if_changed(local_script, local_text):
+            changed_files.append(local_script)
+        _ensure_executable(local_script)
+
+    if _should_generate(slurm_script):
+        slurm_text = _render_slurm_launch_script(
+            command, design_payload=design_payload, iteration_id=iteration_id
+        )
+        if _write_text_if_changed(slurm_script, slurm_text):
+            changed_files.append(slurm_script)
+        _ensure_executable(slurm_script)
 
 
 def _resolve_launch_mode(design_payload: dict[str, Any]) -> str:
@@ -656,7 +954,8 @@ def _execute_local_run(
     timeout_seconds: float,
     changed_files: list[Path],
 ) -> tuple[dict[str, Any], bool]:
-    run_dir = iteration_dir / "runs" / run_id
+    run_id = _validate_run_id(run_id)
+    run_dir = _resolve_run_dir(iteration_dir, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = _ensure_logs_dir(run_dir, changed_files)
     manifest_path = run_dir / "run_manifest.json"
@@ -805,7 +1104,8 @@ def _execute_slurm_submit(
     timeout_seconds: float,
     changed_files: list[Path],
 ) -> tuple[dict[str, Any], bool]:
-    run_dir = iteration_dir / "runs" / run_id
+    run_id = _validate_run_id(run_id)
+    run_dir = _resolve_run_dir(iteration_dir, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = _ensure_logs_dir(run_dir, changed_files)
     manifest_path = run_dir / "run_manifest.json"
@@ -827,7 +1127,12 @@ def _execute_slurm_submit(
         return payload, success
 
     started_at = _timestamp_now()
-    command = ["sbatch", "launch/run_slurm.sbatch"]
+    export_value = f"ALL,RUN_ID={run_id},AUTOLAB_RUN_ID={run_id},AUTOLAB_ITERATION_ID={iteration_id}"
+    command = ["sbatch", f"--export={export_value}", "launch/run_slurm.sbatch"]
+    env = os.environ.copy()
+    env["RUN_ID"] = run_id
+    env["AUTOLAB_RUN_ID"] = run_id
+    env["AUTOLAB_ITERATION_ID"] = iteration_id
     stdout_text = ""
     stderr_text = ""
     returncode: int | None = None
@@ -836,6 +1141,7 @@ def _execute_slurm_submit(
         proc = subprocess.run(
             command,
             cwd=iteration_dir,
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -928,7 +1234,8 @@ def _execute_slurm_interactive_run(
     changed_files: list[Path],
 ) -> tuple[dict[str, Any], bool]:
     """Run ``bash launch/run_slurm.sbatch`` directly on the interactive allocation."""
-    run_dir = iteration_dir / "runs" / run_id
+    run_id = _validate_run_id(run_id)
+    run_dir = _resolve_run_dir(iteration_dir, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = _ensure_logs_dir(run_dir, changed_files)
     manifest_path = run_dir / "run_manifest.json"
@@ -1096,7 +1403,8 @@ def _write_group_manifest(
     first_payload: dict[str, Any],
     changed_files: list[Path],
 ) -> dict[str, Any]:
-    run_dir = iteration_dir / "runs" / base_run_id
+    base_run_id = _validate_run_id(base_run_id)
+    run_dir = _resolve_run_dir(iteration_dir, base_run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = _ensure_logs_dir(run_dir, changed_files)
     marker = logs_dir / "launch.group.log"
@@ -1174,6 +1482,8 @@ def _maybe_adopt_existing_run_id(
     base_run_id: str,
     run_group: list[str],
 ) -> str:
+    if base_run_id:
+        base_run_id = _validate_run_id(base_run_id)
     if run_group:
         return base_run_id
     if not base_run_id:
@@ -1182,12 +1492,18 @@ def _maybe_adopt_existing_run_id(
         return base_run_id
     if str(state.get("last_run_id", "")).strip():
         return base_run_id
-    manifest_for_pending = iteration_dir / "runs" / base_run_id / "run_manifest.json"
+    manifest_for_pending = (
+        _resolve_run_dir(iteration_dir, base_run_id) / "run_manifest.json"
+    )
     if manifest_for_pending.exists():
         return base_run_id
 
     existing_run_id = _latest_existing_run_id(iteration_dir)
     if not existing_run_id:
+        return base_run_id
+    try:
+        existing_run_id = _validate_run_id(existing_run_id)
+    except StageCheckError:
         return base_run_id
     state["pending_run_id"] = existing_run_id
     _append_log(
@@ -1211,6 +1527,427 @@ def _sync_status_from_manifest(payload: dict[str, Any], launch_mode: str) -> str
     return sync_status or "pending"
 
 
+def _normalize_scheduler_state(raw_text: str) -> str:
+    text = str(raw_text).strip()
+    if not text:
+        return ""
+    first_line = text.splitlines()[0].strip()
+    if not first_line:
+        return ""
+    token = first_line.split("|", 1)[0].strip().lower()
+    if not token:
+        return ""
+    token = token.split(",", 1)[0].strip()
+    token = token.replace("+", "").replace("*", "")
+    if " " in token:
+        token = token.split()[0].strip()
+
+    if token in {"pd", "pending", "configuring", "cf", "queued"}:
+        return "pending"
+    if token in {"r", "running", "cg", "completing"}:
+        return "running"
+    if token in {"cd", "completed", "complete", "success", "done"}:
+        return "completed"
+    if token in {
+        "f",
+        "failed",
+        "cancelled",
+        "timeout",
+        "out_of_memory",
+        "oom",
+        "node_fail",
+        "preempted",
+        "boot_fail",
+    }:
+        return "failed"
+    if token.startswith("cancel"):
+        return "failed"
+    if token.startswith("fail"):
+        return "failed"
+    if token.startswith("timeout"):
+        return "failed"
+    if token.startswith("complete"):
+        return "completed"
+    return ""
+
+
+def _monitor_status_from_scheduler(
+    scheduler_state: str, *, current_status: str, current_sync_status: str
+) -> tuple[str, str]:
+    next_status = current_status
+    next_sync_status = current_sync_status
+
+    if scheduler_state == "pending":
+        next_status = "pending"
+    elif scheduler_state == "running":
+        next_status = "running"
+    elif scheduler_state == "completed":
+        if next_status not in {"synced", "completed"}:
+            next_status = "completed"
+    elif scheduler_state == "failed":
+        next_status = "failed"
+        next_sync_status = "failed"
+
+    if next_status == "synced":
+        next_sync_status = "completed"
+    if next_status == "failed":
+        next_sync_status = "failed"
+    return (next_status, next_sync_status)
+
+
+def _apply_monitor_status_to_manifest(
+    manifest: dict[str, Any],
+    *,
+    status: str,
+    sync_status: str,
+    fallback_status: str,
+) -> dict[str, Any]:
+    manifest["status"] = _normalize_status(status, fallback=fallback_status)
+    artifact_sync_to_local = manifest.get("artifact_sync_to_local")
+    if not isinstance(artifact_sync_to_local, dict):
+        artifact_sync_to_local = {}
+    artifact_sync_to_local["status"] = sync_status
+    manifest["artifact_sync_to_local"] = artifact_sync_to_local
+
+    timestamps = manifest.get("timestamps")
+    if not isinstance(timestamps, dict):
+        timestamps = {}
+    if not str(timestamps.get("started_at", "")).strip():
+        timestamps["started_at"] = _timestamp_now()
+    if manifest["status"] in {"synced", "completed", "failed", "partial"}:
+        if not str(timestamps.get("completed_at", "")).strip():
+            timestamps["completed_at"] = _timestamp_now()
+    manifest["timestamps"] = timestamps
+    manifest["started_at"] = str(timestamps.get("started_at", "")).strip()
+    completed_at = str(timestamps.get("completed_at", "")).strip()
+    if completed_at:
+        manifest["completed_at"] = completed_at
+    return manifest
+
+
+def _aggregate_group_monitor_status(
+    *,
+    run_ids: list[str],
+    per_run_status: dict[str, tuple[str, str]],
+) -> tuple[str, str]:
+    if not run_ids:
+        return ("pending", "pending")
+
+    statuses = [
+        _normalize_status(
+            per_run_status.get(run_id, ("pending", "pending"))[0], fallback="pending"
+        )
+        for run_id in run_ids
+    ]
+    sync_statuses = [
+        str(per_run_status.get(run_id, ("pending", "pending"))[1]).strip().lower()
+        for run_id in run_ids
+    ]
+    if any(status in {"failed", "partial"} for status in statuses):
+        return ("failed", "failed")
+    if all(status == "synced" for status in statuses):
+        return ("synced", "completed")
+    if all(status in {"completed", "synced"} for status in statuses):
+        if all(sync in SYNC_SUCCESS_STATUSES for sync in sync_statuses):
+            return ("synced", "completed")
+        return ("completed", "pending")
+    if any(status == "running" for status in statuses):
+        return ("running", "pending")
+    if any(status in {"submitted", "pending"} for status in statuses):
+        return ("pending", "pending")
+    return (statuses[0], sync_statuses[0] if sync_statuses else "pending")
+
+
+def _execute_slurm_monitor_runtime(
+    repo_root: Path, *, state: dict[str, Any]
+) -> SlurmMonitorExecutionResult:
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    if not iteration_id:
+        raise StageCheckError("slurm_monitor execution requires state.iteration_id")
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    primary_run_id = (
+        str(state.get("pending_run_id", "")).strip()
+        or str(state.get("last_run_id", "")).strip()
+    )
+    if not primary_run_id:
+        return SlurmMonitorExecutionResult(
+            run_id="",
+            status="",
+            sync_status=str(state.get("sync_status", "")).strip() or "pending",
+            changed_files=(),
+        )
+    primary_run_id = _validate_run_id(primary_run_id)
+
+    run_group_raw = state.get("run_group")
+    run_group: list[str] = []
+    if isinstance(run_group_raw, list):
+        for raw_run_id in run_group_raw:
+            candidate = str(raw_run_id).strip()
+            if not candidate:
+                continue
+            normalized = _validate_run_id(candidate)
+            if normalized not in run_group:
+                run_group.append(normalized)
+    monitored_run_ids = run_group if run_group else [primary_run_id]
+    if primary_run_id not in monitored_run_ids:
+        monitored_run_ids = [*monitored_run_ids]
+
+    monitor_cfg = _load_slurm_monitor_runtime_config(repo_root)
+    policy = _load_verifier_policy(repo_root)
+    python_bin = _resolve_policy_python_bin(policy)
+    changed_files: list[Path] = []
+    per_run_status: dict[str, tuple[str, str]] = {}
+    blocked_progress_runs: list[str] = []
+
+    for run_id in monitored_run_ids:
+        run_dir = _resolve_run_dir(iteration_dir, run_id)
+        manifest_path = run_dir / "run_manifest.json"
+        manifest = _load_json_object(manifest_path)
+        if not isinstance(manifest, dict):
+            raise StageCheckError(
+                f"slurm_monitor requires run manifest at {manifest_path} for run_id={run_id}"
+            )
+
+        host_mode = (
+            str(
+                manifest.get("host_mode")
+                or manifest.get("launch_mode")
+                or _detect_priority_host_mode()
+            )
+            .strip()
+            .lower()
+        )
+        if host_mode == "slurm_interactive":
+            host_mode = "slurm"
+        if host_mode != "slurm":
+            sync_status = _sync_status_from_manifest(manifest, launch_mode="local")
+            per_run_status[run_id] = (
+                str(manifest.get("status", "")).strip().lower(),
+                sync_status,
+            )
+            continue
+
+        current_status = _normalize_status(
+            str(manifest.get("status", "")), fallback="pending"
+        )
+        artifact_sync = manifest.get("artifact_sync_to_local")
+        if not isinstance(artifact_sync, dict):
+            artifact_sync = {}
+        current_sync_status = (
+            str(artifact_sync.get("status", "")).strip().lower() or "pending"
+        )
+        job_id = _extract_job_id(manifest)
+        logs_dir = _ensure_logs_dir(run_dir, changed_files)
+        variables = {
+            "job_id": job_id,
+            "run_id": run_id,
+            "iteration_id": iteration_id,
+            "iteration_path": str(iteration_dir),
+            "run_dir": str(run_dir),
+            "repo_root": str(repo_root),
+        }
+
+        next_status = current_status
+        next_sync_status = current_sync_status
+        if monitor_cfg.poll_command_template:
+            if not job_id:
+                raise StageCheckError(
+                    "slurm_monitor poll_command_template is configured but "
+                    f"run manifest lacks job_id for run_id={run_id}"
+                )
+            poll_template = _resolve_policy_command(
+                monitor_cfg.poll_command_template, python_bin=python_bin
+            )
+            poll_command = _template_command_argv(
+                poll_template,
+                variables,
+                context=f"slurm monitor poll command for run_id={run_id}",
+            )
+            try:
+                poll_proc = subprocess.run(
+                    poll_command,
+                    cwd=repo_root,
+                    shell=False,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=float(monitor_cfg.poll_timeout_seconds),
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise StageCheckError(
+                    f"slurm monitor poll command timed out for run_id={run_id}: {exc}"
+                ) from exc
+            except OSError as exc:
+                raise StageCheckError(
+                    f"slurm monitor poll command failed for run_id={run_id}: {exc}"
+                ) from exc
+
+            poll_stdout = str(poll_proc.stdout or "")
+            poll_stderr = str(poll_proc.stderr or "")
+            poll_stdout_path = logs_dir / "slurm_monitor.poll.stdout.log"
+            poll_stderr_path = logs_dir / "slurm_monitor.poll.stderr.log"
+            if _write_text_if_changed(poll_stdout_path, poll_stdout):
+                changed_files.append(poll_stdout_path)
+            if _write_text_if_changed(poll_stderr_path, poll_stderr):
+                changed_files.append(poll_stderr_path)
+
+            if int(poll_proc.returncode) != 0:
+                raise StageCheckError(
+                    "slurm monitor poll command failed "
+                    f"(run_id={run_id}, exit_code={poll_proc.returncode})"
+                )
+
+            scheduler_state = _normalize_scheduler_state(
+                poll_stdout
+            ) or _normalize_scheduler_state(poll_stderr)
+            if scheduler_state:
+                next_status, next_sync_status = _monitor_status_from_scheduler(
+                    scheduler_state,
+                    current_status=next_status,
+                    current_sync_status=next_sync_status,
+                )
+
+        if (
+            monitor_cfg.sync_command_template
+            and next_status in {"completed", "synced"}
+            and next_sync_status not in SYNC_SUCCESS_STATUSES
+        ):
+            sync_template = _resolve_policy_command(
+                monitor_cfg.sync_command_template, python_bin=python_bin
+            )
+            sync_command = _template_command_argv(
+                sync_template,
+                variables,
+                context=f"slurm monitor sync command for run_id={run_id}",
+            )
+            try:
+                sync_proc = subprocess.run(
+                    sync_command,
+                    cwd=repo_root,
+                    shell=False,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=float(monitor_cfg.sync_timeout_seconds),
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise StageCheckError(
+                    f"slurm monitor sync command timed out for run_id={run_id}: {exc}"
+                ) from exc
+            except OSError as exc:
+                raise StageCheckError(
+                    f"slurm monitor sync command failed for run_id={run_id}: {exc}"
+                ) from exc
+
+            sync_stdout = str(sync_proc.stdout or "")
+            sync_stderr = str(sync_proc.stderr or "")
+            sync_stdout_path = logs_dir / "slurm_monitor.sync.stdout.log"
+            sync_stderr_path = logs_dir / "slurm_monitor.sync.stderr.log"
+            if _write_text_if_changed(sync_stdout_path, sync_stdout):
+                changed_files.append(sync_stdout_path)
+            if _write_text_if_changed(sync_stderr_path, sync_stderr):
+                changed_files.append(sync_stderr_path)
+
+            if int(sync_proc.returncode) != 0:
+                raise StageCheckError(
+                    "slurm monitor sync command failed "
+                    f"(run_id={run_id}, exit_code={sync_proc.returncode})"
+                )
+            next_sync_status = "completed"
+            if next_status != "failed":
+                next_status = "synced"
+
+        if next_sync_status in SYNC_SUCCESS_STATUSES and next_status == "completed":
+            next_status = "synced"
+        manifest = _apply_monitor_status_to_manifest(
+            manifest,
+            status=next_status,
+            sync_status=next_sync_status,
+            fallback_status=current_status,
+        )
+        if _write_json_if_changed(manifest_path, manifest):
+            changed_files.append(manifest_path)
+
+        normalized_status = str(manifest.get("status", "")).strip().lower()
+        normalized_sync = _sync_status_from_manifest(manifest, launch_mode="slurm")
+        per_run_status[run_id] = (normalized_status, normalized_sync)
+        if (
+            not monitor_cfg.poll_command_template
+            and not monitor_cfg.sync_command_template
+            and normalized_status in IN_PROGRESS_STATUSES
+            and normalized_sync not in SYNC_SUCCESS_STATUSES
+        ):
+            blocked_progress_runs.append(f"{run_id}:{normalized_status}")
+
+    if blocked_progress_runs:
+        stalled_signature = "|".join(sorted(blocked_progress_runs))
+        stalled_state = state.get("slurm_monitor_no_progress")
+        stalled_count = 1
+        if isinstance(stalled_state, dict):
+            if str(stalled_state.get("signature", "")).strip() == stalled_signature:
+                try:
+                    stalled_count = int(stalled_state.get("count", 0) or 0) + 1
+                except Exception:
+                    stalled_count = 2
+        state["slurm_monitor_no_progress"] = {
+            "signature": stalled_signature,
+            "count": stalled_count,
+        }
+        if stalled_count >= 2:
+            raise StageCheckError(
+                "slurm_monitor cannot make deterministic progress: "
+                "slurm.monitor.poll_command_template and slurm.monitor.sync_command_template "
+                "are both unset and run manifests remain in progress "
+                f"for {stalled_count} consecutive checks ({', '.join(blocked_progress_runs)})"
+            )
+    else:
+        state.pop("slurm_monitor_no_progress", None)
+
+    result_status, result_sync = per_run_status.get(
+        primary_run_id, ("pending", "pending")
+    )
+    if run_group:
+        aggregate_status, aggregate_sync = _aggregate_group_monitor_status(
+            run_ids=monitored_run_ids,
+            per_run_status=per_run_status,
+        )
+        primary_manifest_path = (
+            _resolve_run_dir(iteration_dir, primary_run_id) / "run_manifest.json"
+        )
+        primary_manifest = _load_json_object(primary_manifest_path)
+        if not isinstance(primary_manifest, dict):
+            raise StageCheckError(
+                "slurm_monitor requires aggregate run manifest at "
+                f"{primary_manifest_path} for run_id={primary_run_id}"
+            )
+        current_primary_status = _normalize_status(
+            str(primary_manifest.get("status", "")), fallback="pending"
+        )
+        primary_manifest = _apply_monitor_status_to_manifest(
+            primary_manifest,
+            status=aggregate_status,
+            sync_status=aggregate_sync,
+            fallback_status=current_primary_status,
+        )
+        if _write_json_if_changed(primary_manifest_path, primary_manifest):
+            changed_files.append(primary_manifest_path)
+        result_status = str(primary_manifest.get("status", "")).strip().lower()
+        result_sync = _sync_status_from_manifest(primary_manifest, launch_mode="slurm")
+
+    state["sync_status"] = str(result_sync).strip() or "pending"
+    return SlurmMonitorExecutionResult(
+        run_id=primary_run_id,
+        status=result_status,
+        sync_status=str(state.get("sync_status", "")).strip() or "pending",
+        changed_files=_dedupe_paths(changed_files),
+    )
+
+
 def _execute_launch_runtime(
     repo_root: Path, *, state: dict[str, Any]
 ) -> LaunchExecutionResult:
@@ -1222,6 +1959,7 @@ def _execute_launch_runtime(
         )
         if not run_id:
             raise StageCheckError("launch execution disabled but run_id is missing")
+        run_id = _validate_run_id(run_id)
         _append_log(repo_root, f"launch execution disabled by policy run_id={run_id}")
         return LaunchExecutionResult(
             run_id=run_id,
@@ -1244,13 +1982,18 @@ def _execute_launch_runtime(
     )
     if not base_run_id:
         raise StageCheckError("launch execution requires pending_run_id or last_run_id")
+    base_run_id = _validate_run_id(base_run_id)
 
     run_group_raw = state.get("run_group", [])
-    run_group = (
-        [str(rid).strip() for rid in run_group_raw if str(rid).strip()]
-        if isinstance(run_group_raw, list)
-        else []
-    )
+    run_group: list[str] = []
+    if isinstance(run_group_raw, list):
+        for raw_run_id in run_group_raw:
+            candidate = str(raw_run_id).strip()
+            if not candidate:
+                continue
+            normalized = _validate_run_id(candidate)
+            if normalized not in run_group:
+                run_group.append(normalized)
     base_run_id = _maybe_adopt_existing_run_id(
         repo_root=repo_root,
         state=state,
@@ -1274,7 +2017,7 @@ def _execute_launch_runtime(
     if not launch_mode:
         for run_id in run_ids:
             manifest_payload = _load_json_object(
-                iteration_dir / "runs" / run_id / "run_manifest.json"
+                _resolve_run_dir(iteration_dir, run_id) / "run_manifest.json"
             )
             launch_mode = _resolve_manifest_launch_mode(manifest_payload)
             if launch_mode:
@@ -1289,6 +2032,17 @@ def _execute_launch_runtime(
     if not launch_mode:
         assert design_error is not None
         raise design_error
+
+    changed_files: list[Path] = []
+    if design_error is None:
+        _ensure_launch_scripts(
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
+            iteration_id=iteration_id,
+            design_payload=design_payload,
+            script_generation_mode=str(config.script_generation),
+            changed_files=changed_files,
+        )
 
     local_script = iteration_dir / "launch" / "run_local.sh"
     slurm_script = iteration_dir / "launch" / "run_slurm.sbatch"
@@ -1312,7 +2066,6 @@ def _execute_launch_runtime(
                 "launch: SLURM interactive session detected, resources fit — running directly",
             )
 
-    changed_files: list[Path] = []
     per_run_payloads: list[dict[str, Any]] = []
     for run_id in run_ids:
         if launch_mode == "local":

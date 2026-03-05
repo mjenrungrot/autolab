@@ -742,10 +742,10 @@ class TestLockLimitations:
 
 
 class TestSlurmSyncRetryBudgetExhaustion:
-    """Pending sync now hands off to monitor without launch retry churn."""
+    """Pending sync handoff now fails fast when monitor cannot make deterministic progress."""
 
     def test_pending_sync_exhausts_budget(self, tmp_path: Path) -> None:
-        """Pending sync should remain in slurm_monitor without retry exhaustion."""
+        """Pending sync with no monitor hooks triggers deterministic stall failure."""
         repo, state_path, it_dir = _setup_repo(
             tmp_path,
             stage="launch",
@@ -769,11 +769,13 @@ class TestSlurmSyncRetryBudgetExhaustion:
         assert persisted["stage"] == "slurm_monitor"
         assert persisted["stage_attempt"] == 0
 
-        # Attempt 3: still waiting, no budget exhaustion
+        # Attempt 3: deterministic stall failure is raised
         outcome3 = _run(state_path)
-        assert outcome3.exit_code == 0
+        assert outcome3.exit_code == 1
+        assert "cannot make deterministic progress" in outcome3.message
         persisted = _read_state(repo)
         assert persisted["stage"] == "slurm_monitor"
+        assert persisted["stage_attempt"] == 1
 
     def test_cross_device_attempt_double_counting(self, tmp_path: Path) -> None:
         """Cross-device monitor checks should not consume launch retry budget."""

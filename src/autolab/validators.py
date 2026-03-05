@@ -166,6 +166,14 @@ def _validate_stage_readiness(
             },
         )
 
+    stage_spec = registry.get(stage)
+    if stage_spec is not None and not bool(stage_spec.is_runner_eligible):
+        return (
+            True,
+            "readiness check skipped for deterministic stage",
+            {"stage": stage, "missing_tokens": [], "reason": "runner_disabled"},
+        )
+
     template_path = _resolve_stage_prompt_path(repo_root, stage)
     origins = _collect_prompt_token_origins(
         repo_root,
