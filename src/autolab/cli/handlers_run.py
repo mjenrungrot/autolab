@@ -6,6 +6,13 @@ from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Late-bind to autolab.commands.main to preserve monkeypatch compatibility."""
+    from autolab.commands import main as commands_main
+
+    return int(commands_main(argv))
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
@@ -859,15 +866,23 @@ def _cmd_verify_golden(args: argparse.Namespace) -> int:
             )
             shutil.copytree(golden_root / "paper", repo / "paper", dirs_exist_ok=True)
 
-            # 4. Copy golden iteration state.json and backlog.yaml
-            shutil.copy2(
-                golden_root / ".autolab" / "state.json",
-                target_autolab / "state.json",
-            )
-            shutil.copy2(
-                golden_root / ".autolab" / "backlog.yaml",
-                target_autolab / "backlog.yaml",
-            )
+            # 4. Overlay packaged golden .autolab fixtures (state/backlog plus
+            # supporting contract artifacts such as plan_contract.json).
+            golden_autolab_root = golden_root / ".autolab"
+            if not golden_autolab_root.is_dir():
+                print(
+                    "autolab verify-golden: ERROR packaged golden .autolab fixtures are unavailable "
+                    "(expected package://autolab/example_golden_iterations/.autolab)",
+                    file=sys.stderr,
+                )
+                return 1
+            for source_path in sorted(golden_autolab_root.rglob("*")):
+                if not source_path.is_file():
+                    continue
+                relative_path = source_path.relative_to(golden_autolab_root)
+                destination_path = target_autolab / relative_path
+                destination_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, destination_path)
 
             # 5. Write minimal agent_result.json
             agent_result = {
