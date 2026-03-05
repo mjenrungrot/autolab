@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.16
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.17
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -71,11 +71,12 @@ Two terminal stages (`human_review`, `stop`) handle escalation and completion.
 - Local host mode:
   - `launch -> slurm_monitor (auto-skip/no-op) -> extract_results`
 - SLURM host mode:
-  - `launch`: submit job, write initial manifest, append ledger entry
-  - `slurm_monitor`: poll scheduler, sync artifacts, update manifest/ledger statuses
+  - `launch`: submit job, write initial manifest, append/repair the SLURM ledger entry
+  - `slurm_monitor`: poll scheduler, run optional sync hooks, update run-manifest status/sync fields and monitor logs
   - `extract_results`: consume local artifacts, emit `completed|partial|failed` metrics
 - Why `slurm_monitor` exists:
   - It keeps async scheduler polling/sync responsibilities out of extraction logic while preserving a single canonical stage graph.
+  - Ledger ownership stays in `launch`; `slurm_monitor` does not rewrite `docs/slurm_job_list.md` rows.
 
 **Operating modes**
 
@@ -106,6 +107,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 `runner` is the primary execution payload that Autolab sends to runner stdin. `audit`, `brief`, `human`, and `context` are companion views for policy checks, retry/handoff context, and inspection tooling.
 
 Runner packets are intentionally slim: mission, strict outputs, required inputs, stop conditions, and non-negotiables. Status vocabulary and other verification-policy payloads (file budgets, evidence schemas, raw verifier blobs) stay in companion views, not runner prompts.
+Memory guidance is stage-opt-in via `shared/memory_brief.md`; orchestration handles todo/documentation reconciliation after opted-in stages.
 
 ```bash
 autolab render
@@ -130,6 +132,7 @@ Safety behavior is unchanged: starts locked (read-only), mutating actions requir
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 
 Runner cutover: `launch`, `slurm_monitor`, and `extract_results` are deterministic runtime stages and are no longer runner-eligible. Keep `agent_runner.stages` limited to active runner stages (`hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`).
+Deterministic stage behavior: `run_agent_mode=policy|force_off` bypasses runner invocation, while `run_agent_mode=force_on` fails fast on `launch`, `slurm_monitor`, and `extract_results`.
 
 **Commit and quality gates.** `auto_commit.mode` controls commit behavior (`meaningful_only` default, `always`, `disabled`). `meaningful_change` settings gate implementation progress, verification success, and git-based checks. Override with `--no-strict-implementation-progress` for experiments. See `docs/runner_reference.md`.
 
@@ -153,7 +156,8 @@ Each stage produces specific artifacts and has defined exit behavior:
 - **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`). Prompt-pack views are resolved at runtime; inspect with `autolab render --stage implementation --view runner|audit|brief|human|context` (stdout only; no rendered file writes).
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
 - **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.
-- **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.
+- **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` and monitor logs (`runs/<run_id>/logs/slurm_monitor.*.log`) for SLURM progress; local runs auto-skip to extraction.
+- **SLURM ledger ownership** -- `launch` appends idempotent `docs/slurm_job_list.md` entries; monitor/evaluate stages validate presence but do not rewrite prior rows.
 - **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting. Summary contract: parser hook writes `analysis/summary.md`, or `extract_results.summary.llm_command` must be configured when using `mode: llm_on_demand`.
 - **update_docs** -- `docs_update.md`; advances when run evidence references are present.
 - **decide_repeat** -- `decision_result.json`; decides next iteration or terminal action.
@@ -161,7 +165,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 
 ## Migration Notes
 
-- Runner cutover: remove deterministic stages (`launch`, `slurm_monitor`, `extract_results`) from `agent_runner.stages`; keep only `hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`.
+- Runner cutover: remove deterministic stages (`launch`, `slurm_monitor`, `extract_results`) from `agent_runner.stages`; keep only `hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`. `run_agent_mode=force_on` is rejected on deterministic stages.
 - Extract parser contract: `design.yaml` now requires `extract_parser` (schema-level).
 - Summary contract: if parser does not write `analysis/summary.md`, configure `.autolab/verifier_policy.yaml -> extract_results.summary.llm_command`.
 

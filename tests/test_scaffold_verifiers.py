@@ -981,6 +981,66 @@ def test_prompt_lint_rejects_runner_raw_blob_tokens(tmp_path: Path) -> None:
     )
 
 
+def test_prompt_lint_design_audit_requires_extract_parser_template_block(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.audit.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.replace("\nextract_parser:\n", "\nparser_hook:\n", 1),
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert (
+        "design output template must include an extract_parser mapping block"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_rejects_universal_dual_memory_guidance_in_shared_guardrails(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    guardrails_path = repo / ".autolab" / "prompts" / "shared" / "guardrails.md"
+    original = guardrails_path.read_text(encoding="utf-8")
+    guardrails_path.write_text(
+        original.rstrip()
+        + "\n- Mirror actionable items between docs/todo.md and {{iteration_path}}/documentation.md.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "must not include universal dual-memory policy guidance" in result.stdout
+
+
+def test_prompt_lint_requires_runtime_context_to_describe_deterministic_bypass(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    runtime_context_path = (
+        repo / ".autolab" / "prompts" / "shared" / "runtime_context.md"
+    )
+    text = runtime_context_path.read_text(encoding="utf-8")
+    runtime_context_path.write_text(
+        text.replace("deterministic runtime stages", "runtime stages"),
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "deterministic-stage runner bypass semantics" in result.stdout
+
+
 def test_prompt_lint_fails_when_prompt_uses_nonrequired_token_without_optional_contract(
     tmp_path: Path,
 ) -> None:

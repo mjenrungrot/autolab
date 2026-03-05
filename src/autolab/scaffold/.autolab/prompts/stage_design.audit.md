@@ -58,6 +58,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/des
 - Include `metrics.primary`, `metrics.success_delta`, `metrics.aggregation`, `metrics.baseline_comparison`.
 - Provide non-empty `baselines`; include `variants` when proposing changes.
 - Include non-empty `implementation_requirements` with explicit `requirement_id`, `description`, and `scope_kind` (`experiment` or `project_wide`) so implementation planning can be machine-checked.
+- Include `extract_parser` with explicit `kind` (`python` or `command`) and required hook fields (`module` for python hooks, `command` for command hooks) so extraction can run without fallback guessing.
 - If using replicates, set `replicates.count`, `replicates.seed_strategy`, and `replicates.base_seed`; place the one-line rationale as an inline YAML comment on the `count` line (for example: `count: 3  # rationale: seed-variance estimation`). For exploratory single-run designs, use `count: 1` with `seed_strategy: fixed` and acknowledge that run-to-run variance is unobserved.
 
 ## SCHEMA GOTCHAS
@@ -117,6 +118,9 @@ implementation_requirements:
     scope_kind: experiment
     expected_artifacts:
       - implementation_plan.md
+extract_parser:
+  kind: command
+  command: python3 -m scripts.extract_results --run-id {run_id} --iteration-path {iteration_path}
 variants:
   - name: proposed
     changes: {}
@@ -133,6 +137,7 @@ variants:
 - [ ] `compute.location` is set and explicit.
 - [ ] `metrics` includes `primary`, `success_delta`, and `aggregation`.
 - [ ] `implementation_requirements` is non-empty and each item has requirement_id/description/scope_kind.
+- [ ] `extract_parser.kind` is set to `python` or `command`, with required hook fields present.
 - [ ] [guidance] `replicates.count` includes an inline `# rationale: ...` comment.
 - [ ] [guidance] When `replicates.count: 1`, the rationale explicitly notes the single-run variance limitation.
 

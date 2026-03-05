@@ -8,6 +8,7 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 
 ## OUTPUTS (STRICT)
 - Produce required outputs defined by workflow for stage `design`.
+- Ensure `design.yaml` includes `implementation_requirements[*].scope_kind` and a valid `extract_parser` block.
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`

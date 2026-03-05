@@ -9,10 +9,10 @@ Autolab resolves stage placeholders before runner execution and writes:
 - `.autolab/prompts/rendered/{{stage}}.human.md`
 - `.autolab/prompts/rendered/{{stage}}.context.json`
 
-`{{stage}}.runner.md` is the primary execution payload sent to the runner. Audit/brief/human/context packets are companion artifacts for policy, review, and handoff context.
+For runner-eligible stages, `{{stage}}.runner.md` is the primary execution payload sent to the runner. For deterministic runtime stages (`launch`, `slurm_monitor`, `extract_results`), orchestration bypasses the runner and executes built-in runtime handlers directly; rendered packets remain companion artifacts for policy, review, and handoff context.
 
 Resolved placeholders must be concrete for required tokens and must match `.autolab/state.json`.
-If any required token remains unresolved, this stage must fail before work starts.
+Runner-eligible stages fail readiness when required tokens remain unresolved; deterministic runtime stages enforce their own runtime prerequisites.
 
 `state.json` is owned by Autolab orchestration; do not edit it manually unless a human explicitly asks.
 The runtime stage context block includes resolved edit scope allowlists (workspace + allowed dirs). Use those as the hard edit boundary.

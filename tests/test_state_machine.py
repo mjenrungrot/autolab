@@ -199,6 +199,10 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
                 "expected_artifacts": ["implementation_plan.md"],
             }
         ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "true",
+        },
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
@@ -359,6 +363,9 @@ def _seed_extract(iteration_dir: Path, run_id: str = "run_001") -> None:
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
+    analysis_dir = iteration_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "summary.md").write_text("# Summary\nResults.", encoding="utf-8")
 
 
 def _seed_update_docs(iteration_dir: Path) -> None:
@@ -535,6 +542,50 @@ class TestHappyPath:
 
         assert not outcome.transitioned
         assert outcome.stage_after == "stop"
+
+
+class TestImplementationReadinessContractGate:
+    @pytest.mark.parametrize(
+        ("mutator", "expected_fragment"),
+        [
+            (
+                lambda design: design.pop("extract_parser", None),
+                "extract_parser",
+            ),
+            (
+                lambda design: design["implementation_requirements"][0].pop(
+                    "scope_kind", None
+                ),
+                "scope_kind",
+            ),
+        ],
+    )
+    def test_implementation_readiness_rejects_invalid_design_contract(
+        self,
+        tmp_path: Path,
+        mutator: Any,
+        expected_fragment: str,
+    ) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation")
+        _seed_design(it_dir, iteration_id=it_dir.name)
+        design_path = it_dir / "design.yaml"
+        design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+        assert isinstance(design_payload, dict)
+        mutator(design_payload)
+        design_path.write_text(
+            yaml.safe_dump(design_payload, sort_keys=False),
+            encoding="utf-8",
+        )
+        _seed_implementation(it_dir)
+
+        outcome = _run(state_path)
+
+        assert outcome.exit_code == 1
+        assert "stage readiness failed: design contract invalid" in outcome.message
+        assert expected_fragment in outcome.message
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "implementation"
+        assert persisted["stage_attempt"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1255,6 +1306,9 @@ def _seed_slurm_extract(
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
+    analysis_dir = iteration_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "summary.md").write_text("# Summary\nResults.", encoding="utf-8")
 
 
 def _write_slurm_ledger(
