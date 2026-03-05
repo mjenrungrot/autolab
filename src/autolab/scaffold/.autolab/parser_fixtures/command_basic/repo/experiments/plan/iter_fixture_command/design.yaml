@@ -1,0 +1,28 @@
+schema_version: "1.0"
+id: "e_fixture_command"
+iteration_id: "iter_fixture_command"
+hypothesis_id: "h_fixture_command"
+entrypoint:
+  module: "pkg.train"
+  args: {}
+compute:
+  location: "local"
+metrics:
+  primary:
+    name: "validation_accuracy"
+    unit: "%"
+    mode: "maximize"
+  secondary: []
+  success_delta: "+0.01"
+  aggregation: "mean"
+  baseline_comparison: "vs baseline"
+baselines:
+  - name: "baseline_current"
+    description: "baseline"
+implementation_requirements:
+  - requirement_id: "R1"
+    description: "fixture"
+    scope_kind: "experiment"
+extract_parser:
+  kind: "command"
+  command: "python -m parsers.fixture_command_parser --run-id {run_id} --iteration-path {iteration_path}"

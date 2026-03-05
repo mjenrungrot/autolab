@@ -212,6 +212,12 @@ extract_results:
     # Contract: design.yaml must declare extract_parser. With schema v1.0 this now
     # fails at design-stage schema validation instead of deferring to extract_results.
     require_hook: true
+    # Parser capability manifest gates:
+    # - when true, schema/compatibility checks require
+    #   experiments/<type>/<iteration_id>/parser_capabilities.json
+    # - index gate additionally requires .autolab/parser_capabilities.json
+    require_capability_manifest: false
+    require_capability_index: false
   summary:
     # Contract: extract_results must end with non-empty analysis/summary.md.
     # - Parser-first path: parser writes analysis/summary.md directly.

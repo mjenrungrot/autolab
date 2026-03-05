@@ -463,6 +463,177 @@ def test_schema_checks_fail_when_required_check_key_missing(tmp_path: Path) -> N
     assert "docs_target_update" in result.stdout
 
 
+def test_schema_checks_fail_when_parser_capability_metric_mismatch(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    manifest_path = iteration_dir / "parser_capabilities.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "parser": {
+                    "kind": "command",
+                    "locator": "python -m scripts.extract_results --run-id {run_id} --iteration-path {iteration_path}",
+                },
+                "supported_metrics": ["not_accuracy"],
+                "output_contract": {
+                    "writes_metrics_json": True,
+                    "writes_summary_markdown": True,
+                },
+                "generated_at": "2026-03-05T00:00:00Z",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "parser_capabilities.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iterations": {
+                    "iter1": {
+                        "manifest_path": "experiments/plan/iter1/parser_capabilities.json",
+                        "parser_kind": "command",
+                        "supported_metrics": ["not_accuracy"],
+                        "updated_at": "2026-03-05T00:00:00Z",
+                    }
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "parser capability mismatch" in result.stdout
+
+
+def test_schema_checks_fail_when_parser_capability_kind_mismatch(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    manifest_path = iteration_dir / "parser_capabilities.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "parser": {
+                    "kind": "python",
+                    "locator": "parsers.iter1_extract_parser:parse_results",
+                },
+                "supported_metrics": ["accuracy"],
+                "output_contract": {
+                    "writes_metrics_json": True,
+                    "writes_summary_markdown": True,
+                },
+                "generated_at": "2026-03-05T00:00:00Z",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "parser_capabilities.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iterations": {
+                    "iter1": {
+                        "manifest_path": "experiments/plan/iter1/parser_capabilities.json",
+                        "parser_kind": "python",
+                        "supported_metrics": ["accuracy"],
+                        "updated_at": "2026-03-05T00:00:00Z",
+                    }
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "design.extract_parser.kind='command'" in result.stdout
+    assert "parser_capabilities.parser.kind='python'" in result.stdout
+
+
+def test_schema_checks_fail_when_policy_requires_parser_capability_manifest(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy, dict)
+    extract_results_policy = policy.setdefault("extract_results", {})
+    assert isinstance(extract_results_policy, dict)
+    parser_policy = extract_results_policy.setdefault("parser", {})
+    assert isinstance(parser_policy, dict)
+    parser_policy["require_capability_manifest"] = True
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "require_capability_manifest=true" in result.stdout
+
+
+def test_schema_checks_fail_when_policy_requires_parser_capability_index(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    manifest_path = iteration_dir / "parser_capabilities.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "iteration_id": "iter1",
+                "parser": {
+                    "kind": "command",
+                    "locator": "python -m scripts.extract_results --run-id {run_id} --iteration-path {iteration_path}",
+                },
+                "supported_metrics": ["accuracy"],
+                "output_contract": {
+                    "writes_metrics_json": True,
+                    "writes_summary_markdown": True,
+                },
+                "generated_at": "2026-03-05T00:00:00Z",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    assert isinstance(policy, dict)
+    extract_results_policy = policy.setdefault("extract_results", {})
+    assert isinstance(extract_results_policy, dict)
+    parser_policy = extract_results_policy.setdefault("parser", {})
+    assert isinstance(parser_policy, dict)
+    parser_policy["require_capability_index"] = True
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "require_capability_index=true" in result.stdout
+
+
 def test_registry_consistency_fails_when_policy_requires_unsupported_capability(
     tmp_path: Path,
 ) -> None:

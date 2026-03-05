@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_fixture_python",
+  "parser": {
+    "kind": "python",
+    "locator": "parsers.fixture_python_parser:parse_results",
+    "module": "parsers.fixture_python_parser",
+    "callable": "parse_results"
+  },
+  "supported_metrics": [
+    "validation_loss"
+  ],
+  "output_contract": {
+    "writes_metrics_json": true,
+    "writes_summary_markdown": true
+  },
+  "generated_at": "2026-03-05T00:00:00Z"
+}

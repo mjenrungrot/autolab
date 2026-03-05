@@ -14,6 +14,7 @@ from autolab.cli import handlers_observe as _handlers_observe
 from autolab.cli import handlers_project as _handlers_project
 from autolab.cli import handlers_run as _handlers_run
 from autolab.cli import parser as _parser
+from autolab.cli import handlers_parser as _handlers_parser
 from autolab.cli import support as _support
 
 _TARGET_MODULES = (
@@ -22,6 +23,7 @@ _TARGET_MODULES = (
     _handlers_backlog,
     _handlers_project,
     _handlers_run,
+    _handlers_parser,
     _handlers_admin,
     _parser,
 )

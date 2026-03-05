@@ -197,10 +197,17 @@ def _sync_scaffold_bundle(
     *,
     overwrite: bool,
 ) -> tuple[int, int]:
+    def _should_skip_scaffold_path(relative_path: Path) -> bool:
+        if "__pycache__" in relative_path.parts:
+            return True
+        return relative_path.name.lower().endswith(".pyc")
+
     copied = 0
     skipped = 0
     for source in source_root.rglob("*"):
         relative = source.relative_to(source_root)
+        if _should_skip_scaffold_path(relative):
+            continue
         destination = destination_root / relative
         if source.is_dir():
             destination.mkdir(parents=True, exist_ok=True)

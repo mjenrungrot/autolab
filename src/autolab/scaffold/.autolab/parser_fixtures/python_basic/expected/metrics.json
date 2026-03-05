@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_fixture_python",
+  "run_id": "run_fixture_python",
+  "status": "completed",
+  "primary_metric": {
+    "name": "validation_loss",
+    "value": 0.18,
+    "delta_vs_baseline": -0.04
+  }
+}

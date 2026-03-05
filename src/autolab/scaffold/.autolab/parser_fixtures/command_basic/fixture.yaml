@@ -1,0 +1,5 @@
+schema_version: "1.0"
+pack_name: command_basic
+iteration_id: iter_fixture_command
+run_id: run_fixture_command
+description: Minimal command-hook parser fixture pack.

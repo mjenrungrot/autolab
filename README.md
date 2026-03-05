@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.20
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.21
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -91,7 +91,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Command categories (onboarding-first).**
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -161,6 +161,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 - **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` and monitor logs (`runs/<run_id>/logs/slurm_monitor.*.log`) for SLURM progress; local runs auto-skip to extraction.
 - **SLURM ledger ownership** -- `launch` appends idempotent `docs/slurm_job_list.md` entries; monitor/evaluate stages validate presence but do not rewrite prior rows.
 - **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting. Summary contract: parser hook writes `analysis/summary.md`, or `extract_results.summary.llm_command` must be configured when using `mode: llm_on_demand`.
+- **parser capability artifacts** -- `experiments/<type>/<iteration_id>/parser_capabilities.json` plus `.autolab/parser_capabilities.json`; validate parser-kind + metric compatibility against `design.yaml`.
 - **update_docs** -- `docs_update.md`; advances when run evidence references are present.
 - **decide_repeat** -- `decision_result.json`; decides next iteration or terminal action. On decision application, Autolab also refreshes `traceability_coverage.json` plus `.autolab/traceability_latest.json` (advisory for stage transitions; non-blocking on generation failure).
 - assistant audit trail: `.autolab/task_history.jsonl`
@@ -169,6 +170,9 @@ Each stage produces specific artifacts and has defined exit behavior:
 
 - Runner cutover: remove deterministic stages (`launch`, `slurm_monitor`, `extract_results`) from `agent_runner.stages`; keep only `hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`. `run_agent_mode=force_on` is rejected on deterministic stages.
 - Extract parser contract: `design.yaml` now requires `extract_parser` (schema-level).
+- Parser SDK: bootstrap with `autolab parser init`; validate deterministically with `autolab parser test` (default isolated temp workspace).
+- Parser fixtures: scaffold ships `.autolab/parser_fixtures/<pack>/...` for golden parser tests.
+- Parser capability gate: when capability artifacts exist (or strict policy is enabled), `autolab verify` enforces parser-kind and primary-metric compatibility.
 - Summary contract: if parser does not write `analysis/summary.md`, configure `.autolab/verifier_policy.yaml -> extract_results.summary.llm_command`.
 
 **Failure and retry.** Verifier failure increments `state.stage_attempt` and marks `needs_retry` while below `max_stage_attempts`. When the budget is exhausted the workflow escalates to `human_review`. `implementation_review` can explicitly return `pass`, `needs_retry`, or `failed`.

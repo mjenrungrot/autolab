@@ -1,0 +1,6 @@
+python_bin: python3
+extract_results:
+  parser:
+    require_hook: true
+  summary:
+    mode: none

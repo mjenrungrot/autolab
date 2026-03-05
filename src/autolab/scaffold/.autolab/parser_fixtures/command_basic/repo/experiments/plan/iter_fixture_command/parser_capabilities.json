@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_fixture_command",
+  "parser": {
+    "kind": "command",
+    "locator": "python -m parsers.fixture_command_parser --run-id {run_id} --iteration-path {iteration_path}",
+    "command": "python -m parsers.fixture_command_parser --run-id {run_id} --iteration-path {iteration_path}"
+  },
+  "supported_metrics": [
+    "validation_accuracy"
+  ],
+  "output_contract": {
+    "writes_metrics_json": true,
+    "writes_summary_markdown": true
+  },
+  "generated_at": "2026-03-05T00:00:00Z"
+}

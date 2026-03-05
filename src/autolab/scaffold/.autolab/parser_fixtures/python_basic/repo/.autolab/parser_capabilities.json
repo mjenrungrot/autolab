@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "iterations": {
+    "iter_fixture_python": {
+      "manifest_path": "experiments/plan/iter_fixture_python/parser_capabilities.json",
+      "parser_kind": "python",
+      "supported_metrics": [
+        "validation_loss"
+      ],
+      "updated_at": "2026-03-05T00:00:00Z"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_fixture_command",
+  "run_id": "run_fixture_command",
+  "status": "completed",
+  "primary_metric": {
+    "name": "validation_accuracy",
+    "value": 0.82,
+    "delta_vs_baseline": 0.02
+  }
+}

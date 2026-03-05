@@ -1,0 +1,10 @@
+{
+  "iteration_id": "iter_fixture_command",
+  "experiment_id": "e_fixture_command",
+  "stage": "extract_results",
+  "stage_attempt": 0,
+  "last_run_id": "run_fixture_command",
+  "sync_status": "na",
+  "max_stage_attempts": 3,
+  "max_total_iterations": 20
+}
