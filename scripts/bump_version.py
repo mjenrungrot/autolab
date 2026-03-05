@@ -103,6 +103,15 @@ def _sync_readme_tag_line(lines: list[str], new_version: str) -> tuple[list[str]
     raise ValueError("could not find pinned release install command in README.md")
 
 
+def _load_readme_tag_version(readme_path: Path) -> str:
+    for line in readme_path.read_text(encoding="utf-8").splitlines():
+        match = README_TAG_RE.match(line)
+        if match is None:
+            continue
+        return match.group("version")
+    raise ValueError("could not find pinned release install command in README.md")
+
+
 def _update_readme_tag(
     readme_path: Path, new_version: str, *, dry_run: bool = False
 ) -> str:
@@ -123,6 +132,13 @@ def bump_version(
     pyproject_path: Path, readme_path: Path, *, dry_run: bool = False
 ) -> tuple[str, str, str]:
     old_version = _load_project_version(pyproject_path)
+    old_tag_version = _load_readme_tag_version(readme_path)
+    if old_tag_version != old_version:
+        raise ValueError(
+            "README.md pinned release tag version mismatch: "
+            f"expected v{old_version}, found v{old_tag_version}"
+        )
+
     new_version = _bump_patch(old_version)
     text = pyproject_path.read_text(encoding="utf-8")
     has_trailing_newline = text.endswith("\n")
@@ -135,8 +151,10 @@ def bump_version(
     if not dry_run:
         pyproject_path.write_text(updated_text, encoding="utf-8")
 
-    old_tag_version = _update_readme_tag(readme_path, new_version, dry_run=dry_run)
-    return old_version, new_version, old_tag_version
+    synced_old_tag_version = _update_readme_tag(
+        readme_path, new_version, dry_run=dry_run
+    )
+    return old_version, new_version, synced_old_tag_version
 
 
 def _default_pyproject_path() -> Path:

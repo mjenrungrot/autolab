@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.14
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.15
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -45,8 +45,10 @@ Run formatter/style checks locally:
 ./scripts/check_style.sh
 ```
 
-This also syncs the pinned release tag in `README.md` and can sync the current
-`vX.Y.Z` tag to GitHub (`origin`) after each commit on the default branch.
+This also checks that the pinned release tag in `README.md` matches the current
+`pyproject.toml` version, then syncs it to the next patch release and can sync
+the current `vX.Y.Z` tag to GitHub (`origin`) after each commit on the default
+branch.
 On default-branch commits, pre-commit now fails hard unless staged `CHANGELOG.md`
 contains a valid section for exactly `v<previous>..v<current>` with a real
 `### Summary` block.
