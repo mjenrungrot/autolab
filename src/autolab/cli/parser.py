@@ -276,6 +276,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_cmd_status)
 
+    trace = subparsers.add_parser(
+        "trace",
+        help="Build traceability coverage artifact for the active iteration",
+    )
+    trace.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    trace.add_argument(
+        "--iteration-id",
+        default="",
+        help="Optional iteration_id override (default: state.iteration_id).",
+    )
+    trace.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON summary.",
+    )
+    trace.set_defaults(handler=_cmd_trace)
+
     progress = subparsers.add_parser(
         "progress",
         help="Refresh and summarize handoff/progress state",

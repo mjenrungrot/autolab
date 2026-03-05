@@ -15,7 +15,7 @@ from autolab.constants import (
     TODO_DOC_SYNC_POST_STAGES,
     TODO_DOC_SYNC_PRE_STAGES,
 )
-from autolab.models import EvalResult, RunOutcome, StageCheckError
+from autolab.models import RunOutcome, StageCheckError
 from autolab.registry import load_registry
 from autolab.config import (
     _load_agent_runner_config,
@@ -69,6 +69,7 @@ from autolab.state import _resolve_repo_root
 from autolab.prompts import _suggest_decision_from_metrics
 from autolab.todo_sync import select_decision_from_todo
 from autolab.validators import _run_verification_step, _validate_stage_readiness
+from autolab.traceability import build_traceability_coverage
 
 
 def _orchestrator_todo_pre_sync(
@@ -370,6 +371,203 @@ def _write_auto_decision_artifact(
         },
     }
     _write_json(repo_root / ".autolab" / "auto_decision.json", payload)
+
+
+def _relative_repo_path(repo_root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _load_iteration_plan_contract(
+    repo_root: Path,
+    *,
+    iteration_dir: Path,
+    iteration_id: str,
+) -> dict[str, Any]:
+    iteration_contract = iteration_dir / "plan_contract.json"
+    if iteration_contract.exists():
+        try:
+            payload = json.loads(iteration_contract.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            return payload
+
+    canonical_contract = repo_root / ".autolab" / "plan_contract.json"
+    if canonical_contract.exists():
+        try:
+            payload = json.loads(canonical_contract.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+            if not payload_iteration_id or payload_iteration_id == iteration_id:
+                return payload
+    return {}
+
+
+def _build_decision_result_evidence(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    selected_decision: str,
+    decision_source: str,
+    metrics_evidence: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        require_exists=False,
+    )
+
+    run_id = str(state.get("last_run_id", "")).strip()
+    metrics_pointer = ""
+    if run_id:
+        metrics_pointer = _relative_repo_path(
+            repo_root, iteration_dir / "runs" / run_id / "metrics.json"
+        )
+
+    evidence_rows: list[dict[str, str]] = []
+    if metrics_pointer:
+        metrics_summary_parts = [
+            f"run_id={run_id}",
+            f"decision={selected_decision}",
+            f"decision_source={decision_source}",
+        ]
+        metrics_comparison = str((metrics_evidence or {}).get("comparison", "")).strip()
+        if metrics_comparison:
+            metrics_summary_parts.append(metrics_comparison)
+        evidence_rows.append(
+            {
+                "source": "metrics",
+                "pointer": metrics_pointer,
+                "summary": "; ".join(metrics_summary_parts),
+            }
+        )
+
+    plan_contract_payload = _load_iteration_plan_contract(
+        repo_root,
+        iteration_dir=iteration_dir,
+        iteration_id=iteration_id,
+    )
+    tasks = plan_contract_payload.get("tasks")
+    if isinstance(tasks, list):
+        plan_pointer = _relative_repo_path(
+            repo_root, iteration_dir / "plan_contract.json"
+        )
+        for entry in tasks:
+            if not isinstance(entry, dict):
+                continue
+            task_id = str(entry.get("task_id", "")).strip()
+            if not task_id:
+                continue
+            covers_requirements = entry.get("covers_requirements")
+            if not isinstance(covers_requirements, list):
+                continue
+            for requirement in covers_requirements:
+                requirement_id = str(requirement).strip()
+                if not requirement_id:
+                    continue
+                evidence_rows.append(
+                    {
+                        "source": "traceability",
+                        "pointer": metrics_pointer or f"{plan_pointer}#task:{task_id}",
+                        "summary": (
+                            f"requirement_id={requirement_id}; task_id={task_id}; "
+                            f"decision={selected_decision}; run_id={run_id or 'none'}"
+                        ),
+                    }
+                )
+
+    evidence_rows.append(
+        {
+            "source": decision_source,
+            "pointer": ".autolab/decision_trace.json",
+            "summary": f"decision '{selected_decision}' selected by {decision_source}",
+        }
+    )
+
+    deduped_rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in evidence_rows:
+        key = (
+            str(row.get("source", "")).strip(),
+            str(row.get("pointer", "")).strip(),
+            str(row.get("summary", "")).strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_rows.append({"source": key[0], "pointer": key[1], "summary": key[2]})
+    return deduped_rows
+
+
+def _decision_rationale_for_source(
+    *,
+    selected_decision: str,
+    decision_source: str,
+    auto_selected: bool,
+) -> str:
+    if auto_selected:
+        return f"Auto-selected via {decision_source}"
+    if decision_source == "artifact":
+        return "Applied from decision_result.json artifact"
+    if decision_source == "strict_override":
+        return f"Applied by strict_mode policy override ({selected_decision})"
+    return "Manual decide_repeat selection applied"
+
+
+def _write_iteration_decision_result(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    selected_decision: str,
+    decision_source: str,
+    auto_selected: bool,
+    metrics_evidence: dict[str, Any] | None,
+) -> Path:
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=str(state.get("iteration_id", "")).strip(),
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+        require_exists=False,
+    )
+    decision_path = iteration_dir / "decision_result.json"
+    evidence = _build_decision_result_evidence(
+        repo_root,
+        state=state,
+        selected_decision=selected_decision,
+        decision_source=decision_source,
+        metrics_evidence=metrics_evidence,
+    )
+    if not evidence:
+        evidence = [
+            {
+                "source": decision_source,
+                "pointer": ".autolab/decision_trace.json",
+                "summary": f"decision '{selected_decision}' selected by {decision_source}",
+            }
+        ]
+    _write_json(
+        decision_path,
+        {
+            "schema_version": "1.0",
+            "decision": selected_decision,
+            "rationale": _decision_rationale_for_source(
+                selected_decision=selected_decision,
+                decision_source=decision_source,
+                auto_selected=auto_selected,
+            ),
+            "evidence": evidence,
+            "risks": [],
+        },
+    )
+    return decision_path
 
 
 def _read_design_replicate_count(repo_root: Path, state: dict[str, Any]) -> int:
@@ -856,34 +1054,21 @@ def _run_once_standard(
             )
         except Exception:
             pass
-        if auto_selected:
-            try:
-                _iter_dir, _iter_type = _resolve_iteration_directory(
-                    repo_root,
-                    iteration_id=str(state.get("iteration_id", "")).strip(),
-                    experiment_id=str(state.get("experiment_id", "")).strip(),
-                    require_exists=False,
-                )
-                _write_json(
-                    _iter_dir / "decision_result.json",
-                    {
-                        "schema_version": "1.0",
-                        "decision": selected_decision,
-                        "rationale": f"Auto-selected via {decision_source}",
-                        "evidence": [
-                            {
-                                "source": decision_source,
-                                "pointer": str(
-                                    repo_root / ".autolab" / "decision_trace.json"
-                                ),
-                                "summary": f"Decision '{selected_decision}' auto-selected by {decision_source} policy",
-                            }
-                        ],
-                        "risks": [],
-                    },
-                )
-            except Exception:
-                pass
+        warnings: list[str] = []
+        decision_result_path: Path | None = None
+        try:
+            decision_result_path = _write_iteration_decision_result(
+                repo_root,
+                state=state,
+                selected_decision=selected_decision,
+                decision_source=decision_source,
+                auto_selected=auto_selected,
+                metrics_evidence=metrics_evidence,
+            )
+        except Exception as exc:
+            warning = f"warning: failed to write decision_result.json: {exc}"
+            warnings.append(warning)
+            _append_log(repo_root, warning)
         message = f"decision applied: decide_repeat -> {selected_decision}"
         if auto_selected:
             _source_labels = {
@@ -901,6 +1086,19 @@ def _run_once_standard(
         if selected_decision == "hypothesis":
             message = f"{message} (note: reusing current iteration directory; prior hypothesis.md will be overwritten)"
         changed = [state_path]
+        if decision_result_path is not None:
+            changed.append(decision_result_path)
+        try:
+            trace_result = build_traceability_coverage(
+                repo_root,
+                state,
+                write_outputs=True,
+            )
+            changed.extend([trace_result.coverage_path, trace_result.latest_path])
+        except Exception as exc:
+            warning = f"warning: traceability generation failed: {exc}"
+            warnings.append(warning)
+            _append_log(repo_root, warning)
         if selected_decision == "stop":
             completed, backlog_path, completion_summary = (
                 _mark_backlog_experiment_completed(
@@ -916,10 +1114,15 @@ def _run_once_standard(
                     not str(state.get("experiment_id", "")).strip()
                     and experiment_id_autofill_reason
                 ):
-                    completion_summary = f"state.experiment_id is unset ({experiment_id_autofill_reason})"
+                    completion_summary = (
+                        "state.experiment_id is unset "
+                        f"({experiment_id_autofill_reason})"
+                    )
                 completion_summary = f"backlog completion skipped: {completion_summary}"
                 _append_log(repo_root, completion_summary)
             message = f"{message}; {completion_summary}"
+        if warnings:
+            message = f"{message}; {'; '.join(warnings)}"
         outcome = RunOutcome(
             exit_code=0,
             transitioned=True,

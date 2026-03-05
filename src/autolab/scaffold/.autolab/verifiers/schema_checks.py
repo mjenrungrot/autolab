@@ -113,6 +113,8 @@ SCHEMAS: dict[str, str] = {
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
     "plan_execution_state": "plan_execution_state.schema.json",
+    "traceability_coverage": "traceability_coverage.schema.json",
+    "traceability_latest": "traceability_latest.schema.json",
     "handoff": "handoff.schema.json",
     "plan_contract": "plan_contract.schema.json",
     "plan_check_result": "plan_check_result.schema.json",
@@ -178,6 +180,16 @@ def _is_strict_schema_mode() -> bool:
     if not isinstance(schema_validation, dict):
         return False
     return bool(schema_validation.get("strict_additional_properties", False))
+
+
+def _is_traceability_schema_strict(policy: dict[str, Any]) -> bool:
+    """Return whether traceability schema issues should fail verification."""
+    schema_validation = policy.get("schema_validation")
+    if not isinstance(schema_validation, dict):
+        return False
+    if "traceability_artifacts_strict" not in schema_validation:
+        return False
+    return bool(schema_validation.get("traceability_artifacts_strict"))
 
 
 def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
@@ -605,6 +617,49 @@ def _validate_plan_execution_state(state: dict[str, Any]) -> list[str]:
     return _schema_validate(payload, schema_key="plan_execution_state", path=path)
 
 
+def _validate_traceability_coverage(state: dict[str, Any]) -> list[str]:
+    """Validate traceability_coverage.json when present (optional artifact)."""
+    iteration_dir = _iteration_dir(state)
+    path = iteration_dir / "traceability_coverage.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    failures = _schema_validate(payload, schema_key="traceability_coverage", path=path)
+    state_iteration_id = str(state.get("iteration_id", "")).strip()
+    payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+    if (
+        state_iteration_id
+        and payload_iteration_id
+        and payload_iteration_id != state_iteration_id
+    ):
+        failures.append(f"{path} iteration_id mismatch")
+    return failures
+
+
+def _validate_traceability_latest(state: dict[str, Any]) -> list[str]:
+    """Validate .autolab/traceability_latest.json when present (optional artifact)."""
+    path = REPO_ROOT / ".autolab" / "traceability_latest.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    failures = _schema_validate(payload, schema_key="traceability_latest", path=path)
+    state_iteration_id = str(state.get("iteration_id", "")).strip()
+    payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+    if (
+        state_iteration_id
+        and payload_iteration_id
+        and payload_iteration_id != state_iteration_id
+    ):
+        failures.append(f"{path} iteration_id mismatch")
+    return failures
+
+
 def _validate_handoff() -> list[str]:
     """Validate .autolab/handoff.json when present (optional artifact)."""
     path = REPO_ROOT / ".autolab" / "handoff.json"
@@ -817,6 +872,15 @@ def main() -> int:
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
 
+    warnings: list[str] = []
+    traceability_issues = []
+    traceability_issues.extend(_validate_traceability_coverage(state))
+    traceability_issues.extend(_validate_traceability_latest(state))
+    if _is_traceability_schema_strict(policy):
+        failures.extend(traceability_issues)
+    else:
+        warnings.extend(traceability_issues)
+
     passed = not failures
 
     if args.json:
@@ -835,6 +899,7 @@ def main() -> int:
             "stage": stage,
             "checks": checks,
             "errors": failures,
+            "warnings": warnings,
         }
         print(json.dumps(envelope))
     else:
@@ -874,8 +939,17 @@ def main() -> int:
                 print("\nMost likely fixes:")
                 for hint in hint_texts:
                     print(f"- {hint}")
+            if warnings:
+                print("\nAdvisory warnings:")
+                for warning in warnings:
+                    print(f"- {warning}")
         else:
-            print("schema_checks: PASS")
+            if warnings:
+                print("schema_checks: PASS (with advisory warnings)")
+                for warning in warnings:
+                    print(f"- {warning}")
+            else:
+                print("schema_checks: PASS")
 
     return 0 if passed else 1
 

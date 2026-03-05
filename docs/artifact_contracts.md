@@ -139,6 +139,46 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Producing stage**: decide_repeat
 - **Consuming stages**: run_standard (decision application)
 
+## traceability_coverage.json
+
+- **Path**: `experiments/<type>/<iteration_id>/traceability_coverage.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/traceability_coverage.schema.json`
+- **Required top-level fields**:
+  - `schema_version`, `generated_at`, `iteration_id`
+  - `experiment_id`, `run_id`
+  - `claim` (canonical v1 claim record)
+  - `decision` (iteration-level decision snapshot: status/value/rationale/pointer/evidence_count)
+  - `links[]` (joined `requirement_id -> task_id -> verification -> measurement -> decision` rows)
+  - `summary` (coverage/failure rollups)
+  - `pointers` (artifact pointers used for reconstruction)
+  - `diagnostics` (non-blocking gaps/missing artifact notes)
+- **Primary implementation evidence source**:
+  - `pointers.plan_execution_summary_path` points to `plan_execution_summary.json` for per-task execution/verification evidence.
+  - `plan_execution_state.json` is a scheduler-resume artifact and is not the primary row evidence source.
+- **Coverage status vocabulary**:
+  - `covered`, `untested`, `failed`
+- **Failure classification vocabulary**:
+  - `design`, `execution`, `measurement` (plus `none` for fully covered rows)
+- **Producing stage**:
+  - auto-refresh on `decide_repeat` decision application (best effort; non-blocking)
+  - manual regeneration via `autolab trace [--iteration-id <id>] [--json]`
+- **Consuming stages**: observability/handoff/debug workflows (advisory, not stage-gating)
+- **Verifier note**: schema checks can validate traceability artifacts when present; this does not change stage-transition semantics.
+
+## .autolab/traceability_latest.json
+
+- **Path**: `.autolab/traceability_latest.json`
+- **Format**: JSON
+- **Content**:
+  - latest `iteration_id`/`experiment_id` trace pointer
+  - compact traceability summary counters
+  - decision snapshot for the same trace refresh
+- **Produced when**:
+  - `traceability_coverage.json` is refreshed (auto or manual `autolab trace`)
+- **Consumed by**:
+  - quick machine lookup workflows (without walking iteration paths)
+
 ## run_context.json
 
 - **Path**: `.autolab/run_context.json`
