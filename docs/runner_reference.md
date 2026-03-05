@@ -2,10 +2,9 @@
 
 This document covers agent runner configuration, command substitution, environment variables, edit scope modes, and timeout settings.
 
-Launch-stage note: launch command execution/submission is orchestrator-backed. When
-runner-generated launch artifacts already contain execution evidence for the current
-`run_id`, the orchestrator skips duplicate execution and only backfills invariants
-such as logs/ledger entries.
+Deterministic-stage note: `launch`, `slurm_monitor`, and `extract_results` are
+orchestrator-backed runtime stages. Runner invocation is bypassed for these stages
+unless `run_agent_mode=force_on`, which is rejected as a stage failure.
 
 ## Runner Presets
 
@@ -57,6 +56,13 @@ Set by Autolab before runner invocation:
 - `variable`: `AUTOLAB_PROMPT_RETRY_BRIEF_PATH`; `value`: Deprecated alias for `AUTOLAB_PROMPT_BRIEF_PATH`; `purpose`: Backward compatibility.
 - `variable`: `AUTOLAB_PROMPT_HUMAN_PATH`; `value`: Path to rendered human packet; `purpose`: Human review packet access.
 - `variable`: `AUTOLAB_CORE_ADD_DIRS`; `value`: Comma-separated core add-dir absolute paths; `purpose`: Scope diagnostics.
+
+## Memory Brief Ownership
+
+- Memory sync guidance is stage-opted, not universal: only templates that include
+  `{{shared:memory_brief.md}}` carry todo/documentation reminders.
+- Orchestration owns todo/documentation reconciliation after those opted-in stages.
+- Runner prompts should keep memory edits concise and task-scoped.
 
 ## Edit Scope Modes
 
@@ -131,6 +137,13 @@ Not all stages support runner invocation. Eligible stages:
 Deterministic runtime cutover: `launch`, `slurm_monitor`, and `extract_results` are
 orchestrator-owned and not runner-eligible.
 
+Run-mode behavior for deterministic stages:
+
+- `run_agent_mode=policy`: runner is bypassed; deterministic runtime executes.
+- `run_agent_mode=force_off`: runner is bypassed; deterministic runtime executes.
+- `run_agent_mode=force_on`: rejected with
+  `run_agent_mode=force_on is incompatible with deterministic stage '<stage>'`.
+
 Terminal stages (`human_review`, `stop`) are not runner-eligible.
 
 Configure which stages the runner executes via `agent_runner.stages`:
@@ -151,4 +164,5 @@ stages should be removed during scaffold/policy upgrades.
 - `--run-agent`: Force runner on for this command (ignores `enabled` policy)
 - `--no-run-agent`: Force runner off (skips runner even if enabled)
 
-These apply to both `autolab run` and `autolab loop`.
+These apply to both `autolab run` and `autolab loop`. For deterministic stages,
+`--run-agent` (`force_on`) fails fast instead of forcing runner execution.

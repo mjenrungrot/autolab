@@ -17,6 +17,7 @@ from pathlib import Path
 from verifier_lib import REPO_ROOT, make_result, print_result
 
 PROMPTS_DIR = REPO_ROOT / ".autolab" / "prompts"
+SHARED_PROMPTS_DIR = PROMPTS_DIR / "shared"
 TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 SHARED_INCLUDE_PATTERN = re.compile(
     r"\{\{\s*shared\s*:\s*([A-Za-z0-9][A-Za-z0-9_.\-/]*)\s*\}\}"
@@ -117,6 +118,52 @@ DEFAULT_OPTIONAL_TOKENS_BY_STAGE: dict[str, set[str]] = {
         "auto_metrics_evidence",
     },
 }
+
+
+def _lint_shared_prompt_contracts() -> list[str]:
+    failures: list[str] = []
+
+    guardrails_path = SHARED_PROMPTS_DIR / "guardrails.md"
+    verification_ritual_path = SHARED_PROMPTS_DIR / "verification_ritual.md"
+    runtime_context_path = SHARED_PROMPTS_DIR / "runtime_context.md"
+
+    try:
+        guardrails_text = guardrails_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        failures.append(f"{guardrails_path} could not be read: {exc}")
+        guardrails_text = ""
+    if "docs/todo.md" in guardrails_text or "documentation.md" in guardrails_text:
+        failures.append(
+            f"{guardrails_path} must not include universal dual-memory policy guidance; use shared:memory_brief.md in opted-in stages"
+        )
+
+    try:
+        verification_text = verification_ritual_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        failures.append(f"{verification_ritual_path} could not be read: {exc}")
+        verification_text = ""
+    if (
+        "Dual-memory audit" in verification_text
+        or "docs/todo.md" in verification_text
+        or "documentation.md" in verification_text
+    ):
+        failures.append(
+            f"{verification_ritual_path} must remain memory-policy neutral; stage-specific memory checks belong in shared:memory_brief.md"
+        )
+
+    try:
+        runtime_context_text = runtime_context_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        failures.append(f"{runtime_context_path} could not be read: {exc}")
+        runtime_context_text = ""
+    if "deterministic runtime stages" not in runtime_context_text or (
+        "bypasses the runner" not in runtime_context_text
+    ):
+        failures.append(
+            f"{runtime_context_path} must explicitly describe deterministic-stage runner bypass semantics"
+        )
+
+    return failures
 
 
 def _format_shared_include(include_ref: str) -> str:
@@ -435,6 +482,20 @@ def _lint_stage_prompt(
                 failures.append(
                     f"{prompt_path} missing required shared include: {_format_shared_include(include)}"
                 )
+    if audience == "audit" and stage == "design":
+        extract_parser_mentions = lowered.count("extract_parser")
+        if extract_parser_mentions < 2:
+            failures.append(
+                f"{prompt_path} design audit prompt must mention extract_parser in both contract guidance and output template"
+            )
+        if not re.search(r"^\s*extract_parser:\s*$", text, flags=re.MULTILINE):
+            failures.append(
+                f"{prompt_path} design output template must include an extract_parser mapping block"
+            )
+        if "scope_kind" not in lowered:
+            failures.append(
+                f"{prompt_path} design contract must explicitly require implementation_requirements.scope_kind"
+            )
 
     if audience == "runner":
         if (
@@ -677,6 +738,7 @@ def main() -> int:
         for prompt_path in assistant_files:
             failures.extend(_lint_assistant_prompt(prompt_path))
     else:
+        failures.extend(_lint_shared_prompt_contracts())
         stage_prompt_files = _resolve_stage_prompt_files()
         terminal_stages = _resolve_terminal_stages()
         required_tokens_by_stage = _resolve_required_tokens_by_stage()

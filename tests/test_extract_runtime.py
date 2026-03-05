@@ -66,6 +66,12 @@ def _write_python_hook(repo: Path, *, module_name: str, body: str) -> None:
     module_path.write_text(body, encoding="utf-8")
 
 
+def _write_executable_script(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
 def test_extract_runtime_skips_when_design_missing_and_parser_optional(
     tmp_path: Path,
 ) -> None:
@@ -307,6 +313,280 @@ def test_extract_runtime_fails_when_summary_missing_in_mode_none(
             _execute_extract_runtime(repo, state=_base_state())
     finally:
         sys.path.remove(str(repo))
+
+
+def test_extract_runtime_python_hook_blocks_external_import_side_effects(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    module_name = "extract_runtime_external_side_effect"
+    marker_path = tmp_path / "side_effect_marker.txt"
+    external_dir = tmp_path / "external_modules"
+    external_dir.mkdir(parents=True, exist_ok=True)
+    (external_dir / f"{module_name}.py").write_text(
+        (
+            "from pathlib import Path\n"
+            f"Path({str(marker_path)!r}).write_text('imported', encoding='utf-8')\n"
+            "def parse_results(*, run_id, **kwargs):\n"
+            "    return {\n"
+            "        'metrics': {'schema_version': '1.0', 'iteration_id': 'iter1', 'run_id': run_id},\n"
+            "        'summary_markdown': '# Summary\\nexternal\\n',\n"
+            "    }\n"
+        ),
+        encoding="utf-8",
+    )
+    _write_design(
+        iteration_dir,
+        extract_parser={
+            "kind": "python",
+            "module": module_name,
+            "callable": "parse_results",
+        },
+    )
+    _write_policy(
+        repo,
+        {
+            "extract_results": {
+                "parser": {
+                    "require_hook": True,
+                    "allow_external_python_modules": False,
+                },
+                "summary": {"mode": "none"},
+            }
+        },
+    )
+
+    assert not marker_path.exists()
+    sys.path.insert(0, str(external_dir))
+    try:
+        with pytest.raises(StageCheckError, match="repository root"):
+            _execute_extract_runtime(repo, state=_base_state())
+    finally:
+        sys.path.remove(str(external_dir))
+        sys.modules.pop(module_name, None)
+    assert not marker_path.exists()
+
+
+def test_extract_runtime_blocks_command_allowlist_traversal_bypass(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    marker_path = iteration_dir / "analysis" / "blocked_parser_ran.txt"
+    blocked_script = repo / "tools" / "blocked" / "parser_hook.py"
+    _write_executable_script(
+        blocked_script,
+        (
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker_path)!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+            f"Path({str(marker_path)!r}).write_text('ran\\n', encoding='utf-8')\n"
+            "print(json.dumps({\n"
+            "    'metrics': {\n"
+            "        'schema_version': '1.0',\n"
+            "        'iteration_id': 'iter1',\n"
+            "        'run_id': 'run_001',\n"
+            "        'status': 'completed',\n"
+            "        'primary_metric': {'name': 'acc', 'value': 1.0, 'delta_vs_baseline': 0.1},\n"
+            "    },\n"
+            "    'summary_markdown': '# Summary\\\\nblocked\\\\n',\n"
+            "}))\n"
+        ),
+    )
+    allowed_dir = repo / "tools" / "allowed"
+    allowed_dir.mkdir(parents=True, exist_ok=True)
+    traversal_command = str(allowed_dir / ".." / "blocked" / "parser_hook.py")
+    _write_design(
+        iteration_dir,
+        extract_parser={
+            "kind": "command",
+            "command": traversal_command,
+        },
+    )
+    _write_policy(
+        repo,
+        {
+            "extract_results": {
+                "parser": {
+                    "require_hook": True,
+                    "allow_command_hook": True,
+                    "command_allowlist": [str(allowed_dir)],
+                },
+                "summary": {"mode": "none"},
+            }
+        },
+    )
+
+    with pytest.raises(StageCheckError, match="not allowed"):
+        _execute_extract_runtime(repo, state=_base_state())
+    assert not marker_path.exists()
+
+
+def test_extract_runtime_command_hook_runs_with_realpath_allowlist(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    command_script = repo / "tools" / "parser_hook.py"
+    _write_executable_script(
+        command_script,
+        (
+            f"#!{sys.executable}\n"
+            "import argparse\n"
+            "import json\n"
+            "parser = argparse.ArgumentParser()\n"
+            "parser.add_argument('--run-id', required=True)\n"
+            "args = parser.parse_args()\n"
+            "print(json.dumps({\n"
+            "    'metrics': {\n"
+            "        'schema_version': '1.0',\n"
+            "        'iteration_id': 'iter1',\n"
+            "        'run_id': args.run_id,\n"
+            "        'status': 'completed',\n"
+            "        'primary_metric': {'name': 'acc', 'value': 1.0, 'delta_vs_baseline': 0.1},\n"
+            "    },\n"
+            "    'summary_markdown': '# Summary\\\\nfrom-command\\\\n',\n"
+            "}))\n"
+        ),
+    )
+    _write_design(
+        iteration_dir,
+        extract_parser={
+            "kind": "command",
+            "command": f"{command_script} --run-id {{run_id}}",
+        },
+    )
+    _write_policy(
+        repo,
+        {
+            "extract_results": {
+                "parser": {
+                    "require_hook": True,
+                    "allow_command_hook": True,
+                    "command_allowlist": [str(command_script)],
+                },
+                "summary": {"mode": "none"},
+            }
+        },
+    )
+
+    result = _execute_extract_runtime(repo, state=_base_state())
+
+    metrics_path = iteration_dir / "runs" / "run_001" / "metrics.json"
+    summary_path = iteration_dir / "analysis" / "summary.md"
+    stdout_path = (
+        iteration_dir / "runs" / "run_001" / "logs" / "extract.parser.stdout.log"
+    )
+    stderr_path = (
+        iteration_dir / "runs" / "run_001" / "logs" / "extract.parser.stderr.log"
+    )
+    assert json.loads(metrics_path.read_text(encoding="utf-8"))["run_id"] == "run_001"
+    assert "from-command" in summary_path.read_text(encoding="utf-8")
+    assert set(result.changed_files) == {
+        metrics_path,
+        summary_path,
+        stdout_path,
+        stderr_path,
+    }
+
+
+def test_extract_runtime_command_hook_allows_basename_allowlist_entry(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    command_script = repo / "tools" / "basename_parser_hook.py"
+    _write_executable_script(
+        command_script,
+        (
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "print(json.dumps({\n"
+            "    'metrics': {\n"
+            "        'schema_version': '1.0',\n"
+            "        'iteration_id': 'iter1',\n"
+            "        'run_id': 'run_001',\n"
+            "        'status': 'completed',\n"
+            "        'primary_metric': {'name': 'acc', 'value': 1.0, 'delta_vs_baseline': 0.1},\n"
+            "    },\n"
+            "    'summary_markdown': '# Summary\\\\nbasename-allowlist\\\\n',\n"
+            "}))\n"
+        ),
+    )
+    _write_design(
+        iteration_dir,
+        extract_parser={
+            "kind": "command",
+            "command": str(command_script),
+        },
+    )
+    _write_policy(
+        repo,
+        {
+            "extract_results": {
+                "parser": {
+                    "require_hook": True,
+                    "allow_command_hook": True,
+                    "command_allowlist": [command_script.name],
+                },
+                "summary": {"mode": "none"},
+            }
+        },
+    )
+
+    result = _execute_extract_runtime(repo, state=_base_state())
+    metrics_path = iteration_dir / "runs" / "run_001" / "metrics.json"
+    summary_path = iteration_dir / "analysis" / "summary.md"
+    assert json.loads(metrics_path.read_text(encoding="utf-8"))["run_id"] == "run_001"
+    assert "basename-allowlist" in summary_path.read_text(encoding="utf-8")
+    assert metrics_path in result.changed_files
+    assert summary_path in result.changed_files
+
+
+def test_extract_runtime_command_hook_policy_gate_blocks_execution(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    marker_path = iteration_dir / "analysis" / "should_not_run.txt"
+    command_script = repo / "tools" / "parser_hook.py"
+    _write_executable_script(
+        command_script,
+        (
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker_path)!r}).parent.mkdir(parents=True, exist_ok=True)\n"
+            f"Path({str(marker_path)!r}).write_text('ran\\n', encoding='utf-8')\n"
+            "print(json.dumps({'metrics': {'schema_version': '1.0'}, 'summary_markdown': '# Summary\\nran\\n'}))\n"
+        ),
+    )
+    _write_design(
+        iteration_dir,
+        extract_parser={
+            "kind": "command",
+            "command": str(command_script),
+        },
+    )
+    _write_policy(
+        repo,
+        {
+            "extract_results": {
+                "parser": {
+                    "require_hook": True,
+                    "allow_command_hook": False,
+                    "command_allowlist": [str(command_script)],
+                },
+                "summary": {"mode": "none"},
+            }
+        },
+    )
+
+    with pytest.raises(StageCheckError, match="disabled by policy"):
+        _execute_extract_runtime(repo, state=_base_state())
+    assert not marker_path.exists()
 
 
 def test_extract_runtime_llm_on_demand_generates_missing_summary(

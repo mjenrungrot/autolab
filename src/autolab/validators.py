@@ -136,11 +136,38 @@ def _validate_stage_readiness(
     *,
     stage_override: str | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
-    """Validate prompt-token readiness before runner execution/evaluation."""
+    """Validate stage readiness before runner execution/evaluation."""
     from autolab.prompts import _build_prompt_context, _resolve_stage_prompt_path
     from autolab.registry import load_registry, registry_required_tokens
+    from autolab.state import _resolve_iteration_directory
 
     stage = _resolve_verification_stage(state, stage_override=stage_override)
+    design_contract_details: dict[str, Any] = {}
+    if stage == "implementation":
+        iteration_id = str(state.get("iteration_id", "")).strip()
+        experiment_id = str(state.get("experiment_id", "")).strip()
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        design_path = iteration_dir / "design.yaml"
+        design_contract_details["design_path"] = design_path.as_posix()
+        try:
+            _validate_design(design_path, iteration_id)
+        except StageCheckError as exc:
+            details = {
+                "stage": stage,
+                "missing_tokens": [],
+                **design_contract_details,
+                "design_contract_error": str(exc),
+            }
+            return (
+                False,
+                "stage readiness failed: design contract invalid",
+                details,
+            )
     if stage in {"decide_repeat", "human_review", "stop"}:
         return (
             True,
@@ -163,6 +190,7 @@ def _validate_stage_readiness(
                 "stage": stage,
                 "missing_tokens": [],
                 "reason": "workflow_registry_missing",
+                **design_contract_details,
             },
         )
 
@@ -209,6 +237,7 @@ def _validate_stage_readiness(
         "template_path": template_path.as_posix(),
         "missing_tokens": missing,
         "required_tokens": required_tokens,
+        **design_contract_details,
     }
     if missing:
         return (
@@ -366,6 +395,7 @@ def _validate_design(path: Path, iteration_id: str) -> None:
         "metrics",
         "baselines",
         "implementation_requirements",
+        "extract_parser",
     }
     missing = sorted(required - set(payload.keys()))
     if missing:
@@ -401,6 +431,45 @@ def _validate_design(path: Path, iteration_id: str) -> None:
     ):
         raise StageCheckError(
             "design.yaml implementation_requirements must be a non-empty list"
+        )
+    allowed_scope_kinds = {"experiment", "project_wide"}
+    for index, requirement in enumerate(implementation_requirements):
+        if not isinstance(requirement, dict):
+            raise StageCheckError(
+                f"design.yaml implementation_requirements[{index}] must be a mapping"
+            )
+        requirement_id = str(requirement.get("requirement_id", "")).strip()
+        description = str(requirement.get("description", "")).strip()
+        scope_kind = str(requirement.get("scope_kind", "")).strip()
+        if not requirement_id:
+            raise StageCheckError(
+                f"design.yaml implementation_requirements[{index}] missing requirement_id"
+            )
+        if not description:
+            raise StageCheckError(
+                f"design.yaml implementation_requirements[{index}] missing description"
+            )
+        if scope_kind not in allowed_scope_kinds:
+            raise StageCheckError(
+                "design.yaml implementation_requirements"
+                f"[{index}] scope_kind must be one of {sorted(allowed_scope_kinds)}"
+            )
+
+    extract_parser = payload.get("extract_parser")
+    if not isinstance(extract_parser, dict):
+        raise StageCheckError("design.yaml extract_parser must be a mapping")
+    parser_kind = str(extract_parser.get("kind", "")).strip()
+    if parser_kind not in {"python", "command"}:
+        raise StageCheckError(
+            "design.yaml extract_parser.kind must be one of ['command', 'python']"
+        )
+    if parser_kind == "python" and not str(extract_parser.get("module", "")).strip():
+        raise StageCheckError(
+            "design.yaml extract_parser kind=python requires non-empty module"
+        )
+    if parser_kind == "command" and not str(extract_parser.get("command", "")).strip():
+        raise StageCheckError(
+            "design.yaml extract_parser kind=command requires non-empty command"
         )
 
 

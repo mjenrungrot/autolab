@@ -213,6 +213,10 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
                 "expected_artifacts": ["implementation_plan.md"],
             }
         ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "true",
+        },
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
@@ -473,6 +477,10 @@ def _make_valid_design(**overrides: Any) -> dict[str, Any]:
                 "expected_artifacts": ["implementation_plan.md"],
             }
         ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "true",
+        },
     }
     design.update(overrides)
     return design

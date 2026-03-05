@@ -216,6 +216,10 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
                 "expected_artifacts": ["implementation_plan.md"],
             }
         ],
+        "extract_parser": {
+            "kind": "command",
+            "command": "true",
+        },
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
@@ -477,6 +481,9 @@ def _seed_slurm_extract(
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, indent=2), encoding="utf-8"
     )
+    analysis_dir = iteration_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "summary.md").write_text("# Summary\nResults.", encoding="utf-8")
 
 
 def _write_slurm_ledger(

@@ -5,7 +5,9 @@ import inspect
 import json
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,6 +79,70 @@ def _parse_timeout_seconds(raw_value: Any, *, default: float, field_name: str) -
     if timeout <= 0:
         raise StageCheckError(f"{field_name} must be > 0")
     return timeout
+
+
+def _validate_python_module_name(module_name: str) -> str:
+    value = str(module_name).strip()
+    if not value:
+        raise StageCheckError("extract parser hook module name must be non-empty")
+    for part in value.split("."):
+        if not _PYTHON_IDENTIFIER_PATTERN.fullmatch(part):
+            raise StageCheckError(
+                f"extract parser hook module name '{module_name}' is invalid"
+            )
+    return value
+
+
+def _resolve_repo_python_module_source(repo_root: Path, module_name: str) -> Path:
+    normalized_module_name = _validate_python_module_name(module_name)
+    module_path = Path(*normalized_module_name.split("."))
+    source_candidates = (
+        repo_root / module_path.with_suffix(".py"),
+        repo_root / module_path / "__init__.py",
+    )
+    for candidate in source_candidates:
+        if not candidate.is_file():
+            continue
+        _ensure_path_within(
+            repo_root,
+            candidate,
+            field=f"extract parser hook module '{normalized_module_name}'",
+        )
+        return candidate
+    raise StageCheckError(
+        "extract parser hook module must resolve to a file under the repository root"
+    )
+
+
+def _looks_like_path_token(token: str) -> bool:
+    return (
+        Path(token).is_absolute()
+        or "/" in token
+        or "\\" in token
+        or token.startswith(".")
+    )
+
+
+def _resolve_real_path(path: Path) -> Path | None:
+    try:
+        return path.resolve(strict=True)
+    except Exception:
+        return None
+
+
+def _resolve_executable_real_path(executable: str, *, cwd: Path) -> Path | None:
+    token = str(executable).strip()
+    if not token:
+        return None
+    if _looks_like_path_token(token):
+        candidate = Path(token)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        return _resolve_real_path(candidate)
+    resolved = shutil.which(token)
+    if not resolved:
+        return None
+    return _resolve_real_path(Path(resolved))
 
 
 def _load_extract_parser_security_policy(repo_root: Path) -> dict[str, Any]:
@@ -253,17 +319,38 @@ def _template_command_argv(
     return argv
 
 
-def _command_matches_allowlist(command: str, allowlist: tuple[str, ...]) -> bool:
+def _command_matches_allowlist(
+    command: str, allowlist: tuple[str, ...], *, cwd: Path
+) -> bool:
     if not allowlist:
         return True
-    executable = str(command).strip()
-    executable_name = Path(executable).name
-    return any(
-        executable == entry
-        or executable_name == entry
-        or executable.startswith(f"{entry}/")
-        for entry in allowlist
-    )
+    executable_real = _resolve_executable_real_path(command, cwd=cwd)
+    if executable_real is None:
+        return False
+    executable_name = executable_real.name
+    for raw_entry in allowlist:
+        entry = str(raw_entry).strip()
+        if not entry:
+            continue
+        if not _looks_like_path_token(entry):
+            if executable_name == entry:
+                return True
+            continue
+        entry_path = Path(entry)
+        if not entry_path.is_absolute():
+            entry_path = cwd / entry_path
+        entry_real = _resolve_real_path(entry_path)
+        if entry_real is None:
+            continue
+        if entry_real.is_dir():
+            try:
+                executable_real.relative_to(entry_real)
+                return True
+            except ValueError:
+                continue
+        if executable_real == entry_real:
+            return True
+    return False
 
 
 def _apply_parser_result(
@@ -302,11 +389,28 @@ def _execute_python_parser_hook(
     allow_external_python_modules: bool,
     changed_files: list[Path],
 ) -> None:
-    module_name = str(hook["module"])
+    module_name = _validate_python_module_name(str(hook["module"]))
     callable_name = str(hook["callable"])
+    expected_module_source: Path | None = None
+    if not allow_external_python_modules:
+        expected_module_source = _resolve_repo_python_module_source(
+            repo_root, module_name
+        )
 
+    original_sys_path: list[str] | None = None
+    if not allow_external_python_modules:
+        repo_root_str = str(repo_root)
+        original_sys_path = list(sys.path)
+        sys.path = [
+            repo_root_str,
+            *[entry for entry in sys.path if entry != repo_root_str],
+        ]
     try:
-        module = importlib.import_module(module_name)
+        try:
+            module = importlib.import_module(module_name)
+        finally:
+            if original_sys_path is not None:
+                sys.path = original_sys_path
     except Exception as exc:
         raise StageCheckError(
             f"extract parser hook could not import module '{module_name}': {exc}"
@@ -320,11 +424,18 @@ def _execute_python_parser_hook(
             raise StageCheckError(
                 "extract parser hook module must resolve to a file under the repository root"
             )
-        _ensure_path_within(
+        resolved_module_source = _ensure_path_within(
             repo_root,
             Path(module_source),
             field=f"extract parser hook module '{module_name}'",
         )
+        if expected_module_source is not None:
+            expected_resolved = expected_module_source.resolve(strict=False)
+            module_resolved = resolved_module_source.resolve(strict=False)
+            if module_resolved != expected_resolved:
+                raise StageCheckError(
+                    f"extract parser hook module '{module_name}' resolved to unexpected source '{module_resolved}'"
+                )
 
     current: Any = module
     for part in callable_name.split("."):
@@ -417,12 +528,6 @@ def _execute_command_parser_hook(
         variables,
         context=f"extract command parser for run_id={run_id}",
     )
-    if not _command_matches_allowlist(command[0], command_allowlist):
-        raise StageCheckError(
-            "extract command parser hook executable is not allowed by "
-            "extract_results.parser.command_allowlist"
-        )
-
     cwd = repo_root
     if working_dir:
         raw_dir = Path(working_dir)
@@ -431,6 +536,11 @@ def _execute_command_parser_hook(
             repo_root,
             cwd_candidate,
             field="extract parser hook working_dir",
+        )
+    if not _command_matches_allowlist(command[0], command_allowlist, cwd=cwd):
+        raise StageCheckError(
+            "extract command parser hook executable is not allowed by "
+            "extract_results.parser.command_allowlist"
         )
 
     try:

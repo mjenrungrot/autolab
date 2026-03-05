@@ -82,16 +82,19 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Dynamic line limit**: Scales with `count_paths` in `experiment_file_line_limits.yaml`
 - **Producing stages**: launch (create), slurm_monitor (status/sync updates)
 - **Consuming stages**: slurm_monitor, extract_results, update_docs
+- **Ownership note**: `slurm_monitor` mutates manifest status/sync state and monitor logs, while `launch` owns SLURM ledger append behavior.
 
 ## docs/slurm_job_list.md
 
 - **Path**: `docs/slurm_job_list.md`
 - **Format**: Markdown
-- **Content**: durable run/job ledger entries for SLURM launches (`run_id`, `job_id`, status notes)
-- **Producing stages**:
-  - `launch`: append initial entry at submission
-  - `slurm_monitor`: update current scheduler/sync status
-- **Consuming stages**: slurm_monitor (primary), extract_results (read-only context)
+- **Content**: durable canonical run/job ledger entries for SLURM launches (`run_id`, `job_id`, `iteration_id`, submission date, status at append time)
+- **Producing stage**:
+  - `launch`: append idempotent canonical entry (including adopted/existing manifests)
+- **Consuming checks**:
+  - launch/update_docs validation requires `run_id` presence in ledger for SLURM manifests
+  - `autolab slurm-job-list verify` can audit canonical line presence
+- **Ownership note**: `slurm_monitor` does not rewrite ledger rows; it advances `run_manifest.json` status/sync fields.
 
 ## metrics.json
 

@@ -1,12 +1,24 @@
 # Changelog
 
+## [1.2.17] - 2026-03-05
+
+### Summary
+
+- Hardened prompt extraction rendering to strip sentinel placeholders, normalize booleans/integers, and avoid leaking unknown/unavailable markers into runner-facing prompts.
+- Expanded prompt lint enforcement for runner packs, including stricter checks for duplicated guidance, audit leakage, and stage-irrelevant policy content.
+- Added milestone verification coverage to lock deterministic launch/slurm-monitor execution paths and prompt-pack DoD guarantees.
+- Updated docs to reflect compact review briefs, stricter prompt hygiene, and runtime contract behavior for this milestone.
+
+<!-- autolab:range v1.2.16..v1.2.17 -->
+
 ## [1.2.16] - 2026-03-05
 
 ### Summary
 
 - De-LLM'd operational execution paths by adding deterministic runtimes for `launch`, `slurm_monitor`, and `extract_results`, including multi-run monitor aggregation and task-level runtime evidence handling.
 - Hardened parser and command execution surfaces with stricter policy controls, safer command templating, run/path containment checks, and timeout-aware hook execution.
-- Tightened prompt/runtime contracts: `design.yaml` now requires `extract_parser`, deterministic stages reject `run_agent_mode=force_on`, and dual-memory guidance moved from universal runtime prose to stage-opted compact memory briefs with orchestration-scoped todo/doc reconciliation.
+- Tightened prompt/runtime contracts: `design.yaml` now requires `extract_parser`, deterministic stages reject `run_agent_mode=force_on`, and memory guidance moved to stage-opted compact memory briefs with orchestration-scoped todo/doc reconciliation.
+- Aligned runtime docs/contracts with implementation behavior: `launch` owns SLURM ledger append semantics, while `slurm_monitor` owns run-manifest progress updates and monitor logs.
 
 <!-- autolab:range v1.2.15..v1.2.16 -->
 
