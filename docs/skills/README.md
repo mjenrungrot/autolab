@@ -29,7 +29,7 @@ Install always writes full content copies from packaged assets.
 
 ## Bundled Scope
 
-- Codex bundle includes workflow and orchestration skills (`autolab`, `llm-council`, `swarm-planner`, `parallel-task`).
+- Codex bundle includes workflow, semantic-agent, and orchestration skills (`autolab`, `researcher`, `planner`, `plan-checker`, `reviewer`, `llm-council`, `swarm-planner`, `parallel-task`).
 - Claude bundle currently includes the `autolab` workflow operator skill.
 
 To add more provider-specific skills, create `src/autolab/skills/<provider>/<skill>/SKILL.md` and ensure installer/test coverage is updated.

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.27] - 2026-03-05
+
+### Summary
+
+- Added bundled Codex semantic-role skills (`researcher`, `planner`, `plan-checker`, `reviewer`) plus install/docs coverage for project-local skill copies.
+- Added prompt and research-command agent-surface guidance so implementation, review, and research flows can advertise installed semantic roles without breaking fallback behavior.
+- Tightened `run --execute-approved-plan` so it requires current planning artifacts plus a matching current approval artifact instead of silently regenerating plan state.
+
+<!-- autolab:range v1.2.26..v1.2.27 -->
+
 ## [1.2.26] - 2026-03-05
 
 ### Summary

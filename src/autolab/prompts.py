@@ -22,7 +22,12 @@ from autolab.constants import (
     STAGE_PROMPT_FILES,
     STAGE_RUNNER_PROMPT_FILES,
 )
+from autolab.agent_surface import (
+    build_agent_surface_guidance,
+    resolve_agent_surface,
+)
 from autolab.config import (
+    _load_agent_runner_config,
     _load_launch_execute_policy,
     _load_protected_files,
     _load_verifier_policy,
@@ -820,6 +825,16 @@ def _build_prompt_context(
             "verifier_categories": dict(stage_spec.verifier_categories),
         }
     protected_files = _load_protected_files(policy, auto_mode=False)
+    runner_config = _load_agent_runner_config(repo_root)
+    agent_surface = resolve_agent_surface(
+        repo_root,
+        provider=runner_config.runner,
+        stage=stage,
+        assistant_cycle_stage=str(state.get("task_cycle_stage", "")).strip()
+        if str(state.get("assistant_mode", "")).strip().lower() == "on"
+        else "",
+    )
+    agent_surface_guidance = build_agent_surface_guidance(agent_surface)
 
     retry_counters = {
         "stage_attempt": stage_attempt,
@@ -890,6 +905,8 @@ def _build_prompt_context(
             else [],
         },
         "sidecar_guidance": sidecar_guidance,
+        "agent_surface": agent_surface,
+        "agent_surface_guidance": agent_surface_guidance,
         "retry_counters": retry_counters,
         "protected_files": protected_files,
         "stage_metadata": stage_metadata,
@@ -923,6 +940,7 @@ def _build_prompt_context(
                 "codebase_experiment_delta_summary", ""
             ),
             "context_resolution": context_resolution,
+            "agent_surface": agent_surface,
         },
         "verification": {
             "verifier_outputs": verifier_outputs,
@@ -995,6 +1013,15 @@ def _collect_stage_brief_items(
 ) -> list[str]:
     items: list[str] = []
     seen: set[str] = set()
+
+    agent_surface_guidance = context_payload.get("agent_surface_guidance")
+    if isinstance(agent_surface_guidance, dict):
+        agent_items = agent_surface_guidance.get("brief_items")
+        if isinstance(agent_items, list):
+            for item in agent_items:
+                candidate = _sanitize_retry_blocker(str(item))
+                if candidate:
+                    items.append(candidate)
 
     sidecar_guidance = context_payload.get("sidecar_guidance")
     if isinstance(sidecar_guidance, dict):
@@ -1291,6 +1318,13 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     extra_context_lines: list[str] = []
     if isinstance(sidecar_guidance, dict):
         raw_lines = sidecar_guidance.get("stage_context_lines")
+        if isinstance(raw_lines, list):
+            extra_context_lines.extend(
+                str(item).strip() for item in raw_lines if str(item).strip()
+            )
+    agent_surface_guidance = context_payload.get("agent_surface_guidance")
+    if isinstance(agent_surface_guidance, dict):
+        raw_lines = agent_surface_guidance.get("stage_context_lines")
         if isinstance(raw_lines, list):
             extra_context_lines.extend(
                 str(item).strip() for item in raw_lines if str(item).strip()

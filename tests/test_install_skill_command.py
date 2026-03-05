@@ -82,7 +82,16 @@ def test_install_skill_codex_installs_all_skills(tmp_path: Path) -> None:
     assert exit_code == 0
 
     expected_skills = _list_bundled_skills("codex")
-    assert len(expected_skills) == 4
+    assert expected_skills == [
+        "autolab",
+        "llm-council",
+        "parallel-task",
+        "plan-checker",
+        "planner",
+        "researcher",
+        "reviewer",
+        "swarm-planner",
+    ]
     for skill_name in expected_skills:
         dest = tmp_path / ".codex" / "skills" / skill_name / "SKILL.md"
         assert dest.exists(), f"missing {skill_name}/SKILL.md"
@@ -101,17 +110,17 @@ def test_install_skill_codex_selective_install(tmp_path: Path) -> None:
             "install-skill",
             "codex",
             "--skill",
-            "swarm-planner",
+            "plan-checker",
             "--project-root",
             str(tmp_path),
         ]
     )
     assert exit_code == 0
 
-    dest = tmp_path / ".codex" / "skills" / "swarm-planner" / "SKILL.md"
+    dest = tmp_path / ".codex" / "skills" / "plan-checker" / "SKILL.md"
     assert dest.exists()
     content = dest.read_text(encoding="utf-8")
-    _assert_has_yaml_frontmatter(content, expected_name="swarm-planner")
+    _assert_has_yaml_frontmatter(content, expected_name="plan-checker")
 
     # Only the requested skill should be installed
     autolab_dest = tmp_path / ".codex" / "skills" / "autolab" / "SKILL.md"

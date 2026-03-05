@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.26
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.27
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -227,7 +227,7 @@ Workflow bootstrap expects `hypotheses` and `experiments` lists with `id`, `stat
 autolab install-skill codex
 ```
 
-Installs to `<project-root>/.codex/skills/autolab/SKILL.md`.
+Installs bundled Codex skills under `<project-root>/.codex/skills/`, including `autolab`, `researcher`, `planner`, `plan-checker`, `reviewer`, `llm-council`, `swarm-planner`, and `parallel-task`.
 
 Target a different project:
 
