@@ -278,6 +278,48 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: human takeover workflows and incident handoff review
 
+## context sidecars (`discuss.json` / `research.json`)
+
+- **Paths**:
+  - `.autolab/context/sidecars/project_wide/discuss.json`
+  - `.autolab/context/sidecars/project_wide/research.json`
+  - `experiments/<type>/<iteration_id>/context/sidecars/discuss.json`
+  - `experiments/<type>/<iteration_id>/context/sidecars/research.json`
+- **Format**: JSON
+- **Schemas**:
+  - discuss: `.autolab/schemas/discuss_sidecar.schema.json`
+  - research: `.autolab/schemas/research_sidecar.schema.json`
+- **Required shared metadata**:
+  - `schema_version` (`"1.0"`), `sidecar_kind`, `scope_kind`, `scope_root`, `generated_at`
+  - project-wide sidecars must omit `iteration_id` and `experiment_id`
+  - experiment-scoped sidecars must carry `iteration_id` and `experiment_id`
+- **Optional provenance metadata**:
+  - `derived_from[]` and `stale_if[]` dependency refs
+  - each dependency ref records `path`, `fingerprint`, and optional `reason`
+- **Required collection arrays**:
+  - discuss: `locked_decisions[]`, `preferences[]`, `constraints[]`, `open_questions[]`, `promotion_candidates[]`
+  - research: `questions[]`, `findings[]`, `recommendations[]`, `sources[]`
+- **Collection item contract**: every entry is an object with `id`, `summary`, and optional `detail`
+- **Produced by**: manual authoring for now; producer commands are reserved for future `autolab discuss` / `autolab research` workflows
+- **Consumed by**: `autolab render --view context` resolution/provenance and future discuss/research tooling
+- **Verifier note**: `schema_checks.py` validates these sidecars when present; missing sidecars remain non-fatal. It also checks that `scope_root` resolves to the active scope root for the selected render context.
+
+### render context resolution (`context_resolution`)
+
+- **Path**: inline inside `autolab render --view context` JSON output
+- **Format**: JSON object
+- **Required top-level fields**:
+  - `scope_kind`, `scope_root`, `component_order`, `components`, `effective_discuss`, `effective_research`, `compact_render`, `diagnostics`
+- **Component row contract**:
+  - `component_id`, `artifact_kind`, `scope_kind`, `path`, `status`, `selected`, `selection_reason`, `precedence_index`, `fingerprint`, `derived_from`, `stale_if`, `stale`, `stale_reasons`
+- **Selection order**:
+  - project-wide render: `project_map`, `project_wide_discuss`, `project_wide_research`
+  - experiment render: `project_map`, `project_wide_discuss`, `project_wide_research`, `context_delta`, `experiment_discuss`, `experiment_research`
+- **Resolver rule**:
+  - project-wide render never loads experiment-local sidecars
+  - experiment render may load shared project-wide sidecars plus the active iteration overlay
+  - sidecars from any other iteration/experiment are ignored and surfaced as diagnostics when bundle pointers are stale or mismatched
+
 ## codebase project map (`project_map.json` / `project_map.md`)
 
 - **Paths**:

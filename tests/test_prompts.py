@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 from pathlib import Path
@@ -18,6 +19,7 @@ from autolab.prompts import (
     _render_stage_prompt,
     _resolve_stage_prompt_path,
 )
+from autolab.utils import _path_fingerprint
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCAFFOLD_PROMPTS_DIR = (
@@ -113,6 +115,221 @@ def _set_stage_prompt_mapping(
     workflow_path.write_text(
         yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
     )
+
+
+def _require_sidecar_context_support() -> None:
+    if importlib.util.find_spec("autolab.sidecar_context") is None:
+        pytest.skip("sidecar context rollout not landed")
+
+
+def _sidecar_item(item_id: str, text: str) -> dict[str, str]:
+    return {
+        "id": item_id,
+        "summary": text,
+        "detail": text,
+    }
+
+
+def _write_sidecar_payload(
+    path: Path,
+    *,
+    sidecar_kind: str,
+    scope_kind: str,
+    scope_root: str,
+    collection_name: str,
+    items: list[dict[str, str]],
+    derived_from: list[dict[str, str]] | None = None,
+    stale_if: list[dict[str, str]] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "sidecar_kind": sidecar_kind,
+        "scope_kind": scope_kind,
+        "scope_root": scope_root,
+        "generated_at": "2026-03-05T00:00:00Z",
+        "locked_decisions": [],
+        "preferences": [],
+        "constraints": [],
+        "open_questions": [],
+        "promotion_candidates": [],
+        "questions": [],
+        "findings": [],
+        "recommendations": [],
+        "sources": [],
+    }
+    if scope_kind == "experiment":
+        payload["iteration_id"] = "iter1"
+        payload["experiment_id"] = "e1"
+    payload[collection_name] = items
+    if derived_from is not None:
+        payload["derived_from"] = derived_from
+    if stale_if is not None:
+        payload["stale_if"] = stale_if
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_context_resolution_fixture(
+    repo: Path,
+    *,
+    project_research_dependency_fingerprint: str | None = None,
+    project_scope_root: str | None = None,
+) -> None:
+    context_dir = repo / ".autolab" / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    project_sidecar_dir = context_dir / "sidecars" / "project_wide"
+    experiment_sidecar_dir = iteration_dir / "context" / "sidecars"
+
+    (context_dir / "project_map.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "scan_mode": "fast_heuristic",
+                "repo_root": str(repo),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (iteration_dir / "context_delta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "experiment_id": "e1",
+                "changed_paths": ["src/model.py"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (context_dir / "bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "focus_iteration_id": "iter1",
+                "focus_experiment_id": "e1",
+                "project_map_path": ".autolab/context/project_map.json",
+                "selected_experiment_delta_path": "experiments/plan/iter1/context_delta.json",
+                "experiment_delta_maps": [
+                    {
+                        "iteration_id": "iter1",
+                        "experiment_id": "e1",
+                        "path": "experiments/plan/iter1/context_delta.json",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _write_sidecar_payload(
+        project_sidecar_dir / "discuss.json",
+        sidecar_kind="discuss",
+        scope_kind="project_wide",
+        scope_root=project_scope_root or str(repo.resolve()),
+        collection_name="preferences",
+        items=[
+            _sidecar_item("shared-discuss", "project-wide discuss shared baseline"),
+            _sidecar_item("pw-discuss", "project-wide discuss only"),
+        ],
+    )
+    _write_sidecar_payload(
+        project_sidecar_dir / "research.json",
+        sidecar_kind="research",
+        scope_kind="project_wide",
+        scope_root=project_scope_root or str(repo.resolve()),
+        collection_name="findings",
+        items=[
+            _sidecar_item("shared-research", "project-wide research shared baseline"),
+            _sidecar_item("pw-research", "project-wide research only"),
+        ],
+        derived_from=(
+            [
+                {
+                    "path": ".autolab/context/project_map.json",
+                    "fingerprint": project_research_dependency_fingerprint,
+                    "reason": "project_map",
+                }
+            ]
+            if project_research_dependency_fingerprint is not None
+            else None
+        ),
+        stale_if=(
+            [
+                {
+                    "path": ".autolab/context/project_map.json",
+                    "fingerprint": project_research_dependency_fingerprint,
+                    "reason": "project_map",
+                }
+            ]
+            if project_research_dependency_fingerprint is not None
+            else None
+        ),
+    )
+    _write_sidecar_payload(
+        experiment_sidecar_dir / "discuss.json",
+        sidecar_kind="discuss",
+        scope_kind="experiment",
+        scope_root=str(iteration_dir.resolve()),
+        collection_name="preferences",
+        items=[
+            _sidecar_item("shared-discuss", "experiment discuss override"),
+            _sidecar_item("exp-discuss", "experiment discuss only"),
+        ],
+    )
+    _write_sidecar_payload(
+        experiment_sidecar_dir / "research.json",
+        sidecar_kind="research",
+        scope_kind="experiment",
+        scope_root=str(iteration_dir.resolve()),
+        collection_name="findings",
+        items=[
+            _sidecar_item("shared-research", "experiment research override"),
+            _sidecar_item("exp-research", "experiment research only"),
+        ],
+    )
+
+
+def _items_by_id(payload: object) -> dict[str, dict[str, object]]:
+    if isinstance(payload, dict):
+        raw_items: list[object] = []
+        for value in payload.values():
+            if isinstance(value, list):
+                raw_items.extend(value)
+    elif isinstance(payload, list):
+        raw_items = payload
+    else:
+        raw_items = []
+
+    by_id: dict[str, dict[str, object]] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or item.get("item_id") or "").strip()
+        if item_id:
+            by_id[item_id] = item
+    return by_id
+
+
+def _assert_component_order_tokens(
+    component_order: object, expected_tokens: list[tuple[str, ...]]
+) -> None:
+    assert isinstance(component_order, list)
+    assert len(component_order) == len(expected_tokens)
+    for actual, tokens in zip(component_order, expected_tokens, strict=True):
+        actual_text = str(actual).lower()
+        for token in tokens:
+            assert token in actual_text
 
 
 def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> None:
@@ -595,6 +812,10 @@ def test_render_prompt_includes_codebase_context_bundle_paths_and_summaries(
         bundle.context_payload.get("codebase_project_map_summary")
         == "languages=python; experiments=1; concerns=0"
     )
+    assert (
+        bundle.context_payload.get("codebase_experiment_delta_summary")
+        == "iteration=iter1; type=plan; latest_run=none"
+    )
 
 
 def test_render_implementation_prompt_pack_metadata_and_texts(
@@ -1054,3 +1275,221 @@ def test_suggest_decision_from_metrics_minimize_mode(tmp_path: Path) -> None:
     assert result == "stop"
     assert isinstance(evidence, dict)
     assert evidence.get("metric_mode") == "minimize"
+
+
+def test_render_stage_prompt_includes_context_resolution_component_metadata(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    resolution = bundle.context_payload["context_resolution"]
+    assert resolution["scope_kind"] == "experiment"
+    assert resolution["scope_root"] == str(
+        (repo / "experiments" / "plan" / "iter1").resolve()
+    )
+    assert resolution["diagnostics"] == []
+    _assert_component_order_tokens(
+        resolution["component_order"],
+        [
+            ("project_map",),
+            ("project", "discuss"),
+            ("project", "research"),
+            ("context_delta",),
+            ("experiment", "discuss"),
+            ("experiment", "research"),
+        ],
+    )
+
+    components = resolution["components"]
+    assert [
+        (row["component_id"], row["artifact_kind"], row["scope_kind"])
+        for row in components
+    ] == [
+        ("project_map", "project_map", "project_wide"),
+        ("project_wide_discuss", "discuss", "project_wide"),
+        ("project_wide_research", "research", "project_wide"),
+        ("context_delta", "context_delta", "experiment"),
+        ("experiment_discuss", "discuss", "experiment"),
+        ("experiment_research", "research", "experiment"),
+    ]
+    assert [row["precedence_index"] for row in components] == [0, 1, 2, 3, 4, 5]
+    for row in components:
+        assert set(row) >= {
+            "component_id",
+            "artifact_kind",
+            "scope_kind",
+            "path",
+            "status",
+            "selected",
+            "selection_reason",
+            "precedence_index",
+            "fingerprint",
+            "derived_from",
+            "stale",
+            "stale_reasons",
+        }
+
+    discuss_items = _items_by_id(resolution["effective_discuss"])
+    research_items = _items_by_id(resolution["effective_research"])
+    assert discuss_items["shared-discuss"]["source_scope_kind"] == "experiment"
+    assert research_items["shared-research"]["source_scope_kind"] == "experiment"
+    assert (
+        discuss_items["shared-discuss"]["source_component_id"] == "experiment_discuss"
+    )
+    assert (
+        research_items["shared-research"]["source_component_id"]
+        == "experiment_research"
+    )
+    assert str(discuss_items["shared-discuss"]["source_component_path"]).endswith(
+        "experiments/plan/iter1/context/sidecars/discuss.json"
+    )
+    assert str(research_items["shared-research"]["source_component_path"]).endswith(
+        "experiments/plan/iter1/context/sidecars/research.json"
+    )
+    assert (
+        "project_wide_discuss: artifact_kind=discuss status=loaded selected=yes"
+        in resolution["compact_render"]
+    )
+    assert (
+        "project_wide_research: artifact_kind=research status=loaded selected=yes"
+        in resolution["compact_render"]
+    )
+    assert (
+        "experiment_discuss: artifact_kind=discuss status=loaded selected=yes"
+        in resolution["compact_render"]
+    )
+    assert (
+        "experiment_research: artifact_kind=research status=loaded selected=yes"
+        in resolution["compact_render"]
+    )
+    assert (
+        "effective_discuss=pw-discuss,shared-discuss,exp-discuss"
+        in resolution["compact_render"]
+    )
+    assert (
+        "effective_research=pw-research,shared-research,exp-research"
+        in resolution["compact_render"]
+    )
+
+
+def test_render_stage_prompt_context_resolution_surfaces_stale_dependency_hashes(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    (repo / "src").mkdir(exist_ok=True)
+    _write_context_resolution_fixture(repo)
+    expected_fingerprint = _path_fingerprint(repo, ".autolab/context/project_map.json")
+    _write_sidecar_payload(
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "research.json",
+        sidecar_kind="research",
+        scope_kind="project_wide",
+        scope_root=str(repo.resolve()),
+        collection_name="findings",
+        items=[
+            _sidecar_item("shared-research", "project-wide research shared baseline"),
+            _sidecar_item("pw-research", "project-wide research only"),
+        ],
+        derived_from=[
+            {
+                "path": ".autolab/context/project_map.json",
+                "fingerprint": expected_fingerprint,
+                "reason": "project_map",
+            }
+        ],
+        stale_if=[
+            {
+                "path": ".autolab/context/project_map.json",
+                "fingerprint": expected_fingerprint,
+                "reason": "project_map",
+            }
+        ],
+    )
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    (repo / ".autolab" / "context" / "project_map.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-06T00:00:00Z",
+                "scan_mode": "full_refresh",
+                "repo_root": str(repo),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "project_wide",
+            "scope_root": str((repo / "src").resolve()),
+            "project_wide_root": str((repo / "src").resolve()),
+            "workspace_dir": str((repo / "src").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    resolution = bundle.context_payload["context_resolution"]
+    research_row = next(
+        row
+        for row in resolution["components"]
+        if row["component_id"] == "project_wide_research"
+        and row["artifact_kind"] == "research"
+        and row["scope_kind"] == "project_wide"
+    )
+    assert research_row["stale"] is True
+    assert research_row["derived_from"] == [
+        {
+            "path": ".autolab/context/project_map.json",
+            "fingerprint": expected_fingerprint,
+            "reason": "project_map",
+        }
+    ]
+    assert research_row["stale_reasons"]
+    assert any(
+        ".autolab/context/project_map.json" in str(reason)
+        for reason in research_row["stale_reasons"]
+    )
+    assert any(
+        ".autolab/context/project_map.json" in str(item)
+        for item in resolution["diagnostics"]
+    )

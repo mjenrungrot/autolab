@@ -7,7 +7,8 @@ Responsibility boundary
   - JSON Schema validation of all structured artifacts against .schema.json
     files (state, backlog, design, agent_result, review_result, run_manifest,
     metrics, decision_result, todo_state, todo_focus, plan_metadata,
-    plan_execution_summary) using Draft 2020-12 via jsonschema library
+    plan_execution_summary, discuss_sidecar, research_sidecar) using Draft
+    2020-12 via jsonschema library
   - Cross-artifact consistency:
       * iteration_id / run_id match across state, design, run_manifest, metrics
       * primary_metric.name in metrics matches design.metrics.primary.name
@@ -74,6 +75,11 @@ except Exception:  # pragma: no cover
     _shared_resolve_stage_requirements = None  # type: ignore[assignment]
 
 try:
+    from autolab.scope import _resolve_project_wide_root as _shared_project_wide_root
+except Exception:  # pragma: no cover
+    _shared_project_wide_root = None  # type: ignore[assignment]
+
+try:
     from autolab.constants import (
         REVIEW_RESULT_REQUIRED_CHECKS,
         REVIEW_RESULT_CHECK_STATUSES,
@@ -126,6 +132,8 @@ SCHEMAS: dict[str, str] = {
     "codebase_project_map": "codebase_project_map.schema.json",
     "codebase_experiment_delta": "codebase_experiment_delta.schema.json",
     "codebase_context_bundle": "codebase_context_bundle.schema.json",
+    "discuss_sidecar": "discuss_sidecar.schema.json",
+    "research_sidecar": "research_sidecar.schema.json",
 }
 
 OBSERVABILITY_REASON_CODES = {
@@ -1253,6 +1261,146 @@ def _validate_handoff(state: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _iter_context_sidecar_specs(
+    state: dict[str, Any],
+) -> tuple[tuple[str, str, Path, str], ...]:
+    iteration_dir = _iteration_dir(state)
+    return (
+        (
+            "project_wide",
+            "discuss",
+            REPO_ROOT
+            / ".autolab"
+            / "context"
+            / "sidecars"
+            / "project_wide"
+            / "discuss.json",
+            "discuss_sidecar",
+        ),
+        (
+            "project_wide",
+            "research",
+            REPO_ROOT
+            / ".autolab"
+            / "context"
+            / "sidecars"
+            / "project_wide"
+            / "research.json",
+            "research_sidecar",
+        ),
+        (
+            "experiment",
+            "discuss",
+            iteration_dir / "context" / "sidecars" / "discuss.json",
+            "discuss_sidecar",
+        ),
+        (
+            "experiment",
+            "research",
+            iteration_dir / "context" / "sidecars" / "research.json",
+            "research_sidecar",
+        ),
+    )
+
+
+def _resolve_repo_contained_path(raw_path: Any) -> Path | None:
+    candidate = str(raw_path or "").strip()
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    resolved_repo_root = REPO_ROOT.resolve()
+    resolved_path = path.resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_repo_root)
+    except ValueError:
+        return None
+    return resolved_path
+
+
+def _expected_sidecar_scope_root(
+    *,
+    expected_scope_kind: str,
+    state: dict[str, Any],
+) -> Path | None:
+    if expected_scope_kind == "experiment":
+        return _iteration_dir(state).resolve()
+    if _shared_project_wide_root is None:
+        return None
+    try:
+        return _shared_project_wide_root(REPO_ROOT).resolve()
+    except Exception:
+        return None
+
+
+def _validate_context_sidecars(state: dict[str, Any]) -> list[str]:
+    """Validate optional discuss/research sidecars when present."""
+    failures: list[str] = []
+    state_iteration_id = str(state.get("iteration_id", "")).strip()
+    state_experiment_id = str(state.get("experiment_id", "")).strip()
+
+    for (
+        expected_scope_kind,
+        _sidecar_kind,
+        path,
+        schema_key,
+    ) in _iter_context_sidecar_specs(state):
+        if not path.exists():
+            continue
+        try:
+            payload = load_json(path)
+        except Exception as exc:
+            failures.append(f"{path} {exc}")
+            continue
+
+        failures.extend(_schema_validate(payload, schema_key=schema_key, path=path))
+        failures.extend(
+            _validate_timestamp(
+                payload.get("generated_at"),
+                path_label=f"{path} generated_at",
+            )
+        )
+
+        payload_scope_kind = str(payload.get("scope_kind", "")).strip()
+        if payload_scope_kind and payload_scope_kind != expected_scope_kind:
+            failures.append(
+                f"{path} scope_kind '{payload_scope_kind}' does not match {expected_scope_kind} sidecar location"
+            )
+
+        resolved_scope_root = _resolve_repo_contained_path(payload.get("scope_root"))
+        expected_scope_root = _expected_sidecar_scope_root(
+            expected_scope_kind=expected_scope_kind,
+            state=state,
+        )
+        if payload.get("scope_root") and resolved_scope_root is None:
+            failures.append(f"{path} scope_root must resolve inside repo root")
+        elif expected_scope_root is not None and resolved_scope_root is not None:
+            if resolved_scope_root != expected_scope_root:
+                failures.append(
+                    f"{path} scope_root mismatch ({resolved_scope_root} != {expected_scope_root})"
+                )
+
+        if expected_scope_kind != "experiment":
+            continue
+        payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+        if (
+            state_iteration_id
+            and payload_iteration_id
+            and payload_iteration_id != state_iteration_id
+        ):
+            failures.append(f"{path} iteration_id mismatch")
+        payload_experiment_id = str(payload.get("experiment_id", "")).strip()
+        if (
+            state_experiment_id
+            and payload_experiment_id
+            and payload_experiment_id != state_experiment_id
+        ):
+            failures.append(f"{path} experiment_id mismatch")
+
+    return failures
+
+
 def _resolve_bundle_path(raw_path: Any) -> Path | None:
     candidate = str(raw_path or "").strip()
     if not candidate:
@@ -1455,6 +1603,7 @@ def main() -> int:
     failures.extend(_validate_plan_execution_summary(state))
     failures.extend(_validate_plan_execution_state(state))
     failures.extend(_validate_handoff(state))
+    failures.extend(_validate_context_sidecars(state))
     failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
@@ -1505,6 +1654,7 @@ def main() -> int:
                     "agent_result": "Check .autolab/agent_result.json status is complete|needs_retry|failed",
                     "todo_state": "Validate .autolab/todo_state.json version field is an integer",
                     "handoff": "Regenerate via `autolab handoff` or verify required handoff fields in .autolab/handoff.json",
+                    "sidecars/": "Ensure optional discuss/research sidecar metadata matches scope and every collection item includes id and summary",
                     "metrics": "Ensure metrics.json has schema_version and primary_metric",
                 }
                 for i, failure_text in enumerate(top_n, 1):

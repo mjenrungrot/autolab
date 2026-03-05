@@ -381,6 +381,139 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_sidecar(
+    repo: Path,
+    *,
+    kind: str,
+    scope_kind: str,
+    valid: bool = True,
+) -> None:
+    if scope_kind == "project_wide":
+        path = (
+            repo / ".autolab" / "context" / "sidecars" / "project_wide" / f"{kind}.json"
+        )
+        scope_root = "."
+    else:
+        path = (
+            repo
+            / "experiments"
+            / "plan"
+            / "iter1"
+            / "context"
+            / "sidecars"
+            / f"{kind}.json"
+        )
+        scope_root = "experiments/plan/iter1"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "sidecar_kind": kind,
+        "scope_kind": scope_kind,
+        "scope_root": scope_root,
+        "generated_at": "2026-03-05T00:00:00Z",
+        "derived_from": [
+            {
+                "path": ".autolab/state.json",
+                "fingerprint": "sha256:state",
+                "reason": "stage context",
+            }
+        ],
+        "stale_if": [
+            {
+                "path": "experiments/plan/iter1/design.yaml",
+                "fingerprint": "sha256:design",
+                "reason": "refresh when design changes",
+            }
+        ],
+    }
+    if scope_kind == "experiment":
+        payload["iteration_id"] = "iter1"
+        payload["experiment_id"] = "e1"
+
+    if kind == "discuss":
+        payload.update(
+            {
+                "locked_decisions": [
+                    {
+                        "id": "decision-1",
+                        "summary": "Keep evaluation on the local baseline.",
+                        "detail": "Avoid changing the evaluation dataset in this iteration.",
+                    }
+                ],
+                "preferences": [
+                    {
+                        "id": "preference-1",
+                        "summary": "Prefer smaller, reviewable patches.",
+                    }
+                ],
+                "constraints": [
+                    {
+                        "id": "constraint-1",
+                        "summary": "Do not modify benchmark definitions.",
+                    }
+                ],
+                "open_questions": [
+                    {
+                        "id": "question-1",
+                        "summary": "Should we add a parser capability fixture for research output later?",
+                    }
+                ],
+                "promotion_candidates": [
+                    {
+                        "id": "candidate-1",
+                        "summary": "Promote this provenance note into the design artifact if adopted.",
+                    }
+                ],
+            }
+        )
+        if not valid:
+            invalid_items = payload["locked_decisions"]
+            assert isinstance(invalid_items, list)
+            invalid_item = invalid_items[0]
+            assert isinstance(invalid_item, dict)
+            invalid_item.pop("id", None)
+    else:
+        payload.update(
+            {
+                "questions": [
+                    {
+                        "id": "research-question-1",
+                        "summary": "What evidence should inform the next parser contract revision?",
+                    }
+                ],
+                "findings": [
+                    {
+                        "id": "finding-1",
+                        "summary": "Current scaffold verifiers already accept optional artifacts when paths exist.",
+                        "detail": "Sidecars should follow the same non-fatal when absent behavior.",
+                    }
+                ],
+                "recommendations": [
+                    {
+                        "id": "recommendation-1",
+                        "summary": "Keep sidecar schemas narrow until producer commands land.",
+                    }
+                ],
+                "sources": [
+                    {
+                        "id": "source-1",
+                        "summary": "docs/artifact_contracts.md",
+                        "detail": "Reference artifact contract documentation.",
+                    }
+                ],
+            }
+        )
+        if not valid:
+            invalid_items = payload["questions"]
+            assert isinstance(invalid_items, list)
+            invalid_item = invalid_items[0]
+            assert isinstance(invalid_item, dict)
+            invalid_item.pop("id", None)
+
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _valid_plan_execution_task_detail(
     *, reason_code: str = "completed", task_id: str = "T1"
 ) -> dict[str, object]:
@@ -606,6 +739,117 @@ def test_schema_checks_fails_for_invalid_handoff_schema(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert ".autolab/handoff.json schema violation" in result.stdout
+
+
+def test_schema_checks_validates_optional_sidecar_schemas(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="discuss", scope_kind="project_wide")
+    _write_sidecar(repo, kind="research", scope_kind="project_wide")
+    _write_sidecar(repo, kind="discuss", scope_kind="experiment")
+    _write_sidecar(repo, kind="research", scope_kind="experiment")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("kind", "scope_kind"),
+    [
+        ("discuss", "project_wide"),
+        ("research", "experiment"),
+    ],
+)
+def test_schema_checks_fails_for_invalid_sidecar_item_shape(
+    tmp_path: Path,
+    *,
+    kind: str,
+    scope_kind: str,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind=kind, scope_kind=scope_kind, valid=False)
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert f"{kind}.json schema violation" in result.stdout
+    assert "'id' is a required property" in result.stdout
+
+
+def test_schema_checks_fails_for_missing_sidecar_dependency_fingerprint(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="research", scope_kind="project_wide")
+    sidecar_path = (
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "research.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    derived_from = payload.get("derived_from")
+    assert isinstance(derived_from, list)
+    assert isinstance(derived_from[0], dict)
+    derived_from[0].pop("fingerprint", None)
+    sidecar_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "research.json schema violation" in result.stdout
+    assert "'fingerprint' is a required property" in result.stdout
+
+
+def test_schema_checks_fails_for_missing_experiment_sidecar_identity(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="discuss", scope_kind="experiment")
+    sidecar_path = (
+        repo
+        / "experiments"
+        / "plan"
+        / "iter1"
+        / "context"
+        / "sidecars"
+        / "discuss.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    payload.pop("experiment_id", None)
+    sidecar_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "discuss.json schema violation" in result.stdout
+    assert "'experiment_id' is a required property" in result.stdout
+
+
+def test_schema_checks_fails_for_project_wide_sidecar_with_experiment_identity(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="research", scope_kind="project_wide")
+    sidecar_path = (
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "research.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    payload["iteration_id"] = "iter1"
+    payload["experiment_id"] = "e1"
+    sidecar_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "research.json schema violation" in result.stdout
+    assert "should not be valid under" in result.stdout
 
 
 def test_schema_checks_pass_with_runtime_state_history_keys(tmp_path: Path) -> None:
