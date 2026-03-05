@@ -3233,6 +3233,12 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         verifier_scripts.append(
             f"{python_bin} .autolab/verifiers/prompt_lint.py --stage {stage_name} --json"
         )
+    if stage_name == "implementation":
+        implementation_contract_path = verifiers_dir / "implementation_plan_contract.py"
+        if implementation_contract_path.exists():
+            verifier_scripts.append(
+                f"{python_bin} .autolab/verifiers/implementation_plan_contract.py --stage {stage_name} --json"
+            )
 
     # Pattern-path notes on required_outputs
     output_notes: list[dict[str, Any]] = []

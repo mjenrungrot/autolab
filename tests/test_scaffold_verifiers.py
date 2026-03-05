@@ -100,11 +100,53 @@ def _write_design(repo: Path) -> None:
             "baseline_comparison": "vs baseline",
         },
         "baselines": [{"name": "baseline", "description": "existing"}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Implement baseline training path",
+                "scope_kind": "experiment",
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+            }
+        ],
         "variants": [{"name": "proposed", "changes": {}}],
     }
     path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _write_plan_contract(repo: Path) -> None:
+    payload = {
+        "schema_version": "1.0",
+        "iteration_id": "iter1",
+        "stage": "implementation",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "tasks": [
+            {
+                "task_id": "T1",
+                "scope_kind": "experiment",
+                "depends_on": [],
+                "reads": ["experiments/plan/iter1/design.yaml"],
+                "writes": ["experiments/plan/iter1/implementation_plan.md"],
+                "touches": ["experiments/plan/iter1/implementation_plan.md"],
+                "conflict_group": "",
+                "verification_commands": [
+                    "python -m pytest -q tests/test_scaffold_verifiers.py"
+                ],
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+                "failure_policy": "fail_fast",
+                "can_run_in_parallel": False,
+                "covers_requirements": ["R1"],
+            }
+        ],
+    }
+    canonical = repo / ".autolab" / "plan_contract.json"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    snapshot = repo / "experiments" / "plan" / "iter1" / "plan_contract.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _write_review_result(repo: Path, *, include_docs_check: bool = True) -> None:
@@ -261,6 +303,7 @@ def _setup_review_repo(tmp_path: Path) -> Path:
     _write_backlog(repo)
     _write_agent_result(repo)
     _write_design(repo)
+    _write_plan_contract(repo)
     return repo
 
 

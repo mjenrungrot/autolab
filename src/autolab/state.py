@@ -688,12 +688,90 @@ def _ensure_iteration_skeleton(
             "baselines:\n"
             '  - name: "baseline_current"\n'
             '    description: "TODO: describe current baseline"\n'
+            "implementation_requirements:\n"
+            '  - requirement_id: "R1"\n'
+            '    description: "TODO: define first implementation requirement"\n'
+            '    scope_kind: "experiment"\n'
+            "    expected_artifacts:\n"
+            '      - "implementation_plan.md"\n'
         ),
         created,
     )
     _ensure_text_file(
         iteration_dir / "implementation_plan.md",
         "# Implementation Plan\n\n- Implement the design requirements.\n",
+        created,
+    )
+    _ensure_json_file(
+        iteration_dir / "plan_contract.json",
+        {
+            "schema_version": "1.0",
+            "iteration_id": iteration_id,
+            "stage": "implementation",
+            "generated_at": "1970-01-01T00:00:00Z",
+            "tasks": [
+                {
+                    "task_id": "T1",
+                    "scope_kind": "experiment",
+                    "depends_on": [],
+                    "reads": [
+                        f"experiments/{normalized_type}/{iteration_id}/design.yaml"
+                    ],
+                    "writes": [
+                        f"experiments/{normalized_type}/{iteration_id}/implementation_plan.md"
+                    ],
+                    "touches": [
+                        f"experiments/{normalized_type}/{iteration_id}/implementation_plan.md"
+                    ],
+                    "conflict_group": "",
+                    "verification_commands": [],
+                    "manual_only_rationale": "Bootstrap placeholder; define concrete verification_commands before execution.",
+                    "expected_artifacts": [
+                        "implementation_plan.md",
+                        "plan_contract.json",
+                    ],
+                    "failure_policy": "fail_fast",
+                    "can_run_in_parallel": False,
+                    "covers_requirements": ["R1"],
+                }
+            ],
+        },
+        created,
+    )
+    _ensure_json_file(
+        repo_root / ".autolab" / "plan_contract.json",
+        {
+            "schema_version": "1.0",
+            "iteration_id": iteration_id,
+            "stage": "implementation",
+            "generated_at": "1970-01-01T00:00:00Z",
+            "tasks": [
+                {
+                    "task_id": "T1",
+                    "scope_kind": "experiment",
+                    "depends_on": [],
+                    "reads": [
+                        f"experiments/{normalized_type}/{iteration_id}/design.yaml"
+                    ],
+                    "writes": [
+                        f"experiments/{normalized_type}/{iteration_id}/implementation_plan.md"
+                    ],
+                    "touches": [
+                        f"experiments/{normalized_type}/{iteration_id}/implementation_plan.md"
+                    ],
+                    "conflict_group": "",
+                    "verification_commands": [],
+                    "manual_only_rationale": "Bootstrap placeholder; define concrete verification_commands before execution.",
+                    "expected_artifacts": [
+                        "implementation_plan.md",
+                        "plan_contract.json",
+                    ],
+                    "failure_policy": "fail_fast",
+                    "can_run_in_parallel": False,
+                    "covers_requirements": ["R1"],
+                }
+            ],
+        },
         created,
     )
     _ensure_text_file(

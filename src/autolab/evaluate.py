@@ -110,6 +110,11 @@ def _eval_implementation(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
+    from autolab.plan_contract import (
+        PlanContractError,
+        check_implementation_plan_contract,
+    )
+
     policy_requirements = _resolve_stage_requirements(
         _load_verifier_policy(repo_root), "implementation"
     )
@@ -117,6 +122,19 @@ def _eval_implementation(
         iteration_dir / "implementation_plan.md",
         require_dry_run=bool(policy_requirements.get("dry_run", False)),
     )
+    try:
+        contract_passed, contract_message, _details = (
+            check_implementation_plan_contract(
+                repo_root,
+                state,
+                stage_override="implementation",
+                write_outputs=True,
+            )
+        )
+    except PlanContractError as exc:
+        raise StageCheckError(str(exc)) from exc
+    if not contract_passed:
+        raise StageCheckError(contract_message)
     return EvalResult(
         "implementation_review", "complete", "'implementation' checks passed"
     )

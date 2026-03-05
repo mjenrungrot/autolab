@@ -279,6 +279,7 @@ def test_packaged_golden_iteration_fixture_contract() -> None:
     expected_files = sorted(
         [
             Path(".autolab/backlog.yaml"),
+            Path(".autolab/plan_contract.json"),
             Path(".autolab/state.json"),
             Path("README.md"),
             Path("experiments/plan/iter_golden/analysis/summary.md"),
@@ -287,6 +288,7 @@ def test_packaged_golden_iteration_fixture_contract() -> None:
             Path("experiments/plan/iter_golden/docs_update.md"),
             Path("experiments/plan/iter_golden/hypothesis.md"),
             Path("experiments/plan/iter_golden/implementation_plan.md"),
+            Path("experiments/plan/iter_golden/plan_contract.json"),
             Path("experiments/plan/iter_golden/implementation_review.md"),
             Path("experiments/plan/iter_golden/launch/run_local.sh"),
             Path("experiments/plan/iter_golden/review_result.json"),

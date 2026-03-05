@@ -102,6 +102,14 @@ def _write_design(repo: Path) -> None:
             "baseline_comparison": "vs baseline",
         },
         "baselines": [{"name": "baseline", "description": "existing"}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Implement baseline training path",
+                "scope_kind": "experiment",
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+            }
+        ],
         "variants": [{"name": "proposed", "changes": {}}],
     }
     path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
@@ -570,6 +578,7 @@ def test_verification_dry_run_iteration_placeholder_blocks_shell_injection(
         "prompt_registry_contract.py",
         "closed_experiment_guard.py",
         "implementation_plan_lint.py",
+        "implementation_plan_contract.py",
     ):
         verifier_path = repo / ".autolab" / "verifiers" / verifier
         if verifier_path.exists():

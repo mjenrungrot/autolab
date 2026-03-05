@@ -213,6 +213,14 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
         "compute": {"location": "local", "gpus": 0},
         "metrics": ["loss"],
         "baselines": [{"name": "baseline1", "value": 1.0}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Implement baseline training path",
+                "scope_kind": "experiment",
+                "expected_artifacts": ["implementation_plan.md"],
+            }
+        ],
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(design, sort_keys=False), encoding="utf-8"
@@ -220,8 +228,44 @@ def _seed_design(iteration_dir: Path, iteration_id: str = "iter_test_001") -> No
 
 
 def _seed_implementation(iteration_dir: Path) -> None:
+    if not (iteration_dir / "design.yaml").exists():
+        _seed_design(iteration_dir, iteration_id=iteration_dir.name)
     (iteration_dir / "implementation_plan.md").write_text(
         "# Implementation\nStep 1.", encoding="utf-8"
+    )
+    contract = {
+        "schema_version": "1.0",
+        "iteration_id": iteration_dir.name,
+        "stage": "implementation",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "tasks": [
+            {
+                "task_id": "T1",
+                "scope_kind": "experiment",
+                "depends_on": [],
+                "reads": [f"experiments/plan/{iteration_dir.name}/design.yaml"],
+                "writes": [
+                    f"experiments/plan/{iteration_dir.name}/implementation_plan.md"
+                ],
+                "touches": [
+                    f"experiments/plan/{iteration_dir.name}/implementation_plan.md"
+                ],
+                "conflict_group": "",
+                "verification_commands": [
+                    "python -m pytest -q tests/test_pipeline_coverage.py"
+                ],
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+                "failure_policy": "fail_fast",
+                "can_run_in_parallel": False,
+                "covers_requirements": ["R1"],
+            }
+        ],
+    }
+    (iteration_dir / "plan_contract.json").write_text(
+        json.dumps(contract, indent=2), encoding="utf-8"
+    )
+    (iteration_dir.parent.parent.parent / ".autolab" / "plan_contract.json").write_text(
+        json.dumps(contract, indent=2), encoding="utf-8"
     )
 
 

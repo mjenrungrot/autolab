@@ -27,6 +27,14 @@ def _seed_design(iteration_dir: Path, *, mode: str) -> None:
         "compute": {"location": mode, "cpus": 1, "gpus": 0},
         "metrics": {"primary": {"name": "accuracy", "mode": "maximize"}},
         "baselines": [{"name": "baseline", "value": 0.0}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Implement launch runtime path",
+                "scope_kind": "experiment",
+                "expected_artifacts": ["implementation_plan.md"],
+            }
+        ],
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(payload, sort_keys=False),
@@ -525,6 +533,14 @@ def _seed_design_with_compute(
         "compute": compute,
         "metrics": {"primary": {"name": "accuracy", "mode": "maximize"}},
         "baselines": [{"name": "baseline", "value": 0.0}],
+        "implementation_requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Implement launch runtime path",
+                "scope_kind": "experiment",
+                "expected_artifacts": ["implementation_plan.md"],
+            }
+        ],
     }
     (iteration_dir / "design.yaml").write_text(
         yaml.safe_dump(payload, sort_keys=False),

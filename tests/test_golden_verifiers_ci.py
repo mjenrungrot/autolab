@@ -110,6 +110,10 @@ def _copy_golden_iteration(repo: Path) -> None:
     shutil.copy2(
         golden_root / ".autolab" / "backlog.yaml", repo / ".autolab" / "backlog.yaml"
     )
+    shutil.copy2(
+        golden_root / ".autolab" / "plan_contract.json",
+        repo / ".autolab" / "plan_contract.json",
+    )
 
 
 def _write_agent_result(repo: Path) -> None:

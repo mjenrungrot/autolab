@@ -69,7 +69,7 @@ stages:
     runner_prompt_file: stage_implementation_runner.md
     required_tokens: [iteration_id, iteration_path]
     optional_tokens: [review_feedback, verifier_errors]
-    required_outputs: [implementation_plan.md]
+    required_outputs: [implementation_plan.md, plan_contract.json]
     next_stage: implementation_review
     verifier_categories:
       tests: false

@@ -27,6 +27,10 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/imp
 ## OUTPUTS (STRICT)
 - Updated repo files for this iteration
 - `{{iteration_path}}/implementation_plan.md`
+- `.autolab/plan_contract.json`
+- `{{iteration_path}}/plan_contract.json`
+- `.autolab/plan_check_result.json`
+- `.autolab/plan_graph.json`
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
@@ -56,6 +60,23 @@ Optional fields (not checked by linter but useful):
 - `log`: execution notes
 - `files edited/created`: changed file list
 
+## MACHINE CONTRACT -- plan_contract.json
+`implementation_plan.md` is the human summary; `.autolab/plan_contract.json` is the machine DAG contract. Keep an iteration snapshot at `{{iteration_path}}/plan_contract.json`.
+
+Each contract task must include:
+- `task_id`
+- `scope_kind` (`experiment` or `project_wide`)
+- `depends_on`
+- `reads`
+- `writes`
+- `touches`
+- `conflict_group`
+- `verification_commands` (or `manual_only_rationale`)
+- `expected_artifacts`
+- `failure_policy`
+- `can_run_in_parallel`
+- `covers_requirements` (design requirement IDs)
+
 Canonical minimal task block:
 ```markdown
 ### T1: Add loss function
@@ -71,14 +92,16 @@ Canonical minimal task block:
 ## VERIFIER MAPPING
 - `verifier`: dry_run; `checks`: Executes `dry_run_command` from policy; `common_failure_fix`: Configure `dry_run_command` in `verifier_policy.yaml` or fix runtime errors.
 - `verifier`: implementation_plan_lint; `checks`: Task block structure in `implementation_plan.md`; `common_failure_fix`: Ensure each task has `depends_on`, `location`, `description`, `touches`, `scope_ok`, `validation`, `status`.
+- `verifier`: implementation_plan_contract; `checks`: machine contract DAG consistency, requirement traceability, scope legality, and same-wave conflict safety; `common_failure_fix`: update `.autolab/plan_contract.json` and `{{iteration_path}}/plan_contract.json` until checker passes.
 {{shared:verifier_common.md}}
 
 ## STEPS
 1. Implement only design-relevant changes; avoid unrelated edits.
 2. Keep experiment-local artifacts under `{{iteration_path}}/implementation/` unless code is reusable across iterations.
-3. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
-4. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
-5. Include short bounded excerpts for failing commands and explain remediation.
+3. Build the machine contract and run: `{{python_bin}} .autolab/verifiers/implementation_plan_contract.py --stage implementation --json`; if it fails, revise contract before execution.
+4. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
+5. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
+6. Include short bounded excerpts for failing commands and explain remediation.
 
 {{shared:verification_ritual.md}}
 
@@ -152,6 +175,8 @@ Canonical minimal task block:
 - [ ] `implementation_plan.md` lists changed files and rationale.
 - [ ] `implementation_plan.md` records verifier outcomes with explicit status tokens.
 - [ ] `implementation_plan.md` records exact commands and evidence locations.
+- [ ] `.autolab/plan_contract.json` and `{{iteration_path}}/plan_contract.json` both exist and align.
+- [ ] `implementation_plan_contract.py` passes and emits `.autolab/plan_check_result.json` and `.autolab/plan_graph.json`.
 - [ ] `implementation_plan.md` includes `## Dry Run` when policy requires `dry_run` for implementation.
 - [ ] Output paths avoid unresolved placeholders and literal double-slash style paths.
 - [ ] If task blocks exist, each has depends_on, location, description, touches, scope_ok, validation, status fields.

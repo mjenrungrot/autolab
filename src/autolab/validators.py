@@ -357,6 +357,7 @@ def _validate_design(path: Path, iteration_id: str) -> None:
         "compute",
         "metrics",
         "baselines",
+        "implementation_requirements",
     }
     missing = sorted(required - set(payload.keys()))
     if missing:
@@ -384,6 +385,15 @@ def _validate_design(path: Path, iteration_id: str) -> None:
     baselines = payload.get("baselines")
     if not isinstance(baselines, list) or not baselines:
         raise StageCheckError("design.yaml baselines must be a non-empty list")
+
+    implementation_requirements = payload.get("implementation_requirements")
+    if (
+        not isinstance(implementation_requirements, list)
+        or not implementation_requirements
+    ):
+        raise StageCheckError(
+            "design.yaml implementation_requirements must be a non-empty list"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +908,16 @@ def _build_verification_command_specs(
             (
                 "implementation_plan_lint",
                 f"{python_bin} .autolab/verifiers/implementation_plan_lint.py --stage {shlex.quote(stage)} --json",
+            )
+        )
+    plan_contract_path = (
+        repo_root / ".autolab" / "verifiers" / "implementation_plan_contract.py"
+    )
+    if plan_contract_path.exists() and stage == "implementation":
+        command_specs.append(
+            (
+                "implementation_plan_contract",
+                f"{python_bin} .autolab/verifiers/implementation_plan_contract.py --stage {shlex.quote(stage)} --json",
             )
         )
     prompt_lint_mode = "enforce"

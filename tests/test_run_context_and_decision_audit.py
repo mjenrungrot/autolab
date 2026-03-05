@@ -130,6 +130,12 @@ def test_prepare_launch_run_context_populates_replicate_group(tmp_path: Path) ->
             "baselines:\n"
             '  - name: "b1"\n'
             '    description: "baseline"\n'
+            "implementation_requirements:\n"
+            '  - requirement_id: "R1"\n'
+            '    description: "Implement baseline launch flow"\n'
+            '    scope_kind: "experiment"\n'
+            "    expected_artifacts:\n"
+            '      - "implementation_plan.md"\n'
             "replicates:\n"
             "  count: 3\n"
         ),
@@ -206,6 +212,12 @@ def test_prepare_launch_run_context_single_run_default(tmp_path: Path) -> None:
             "baselines:\n"
             '  - name: "b1"\n'
             '    description: "baseline"\n'
+            "implementation_requirements:\n"
+            '  - requirement_id: "R1"\n'
+            '    description: "Implement baseline launch flow"\n'
+            '    scope_kind: "experiment"\n'
+            "    expected_artifacts:\n"
+            '      - "implementation_plan.md"\n'
         ),
         encoding="utf-8",
     )
