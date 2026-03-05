@@ -330,6 +330,89 @@ def test_loop_without_auto_fails_when_active_lock_exists(tmp_path: Path) -> None
     assert lock_path.exists()
 
 
+def test_loop_auto_continues_after_successful_non_terminal_implementation_wave(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["stage"] = "implementation"
+    state_path.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+
+    call_count = 0
+
+    def _scripted_run_once(
+        _state_path: Path,
+        _decision: str | None,
+        *,
+        run_agent_mode: str = "policy",
+        verify_before_evaluate: bool = False,
+        assistant: bool = False,
+        auto_mode: bool = False,
+        auto_decision: bool = False,
+        strict_implementation_progress: bool = True,
+    ) -> commands_module.RunOutcome:
+        nonlocal call_count
+        del (
+            run_agent_mode,
+            verify_before_evaluate,
+            assistant,
+            auto_mode,
+            auto_decision,
+            strict_implementation_progress,
+        )
+        call_count += 1
+        if call_count == 1:
+            return commands_module.RunOutcome(
+                exit_code=0,
+                transitioned=False,
+                stage_before="implementation",
+                stage_after="implementation",
+                message="implementation wave 1/2 completed; next wave is 2",
+            )
+        return commands_module.RunOutcome(
+            exit_code=0,
+            transitioned=True,
+            stage_before="implementation",
+            stage_after="implementation_review",
+            message="implementation checks passed",
+        )
+
+    monkeypatch.setattr(commands_module, "_run_once", _scripted_run_once)
+    monkeypatch.setattr(
+        commands_module,
+        "_prepare_standard_commit_outcome",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_try_auto_commit",
+        lambda *_args, **_kwargs: "autocommit skipped",
+    )
+
+    exit_code = commands_module.main(
+        [
+            "loop",
+            "--state-file",
+            str(state_path),
+            "--auto",
+            "--max-hours",
+            "1",
+            "--max-iterations",
+            "2",
+            "--no-run-agent",
+        ]
+    )
+
+    assert exit_code == 0
+    assert call_count == 2
+
+
 def test_skip_fails_when_active_lock_exists(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

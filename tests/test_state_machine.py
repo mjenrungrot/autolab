@@ -20,6 +20,7 @@ from autolab.__main__ import (
     RunOutcome,
     _run_once,
 )
+from autolab.plan_execution import ImplementationExecutionStepResult
 from autolab.state import _default_state, _normalize_state
 
 
@@ -218,6 +219,7 @@ def _seed_implementation(iteration_dir: Path) -> None:
         "tasks": [
             {
                 "task_id": "T1",
+                "objective": "Minimal implementation task for fixture validation.",
                 "scope_kind": "experiment",
                 "depends_on": [],
                 "reads": [f"experiments/plan/{iteration_dir.name}/design.yaml"],
@@ -2585,6 +2587,79 @@ class TestStageGateContracts:
 
         assert outcome.exit_code == 1
         assert "must reference state.last_run_id" in outcome.message
+
+
+class TestImplementationExecutionGating:
+    def _enable_plan_execution_summary_gate(self, repo: Path) -> None:
+        policy_path = repo / ".autolab" / "verifier_policy.yaml"
+        policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        policy["plan_execution"] = {"implementation": {"enabled": True}}
+        policy["agent_runner"] = {
+            "enabled": True,
+            "runner": "custom",
+            "command": "echo run",
+            "stages": ["implementation"],
+        }
+        policy_path.write_text(
+            yaml.safe_dump(policy, sort_keys=False), encoding="utf-8"
+        )
+
+    def test_force_off_fails_when_implementation_execution_summary_gate_is_required(
+        self, tmp_path: Path
+    ) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation")
+        _seed_implementation(it_dir)
+        self._enable_plan_execution_summary_gate(repo)
+
+        outcome = _run(state_path, run_agent_mode="force_off")
+
+        assert outcome.exit_code == 1
+        assert "run_agent_mode=force_off is incompatible" in outcome.message
+        persisted = _read_state(repo)
+        assert persisted["stage"] == "implementation"
+        assert persisted["stage_attempt"] == 1
+
+    def test_implementation_eval_accepts_zero_tasks_total_when_counts_are_zero(
+        self, tmp_path: Path
+    ) -> None:
+        repo, state_path, it_dir = _setup_repo(tmp_path, stage="implementation")
+        _seed_implementation(it_dir)
+        self._enable_plan_execution_summary_gate(repo)
+        (it_dir / "plan_execution_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "iteration_id": it_dir.name,
+                    "plan_file": f"experiments/plan/{it_dir.name}/implementation_plan.md",
+                    "tasks_total": 0,
+                    "tasks_completed": 0,
+                    "tasks_failed": 0,
+                    "tasks_blocked": 0,
+                    "tasks_pending": 0,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch(
+                "autolab.run_standard.execute_implementation_plan_step",
+                return_value=ImplementationExecutionStepResult(
+                    handled=False,
+                    proceed_to_evaluate=True,
+                    agent_status="complete",
+                    exit_code=0,
+                    summary="skipped",
+                    changed_files=(),
+                ),
+            ),
+            mock.patch("autolab.run_standard._invoke_agent_runner", return_value={}),
+        ):
+            outcome = _run(state_path, run_agent_mode="policy")
+
+        assert outcome.exit_code == 0
+        assert outcome.stage_after == "implementation_review"
 
 
 # ===========================================================================

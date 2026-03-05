@@ -712,6 +712,7 @@ def _ensure_iteration_skeleton(
             "tasks": [
                 {
                     "task_id": "T1",
+                    "objective": "Bootstrap implementation plan with concrete task definitions.",
                     "scope_kind": "experiment",
                     "depends_on": [],
                     "reads": [
@@ -748,6 +749,7 @@ def _ensure_iteration_skeleton(
             "tasks": [
                 {
                     "task_id": "T1",
+                    "objective": "Bootstrap implementation plan with concrete task definitions.",
                     "scope_kind": "experiment",
                     "depends_on": [],
                     "reads": [

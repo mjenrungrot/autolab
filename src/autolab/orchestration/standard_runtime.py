@@ -12,14 +12,17 @@ from autolab.constants import DECISION_STAGES, TERMINAL_STAGES
 from autolab.models import EvalResult, RunOutcome, StageCheckError
 from autolab.registry import load_registry
 from autolab.config import (
+    _load_agent_runner_config,
     _load_guardrail_config,
     _load_meaningful_change_config,
+    _load_plan_execution_config,
     _load_strict_mode_config,
     _load_verifier_policy,
     _resolve_run_agent_mode,
     _resolve_stage_max_retries,
 )
 from autolab.evaluate import _evaluate_stage
+from autolab.plan_execution import execute_implementation_plan_step
 from autolab.runners import _invoke_agent_runner
 from autolab.launch_runtime import _execute_launch_runtime
 from autolab.state import (
@@ -955,6 +958,44 @@ def _run_once_standard(
         )
     _append_log(repo_root, f"stage readiness passed stage={stage_before}")
 
+    if stage_before == "implementation":
+        try:
+            plan_execution_cfg = _load_plan_execution_config(repo_root).implementation
+            runner_cfg = _load_agent_runner_config(repo_root)
+        except StageCheckError as exc:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=str(exc),
+                verification=verification_summary,
+            )
+        implementation_summary_required = bool(
+            plan_execution_cfg.enabled
+            and runner_cfg.enabled
+            and "implementation" in set(runner_cfg.stages)
+        )
+        if (
+            _resolve_run_agent_mode(run_agent_mode) == "force_off"
+            and implementation_summary_required
+        ):
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=(
+                    "run_agent_mode=force_off is incompatible with implementation evaluation "
+                    "when plan_execution.implementation.enabled=true and agent_runner is enabled "
+                    "for implementation; use run_agent_mode=policy|force_on or disable that gate"
+                ),
+                verification=verification_summary,
+            )
+
+    implementation_exec_result = None
     if _resolve_run_agent_mode(run_agent_mode) != "force_off":
         open_todo_count = _todo_open_count(repo_root)
         _skip_agent_runner = False
@@ -972,17 +1013,50 @@ def _run_once_standard(
                     f"agent runner skipped stage={stage_before} (no stage-focused todo tasks, outputs satisfied)",
                 )
                 _skip_agent_runner = True
+        if stage_before == "implementation":
+            _skip_agent_runner = False
 
         if not _skip_agent_runner:
             try:
-                _invoke_agent_runner(
-                    repo_root,
-                    state_path=state_path,
-                    stage=stage_before,
-                    iteration_id=str(state["iteration_id"]),
-                    run_agent_mode=run_agent_mode,
-                    auto_mode=auto_mode,
-                )
+                if stage_before == "implementation":
+                    runner_cfg = _load_agent_runner_config(repo_root)
+                    module_eligible = bool(
+                        (run_agent_mode == "force_on" or runner_cfg.enabled)
+                        and stage_before in set(runner_cfg.stages)
+                    )
+                    if module_eligible:
+                        implementation_exec_result = execute_implementation_plan_step(
+                            repo_root,
+                            state_path=state_path,
+                            state=state,
+                            run_agent_mode=run_agent_mode,
+                            auto_mode=auto_mode,
+                        )
+                        pre_sync_changed.extend(
+                            list(implementation_exec_result.changed_files)
+                        )
+                    if (
+                        implementation_exec_result is None
+                        or not implementation_exec_result.handled
+                    ):
+                        _invoke_agent_runner(
+                            repo_root,
+                            state_path=state_path,
+                            stage=stage_before,
+                            iteration_id=str(state["iteration_id"]),
+                            run_agent_mode=run_agent_mode,
+                            auto_mode=auto_mode,
+                        )
+                        implementation_exec_result = None
+                else:
+                    _invoke_agent_runner(
+                        repo_root,
+                        state_path=state_path,
+                        stage=stage_before,
+                        iteration_id=str(state["iteration_id"]),
+                        run_agent_mode=run_agent_mode,
+                        auto_mode=auto_mode,
+                    )
             except StageCheckError as exc:
                 detail = _augment_agent_runner_failure_detail(str(exc))
                 return _handle_stage_failure(
@@ -993,6 +1067,56 @@ def _run_once_standard(
                     pre_sync_changed=pre_sync_changed,
                     detail=f"agent runner error: {detail}",
                 )
+
+    if (
+        stage_before == "implementation"
+        and implementation_exec_result is not None
+        and not implementation_exec_result.proceed_to_evaluate
+    ):
+        if implementation_exec_result.next_stage:
+            state["stage"] = implementation_exec_result.next_stage
+            state["stage_attempt"] = 0
+        stage_after = str(state.get("stage", stage_before))
+        _append_state_history(
+            state,
+            stage_before=stage_before,
+            stage_after=stage_after,
+            status=implementation_exec_result.agent_status,
+            summary=implementation_exec_result.summary,
+        )
+        _write_json(state_path, state)
+        outcome = RunOutcome(
+            exit_code=int(implementation_exec_result.exit_code),
+            transitioned=stage_after != stage_before,
+            stage_before=stage_before,
+            stage_after=stage_after,
+            message=implementation_exec_result.summary,
+        )
+        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+            repo_root,
+            state,
+            run_outcome=_outcome_payload(outcome),
+        )
+        summary = _append_todo_message(
+            implementation_exec_result.summary, post_sync_message
+        )
+        _persist_agent_result(
+            repo_root,
+            status=implementation_exec_result.agent_status,
+            summary=summary,
+            changed_files=[state_path, *pre_sync_changed, *post_sync_changed],
+        )
+        _append_log(
+            repo_root,
+            "implementation plan execution step completed without stage transition to review",
+        )
+        return RunOutcome(
+            exit_code=outcome.exit_code,
+            transitioned=outcome.transitioned,
+            stage_before=outcome.stage_before,
+            stage_after=outcome.stage_after,
+            message=summary,
+        )
 
     if stage_before == "launch":
         try:

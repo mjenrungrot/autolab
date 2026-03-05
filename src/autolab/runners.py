@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -117,8 +118,10 @@ def _write_runner_execution_report(
     repo_root: Path,
     *,
     payload: dict[str, Any],
+    report_path: Path | None = None,
 ) -> None:
-    report_path = repo_root / ".autolab" / "runner_execution_report.json"
+    if report_path is None:
+        report_path = repo_root / ".autolab" / "runner_execution_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
@@ -131,6 +134,7 @@ def _finalize_runner_execution_report(
     exit_code: int | None,
     error: str = "",
     termination_reason: str = "",
+    report_path: Path | None = None,
 ) -> None:
     run_report["status"] = status
     run_report["exit_code"] = int(exit_code) if exit_code is not None else None
@@ -145,7 +149,11 @@ def _finalize_runner_execution_report(
         run_report["termination_reason"] = str(termination_reason)
     else:
         run_report.pop("termination_reason", None)
-    _write_runner_execution_report(repo_root, payload=run_report)
+    _write_runner_execution_report(
+        repo_root,
+        payload=run_report,
+        report_path=report_path,
+    )
 
 
 def _terminate_runner_process(process: subprocess.Popen[str]) -> int | None:
@@ -424,6 +432,114 @@ def _substitute_runner_command(
     return command
 
 
+def _sanitize_task_id_for_path(task_id: str) -> str:
+    raw = str(task_id).strip()
+    if not raw:
+        return "task"
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", raw)
+    return sanitized or "task"
+
+
+def _task_rendered_paths(
+    repo_root: Path,
+    *,
+    stage: str,
+    task_id: str,
+    iteration_id: str,
+    task_context: dict[str, Any] | None = None,
+) -> tuple[Path, Path, Path, Path, Path]:
+    rendered_dir = repo_root / ".autolab" / "prompts" / "rendered"
+    rendered_dir.mkdir(parents=True, exist_ok=True)
+    task_token = _sanitize_task_id_for_path(task_id)
+    iteration_token = _sanitize_task_id_for_path(iteration_id)
+
+    token_parts: list[str] = []
+    if isinstance(task_context, dict):
+        for key, prefix in (("wave", "w"), ("attempt", "a")):
+            value = str(task_context.get(key, "")).strip()
+            if value:
+                token_parts.append(f"{prefix}{_sanitize_task_id_for_path(value)}")
+    token_parts.append(uuid.uuid4().hex[:10])
+    invocation_token = ".".join(token_parts)
+
+    base_name = f"{stage}.task_{iteration_token}_{task_token}_{invocation_token}"
+    prompt_path = rendered_dir / f"{base_name}.runner.md"
+    context_path = rendered_dir / f"{base_name}.context.json"
+    audit_path = rendered_dir / f"{base_name}.audit.md"
+    brief_path = rendered_dir / f"{base_name}.brief.md"
+    human_path = rendered_dir / f"{base_name}.human.md"
+    return (prompt_path, context_path, audit_path, brief_path, human_path)
+
+
+def _build_minimal_task_runner_prompt(
+    *,
+    stage: str,
+    task_packet: dict[str, Any],
+    context_path: Path,
+) -> str:
+    task_id = str(task_packet.get("task_id", "")).strip() or "task"
+    objective = (
+        str(task_packet.get("objective", "")).strip() or "(no objective provided)"
+    )
+    scope_kind = str(task_packet.get("scope_kind", "")).strip() or "experiment"
+    depends_on = task_packet.get("depends_on", [])
+    reads = task_packet.get("reads", [])
+    writes = task_packet.get("writes", [])
+    touches = task_packet.get("touches", [])
+    expected_artifacts = task_packet.get("expected_artifacts", [])
+    verification_commands = task_packet.get("verification_commands", [])
+
+    def _render_list(values: Any) -> str:
+        if not isinstance(values, list):
+            return "(none)"
+        rendered = [str(item).strip() for item in values if str(item).strip()]
+        return ", ".join(rendered) if rendered else "(none)"
+
+    return (
+        f"# Stage: {stage} (runner task)\n\n"
+        "## ROLE\n"
+        "You are executing a single implementation task.\n\n"
+        "## TASK\n"
+        f"- task_id: {task_id}\n"
+        f"- objective: {objective}\n"
+        f"- scope_kind: {scope_kind}\n"
+        f"- depends_on: {_render_list(depends_on)}\n\n"
+        "## DECLARED SURFACES\n"
+        f"- reads: {_render_list(reads)}\n"
+        f"- writes: {_render_list(writes)}\n"
+        f"- touches: {_render_list(touches)}\n\n"
+        "## OUTPUTS (STRICT)\n"
+        f"- expected_artifacts: {_render_list(expected_artifacts)}\n\n"
+        "## STOP CONDITIONS\n"
+        "- Stop if an edit is outside declared `writes`/`touches`.\n"
+        "- Stop if required files are missing.\n"
+        "- Stop if you cannot satisfy declared verification intent.\n\n"
+        "## NON-NEGOTIABLES\n"
+        f"- Use `{context_path}` as structured runtime context.\n"
+        "- Keep edits minimal and confined to this task only.\n"
+        "- Do not execute unrelated cleanups or refactors.\n\n"
+        "## TASK-LEVEL VERIFICATION INTENT\n"
+        f"- verification_commands: {_render_list(verification_commands)}\n"
+    )
+
+
+def _build_minimal_task_sidecar_prompt(
+    *,
+    stage: str,
+    task_packet: dict[str, Any],
+    context_path: Path,
+    audience: str,
+) -> str:
+    task_id = str(task_packet.get("task_id", "")).strip() or "task"
+    return (
+        f"# Stage: {stage} (runner task {audience})\n\n"
+        "Task packet mode is active.\n\n"
+        f"- task_id: {task_id}\n"
+        f"- context_path: {context_path}\n"
+        "- Use the task runner prompt/context artifacts for execution.\n"
+    )
+
+
 def _invoke_agent_runner(
     repo_root: Path,
     *,
@@ -432,7 +548,17 @@ def _invoke_agent_runner(
     iteration_id: str,
     run_agent_mode: str,
     auto_mode: bool = False,
-) -> None:
+    task_packet: dict[str, Any] | None = None,
+    task_context: dict[str, Any] | None = None,
+    report_name: str = "runner_execution_report.json",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "skipped",
+        "exit_code": 0,
+        "changed_paths": [],
+        "report_name": str(report_name).strip() or "runner_execution_report.json",
+        "task_id": str((task_packet or {}).get("task_id", "")).strip(),
+    }
     runner = _load_agent_runner_config(repo_root)
     mode = _resolve_run_agent_mode(run_agent_mode)
     if stage not in runner.stages:
@@ -440,12 +566,12 @@ def _invoke_agent_runner(
             _append_log(
                 repo_root, f"agent runner skipped by stage filter stage={stage}"
             )
-        return
+        return result
 
     if mode == "force_off":
-        return
+        return result
     if mode == "policy" and not runner.enabled:
-        return
+        return result
     if mode == "force_on" and not runner.enabled:
         _append_log(
             repo_root, "agent runner forced by --run-agent (policy enabled=false)"
@@ -487,22 +613,106 @@ def _invoke_agent_runner(
             str(path.relative_to(repo_root)) for path in resolved_core_dirs
         ],
     }
-    prompt_bundle = _render_stage_prompt(
-        repo_root,
-        stage=stage,
-        state=prompt_state,
-        template_path=prompt_template_path,
-        runner_scope=runner_scope,
-    )
+    prompt_runner_path: Path
+    prompt_context_path: Path
+    prompt_audit_path: Path
+    prompt_brief_path: Path
+    prompt_human_path: Path
+    prompt_text: str
+    effective_template_path = prompt_template_path
+
+    if isinstance(task_packet, dict):
+        task_id = str(task_packet.get("task_id", "")).strip() or "task"
+        (
+            task_prompt_path,
+            task_context_path,
+            task_audit_path,
+            task_brief_path,
+            task_human_path,
+        ) = _task_rendered_paths(
+            repo_root,
+            stage=stage,
+            task_id=task_id,
+            iteration_id=iteration_id,
+            task_context=task_context,
+        )
+        task_context_payload: dict[str, Any] = {
+            "schema_version": "1.0",
+            "stage": stage,
+            "iteration_id": iteration_id,
+            "task": task_packet,
+            "runner_scope": runner_scope,
+        }
+        if isinstance(task_context, dict):
+            task_context_payload["task_context"] = task_context
+        task_context_path.write_text(
+            json.dumps(task_context_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        prompt_text = _build_minimal_task_runner_prompt(
+            stage=stage,
+            task_packet=task_packet,
+            context_path=task_context_path,
+        )
+        task_prompt_path.write_text(prompt_text, encoding="utf-8")
+        task_audit_path.write_text(
+            _build_minimal_task_sidecar_prompt(
+                stage=stage,
+                task_packet=task_packet,
+                context_path=task_context_path,
+                audience="audit",
+            ),
+            encoding="utf-8",
+        )
+        task_brief_path.write_text(
+            _build_minimal_task_sidecar_prompt(
+                stage=stage,
+                task_packet=task_packet,
+                context_path=task_context_path,
+                audience="brief",
+            ),
+            encoding="utf-8",
+        )
+        task_human_path.write_text(
+            _build_minimal_task_sidecar_prompt(
+                stage=stage,
+                task_packet=task_packet,
+                context_path=task_context_path,
+                audience="human",
+            ),
+            encoding="utf-8",
+        )
+        prompt_runner_path = task_prompt_path
+        prompt_context_path = task_context_path
+        prompt_audit_path = task_audit_path
+        prompt_brief_path = task_brief_path
+        prompt_human_path = task_human_path
+        result["task_id"] = task_id
+    else:
+        prompt_bundle = _render_stage_prompt(
+            repo_root,
+            stage=stage,
+            state=prompt_state,
+            template_path=prompt_template_path,
+            runner_scope=runner_scope,
+        )
+        prompt_runner_path = prompt_bundle.rendered_path
+        prompt_context_path = prompt_bundle.context_path
+        prompt_audit_path = prompt_bundle.audit_path or prompt_runner_path
+        prompt_brief_path = prompt_bundle.brief_path or prompt_runner_path
+        prompt_human_path = prompt_bundle.human_path or prompt_runner_path
+        prompt_text = prompt_bundle.prompt_text
+        effective_template_path = prompt_bundle.template_path
+
     command = _substitute_runner_command(
         runner.command,
         stage=stage,
-        prompt_runner_path=prompt_bundle.rendered_path,
-        prompt_template_path=prompt_bundle.template_path,
-        prompt_context_path=prompt_bundle.context_path,
-        prompt_audit_path=prompt_bundle.audit_path or prompt_bundle.rendered_path,
-        prompt_brief_path=prompt_bundle.brief_path or prompt_bundle.rendered_path,
-        prompt_human_path=prompt_bundle.human_path or prompt_bundle.rendered_path,
+        prompt_runner_path=prompt_runner_path,
+        prompt_template_path=effective_template_path,
+        prompt_context_path=prompt_context_path,
+        prompt_audit_path=prompt_audit_path,
+        prompt_brief_path=prompt_brief_path,
+        prompt_human_path=prompt_human_path,
         iteration_id=iteration_id,
         workspace_dir=workspace_dir,
         core_add_dirs=core_add_dirs,
@@ -534,24 +744,16 @@ def _invoke_agent_runner(
     env = os.environ.copy()
     env["AUTOLAB_STAGE"] = stage
     env["AUTOLAB_ITERATION_ID"] = iteration_id
-    env["AUTOLAB_PROMPT_RUNNER_PATH"] = str(prompt_bundle.rendered_path)
+    env["AUTOLAB_PROMPT_RUNNER_PATH"] = str(prompt_runner_path)
     # Back-compat alias for external runner scripts.
-    env["AUTOLAB_PROMPT_PATH"] = str(prompt_bundle.rendered_path)
-    env["AUTOLAB_PROMPT_TEMPLATE_PATH"] = str(prompt_bundle.template_path)
-    env["AUTOLAB_PROMPT_CONTEXT_PATH"] = str(prompt_bundle.context_path)
-    env["AUTOLAB_PROMPT_AUDIT_PATH"] = str(
-        prompt_bundle.audit_path or prompt_bundle.rendered_path
-    )
-    env["AUTOLAB_PROMPT_BRIEF_PATH"] = str(
-        prompt_bundle.brief_path or prompt_bundle.rendered_path
-    )
+    env["AUTOLAB_PROMPT_PATH"] = str(prompt_runner_path)
+    env["AUTOLAB_PROMPT_TEMPLATE_PATH"] = str(effective_template_path)
+    env["AUTOLAB_PROMPT_CONTEXT_PATH"] = str(prompt_context_path)
+    env["AUTOLAB_PROMPT_AUDIT_PATH"] = str(prompt_audit_path)
+    env["AUTOLAB_PROMPT_BRIEF_PATH"] = str(prompt_brief_path)
     # Back-compat alias for pre-audience retry brief path consumers.
-    env["AUTOLAB_PROMPT_RETRY_BRIEF_PATH"] = str(
-        prompt_bundle.brief_path or prompt_bundle.rendered_path
-    )
-    env["AUTOLAB_PROMPT_HUMAN_PATH"] = str(
-        prompt_bundle.human_path or prompt_bundle.rendered_path
-    )
+    env["AUTOLAB_PROMPT_RETRY_BRIEF_PATH"] = str(prompt_brief_path)
+    env["AUTOLAB_PROMPT_HUMAN_PATH"] = str(prompt_human_path)
     env["AUTOLAB_STATE_FILE"] = str(state_path)
     env["AUTOLAB_REPO_ROOT"] = str(repo_root)
     env["AUTOLAB_WORKSPACE_DIR"] = str(workspace_dir)
@@ -574,12 +776,17 @@ def _invoke_agent_runner(
         "command_argv": [],
         "exit_code": None,
     }
+    report_filename = Path(
+        str(report_name).strip() or "runner_execution_report.json"
+    ).name
+    report_path = repo_root / ".autolab" / report_filename
+    result["report_name"] = report_path.name
     _append_log(
         repo_root,
         (
             f"agent runner start stage={stage} timeout_seconds={runner.timeout_seconds} "
-            f"workspace_dir={workspace_dir} prompt_template={prompt_bundle.template_path} "
-            f"prompt_rendered={prompt_bundle.rendered_path} command={_redact_sensitive_text(command)}"
+            f"workspace_dir={workspace_dir} prompt_template={effective_template_path} "
+            f"prompt_rendered={prompt_runner_path} command={_redact_sensitive_text(command)}"
         ),
     )
 
@@ -602,6 +809,7 @@ def _invoke_agent_runner(
             exit_code=exit_code,
             error=error,
             termination_reason=termination_reason,
+            report_path=report_path,
         )
         run_report_finalized = True
 
@@ -662,7 +870,11 @@ def _invoke_agent_runner(
         run_report["command_argv"] = [
             _redact_sensitive_text(str(token)) for token in popen_command
         ]
-        _write_runner_execution_report(repo_root, payload=run_report)
+        _write_runner_execution_report(
+            repo_root,
+            payload=run_report,
+            report_path=report_path,
+        )
 
         process = subprocess.Popen(
             popen_command,
@@ -678,7 +890,7 @@ def _invoke_agent_runner(
         )
         if process.stdin is not None:
             try:
-                process.stdin.write(prompt_bundle.prompt_text)
+                process.stdin.write(prompt_text)
                 process.stdin.flush()
             except BrokenPipeError:
                 pass
@@ -787,14 +999,18 @@ def _invoke_agent_runner(
             error=runner_error_message,
             termination_reason=runner_termination_reason,
         )
-        return
+        result["status"] = "error"
+        result["exit_code"] = int(returncode) if returncode is not None else 1
+        return result
     if runner_status_override == "timeout":
         _finalize_report(
             status="timeout",
             exit_code=None,
             termination_reason=runner_termination_reason,
         )
-        return
+        result["status"] = "timeout"
+        result["exit_code"] = 1
+        return result
 
     if (
         runner.runner == "codex"
@@ -817,8 +1033,8 @@ def _invoke_agent_runner(
         )
 
     scope_error: StageCheckError | None = None
+    effective_delta_paths: list[str] = []
     try:
-        effective_delta_paths: list[str] = []
         if baseline_snapshot is not None:
             current_snapshot = _collect_change_snapshot(repo_root)
             delta_paths = _snapshot_delta_paths(baseline_snapshot, current_snapshot)
@@ -916,7 +1132,10 @@ def _invoke_agent_runner(
             repo_root,
             f"agent runner ended without exit code stage={stage}; continuing with stage evaluation",
         )
-        return
+        result["status"] = "error"
+        result["exit_code"] = 1
+        result["changed_paths"] = sorted(effective_delta_paths)
+        return result
 
     _append_log(
         repo_root,
@@ -942,14 +1161,21 @@ def _invoke_agent_runner(
             repo_root,
             f"agent runner terminated due to dead channel at stage={stage}; continuing with stage evaluation",
         )
-        return
+        result["status"] = "failed"
+        result["exit_code"] = int(returncode)
+        result["changed_paths"] = sorted(effective_delta_paths)
+        return result
 
     _finalize_report(
         status="completed" if returncode == 0 else "failed",
         exit_code=returncode,
     )
+    result["status"] = "completed" if returncode == 0 else "failed"
+    result["exit_code"] = int(returncode)
+    result["changed_paths"] = sorted(effective_delta_paths)
     if returncode != 0:
         _append_log(
             repo_root,
             f"agent runner non-zero exit at stage={stage}; continuing with stage evaluation",
         )
+    return result

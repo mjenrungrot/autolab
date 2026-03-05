@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from autolab.config import (
@@ -11,11 +12,13 @@ from autolab.config import (
     _load_launch_execute_policy,
     _load_launch_runtime_config,
     _load_meaningful_change_config,
+    _load_plan_execution_config,
     _load_protected_files,
     _resolve_policy_python_bin,
     _load_slurm_lifecycle_strict_policy,
     _load_strict_mode_config,
 )
+from autolab.models import StageCheckError
 
 
 def test_load_guardrail_config_reads_max_generated_todo_tasks(tmp_path: Path) -> None:
@@ -337,3 +340,97 @@ def test_load_agent_runner_config_uses_codex_dangerous_preset_from_env(
     assert runner.runner == "codex"
     assert "--dangerously-bypass-approvals-and-sandbox" in runner.command
     assert runner.codex_dangerously_bypass_approvals_and_sandbox is True
+
+
+def _write_plan_execution_policy(repo: Path, implementation: dict[str, object]) -> None:
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {"plan_execution": {"implementation": implementation}}
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+
+def test_load_plan_execution_config_preserves_explicit_zero_retry_values(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_plan_execution_policy(
+        repo,
+        {
+            "enabled": True,
+            "run_unit": "wave",
+            "max_parallel_tasks": 1,
+            "task_retry_max": 0,
+            "wave_retry_max": 0,
+            "failure_mode": "finish_wave_then_stop",
+            "on_wave_retry_exhausted": "human_review",
+            "require_verification_commands": True,
+        },
+    )
+
+    implementation = _load_plan_execution_config(repo).implementation
+
+    assert implementation.max_parallel_tasks == 1
+    assert implementation.task_retry_max == 0
+    assert implementation.wave_retry_max == 0
+
+
+def test_load_plan_execution_config_rejects_zero_max_parallel_tasks(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_plan_execution_policy(
+        repo,
+        {
+            "enabled": True,
+            "run_unit": "wave",
+            "max_parallel_tasks": 0,
+            "task_retry_max": 0,
+            "wave_retry_max": 0,
+            "failure_mode": "finish_wave_then_stop",
+            "on_wave_retry_exhausted": "human_review",
+            "require_verification_commands": True,
+        },
+    )
+
+    with pytest.raises(
+        StageCheckError,
+        match="plan_execution\\.implementation\\.max_parallel_tasks must be >= 1",
+    ):
+        _load_plan_execution_config(repo)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("max_parallel_tasks", "oops"),
+        ("task_retry_max", "oops"),
+        ("wave_retry_max", "oops"),
+    ),
+)
+def test_load_plan_execution_config_invalid_integer_fields_raise_clean_error(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    implementation: dict[str, object] = {
+        "enabled": True,
+        "run_unit": "wave",
+        "max_parallel_tasks": 1,
+        "task_retry_max": 0,
+        "wave_retry_max": 0,
+        "failure_mode": "finish_wave_then_stop",
+        "on_wave_retry_exhausted": "human_review",
+        "require_verification_commands": True,
+    }
+    implementation[field] = value
+    _write_plan_execution_policy(repo, implementation)
+
+    with pytest.raises(
+        StageCheckError,
+        match=rf"plan_execution\.implementation\.{field} must be an integer",
+    ):
+        _load_plan_execution_config(repo)

@@ -24,6 +24,7 @@ _ROOT_SCOPED_PREFIXES = (
 )
 
 _SCOPE_KINDS = {"experiment", "project_wide"}
+_FAILURE_POLICIES = {"fail_fast"}
 
 
 class PlanContractError(RuntimeError):
@@ -430,6 +431,9 @@ def check_implementation_plan_contract(
         covers_requirements = _parse_str_list(
             task_id, raw_task, "covers_requirements", errors=errors
         )
+        objective = str(raw_task.get("objective", "")).strip()
+        if not objective:
+            errors.append(f"{task_id}: objective must be non-empty")
 
         if not touches:
             errors.append(f"{task_id}: touches must be non-empty")
@@ -442,6 +446,10 @@ def check_implementation_plan_contract(
         failure_policy = str(raw_task.get("failure_policy", "")).strip()
         if not failure_policy:
             errors.append(f"{task_id}: failure_policy must be non-empty")
+        elif failure_policy not in _FAILURE_POLICIES:
+            errors.append(
+                f"{task_id}: failure_policy must be one of {sorted(_FAILURE_POLICIES)}"
+            )
 
         can_run_in_parallel = raw_task.get("can_run_in_parallel")
         if not isinstance(can_run_in_parallel, bool):
@@ -469,7 +477,7 @@ def check_implementation_plan_contract(
                 if _is_iteration_local(path, iteration_prefix=iteration_prefix)
             ]
             if illegal_writes:
-                warnings.append(
+                errors.append(
                     f"{task_id}: project_wide task writes iteration-local paths ({', '.join(sorted(set(illegal_writes)))})"
                 )
 
@@ -482,7 +490,7 @@ def check_implementation_plan_contract(
                 and _normalize_path(path).startswith(_ROOT_SCOPED_PREFIXES)
             ]
             if outside_paths:
-                warnings.append(
+                errors.append(
                     f"{task_id}: experiment-scoped task touches project-wide paths ({', '.join(sorted(set(outside_paths)))})"
                 )
 

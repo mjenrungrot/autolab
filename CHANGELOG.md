@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.14] - 2026-03-04
+
+### Summary
+
+- Added implementation plan execution as the runtime plan of record with wave scheduling, per-task runner prompts/context, task-level verification, and execution state/summary artifacts.
+- Hardened implementation execution controls and policy handling (`failure_mode`, `failure_policy`, retry semantics, `--auto` continuation, and explicit `force_off` incompatibility when execution summary gating is required).
+- Expanded schema/prompt/test coverage for plan execution (new execution-state schema, tightened contract requirements including `objective`, runner prompt isolation, and end-to-end regressions).
+
+<!-- autolab:range v1.2.13..v1.2.14 -->
+
 ## [1.2.13] - 2026-03-04
 
 ### Summary

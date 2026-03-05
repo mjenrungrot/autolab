@@ -74,6 +74,51 @@ class _ExitZeroProcess:
         return None
 
 
+class _CaptureStdin:
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self.closed = False
+
+    def write(self, text: str) -> int:
+        self._chunks.append(str(text))
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+    @property
+    def text(self) -> str:
+        return "".join(self._chunks)
+
+
+class _CaptureProcess:
+    launched: list["_CaptureProcess"] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.command = list(args[0]) if args else []
+        self.env = dict(kwargs.get("env", {}))
+        self.stdin = _CaptureStdin()
+        self.stdout = _StaticStream([])
+        self.stderr = _StaticStream([])
+        self.pid = 999999
+        type(self).launched.append(self)
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+    def poll(self) -> int | None:
+        return 0
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+
 def _configure_runner_environment(
     monkeypatch: pytest.MonkeyPatch,
     repo_root: Path,
@@ -313,3 +358,181 @@ def test_substitute_runner_command_supports_audit_brief_and_human_tokens() -> No
     assert "--prompt-legacy /tmp/implementation.runner.md" in rendered
     assert "--brief-legacy /tmp/implementation.brief.md" in rendered
     assert "--human /tmp/implementation.human.md" in rendered
+
+
+def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    state_path = _configure_runner_environment(
+        monkeypatch,
+        repo_root,
+        process_factory=_CaptureProcess,
+    )
+    _CaptureProcess.launched.clear()
+    runner_config = AgentRunnerConfig(
+        runner="codex",
+        enabled=True,
+        command=(
+            "fake-runner "
+            "--runner {prompt_runner_path} "
+            "--context {prompt_context_path} "
+            "--audit {prompt_audit_path} "
+            "--brief {prompt_brief_path} "
+            "--human {prompt_human_path}"
+        ),
+        stages=("implementation",),
+        edit_scope=AgentRunnerEditScopeConfig(
+            mode="iteration_only",
+            core_dirs=(),
+            ensure_iteration_dir=False,
+        ),
+        timeout_seconds=60.0,
+        codex_dangerously_bypass_approvals_and_sandbox=False,
+    )
+    monkeypatch.setattr(
+        runners, "_load_agent_runner_config", lambda _root: runner_config
+    )
+    monkeypatch.setattr(
+        runners,
+        "_render_stage_prompt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("task packet mode should not render full stage prompt packs")
+        ),
+    )
+
+    task_packet = {
+        "task_id": "T1",
+        "objective": "Implement minimal task packet execution.",
+        "scope_kind": "experiment",
+        "depends_on": [],
+        "reads": ["experiments/plan/iter1/design.yaml"],
+        "writes": ["src/foo.py"],
+        "touches": ["src/foo.py"],
+        "expected_artifacts": ["src/foo.py"],
+        "verification_commands": ["pytest -q tests/test_runner_execution_report.py"],
+    }
+    result = runners._invoke_agent_runner(
+        repo_root,
+        state_path=state_path,
+        stage="implementation",
+        iteration_id="iter1",
+        run_agent_mode="policy",
+        task_packet=task_packet,
+        task_context={"wave": 1, "attempt": 1, "max_attempts": 2},
+    )
+
+    assert result["status"] == "completed"
+    assert result["exit_code"] == 0
+    assert len(_CaptureProcess.launched) == 1
+    launched = _CaptureProcess.launched[0]
+
+    runner_path = Path(launched.env["AUTOLAB_PROMPT_RUNNER_PATH"])
+    context_path = Path(launched.env["AUTOLAB_PROMPT_CONTEXT_PATH"])
+    audit_path = Path(launched.env["AUTOLAB_PROMPT_AUDIT_PATH"])
+    brief_path = Path(launched.env["AUTOLAB_PROMPT_BRIEF_PATH"])
+    human_path = Path(launched.env["AUTOLAB_PROMPT_HUMAN_PATH"])
+
+    assert ".task_" in runner_path.name
+    assert ".task_" in context_path.name
+    assert ".task_" in audit_path.name
+    assert ".task_" in brief_path.name
+    assert ".task_" in human_path.name
+
+    assert runner_path.exists()
+    assert context_path.exists()
+    assert audit_path.exists()
+    assert brief_path.exists()
+    assert human_path.exists()
+    assert not (
+        repo_root / ".autolab" / "prompts" / "rendered" / "implementation.runner.md"
+    ).exists()
+
+    runner_prompt_text = runner_path.read_text(encoding="utf-8")
+    assert "Stage: implementation (runner task)" in runner_prompt_text
+    assert "Implementation Auditor" not in runner_prompt_text
+    assert (
+        "verification_commands: pytest -q tests/test_runner_execution_report.py"
+        in runner_prompt_text
+    )
+
+    task_context_payload = json.loads(context_path.read_text(encoding="utf-8"))
+    assert task_context_payload["task"]["task_id"] == "T1"
+    assert task_context_payload["task_context"]["wave"] == 1
+    assert "allowed_edit_dirs" in task_context_payload["runner_scope"]
+
+    assert "Task packet mode is active." in audit_path.read_text(encoding="utf-8")
+    assert "Task packet mode is active." in brief_path.read_text(encoding="utf-8")
+    assert "Task packet mode is active." in human_path.read_text(encoding="utf-8")
+
+    argv = launched.command
+    assert argv[0] == "fake-runner"
+    assert argv[argv.index("--runner") + 1] == str(runner_path)
+    assert argv[argv.index("--context") + 1] == str(context_path)
+    assert argv[argv.index("--audit") + 1] == str(audit_path)
+    assert argv[argv.index("--brief") + 1] == str(brief_path)
+    assert argv[argv.index("--human") + 1] == str(human_path)
+    assert "Stage: implementation (runner task)" in launched.stdin.text
+
+
+def test_task_packet_rendered_paths_are_unique_per_invocation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    state_path = _configure_runner_environment(
+        monkeypatch,
+        repo_root,
+        process_factory=_CaptureProcess,
+    )
+    _CaptureProcess.launched.clear()
+    monkeypatch.setattr(
+        runners,
+        "_render_stage_prompt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("task packet mode should not render full stage prompt packs")
+        ),
+    )
+
+    task_packet = {
+        "task_id": "T1",
+        "objective": "Unique task packet artifacts per invocation.",
+        "scope_kind": "experiment",
+        "depends_on": [],
+        "reads": [],
+        "writes": ["src/foo.py"],
+        "touches": ["src/foo.py"],
+        "expected_artifacts": ["src/foo.py"],
+        "verification_commands": [],
+    }
+    runners._invoke_agent_runner(
+        repo_root,
+        state_path=state_path,
+        stage="implementation",
+        iteration_id="iter1",
+        run_agent_mode="policy",
+        task_packet=task_packet,
+        task_context={"wave": 1, "attempt": 1},
+    )
+    runners._invoke_agent_runner(
+        repo_root,
+        state_path=state_path,
+        stage="implementation",
+        iteration_id="iter1",
+        run_agent_mode="policy",
+        task_packet=task_packet,
+        task_context={"wave": 1, "attempt": 1},
+    )
+
+    assert len(_CaptureProcess.launched) == 2
+    first = _CaptureProcess.launched[0].env
+    second = _CaptureProcess.launched[1].env
+    for key in (
+        "AUTOLAB_PROMPT_RUNNER_PATH",
+        "AUTOLAB_PROMPT_CONTEXT_PATH",
+        "AUTOLAB_PROMPT_AUDIT_PATH",
+        "AUTOLAB_PROMPT_BRIEF_PATH",
+        "AUTOLAB_PROMPT_HUMAN_PATH",
+    ):
+        assert first[key] != second[key]

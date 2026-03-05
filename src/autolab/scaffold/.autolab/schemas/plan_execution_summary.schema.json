@@ -3,11 +3,27 @@
   "title": "Plan Execution Summary",
   "description": "Execution summary emitted by parallel-task after running a plan",
   "type": "object",
-  "required": ["schema_version", "iteration_id", "plan_file", "tasks_total", "tasks_completed", "tasks_failed", "tasks_blocked"],
+  "required": [
+    "schema_version",
+    "iteration_id",
+    "plan_file",
+    "tasks_total",
+    "tasks_completed",
+    "tasks_failed",
+    "tasks_blocked"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
       "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "stage": {
+      "type": "string",
+      "const": "implementation"
     },
     "iteration_id": {
       "type": "string",
@@ -16,6 +32,14 @@
     "plan_file": {
       "type": "string",
       "minLength": 1
+    },
+    "contract_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_unit": {
+      "type": "string",
+      "enum": ["wave"]
     },
     "tasks_total": {
       "type": "integer",
@@ -33,23 +57,88 @@
       "type": "integer",
       "minimum": 0
     },
+    "tasks_pending": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "waves_total": {
+      "type": "integer",
+      "minimum": 0
+    },
     "waves_executed": {
       "type": "integer",
       "minimum": 0
+    },
+    "wave_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["wave", "status", "tasks"],
+        "properties": {
+          "wave": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "completed", "failed", "blocked"]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "task_details": {
       "type": "array",
       "items": {
         "type": "object",
+        "required": ["task_id", "status", "wave"],
         "properties": {
-          "task_id": {"type": "string"},
-          "status": {"type": "string"},
-          "wave": {"type": "integer"},
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "completed", "failed", "blocked"]
+          },
+          "wave": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retries_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "scope_kind": {
+            "type": "string"
+          },
           "files_changed": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
-        }
+        },
+        "additionalProperties": false
       }
     }
   },

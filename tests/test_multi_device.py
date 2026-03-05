@@ -236,6 +236,7 @@ def _seed_implementation(iteration_dir: Path) -> None:
         "tasks": [
             {
                 "task_id": "T1",
+                "objective": "Minimal implementation task for fixture validation.",
                 "scope_kind": "experiment",
                 "depends_on": [],
                 "reads": [f"experiments/plan/{iteration_dir.name}/design.yaml"],
