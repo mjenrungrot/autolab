@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.18] - 2026-03-05
+
+### Summary
+
+- Added end-to-end traceability coverage artifacts linking requirement -> task -> verifier -> metrics/result -> decision, with `autolab trace` CLI generation.
+- `decide_repeat` now refreshes traceability artifacts non-blockingly and consistently rewrites iteration `decision_result.json` for manual and auto decisions.
+- Added traceability schemas/verifier checks (`traceability_coverage`, `traceability_latest`), advisory-vs-strict policy handling, and expanded traceability test coverage.
+
+<!-- autolab:range v1.2.17..v1.2.18 -->
+
 ## [1.2.17] - 2026-03-05
 
 ### Summary

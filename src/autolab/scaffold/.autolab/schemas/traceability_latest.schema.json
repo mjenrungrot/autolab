@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TraceabilityLatest",
+  "description": "Pointer to the most recent traceability_coverage artifact with compact counters.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "iteration_id",
+    "experiment_id",
+    "run_id",
+    "traceability_path",
+    "decision",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "traceability_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "type": "object",
+      "required": ["status", "decision", "pointer"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["available", "missing"]
+        },
+        "decision": {
+          "type": "string"
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "rows_total",
+        "rows_covered",
+        "rows_untested",
+        "rows_failed",
+        "requirements_total",
+        "requirements_covered",
+        "requirements_untested",
+        "requirements_failed",
+        "failed_by_class",
+        "untested_by_class",
+        "decision_linked_rows"
+      ],
+      "properties": {
+        "rows_total": {"type": "integer", "minimum": 0},
+        "rows_covered": {"type": "integer", "minimum": 0},
+        "rows_untested": {"type": "integer", "minimum": 0},
+        "rows_failed": {"type": "integer", "minimum": 0},
+        "requirements_total": {"type": "integer", "minimum": 0},
+        "requirements_covered": {"type": "integer", "minimum": 0},
+        "requirements_untested": {"type": "integer", "minimum": 0},
+        "requirements_failed": {"type": "integer", "minimum": 0},
+        "failed_by_class": {
+          "type": "object",
+          "required": ["design", "execution", "measurement"],
+          "properties": {
+            "design": {"type": "integer", "minimum": 0},
+            "execution": {"type": "integer", "minimum": 0},
+            "measurement": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "untested_by_class": {
+          "type": "object",
+          "required": ["execution"],
+          "properties": {
+            "execution": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "decision_linked_rows": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

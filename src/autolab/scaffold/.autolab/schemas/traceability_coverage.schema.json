@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TraceabilityCoverage",
+  "description": "End-to-end traceability coverage artifact for hypothesis/design/implementation/verification/measurement/decision linkage.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "iteration_id",
+    "claim",
+    "links",
+    "summary",
+    "pointers",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "claim": {
+      "type": "object",
+      "required": ["claim_id", "text", "status", "source_pointer"],
+      "properties": {
+        "claim_id": {"type": "string", "minLength": 1},
+        "text": {"type": "string"},
+        "status": {"type": "string", "enum": ["available", "missing"]},
+        "source_pointer": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "decision": {
+      "type": "object",
+      "required": ["status", "decision", "rationale", "pointer", "evidence_count"],
+      "properties": {
+        "status": {"type": "string", "enum": ["available", "missing"]},
+        "decision": {"type": "string"},
+        "rationale": {"type": "string"},
+        "pointer": {"type": "string"},
+        "evidence_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "row_id",
+          "claim_id",
+          "requirement_id",
+          "requirement_description",
+          "scope_kind",
+          "task_id",
+          "task_status",
+          "verification",
+          "measurement",
+          "decision",
+          "coverage_status",
+          "failure_class",
+          "failure_reason"
+        ],
+        "properties": {
+          "row_id": {"type": "string", "minLength": 1},
+          "claim_id": {"type": "string", "minLength": 1},
+          "requirement_id": {"type": "string", "minLength": 1},
+          "requirement_description": {"type": "string"},
+          "scope_kind": {"type": "string"},
+          "task_id": {"type": "string"},
+          "task_status": {"type": "string"},
+          "verification": {
+            "type": "object",
+            "required": [
+              "task_evidence_pointer",
+              "stage_verifier_pointer",
+              "stage_verifier_passed",
+              "stage_verifier_message"
+            ],
+            "properties": {
+              "task_evidence_pointer": {"type": "string"},
+              "attempts": {"type": "integer", "minimum": 0},
+              "retries_used": {"type": "integer", "minimum": 0},
+              "last_error": {"type": "string"},
+              "verification_commands": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "stage_verifier_pointer": {"type": "string"},
+              "stage_verifier_passed": {"type": "boolean"},
+              "stage_verifier_message": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "measurement": {
+            "type": "object",
+            "required": [
+              "run_id",
+              "metrics_pointer",
+              "metrics_status",
+              "primary_metric_name",
+              "primary_metric_value",
+              "delta_vs_baseline"
+            ],
+            "properties": {
+              "run_id": {"type": "string"},
+              "metrics_pointer": {"type": "string"},
+              "metrics_status": {
+                "type": "string",
+                "enum": ["completed", "partial", "failed", "missing", "unknown"]
+              },
+              "primary_metric_name": {"type": "string"},
+              "primary_metric_value": {"type": ["number", "null"]},
+              "delta_vs_baseline": {"type": ["number", "null"]}
+            },
+            "additionalProperties": false
+          },
+          "decision": {
+            "type": "object",
+            "required": [
+              "decision",
+              "decision_pointer",
+              "decision_status",
+              "matched_evidence_count"
+            ],
+            "properties": {
+              "decision": {"type": "string"},
+              "decision_pointer": {"type": "string"},
+              "decision_status": {
+                "type": "string",
+                "enum": ["linked", "unlinked", "missing"]
+              },
+              "matched_evidence_count": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          },
+          "coverage_status": {
+            "type": "string",
+            "enum": ["covered", "untested", "failed"]
+          },
+          "failure_class": {
+            "type": "string",
+            "enum": ["none", "design", "execution", "measurement"]
+          },
+          "failure_reason": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "rows_total",
+        "rows_covered",
+        "rows_untested",
+        "rows_failed",
+        "requirements_total",
+        "requirements_covered",
+        "requirements_untested",
+        "requirements_failed",
+        "failed_by_class",
+        "untested_by_class",
+        "decision_linked_rows"
+      ],
+      "properties": {
+        "rows_total": {"type": "integer", "minimum": 0},
+        "rows_covered": {"type": "integer", "minimum": 0},
+        "rows_untested": {"type": "integer", "minimum": 0},
+        "rows_failed": {"type": "integer", "minimum": 0},
+        "requirements_total": {"type": "integer", "minimum": 0},
+        "requirements_covered": {"type": "integer", "minimum": 0},
+        "requirements_untested": {"type": "integer", "minimum": 0},
+        "requirements_failed": {"type": "integer", "minimum": 0},
+        "failed_by_class": {
+          "type": "object",
+          "required": ["design", "execution", "measurement"],
+          "properties": {
+            "design": {"type": "integer", "minimum": 0},
+            "execution": {"type": "integer", "minimum": 0},
+            "measurement": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "untested_by_class": {
+          "type": "object",
+          "required": ["execution"],
+          "properties": {
+            "execution": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "decision_linked_rows": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "pointers": {
+      "type": "object",
+      "required": [
+        "hypothesis_path",
+        "design_path",
+        "plan_contract_path",
+        "plan_execution_summary_path",
+        "verification_result_path",
+        "metrics_path",
+        "decision_result_path"
+      ],
+      "properties": {
+        "hypothesis_path": {"type": "string"},
+        "design_path": {"type": "string"},
+        "plan_contract_path": {"type": "string"},
+        "plan_execution_summary_path": {"type": "string"},
+        "verification_result_path": {"type": "string"},
+        "metrics_path": {"type": "string"},
+        "decision_result_path": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

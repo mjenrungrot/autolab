@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from autolab.cli.support import *
+from autolab.traceability import build_traceability_coverage
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -147,6 +148,80 @@ def _cmd_status(args: argparse.Namespace) -> int:
         )
         print(f"  update_docs_cycles: {docs_cyc}/{max_docs} (breach -> {on_breach})")
 
+    return 0
+
+
+def _cmd_trace(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except RuntimeError as exc:
+        print(f"autolab trace: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    iteration_override = str(getattr(args, "iteration_id", "") or "").strip()
+    if iteration_override:
+        state = dict(state)
+        state["iteration_id"] = iteration_override
+
+    try:
+        result = build_traceability_coverage(
+            repo_root,
+            state,
+            write_outputs=True,
+        )
+    except Exception as exc:
+        print(f"autolab trace: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    coverage_payload = result.coverage_payload
+    summary = coverage_payload.get("summary", {})
+    if bool(getattr(args, "json", False)):
+        try:
+            coverage_path_value = result.coverage_path.relative_to(repo_root).as_posix()
+        except ValueError:
+            coverage_path_value = str(result.coverage_path)
+        try:
+            latest_path_value = result.latest_path.relative_to(repo_root).as_posix()
+        except ValueError:
+            latest_path_value = str(result.latest_path)
+        output = {
+            "status": "ok",
+            "iteration_id": str(coverage_payload.get("iteration_id", "")).strip(),
+            "experiment_id": str(coverage_payload.get("experiment_id", "")).strip(),
+            "coverage_path": coverage_path_value,
+            "latest_path": latest_path_value,
+            "summary": summary if isinstance(summary, dict) else {},
+        }
+        print(json.dumps(output, indent=2))
+        return 0
+
+    rows_total = int(summary.get("rows_total", 0) or 0)
+    rows_covered = int(summary.get("rows_covered", 0) or 0)
+    rows_untested = int(summary.get("rows_untested", 0) or 0)
+    rows_failed = int(summary.get("rows_failed", 0) or 0)
+    requirements_total = int(summary.get("requirements_total", 0) or 0)
+    requirements_covered = int(summary.get("requirements_covered", 0) or 0)
+    requirements_untested = int(summary.get("requirements_untested", 0) or 0)
+    requirements_failed = int(summary.get("requirements_failed", 0) or 0)
+
+    print("autolab trace")
+    print(f"state_file: {state_path}")
+    print(f"iteration_id: {coverage_payload.get('iteration_id', '')}")
+    print(f"experiment_id: {coverage_payload.get('experiment_id', '')}")
+    print(f"coverage_artifact: {result.coverage_path}")
+    print(f"latest_pointer: {result.latest_path}")
+    print(
+        "rows: "
+        f"total={rows_total}, covered={rows_covered}, "
+        f"untested={rows_untested}, failed={rows_failed}"
+    )
+    print(
+        "requirements: "
+        f"total={requirements_total}, covered={requirements_covered}, "
+        f"untested={requirements_untested}, failed={requirements_failed}"
+    )
     return 0
 
 
@@ -301,6 +376,7 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     stateful_subcommands = {
         "run",
         "loop",
+        "trace",
         "render",
         "verify",
         "status",
