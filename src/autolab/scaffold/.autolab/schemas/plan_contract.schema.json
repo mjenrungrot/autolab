@@ -34,6 +34,7 @@
         "type": "object",
         "required": [
           "task_id",
+          "objective",
           "scope_kind",
           "depends_on",
           "reads",
@@ -48,6 +49,10 @@
         ],
         "properties": {
           "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objective": {
             "type": "string",
             "minLength": 1
           },
@@ -108,7 +113,9 @@
           },
           "failure_policy": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "fail_fast"
+            ]
           },
           "can_run_in_parallel": {
             "type": "boolean"

@@ -26,6 +26,16 @@ from autolab.constants import (
     DEFAULT_AUTO_COMMIT_MODE,
     DEFAULT_IMPLEMENTATION_CYCLE_EXCLUDE_PATHS,
     DEFAULT_MEANINGFUL_EXCLUDE_PATHS,
+    DEFAULT_PLAN_EXECUTION_ENABLED,
+    DEFAULT_PLAN_EXECUTION_FAILURE_MODE,
+    DEFAULT_PLAN_EXECUTION_MAX_PARALLEL_TASKS,
+    DEFAULT_PLAN_EXECUTION_ON_WAVE_RETRY_EXHAUSTED,
+    DEFAULT_PLAN_EXECUTION_REQUIRE_VERIFICATION_COMMANDS,
+    DEFAULT_PLAN_EXECUTION_RUN_UNIT,
+    DEFAULT_PLAN_EXECUTION_TASK_RETRY_MAX,
+    DEFAULT_PLAN_EXECUTION_WAVE_RETRY_MAX,
+    PLAN_EXECUTION_FAILURE_MODES,
+    PLAN_EXECUTION_RUN_UNITS,
     RUNNER_ELIGIBLE_STAGES,
     TERMINAL_STAGES,
 )
@@ -36,6 +46,8 @@ from autolab.models import (
     GuardrailConfig,
     LaunchRuntimeConfig,
     MeaningfulChangeConfig,
+    PlanExecutionConfig,
+    PlanExecutionImplementationConfig,
     StageCheckError,
     StrictModeConfig,
     _coerce_bool,
@@ -237,6 +249,140 @@ def _load_launch_runtime_config(repo_root: Path) -> LaunchRuntimeConfig:
 def _load_launch_execute_policy(repo_root: Path) -> bool:
     """Return whether launch stage is allowed to execute commands/submit jobs."""
     return _load_launch_runtime_config(repo_root).execute
+
+
+def _load_plan_execution_config(repo_root: Path) -> PlanExecutionConfig:
+    policy = _load_verifier_policy(repo_root)
+    plan_execution = policy.get("plan_execution")
+    if not isinstance(plan_execution, dict):
+        plan_execution = {}
+
+    implementation = plan_execution.get("implementation")
+    if not isinstance(implementation, dict):
+        implementation = {}
+
+    enabled = _coerce_bool(
+        implementation.get("enabled"),
+        default=DEFAULT_PLAN_EXECUTION_ENABLED,
+    )
+    run_unit = (
+        str(implementation.get("run_unit", DEFAULT_PLAN_EXECUTION_RUN_UNIT))
+        .strip()
+        .lower()
+    )
+    if run_unit not in PLAN_EXECUTION_RUN_UNITS:
+        raise StageCheckError(
+            "plan_execution.implementation.run_unit must be one of "
+            f"{sorted(PLAN_EXECUTION_RUN_UNITS)}"
+        )
+
+    def _parse_int_setting(field: str, *, default: int) -> int:
+        raw_value = implementation.get(field)
+        if raw_value is None:
+            return default
+        if isinstance(raw_value, bool):
+            raise StageCheckError(
+                f"plan_execution.implementation.{field} must be an integer"
+            )
+        if isinstance(raw_value, int):
+            return raw_value
+        if isinstance(raw_value, float):
+            if not raw_value.is_integer():
+                raise StageCheckError(
+                    f"plan_execution.implementation.{field} must be an integer"
+                )
+            return int(raw_value)
+        if isinstance(raw_value, str):
+            candidate = raw_value.strip()
+            if not candidate:
+                raise StageCheckError(
+                    f"plan_execution.implementation.{field} must be an integer"
+                )
+            try:
+                return int(candidate)
+            except Exception as exc:
+                raise StageCheckError(
+                    f"plan_execution.implementation.{field} must be an integer"
+                ) from exc
+        raise StageCheckError(
+            f"plan_execution.implementation.{field} must be an integer"
+        )
+
+    max_parallel_tasks = _parse_int_setting(
+        "max_parallel_tasks",
+        default=DEFAULT_PLAN_EXECUTION_MAX_PARALLEL_TASKS,
+    )
+    if max_parallel_tasks < 1:
+        raise StageCheckError(
+            "plan_execution.implementation.max_parallel_tasks must be >= 1"
+        )
+
+    task_retry_max = _parse_int_setting(
+        "task_retry_max",
+        default=DEFAULT_PLAN_EXECUTION_TASK_RETRY_MAX,
+    )
+    if task_retry_max < 0:
+        raise StageCheckError(
+            "plan_execution.implementation.task_retry_max must be >= 0"
+        )
+
+    wave_retry_max = _parse_int_setting(
+        "wave_retry_max",
+        default=DEFAULT_PLAN_EXECUTION_WAVE_RETRY_MAX,
+    )
+    if wave_retry_max < 0:
+        raise StageCheckError(
+            "plan_execution.implementation.wave_retry_max must be >= 0"
+        )
+
+    failure_mode = (
+        str(
+            implementation.get(
+                "failure_mode",
+                DEFAULT_PLAN_EXECUTION_FAILURE_MODE,
+            )
+        )
+        .strip()
+        .lower()
+    )
+    if failure_mode not in PLAN_EXECUTION_FAILURE_MODES:
+        raise StageCheckError(
+            "plan_execution.implementation.failure_mode must be one of "
+            f"{sorted(PLAN_EXECUTION_FAILURE_MODES)}"
+        )
+
+    on_wave_retry_exhausted = (
+        str(
+            implementation.get(
+                "on_wave_retry_exhausted",
+                DEFAULT_PLAN_EXECUTION_ON_WAVE_RETRY_EXHAUSTED,
+            )
+        )
+        .strip()
+        .lower()
+    )
+    if on_wave_retry_exhausted not in TERMINAL_STAGES:
+        raise StageCheckError(
+            "plan_execution.implementation.on_wave_retry_exhausted must be a terminal stage"
+        )
+
+    require_verification_commands = _coerce_bool(
+        implementation.get("require_verification_commands"),
+        default=DEFAULT_PLAN_EXECUTION_REQUIRE_VERIFICATION_COMMANDS,
+    )
+
+    return PlanExecutionConfig(
+        implementation=PlanExecutionImplementationConfig(
+            enabled=enabled,
+            run_unit=run_unit,
+            max_parallel_tasks=max_parallel_tasks,
+            task_retry_max=task_retry_max,
+            wave_retry_max=wave_retry_max,
+            failure_mode=failure_mode,
+            on_wave_retry_exhausted=on_wave_retry_exhausted,
+            require_verification_commands=require_verification_commands,
+        )
+    )
 
 
 def _load_slurm_lifecycle_strict_policy(repo_root: Path) -> bool:

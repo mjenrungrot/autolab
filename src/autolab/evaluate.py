@@ -15,6 +15,8 @@ except Exception:  # pragma: no cover — optional dependency
 from autolab.constants import ACTIVE_STAGES, SYNC_SUCCESS_STATUSES
 from autolab.models import EvalResult, StageCheckError
 from autolab.config import (
+    _load_agent_runner_config,
+    _load_plan_execution_config,
     _load_slurm_lifecycle_strict_policy,
     _load_verifier_policy,
     _resolve_stage_requirements,
@@ -135,6 +137,63 @@ def _eval_implementation(
         raise StageCheckError(str(exc)) from exc
     if not contract_passed:
         raise StageCheckError(contract_message)
+
+    plan_execution = _load_plan_execution_config(repo_root).implementation
+    runner_cfg = _load_agent_runner_config(repo_root)
+    require_execution_summary = bool(
+        plan_execution.enabled
+        and runner_cfg.enabled
+        and "implementation" in set(runner_cfg.stages)
+    )
+    if require_execution_summary:
+        summary_path = iteration_dir / "plan_execution_summary.json"
+        if not summary_path.exists():
+            raise StageCheckError(
+                "implementation plan execution summary is missing; expected "
+                f"{summary_path}"
+            )
+        summary_payload = _load_dict_json(
+            summary_path,
+            "plan_execution_summary.json",
+        )
+
+        def _summary_non_negative_int(field: str) -> int:
+            raw_value = summary_payload.get(field, 0)
+            try:
+                parsed = int(raw_value)
+            except Exception as exc:
+                raise StageCheckError(
+                    "implementation plan execution summary field "
+                    f"'{field}' must be an integer"
+                ) from exc
+            if parsed < 0:
+                raise StageCheckError(
+                    "implementation plan execution summary field "
+                    f"'{field}' must be >= 0"
+                )
+            return parsed
+
+        tasks_total = _summary_non_negative_int("tasks_total")
+        tasks_completed = _summary_non_negative_int("tasks_completed")
+        tasks_failed = _summary_non_negative_int("tasks_failed")
+        tasks_blocked = _summary_non_negative_int("tasks_blocked")
+        tasks_pending = _summary_non_negative_int("tasks_pending")
+        if tasks_completed > tasks_total:
+            raise StageCheckError(
+                "implementation plan execution summary is inconsistent: "
+                f"tasks_completed={tasks_completed} exceeds tasks_total={tasks_total}"
+            )
+        if (
+            tasks_completed != tasks_total
+            or tasks_failed > 0
+            or tasks_blocked > 0
+            or tasks_pending > 0
+        ):
+            raise StageCheckError(
+                "implementation plan execution is incomplete: "
+                f"completed={tasks_completed}/{tasks_total}, "
+                f"failed={tasks_failed}, blocked={tasks_blocked}, pending={tasks_pending}"
+            )
     return EvalResult(
         "implementation_review", "complete", "'implementation' checks passed"
     )

@@ -142,3 +142,20 @@ class LaunchRuntimeConfig:
     execute: bool
     local_timeout_seconds: float
     slurm_submit_timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class PlanExecutionImplementationConfig:
+    enabled: bool
+    run_unit: str
+    max_parallel_tasks: int
+    task_retry_max: int
+    wave_retry_max: int
+    failure_mode: str
+    on_wave_retry_exhausted: str
+    require_verification_commands: bool
+
+
+@dataclass(frozen=True)
+class PlanExecutionConfig:
+    implementation: PlanExecutionImplementationConfig

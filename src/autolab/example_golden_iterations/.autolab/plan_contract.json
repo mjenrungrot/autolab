@@ -6,6 +6,7 @@
   "tasks": [
     {
       "task_id": "T1",
+      "objective": "Implement augmentation changes required for the experiment design.",
       "scope_kind": "project_wide",
       "depends_on": [],
       "reads": [
@@ -34,6 +35,7 @@
     },
     {
       "task_id": "T2",
+      "objective": "Wire training-path updates and dry-run behavior for the golden iteration.",
       "scope_kind": "project_wide",
       "depends_on": [
         "T1"

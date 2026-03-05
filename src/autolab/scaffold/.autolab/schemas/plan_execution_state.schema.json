@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan Execution State",
+  "description": "Mutable execution cursor/state for contract-driven implementation waves.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "stage",
+    "iteration_id",
+    "contract_path",
+    "contract_hash",
+    "plan_file",
+    "run_unit",
+    "waves_total",
+    "task_status",
+    "task_attempt_counts",
+    "task_retry_counts",
+    "task_last_error",
+    "task_files_changed",
+    "wave_retry_counts",
+    "wave_status",
+    "current_wave",
+    "generated_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "stage": {
+      "type": "string",
+      "const": "implementation"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_unit": {
+      "type": "string",
+      "const": "wave"
+    },
+    "waves_total": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "task_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["pending", "completed", "failed", "blocked"]
+      }
+    },
+    "task_attempt_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "task_retry_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "task_last_error": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "task_files_changed": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "wave_retry_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "wave_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["pending", "completed", "failed", "blocked"]
+      }
+    },
+    "current_wave": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

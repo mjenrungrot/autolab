@@ -124,6 +124,7 @@ def _write_plan_contract(repo: Path) -> None:
         "tasks": [
             {
                 "task_id": "T1",
+                "objective": "Minimal implementation task for fixture validation.",
                 "scope_kind": "experiment",
                 "depends_on": [],
                 "reads": ["experiments/plan/iter1/design.yaml"],
@@ -357,6 +358,26 @@ def _setup_review_repo(tmp_path: Path) -> Path:
     _write_design(repo)
     _write_plan_contract(repo)
     return repo
+
+
+def _extract_task_example_sections(prompt_text: str) -> list[str]:
+    lines = prompt_text.splitlines()
+    sections: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].strip()
+        if not line.startswith("### T"):
+            idx += 1
+            continue
+        end = idx + 1
+        while end < len(lines):
+            candidate = lines[end].strip()
+            if candidate.startswith("### T") or candidate.startswith("## "):
+                break
+            end += 1
+        sections.append("\n".join(lines[idx:end]))
+        idx = end
+    return sections
 
 
 def test_schema_checks_pass_for_valid_review_payload(tmp_path: Path) -> None:
@@ -883,6 +904,26 @@ def test_prompt_lint_uses_workflow_terminal_stage_metadata(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "prompt_lint: PASS" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "prompt_name",
+    ("stage_implementation.md", "stage_implementation.audit.md"),
+)
+def test_implementation_prompt_examples_include_objective_and_failure_policy(
+    tmp_path: Path, prompt_name: str
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    prompt_path = repo / ".autolab" / "prompts" / prompt_name
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+
+    task_sections = _extract_task_example_sections(prompt_text)
+    assert task_sections
+    for section in task_sections:
+        assert "- **objective**:" in section
+        assert (
+            "- **failure_policy**: fail_fast (allowed values: `fail_fast`)" in section
+        )
 
 
 def test_prompt_lint_rejects_banned_runner_sections(tmp_path: Path) -> None:

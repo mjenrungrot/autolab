@@ -112,6 +112,7 @@ SCHEMAS: dict[str, str] = {
     "todo_focus": "todo_focus.schema.json",
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
+    "plan_execution_state": "plan_execution_state.schema.json",
     "handoff": "handoff.schema.json",
     "plan_contract": "plan_contract.schema.json",
     "plan_check_result": "plan_check_result.schema.json",
@@ -591,6 +592,19 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
     return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
 
 
+def _validate_plan_execution_state(state: dict[str, Any]) -> list[str]:
+    """Validate plan_execution_state.json if it exists (optional artifact)."""
+    iteration_dir = _iteration_dir(state)
+    path = iteration_dir / "plan_execution_state.json"
+    if not path.exists():
+        return []
+    try:
+        payload = load_json(path)
+    except Exception as exc:
+        return [f"{path} {exc}"]
+    return _schema_validate(payload, schema_key="plan_execution_state", path=path)
+
+
 def _validate_handoff() -> list[str]:
     """Validate .autolab/handoff.json when present (optional artifact)."""
     path = REPO_ROOT / ".autolab" / "handoff.json"
@@ -797,6 +811,7 @@ def main() -> int:
     failures.extend(_validate_todo_focus(state))
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
+    failures.extend(_validate_plan_execution_state(state))
     failures.extend(_validate_handoff())
     failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))

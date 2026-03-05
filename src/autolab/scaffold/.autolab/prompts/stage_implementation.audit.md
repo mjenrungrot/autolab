@@ -65,6 +65,7 @@ Optional fields (not checked by linter but useful):
 
 Each contract task must include:
 - `task_id`
+- `objective`
 - `scope_kind` (`experiment` or `project_wide`)
 - `depends_on`
 - `reads`
@@ -80,6 +81,8 @@ Each contract task must include:
 Canonical minimal task block:
 ```markdown
 ### T1: Add loss function
+- **objective**: Implement focal loss module required by design.
+- **failure_policy**: fail_fast (allowed values: `fail_fast`)
 - **depends_on**: []
 - **location**: src/model/loss.py
 - **description**: Implement focal loss per design spec
@@ -135,6 +138,8 @@ Canonical minimal task block:
 ## Tasks
 
 ### T1: Add loss function
+- **objective**: Implement focal loss module required by design.
+- **failure_policy**: fail_fast (allowed values: `fail_fast`)
 - **depends_on**: []
 - **location**: src/model/loss.py
 - **description**: Implement focal loss per design spec
@@ -147,6 +152,8 @@ Canonical minimal task block:
 - **files edited/created**:
 
 ### T2: Integrate loss into training loop
+- **objective**: Wire focal loss into training loop entrypoint.
+- **failure_policy**: fail_fast (allowed values: `fail_fast`)
 - **depends_on**: [T1]
 - **location**: src/training/trainer.py
 - **description**: Wire focal loss into the training step

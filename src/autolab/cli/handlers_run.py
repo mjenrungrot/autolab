@@ -443,7 +443,18 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                     overall_exit_code = 1
                 break
             if not outcome.transitioned:
+                continue_auto_after_implementation_wave = bool(
+                    args.auto
+                    and outcome.exit_code == 0
+                    and outcome.stage_before == "implementation"
+                    and outcome.stage_after == "implementation"
+                )
                 if assistant_mode and outcome.exit_code == 0:
+                    continue
+                if continue_auto_after_implementation_wave:
+                    print(
+                        "autolab loop: continue (implementation wave completed without stage transition)"
+                    )
                     continue
                 terminal_reason = "no_transition"
                 print(f"autolab loop: stop (no transition): {outcome.message}")

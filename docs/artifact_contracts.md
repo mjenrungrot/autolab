@@ -139,6 +139,15 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced when**: launch stage begins (system-owned run id allocation)
 - **Consumed by**: prompt rendering / launch stage runner context
 
+## plan_execution_state.json
+
+- **Path**: `experiments/<type>/<iteration_id>/plan_execution_state.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/plan_execution_state.schema.json`
+- **Required fields**: contract hash/path, wave cursor/retry state, per-task status/attempt/error/file tracking
+- **Produced when**: implementation executes contract-driven waves
+- **Consumed by**: implementation scheduler resume/retry logic and handoff summaries
+
 ## auto_decision.json
 
 - **Path**: `.autolab/auto_decision.json`

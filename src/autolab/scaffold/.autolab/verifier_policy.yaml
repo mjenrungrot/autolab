@@ -208,6 +208,19 @@ retry_policy_by_stage:
   update_docs: {max_retries: 3}
   decide_repeat: {max_retries: 3}
 # ---------------------------------------------------------------------------
+# Plan-contract execution policy (implementation stage)
+# ---------------------------------------------------------------------------
+plan_execution:
+  implementation:
+    enabled: true
+    run_unit: wave
+    max_parallel_tasks: 4
+    task_retry_max: 1
+    wave_retry_max: 2
+    failure_mode: finish_wave_then_stop
+    on_wave_retry_exhausted: human_review
+    require_verification_commands: true
+# ---------------------------------------------------------------------------
 # Agent runner configuration
 # ---------------------------------------------------------------------------
 agent_runner:
