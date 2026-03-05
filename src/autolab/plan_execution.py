@@ -10,10 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except Exception:  # pragma: no cover
+    yaml = None
+
 from autolab.config import _load_plan_execution_config
 from autolab.models import StageCheckError
 from autolab.plan_contract import PlanContractError, check_implementation_plan_contract
 from autolab.runners import _invoke_agent_runner
+from autolab.sidecar_tools import build_task_context_guidance
 from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
@@ -67,6 +73,19 @@ def _task_failure_policy(task: dict[str, Any]) -> str:
 def _json_hash(payload: dict[str, Any]) -> str:
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
+def _load_design_yaml_mapping(iteration_dir: Path) -> dict[str, Any]:
+    if yaml is None:
+        return {}
+    design_path = iteration_dir / "design.yaml"
+    if not design_path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _load_json_dict(path: Path) -> dict[str, Any]:
@@ -529,6 +548,7 @@ def _execute_task(
     *,
     state_path: Path,
     iteration_id: str,
+    experiment_id: str,
     iteration_path: str,
     iteration_dir: Path,
     project_wide_root: Path,
@@ -541,6 +561,14 @@ def _execute_task(
     task_scope_kind = str(task.get("scope_kind", "")).strip().lower()
     task_scope_root = (
         project_wide_root if task_scope_kind == "project_wide" else iteration_dir
+    )
+    design_payload = _load_design_yaml_mapping(iteration_dir)
+    task_sidecar_guidance = build_task_context_guidance(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        task_packet=task,
+        design_payload=design_payload,
     )
     manual_only_rationale = str(task.get("manual_only_rationale", "")).strip()
     raw_verification_commands = task.get("verification_commands", [])
@@ -583,6 +611,7 @@ def _execute_task(
                     "wave": wave,
                     "attempt": attempts,
                     "max_attempts": max_attempts,
+                    "sidecar_context": task_sidecar_guidance,
                 },
                 report_name=Path(runner_report_path).name,
             )
@@ -1105,6 +1134,7 @@ def execute_implementation_plan_step(
                 repo_root,
                 state_path=state_path,
                 iteration_id=iteration_id,
+                experiment_id=experiment_id,
                 iteration_path=iteration_path,
                 iteration_dir=iteration_dir,
                 project_wide_root=project_wide_root,
@@ -1165,6 +1195,7 @@ def execute_implementation_plan_step(
                     repo_root,
                     state_path=state_path,
                     iteration_id=iteration_id,
+                    experiment_id=experiment_id,
                     iteration_path=iteration_path,
                     iteration_dir=iteration_dir,
                     project_wide_root=project_wide_root,

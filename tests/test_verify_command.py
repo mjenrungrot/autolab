@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 import sys
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
 import yaml
 
 import autolab.commands as commands_module
@@ -636,6 +639,109 @@ def test_verification_specs_include_result_sanity_for_extract_results(
     command_names = [name for name, _command in command_specs]
     assert "run_health" in command_names
     assert "result_sanity" in command_names
+
+
+def test_verification_specs_include_design_context_quality_for_design(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = {
+        "iteration_id": "iter1",
+        "experiment_id": "e1",
+        "stage": "design",
+        "stage_attempt": 0,
+        "last_run_id": "",
+        "pending_run_id": "",
+        "sync_status": "na",
+        "max_stage_attempts": 3,
+        "max_total_iterations": 20,
+    }
+
+    _stage, _requirements, command_specs = _build_verification_command_specs(
+        repo,
+        state,
+        stage_override="design",
+    )
+    command_names = [name for name, _command in command_specs]
+    assert "design_context_quality" in command_names
+
+
+def test_design_context_quality_verifier_fails_when_generated_report_breaks_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo)
+    _write_backlog(repo)
+    _write_agent_result(repo)
+    _write_design(repo)
+    monkeypatch.chdir(repo)
+
+    verifier_path = repo / ".autolab" / "verifiers" / "design_context_quality.py"
+    spec = importlib.util.spec_from_file_location(
+        "autolab_design_context_quality_verifier_test",
+        verifier_path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    invalid_report_path = (
+        repo / "experiments" / "plan" / "iter1" / "design_context_quality.json"
+    )
+    invalid_report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _fake_build_design_context_quality(*_args, **_kwargs):
+        payload = {
+            "schema_version": "1.0",
+            "generated_at": "2026-03-05T00:00:00Z",
+            "iteration_id": "iter1",
+            "experiment_id": "e1",
+            "context_mode": "present",
+            "available": {
+                "discuss_items": 1,
+                "research_items": 0,
+                "open_questions": 0,
+                "promotion_candidates": 0,
+            },
+            "uptake": {
+                "requirements_total": 1,
+                "requirements_with_context_refs": 1,
+                "requirements_with_resolved_context": 1,
+                "context_refs_total": 1,
+                "resolved_context_refs": 1,
+                "resolved_discuss_context_refs": 1,
+                "resolved_research_context_refs": 0,
+                "promoted_constraints_total": 0,
+                "resolved_promoted_constraints": 0,
+            },
+            "score": {"value": "bad", "max": 1},
+            "diagnostics": [],
+        }
+        invalid_report_path.write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(report_path=invalid_report_path, payload=payload)
+
+    monkeypatch.setattr(
+        module, "build_design_context_quality", _fake_build_design_context_quality
+    )
+
+    exit_code = module.main(["--stage", "design", "--json"])
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail"
+    assert any(
+        "design_context_quality.json schema violation" in error
+        for error in payload["errors"]
+    )
 
 
 def test_verification_dry_run_iteration_placeholder_blocks_shell_injection(

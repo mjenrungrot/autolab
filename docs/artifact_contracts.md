@@ -38,6 +38,9 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `compute.location` must be `"local"` or `"slurm"`
   - `baselines` must be non-empty
   - `implementation_requirements` must be non-empty and include `scope_kind`
+  - `implementation_requirements[].context_refs[]` may reference `project_map`, `context_delta`, project-wide sidecar items, active experiment sidecar items, or `promoted:<requirement_id>:<item_id>`
+  - `project_wide` requirements may not reference experiment sidecars or `context_delta` directly
+  - `implementation_requirements[].promoted_constraints[]` are only valid on `project_wide` requirements, and each `source_ref` must target an experiment sidecar item
   - project-wide task execution uses `scope_roots.project_wide_root` from `.autolab/verifier_policy.yaml`
   - `extract_parser` is required (kind `python` or `command`)
   - parser capability contract (when capability artifacts are present): parser kind and primary metric must align with `parser_capabilities.json`
@@ -45,6 +48,16 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `memory_estimate` format: `<number>[KMGT]B` (e.g. `64GB`)
 - **Producing stage**: design
 - **Consuming stages**: implementation, implementation_review, launch, extract_results
+
+## design_context_quality.json
+
+- **Path**: `experiments/<type>/<iteration_id>/design_context_quality.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/design_context_quality.schema.json`
+- **Required fields**: `schema_version`, `generated_at`, `iteration_id`, `experiment_id`, `context_mode`, `available`, `uptake`, `score`, `diagnostics`
+- **Purpose**: advisory uptake report for discuss/research context usage in `design.yaml`
+- **Produced by**: `autolab verify --stage design` via `.autolab/verifiers/design_context_quality.py`
+- **Consumed by**: human review of design-context quality; non-blocking advisory output
 
 ## implementation_plan.md
 
@@ -299,10 +312,16 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Required collection arrays**:
   - discuss: `locked_decisions[]`, `preferences[]`, `constraints[]`, `open_questions[]`, `promotion_candidates[]`
   - research: `questions[]`, `findings[]`, `recommendations[]`, `sources[]`
-- **Collection item contract**: every entry is an object with `id`, `summary`, and optional `detail`
-- **Produced by**: manual authoring for now; producer commands are reserved for future `autolab discuss` / `autolab research` workflows
-- **Consumed by**: `autolab render --view context` resolution/provenance and future discuss/research tooling
-- **Verifier note**: `schema_checks.py` validates these sidecars when present; missing sidecars remain non-fatal. It also checks that `scope_root` resolves to the active scope root for the selected render context.
+- **Collection item contract**:
+  - every entry is an object with `id`, `summary`, and optional `detail`
+  - discuss `promotion_candidates[]` may also carry `target_scope_kind`, `requirement_hint`, and `rationale`
+  - research findings/recommendations carry explicit `question_ids[]`, `finding_ids[]`, and `source_ids[]` linkage
+  - research `sources[]` may carry `kind`, `path`, and `fingerprint`
+- **Produced by**:
+  - `autolab discuss --scope ...`
+  - `autolab research --scope ...`
+- **Consumed by**: `autolab render --view context`, compact design/implementation prompt context, and advisory design-context-quality scoring
+- **Verifier note**: `schema_checks.py` validates these sidecars when present; missing sidecars remain non-fatal. It checks `scope_root` identity, research-linkage IDs, and source path/fingerprint integrity when `sources[].path` is populated.
 
 ### render context resolution (`context_resolution`)
 
@@ -319,6 +338,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - project-wide render never loads experiment-local sidecars
   - experiment render may load shared project-wide sidecars plus the active iteration overlay
   - sidecars from any other iteration/experiment are ignored and surfaced as diagnostics when bundle pointers are stale or mismatched
+  - runner prompts do not inline raw sidecars; design/implementation consume compact discuss/research summaries and explicit context refs instead
 
 ## codebase project map (`project_map.json` / `project_map.md`)
 

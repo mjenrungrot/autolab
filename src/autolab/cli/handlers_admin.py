@@ -5,6 +5,16 @@ from __future__ import annotations
 import math
 
 from autolab.cli.support import *
+from autolab.sidecar_context import resolve_context_sidecars
+from autolab.sidecar_tools import (
+    DISCUSS_COLLECTIONS,
+    RESEARCH_COLLECTIONS,
+    SIDECAR_COLLECTIONS_BY_KIND,
+    build_sidecar_dependency_refs,
+    build_sidecar_markdown,
+    parse_context_ref,
+    resolve_sidecar_output_paths,
+)
 from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
 from autolab.wave_observability import build_wave_observability
 
@@ -2544,7 +2554,7 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Issue report command
+# Discuss / research commands
 # ---------------------------------------------------------------------------
 
 
@@ -2553,6 +2563,1076 @@ def _truncate_issue_context(text: str, *, max_chars: int = 20000) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return f"...\n{normalized[-max_chars:]}"
+
+
+def _resolve_sidecar_command_target(
+    args: argparse.Namespace,
+    *,
+    command_name: str,
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        raise StageCheckError(f"{command_name}: {exc}") from exc
+
+    requested_scope_kind = str(getattr(args, "scope", "") or "").strip().lower()
+    if requested_scope_kind not in {"project_wide", "experiment"}:
+        raise StageCheckError(
+            f"{command_name}: --scope must be one of ['experiment', 'project_wide']"
+        )
+    requested_iteration_id = str(getattr(args, "iteration_id", "") or "").strip()
+    state_iteration_id = str(state.get("iteration_id", "")).strip()
+    iteration_id = requested_iteration_id or state_iteration_id
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    if requested_scope_kind == "experiment" and iteration_id:
+        backlog_payload, _load_error = _load_backlog_yaml(
+            repo_root / ".autolab" / "backlog.yaml"
+        )
+        if backlog_payload is not None:
+            lookup_experiment_id = (
+                experiment_id if iteration_id == state_iteration_id else ""
+            )
+            entry, resolve_error = _find_backlog_experiment_entry(
+                backlog_payload,
+                experiment_id=lookup_experiment_id,
+                iteration_id=iteration_id,
+            )
+            if entry is not None:
+                resolved_experiment_id = str(entry.get("id", "")).strip()
+                if resolved_experiment_id:
+                    experiment_id = resolved_experiment_id
+            elif requested_iteration_id and resolve_error:
+                raise StageCheckError(f"{command_name}: {resolve_error}")
+    if requested_scope_kind == "experiment" and not iteration_id:
+        raise StageCheckError(
+            f"{command_name}: experiment scope requires --iteration-id or state.iteration_id"
+        )
+    if requested_scope_kind == "experiment" and not experiment_id:
+        raise StageCheckError(
+            f"{command_name}: experiment scope requires non-empty state.experiment_id"
+        )
+    context_resolution = resolve_context_sidecars(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        scope_kind=requested_scope_kind,
+    )
+    return (
+        state_path,
+        repo_root,
+        state,
+        {
+            "scope_kind": requested_scope_kind,
+            "iteration_id": iteration_id,
+            "experiment_id": experiment_id,
+            "context_resolution": context_resolution,
+        },
+        resolve_sidecar_output_paths(
+            repo_root,
+            scope_kind=requested_scope_kind,
+            sidecar_kind="discuss",
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+        ),
+    )
+
+
+def _sidecar_relpath(repo_root: Path, path: Path) -> str:
+    try:
+        return (
+            path.resolve(strict=False)
+            .relative_to(repo_root.resolve(strict=False))
+            .as_posix()
+        )
+    except Exception:
+        return str(path)
+
+
+def _slugify_sidecar_item_id(prefix: str, summary: str, index: int) -> str:
+    raw = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(summary).strip())
+    while "--" in raw:
+        raw = raw.replace("--", "-")
+    normalized = raw.strip("-")[:32] or f"{prefix}-{index + 1}"
+    return f"{prefix}-{normalized}"
+
+
+def _context_question_label(context_resolution: dict[str, Any]) -> str:
+    components = context_resolution.get("components")
+    if not isinstance(components, list):
+        return "the active scope context"
+    labels: list[str] = []
+    for component in components:
+        if not isinstance(component, dict) or not bool(component.get("selected")):
+            continue
+        artifact_kind = str(component.get("artifact_kind", "")).strip()
+        path = str(component.get("path", "")).strip()
+        if artifact_kind and path:
+            labels.append(f"{artifact_kind} ({path})")
+    if not labels:
+        return "the active scope context"
+    return ", ".join(labels[:4])
+
+
+def _collection_status_for_discuss(collection_name: str) -> str:
+    return {
+        "locked_decisions": "locked",
+        "preferences": "preferred",
+        "constraints": "constraint",
+        "open_questions": "unresolved",
+        "promotion_candidates": "promote",
+    }.get(collection_name, "")
+
+
+def _normalize_discuss_entry(
+    collection_name: str,
+    raw_entry: Any,
+    *,
+    index: int,
+    scope_kind: str,
+) -> dict[str, Any] | None:
+    expected_status = _collection_status_for_discuss(collection_name)
+    if isinstance(raw_entry, str):
+        parts = [part.strip() for part in raw_entry.split("|")]
+        summary = parts[0] if parts else ""
+        if not summary:
+            return None
+        entry: dict[str, Any] = {
+            "id": _slugify_sidecar_item_id(collection_name[:3], summary, index),
+            "summary": summary,
+            "detail": parts[1] if len(parts) > 1 and parts[1] else summary,
+            "status": expected_status,
+        }
+        if collection_name == "promotion_candidates":
+            entry["requirement_hint"] = parts[1] if len(parts) > 1 else ""
+            entry["rationale"] = parts[2] if len(parts) > 2 else summary
+            target_scope_kind = (
+                parts[3] if len(parts) > 3 and parts[3] else "project_wide"
+            )
+            if target_scope_kind not in {"experiment", "project_wide"}:
+                target_scope_kind = "project_wide"
+            entry["target_scope_kind"] = target_scope_kind
+            entry["detail"] = parts[2] if len(parts) > 2 and parts[2] else summary
+        return entry
+
+    if not isinstance(raw_entry, dict):
+        return None
+
+    summary = str(raw_entry.get("summary", "")).strip()
+    if not summary:
+        return None
+    entry = {
+        "id": str(raw_entry.get("id", "")).strip()
+        or _slugify_sidecar_item_id(collection_name[:3], summary, index),
+        "summary": summary,
+        "detail": str(raw_entry.get("detail", "")).strip() or summary,
+        "status": expected_status,
+    }
+    if collection_name == "promotion_candidates":
+        target_scope_kind = str(raw_entry.get("target_scope_kind", "")).strip()
+        if target_scope_kind not in {"experiment", "project_wide"}:
+            target_scope_kind = "project_wide"
+        entry["target_scope_kind"] = target_scope_kind
+        entry["requirement_hint"] = str(raw_entry.get("requirement_hint", "")).strip()
+        entry["rationale"] = (
+            str(raw_entry.get("rationale", "")).strip() or entry["detail"]
+        )
+    elif scope_kind == "project_wide":
+        entry.pop("target_scope_kind", None)
+    return entry
+
+
+def _build_discuss_question_pack(
+    *,
+    scope_kind: str,
+    scope_root: Path,
+    iteration_id: str,
+    experiment_id: str,
+    context_resolution: dict[str, Any],
+    existing_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    context_label = _context_question_label(context_resolution)
+    questions: list[dict[str, Any]] = []
+    existing = existing_payload if isinstance(existing_payload, dict) else {}
+    prompts = {
+        "locked_decisions": (
+            f"Which decisions are already fixed for this {scope_kind} scope? Base them on direct user intent and {context_label}.",
+            "summary | detail",
+        ),
+        "preferences": (
+            "Which design or implementation preferences should guide later planning?",
+            "summary | detail",
+        ),
+        "constraints": (
+            "Which hard constraints or non-negotiables must design and implementation honor?",
+            "summary | detail",
+        ),
+        "open_questions": (
+            "Which unresolved questions should research or design answer next?",
+            "summary | detail",
+        ),
+        "promotion_candidates": (
+            "Which experiment-local items may need promotion into project-wide requirements?",
+            "summary | requirement_hint | rationale | target_scope_kind",
+        ),
+    }
+    collections = list(DISCUSS_COLLECTIONS)
+    if scope_kind != "experiment":
+        collections = [name for name in collections if name != "promotion_candidates"]
+    for collection_name in collections:
+        prompt_text, syntax = prompts[collection_name]
+        questions.append(
+            {
+                "collection": collection_name,
+                "prompt": prompt_text,
+                "syntax": syntax,
+                "existing": list(existing.get(collection_name, []))
+                if isinstance(existing.get(collection_name), list)
+                else [],
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "command": "discuss",
+        "scope_kind": scope_kind,
+        "scope_root": str(scope_root),
+        "iteration_id": iteration_id,
+        "experiment_id": experiment_id,
+        "context_resolution": {
+            "compact_render": str(context_resolution.get("compact_render", "")).strip(),
+            "diagnostics": list(context_resolution.get("diagnostics", []))
+            if isinstance(context_resolution.get("diagnostics"), list)
+            else [],
+        },
+        "questions": questions,
+        "responses": {
+            name: list(existing.get(name, []))
+            if isinstance(existing.get(name), list)
+            else []
+            for name in DISCUSS_COLLECTIONS
+        },
+    }
+
+
+def _coerce_discuss_answers(
+    raw_payload: dict[str, Any],
+    *,
+    scope_kind: str,
+) -> dict[str, list[dict[str, Any]]]:
+    responses = raw_payload.get("responses")
+    if not isinstance(responses, dict):
+        responses = raw_payload
+    output: dict[str, list[dict[str, Any]]] = {name: [] for name in DISCUSS_COLLECTIONS}
+    for collection_name in DISCUSS_COLLECTIONS:
+        if collection_name == "promotion_candidates" and scope_kind != "experiment":
+            output[collection_name] = []
+            continue
+        raw_entries = responses.get(collection_name, [])
+        if not isinstance(raw_entries, list):
+            continue
+        normalized: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for index, raw_entry in enumerate(raw_entries):
+            entry = _normalize_discuss_entry(
+                collection_name,
+                raw_entry,
+                index=index,
+                scope_kind=scope_kind,
+            )
+            if not isinstance(entry, dict):
+                continue
+            item_id = str(entry.get("id", "")).strip()
+            if not item_id or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            normalized.append(entry)
+        output[collection_name] = normalized
+    return output
+
+
+def _prompt_multiline_collection(
+    question: dict[str, Any],
+) -> list[str] | None:
+    collection = str(question.get("collection", "")).strip()
+    prompt_text = str(question.get("prompt", "")).strip()
+    syntax = str(question.get("syntax", "")).strip()
+    existing = question.get("existing")
+    print("")
+    print(f"[{collection}] {prompt_text}")
+    if syntax:
+        print(f"  syntax: {syntax}")
+    if isinstance(existing, list) and existing:
+        print("  existing:")
+        for row in existing[:6]:
+            if isinstance(row, dict):
+                print(
+                    "    - "
+                    + (
+                        str(row.get("summary", "")).strip()
+                        or str(row.get("id", "")).strip()
+                    )
+                )
+    print("  enter one item per line; blank line keeps existing; type !clear to clear.")
+    lines: list[str] = []
+    prompt = "> "
+    while True:
+        try:
+            raw = input(prompt)
+        except EOFError:
+            break
+        text = str(raw).strip()
+        if not text:
+            if not lines:
+                return None
+            break
+        if text == "!clear" and not lines:
+            return []
+        lines.append(text)
+        prompt = "... "
+    return lines
+
+
+def _load_answers_file(path: Path) -> dict[str, Any]:
+    payload = _load_json_if_exists(path)
+    if isinstance(payload, dict):
+        return payload
+    raise StageCheckError(f"answers file must contain a JSON object at {path}")
+
+
+def _write_sidecar_outputs(
+    *,
+    repo_root: Path,
+    sidecar_payload: dict[str, Any],
+    output_paths: dict[str, Any],
+) -> None:
+    json_path = output_paths["json_path"]
+    markdown_path = output_paths["markdown_path"]
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(json_path, sidecar_payload)
+    markdown_path.write_text(
+        build_sidecar_markdown(sidecar_payload),
+        encoding="utf-8",
+    )
+
+
+def _resolve_local_agent_invocation(
+    repo_root: Path,
+    *,
+    override_env_var: str,
+) -> tuple[list[str], dict[str, str], str]:
+    override = str(os.environ.get(override_env_var, "")).strip()
+    if override:
+        try:
+            parsed = shlex.split(override)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"{override_env_var} could not be parsed: {exc}"
+            ) from exc
+        if not parsed:
+            raise RuntimeError(f"{override_env_var} is empty")
+        return (parsed, dict(os.environ), override)
+
+    if shutil.which("claude"):
+        env = dict(os.environ)
+        env.pop("CLAUDECODE", None)
+        argv = [
+            "claude",
+            "-p",
+            "--permission-mode",
+            "plan",
+            "--output-format",
+            "text",
+            "-",
+        ]
+        return (argv, env, " ".join(shlex.quote(token) for token in argv))
+
+    if shutil.which("codex"):
+        argv = [
+            "codex",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "-C",
+            str(repo_root),
+            "-",
+        ]
+        return (argv, dict(os.environ), " ".join(shlex.quote(token) for token in argv))
+
+    raise RuntimeError(
+        f"no supported local LLM CLI found; install 'claude' or 'codex', or set {override_env_var}"
+    )
+
+
+def _run_local_agent(
+    repo_root: Path,
+    *,
+    prompt_text: str,
+    timeout_seconds: float,
+    override_env_var: str,
+) -> tuple[int, str, str, str]:
+    try:
+        command_argv, command_env, command_display = _resolve_local_agent_invocation(
+            repo_root,
+            override_env_var=override_env_var,
+        )
+        process = subprocess.run(
+            command_argv,
+            cwd=repo_root,
+            input=prompt_text,
+            text=True,
+            capture_output=True,
+            env=command_env,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except RuntimeError as exc:
+        return (1, "", str(exc), "")
+    except FileNotFoundError as exc:
+        return (127, "", str(exc), command_display)
+    except subprocess.TimeoutExpired as exc:
+        return (
+            124,
+            str(getattr(exc, "stdout", "") or "").strip(),
+            f"timed out after {timeout_seconds:.0f}s",
+            command_display,
+        )
+    except Exception as exc:
+        return (1, "", str(exc), command_display)
+    return (
+        int(process.returncode),
+        str(process.stdout or "").strip(),
+        str(process.stderr or "").strip(),
+        command_display,
+    )
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    candidate = str(text or "").strip()
+    if not candidate:
+        return None
+    if candidate.startswith("```"):
+        parts = candidate.split("```")
+        for part in parts:
+            stripped = part.strip()
+            if not stripped or stripped.lower().startswith("json"):
+                stripped = (
+                    stripped[4:].strip()
+                    if stripped.lower().startswith("json")
+                    else stripped
+                )
+            try:
+                payload = json.loads(stripped)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                return payload
+    try:
+        payload = json.loads(candidate)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _build_research_source_catalog(
+    *,
+    repo_root: Path,
+    context_resolution: dict[str, Any],
+    exclude_path: str,
+) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    components = context_resolution.get("components")
+    if not isinstance(components, list):
+        return sources
+    for component in components:
+        if not isinstance(component, dict) or not bool(component.get("selected")):
+            continue
+        path_text = str(component.get("path", "")).strip()
+        if not path_text or path_text == exclude_path:
+            continue
+        source_id = str(component.get("component_id", "")).strip()
+        if not source_id or source_id in seen_ids:
+            continue
+        seen_ids.add(source_id)
+        artifact_kind = str(component.get("artifact_kind", "")).strip() or "artifact"
+        sources.append(
+            {
+                "id": source_id,
+                "summary": str(component.get("summary", "")).strip() or path_text,
+                "detail": f"{artifact_kind} from {path_text}",
+                "kind": artifact_kind,
+                "path": path_text,
+                "fingerprint": str(component.get("fingerprint", "")).strip()
+                or _path_fingerprint(repo_root, path_text),
+            }
+        )
+    return sources
+
+
+def _build_research_questions(
+    context_resolution: dict[str, Any],
+    *,
+    explicit_questions: list[str],
+) -> list[dict[str, Any]]:
+    questions: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    effective_discuss = context_resolution.get("effective_discuss")
+    if isinstance(effective_discuss, dict):
+        for entry in effective_discuss.get("open_questions", []):
+            if not isinstance(entry, dict):
+                continue
+            item_id = str(entry.get("id", "")).strip()
+            summary = str(entry.get("summary", "")).strip()
+            if not item_id or not summary or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            questions.append(
+                {
+                    "id": item_id,
+                    "summary": summary,
+                    "detail": str(entry.get("detail", "")).strip() or summary,
+                    "status": "unresolved",
+                }
+            )
+    for index, question_text in enumerate(explicit_questions):
+        normalized = str(question_text).strip()
+        if not normalized:
+            continue
+        item_id = _slugify_sidecar_item_id("rq", normalized, index)
+        if item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        questions.append(
+            {
+                "id": item_id,
+                "summary": normalized,
+                "detail": normalized,
+                "status": "unresolved",
+            }
+        )
+    return questions
+
+
+def _build_research_prompt(
+    *,
+    scope_kind: str,
+    context_resolution: dict[str, Any],
+    questions: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> str:
+    return "\n".join(
+        [
+            "You are an Autolab evidence assistant.",
+            "Use only the provided repository-local context. Do not browse the web or invent sources.",
+            "Return a single JSON object with keys 'findings' and 'recommendations'.",
+            "Every finding must include: id, summary, detail, question_ids, source_ids.",
+            "Every recommendation must include: id, summary, detail, question_ids, finding_ids, applies_to_stages, source_ids.",
+            "applies_to_stages must only contain 'design' or 'implementation'.",
+            "Only use question_ids and source_ids that are provided below.",
+            "",
+            f"scope_kind: {scope_kind}",
+            "",
+            "Context resolution:",
+            "```text",
+            str(context_resolution.get("compact_render", "")).strip() or "(none)",
+            "```",
+            "",
+            "Questions:",
+            "```json",
+            json.dumps(questions, indent=2),
+            "```",
+            "",
+            "Available sources:",
+            "```json",
+            json.dumps(sources, indent=2),
+            "```",
+            "",
+            "Now return only the JSON object.",
+        ]
+    )
+
+
+def _normalize_research_entries(
+    *,
+    raw_payload: dict[str, Any],
+    questions: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    question_ids = {str(entry.get("id", "")).strip() for entry in questions}
+    source_ids = {str(entry.get("id", "")).strip() for entry in sources}
+    findings: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+    errors: list[str] = []
+    seen_finding_ids: set[str] = set()
+    raw_findings = raw_payload.get("findings")
+    if isinstance(raw_findings, list):
+        for index, raw_entry in enumerate(raw_findings):
+            if not isinstance(raw_entry, dict):
+                continue
+            summary = str(raw_entry.get("summary", "")).strip()
+            if not summary:
+                continue
+            item_id = str(raw_entry.get("id", "")).strip() or _slugify_sidecar_item_id(
+                "rf", summary, index
+            )
+            if item_id in seen_finding_ids:
+                continue
+            seen_finding_ids.add(item_id)
+            question_refs = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("question_ids", [])
+                    if str(item).strip() in question_ids
+                ]
+                if isinstance(raw_entry.get("question_ids"), list)
+                else []
+            )
+            source_refs = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("source_ids", [])
+                    if str(item).strip() in source_ids
+                ]
+                if isinstance(raw_entry.get("source_ids"), list)
+                else []
+            )
+            if not question_refs:
+                errors.append(
+                    f"finding '{item_id}' must reference at least one known question_id"
+                )
+                continue
+            if not source_refs:
+                errors.append(
+                    f"finding '{item_id}' must reference at least one known source_id"
+                )
+                continue
+            findings.append(
+                {
+                    "id": item_id,
+                    "summary": summary,
+                    "detail": str(raw_entry.get("detail", "")).strip() or summary,
+                    "question_ids": question_refs,
+                    "source_ids": source_refs,
+                }
+            )
+    finding_ids = {str(entry.get("id", "")).strip() for entry in findings}
+    raw_recommendations = raw_payload.get("recommendations")
+    if isinstance(raw_recommendations, list):
+        seen_recommendation_ids: set[str] = set()
+        for index, raw_entry in enumerate(raw_recommendations):
+            if not isinstance(raw_entry, dict):
+                continue
+            summary = str(raw_entry.get("summary", "")).strip()
+            if not summary:
+                continue
+            item_id = str(raw_entry.get("id", "")).strip() or _slugify_sidecar_item_id(
+                "rr", summary, index
+            )
+            if item_id in seen_recommendation_ids:
+                continue
+            seen_recommendation_ids.add(item_id)
+            question_refs = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("question_ids", [])
+                    if str(item).strip() in question_ids
+                ]
+                if isinstance(raw_entry.get("question_ids"), list)
+                else []
+            )
+            finding_refs = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("finding_ids", [])
+                    if str(item).strip() in finding_ids
+                ]
+                if isinstance(raw_entry.get("finding_ids"), list)
+                else []
+            )
+            source_refs = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("source_ids", [])
+                    if str(item).strip() in source_ids
+                ]
+                if isinstance(raw_entry.get("source_ids"), list)
+                else []
+            )
+            stages = (
+                [
+                    str(item).strip()
+                    for item in raw_entry.get("applies_to_stages", [])
+                    if str(item).strip() in {"design", "implementation"}
+                ]
+                if isinstance(raw_entry.get("applies_to_stages"), list)
+                else []
+            )
+            if not question_refs:
+                errors.append(
+                    f"recommendation '{item_id}' must reference at least one known question_id"
+                )
+                continue
+            if not finding_refs:
+                errors.append(
+                    f"recommendation '{item_id}' must reference at least one known finding_id"
+                )
+                continue
+            if not source_refs:
+                errors.append(
+                    f"recommendation '{item_id}' must reference at least one known source_id"
+                )
+                continue
+            recommendations.append(
+                {
+                    "id": item_id,
+                    "summary": summary,
+                    "detail": str(raw_entry.get("detail", "")).strip() or summary,
+                    "question_ids": question_refs,
+                    "finding_ids": finding_refs,
+                    "applies_to_stages": stages or ["design"],
+                    "source_ids": source_refs,
+                }
+            )
+    answered_question_ids = {
+        str(item).strip()
+        for row in [*findings, *recommendations]
+        for item in row.get("question_ids", [])
+        if str(item).strip()
+    }
+    for question in questions:
+        question["status"] = (
+            "answered"
+            if str(question.get("id", "")).strip() in answered_question_ids
+            else "unresolved"
+        )
+    if errors:
+        raise StageCheckError("; ".join(errors))
+    return (findings, recommendations)
+
+
+def _cmd_discuss(args: argparse.Namespace) -> int:
+    try:
+        (
+            _state_path,
+            repo_root,
+            state,
+            target,
+            discuss_paths,
+        ) = _resolve_sidecar_command_target(args, command_name="autolab discuss")
+    except StageCheckError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    existing_payload = _load_json_if_exists(discuss_paths["json_path"])
+    question_pack = _build_discuss_question_pack(
+        scope_kind=target["scope_kind"],
+        scope_root=discuss_paths["scope_root"],
+        iteration_id=target["iteration_id"],
+        experiment_id=target["experiment_id"],
+        context_resolution=target["context_resolution"],
+        existing_payload=existing_payload
+        if isinstance(existing_payload, dict)
+        else None,
+    )
+
+    question_pack_path = str(getattr(args, "write_question_pack", "") or "").strip()
+    if question_pack_path:
+        try:
+            output_path = Path(question_pack_path).expanduser().resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(question_pack, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            print(
+                f"autolab discuss: ERROR failed writing question pack: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+
+    answers_file_text = str(getattr(args, "answers_file", "") or "").strip()
+    responses: dict[str, Any] = {"responses": question_pack["responses"]}
+    non_interactive = bool(getattr(args, "non_interactive", False))
+    if answers_file_text:
+        try:
+            responses = _load_answers_file(
+                Path(answers_file_text).expanduser().resolve()
+            )
+        except StageCheckError as exc:
+            print(f"autolab discuss: ERROR {exc}", file=sys.stderr)
+            return 1
+    elif non_interactive:
+        responses = {"responses": question_pack["responses"]}
+    else:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            print(
+                "autolab discuss: ERROR interactive discuss requires a TTY, --answers-file, or --non-interactive",
+                file=sys.stderr,
+            )
+            return 1
+        interactive_responses: dict[str, list[Any]] = {}
+        for question in question_pack["questions"]:
+            entered = _prompt_multiline_collection(question)
+            collection_name = str(question.get("collection", "")).strip()
+            if entered is None:
+                interactive_responses[collection_name] = list(
+                    question.get("existing", [])
+                    if isinstance(question.get("existing"), list)
+                    else []
+                )
+            else:
+                interactive_responses[collection_name] = entered
+        responses = {"responses": interactive_responses}
+
+    normalized = _coerce_discuss_answers(
+        responses,
+        scope_kind=target["scope_kind"],
+    )
+    exclude_relpaths = {_sidecar_relpath(repo_root, discuss_paths["json_path"])}
+    dependency_refs = build_sidecar_dependency_refs(
+        repo_root,
+        target["context_resolution"],
+        exclude_paths=exclude_relpaths,
+    )
+    discuss_payload: dict[str, Any] = {
+        "schema_version": "1.0",
+        "sidecar_kind": "discuss",
+        "scope_kind": target["scope_kind"],
+        "scope_root": str(discuss_paths["scope_root"]),
+        "generated_at": _utc_now(),
+        "derived_from": dependency_refs,
+        "stale_if": dependency_refs,
+    }
+    if target["scope_kind"] == "experiment":
+        discuss_payload["iteration_id"] = target["iteration_id"]
+        discuss_payload["experiment_id"] = target["experiment_id"]
+    for collection_name in DISCUSS_COLLECTIONS:
+        discuss_payload[collection_name] = normalized.get(collection_name, [])
+
+    try:
+        _write_sidecar_outputs(
+            repo_root=repo_root,
+            sidecar_payload=discuss_payload,
+            output_paths=discuss_paths,
+        )
+    except Exception as exc:
+        print(f"autolab discuss: ERROR failed writing sidecar: {exc}", file=sys.stderr)
+        return 1
+
+    if bool(getattr(args, "json", False)):
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "scope_kind": target["scope_kind"],
+                    "iteration_id": target["iteration_id"],
+                    "experiment_id": target["experiment_id"],
+                    "json_path": _sidecar_relpath(
+                        repo_root, discuss_paths["json_path"]
+                    ),
+                    "markdown_path": _sidecar_relpath(
+                        repo_root, discuss_paths["markdown_path"]
+                    ),
+                    "counts": {
+                        name: len(discuss_payload.get(name, []))
+                        for name in DISCUSS_COLLECTIONS
+                    },
+                    "question_pack_path": question_pack_path,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print("autolab discuss")
+        print(f"scope_kind: {target['scope_kind']}")
+        if target["iteration_id"]:
+            print(f"iteration_id: {target['iteration_id']}")
+        if target["experiment_id"]:
+            print(f"experiment_id: {target['experiment_id']}")
+        print(f"json_path: {discuss_paths['json_path']}")
+        print(f"markdown_path: {discuss_paths['markdown_path']}")
+    return 0
+
+
+def _cmd_research(args: argparse.Namespace) -> int:
+    try:
+        (
+            _state_path,
+            repo_root,
+            state,
+            target,
+            discuss_paths,
+        ) = _resolve_sidecar_command_target(args, command_name="autolab research")
+        research_paths = resolve_sidecar_output_paths(
+            repo_root,
+            scope_kind=target["scope_kind"],
+            sidecar_kind="research",
+            iteration_id=target["iteration_id"],
+            experiment_id=target["experiment_id"],
+        )
+    except StageCheckError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"autolab research: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    explicit_questions = [
+        str(item).strip()
+        for item in (getattr(args, "question", []) or [])
+        if str(item).strip()
+    ]
+    questions = _build_research_questions(
+        target["context_resolution"],
+        explicit_questions=explicit_questions,
+    )
+    if not questions:
+        if bool(getattr(args, "json", False)):
+            print(
+                json.dumps(
+                    {
+                        "status": "noop",
+                        "reason": "no unresolved questions",
+                        "scope_kind": target["scope_kind"],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print("autolab research: no unresolved questions; nothing written")
+        return 0
+
+    dependency_refs = build_sidecar_dependency_refs(
+        repo_root,
+        target["context_resolution"],
+        exclude_paths={_sidecar_relpath(repo_root, research_paths["json_path"])},
+    )
+    sources = _build_research_source_catalog(
+        repo_root=repo_root,
+        context_resolution=target["context_resolution"],
+        exclude_path=_sidecar_relpath(repo_root, research_paths["json_path"]),
+    )
+    prompt_text = _build_research_prompt(
+        scope_kind=target["scope_kind"],
+        context_resolution=target["context_resolution"],
+        questions=questions,
+        sources=sources,
+    )
+
+    try:
+        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
+    except Exception:
+        print(
+            "autolab research: ERROR --timeout-seconds must be a number",
+            file=sys.stderr,
+        )
+        return 1
+    if timeout_seconds <= 0:
+        print(
+            "autolab research: ERROR --timeout-seconds must be > 0",
+            file=sys.stderr,
+        )
+        return 1
+
+    exit_code, stdout, stderr, command_display = _run_local_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+        override_env_var="AUTOLAB_RESEARCH_AGENT_COMMAND",
+    )
+    if exit_code != 0:
+        detail = stderr or stdout or "agent returned no output"
+        print(
+            f"autolab research: ERROR agent failed with exit_code={exit_code}: {detail}",
+            file=sys.stderr,
+        )
+        return 1
+
+    agent_payload = _extract_json_object(stdout)
+    if not isinstance(agent_payload, dict):
+        print(
+            "autolab research: ERROR agent output was not valid JSON",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        findings, recommendations = _normalize_research_entries(
+            raw_payload=agent_payload,
+            questions=questions,
+            sources=sources,
+        )
+    except StageCheckError as exc:
+        print(f"autolab research: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    research_payload: dict[str, Any] = {
+        "schema_version": "1.0",
+        "sidecar_kind": "research",
+        "scope_kind": target["scope_kind"],
+        "scope_root": str(research_paths["scope_root"]),
+        "generated_at": _utc_now(),
+        "derived_from": dependency_refs,
+        "stale_if": dependency_refs,
+        "questions": questions,
+        "findings": findings,
+        "recommendations": recommendations,
+        "sources": sources,
+    }
+    if target["scope_kind"] == "experiment":
+        research_payload["iteration_id"] = target["iteration_id"]
+        research_payload["experiment_id"] = target["experiment_id"]
+
+    try:
+        _write_sidecar_outputs(
+            repo_root=repo_root,
+            sidecar_payload=research_payload,
+            output_paths=research_paths,
+        )
+    except Exception as exc:
+        print(f"autolab research: ERROR failed writing sidecar: {exc}", file=sys.stderr)
+        return 1
+
+    if bool(getattr(args, "json", False)):
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "scope_kind": target["scope_kind"],
+                    "iteration_id": target["iteration_id"],
+                    "experiment_id": target["experiment_id"],
+                    "json_path": _sidecar_relpath(
+                        repo_root, research_paths["json_path"]
+                    ),
+                    "markdown_path": _sidecar_relpath(
+                        repo_root, research_paths["markdown_path"]
+                    ),
+                    "question_count": len(questions),
+                    "finding_count": len(findings),
+                    "recommendation_count": len(recommendations),
+                    "llm_command": command_display,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print("autolab research")
+        print(f"scope_kind: {target['scope_kind']}")
+        if target["iteration_id"]:
+            print(f"iteration_id: {target['iteration_id']}")
+        if target["experiment_id"]:
+            print(f"experiment_id: {target['experiment_id']}")
+        print(f"json_path: {research_paths['json_path']}")
+        print(f"markdown_path: {research_paths['markdown_path']}")
+        print(f"llm_command: {command_display}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Issue report command
+# ---------------------------------------------------------------------------
 
 
 def _tail_issue_log(path: Path, *, max_lines: int, max_chars: int = 20000) -> str:
@@ -2578,48 +3658,9 @@ def _autolab_version_text() -> str:
 def _resolve_issue_report_agent_invocation(
     repo_root: Path,
 ) -> tuple[list[str], dict[str, str], str]:
-    override = str(os.environ.get("AUTOLAB_REPORT_AGENT_COMMAND", "")).strip()
-    if override:
-        try:
-            parsed = shlex.split(override)
-        except ValueError as exc:
-            raise RuntimeError(
-                f"AUTOLAB_REPORT_AGENT_COMMAND could not be parsed: {exc}"
-            ) from exc
-        if not parsed:
-            raise RuntimeError("AUTOLAB_REPORT_AGENT_COMMAND is empty")
-        return (parsed, dict(os.environ), override)
-
-    if shutil.which("claude"):
-        env = dict(os.environ)
-        env.pop("CLAUDECODE", None)
-        argv = [
-            "claude",
-            "-p",
-            "--permission-mode",
-            "plan",
-            "--output-format",
-            "text",
-            "-",
-        ]
-        display = " ".join(shlex.quote(token) for token in argv)
-        return (argv, env, display)
-
-    if shutil.which("codex"):
-        argv = [
-            "codex",
-            "exec",
-            "--sandbox",
-            "read-only",
-            "-C",
-            str(repo_root),
-            "-",
-        ]
-        display = " ".join(shlex.quote(token) for token in argv)
-        return (argv, dict(os.environ), display)
-
-    raise RuntimeError(
-        "no supported local LLM CLI found; install 'claude' or 'codex', or set AUTOLAB_REPORT_AGENT_COMMAND"
+    return _resolve_local_agent_invocation(
+        repo_root,
+        override_env_var="AUTOLAB_REPORT_AGENT_COMMAND",
     )
 
 
@@ -2629,37 +3670,11 @@ def _run_issue_report_agent(
     prompt_text: str,
     timeout_seconds: float,
 ) -> tuple[int, str, str, str]:
-    command_argv, command_env, command_display = _resolve_issue_report_agent_invocation(
-        repo_root
-    )
-    try:
-        process = subprocess.run(
-            command_argv,
-            cwd=repo_root,
-            input=prompt_text,
-            text=True,
-            capture_output=True,
-            env=command_env,
-            timeout=timeout_seconds,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        return (127, "", str(exc), command_display)
-    except subprocess.TimeoutExpired as exc:
-        return (
-            124,
-            str(getattr(exc, "stdout", "") or "").strip(),
-            f"timed out after {timeout_seconds:.0f}s",
-            command_display,
-        )
-    except Exception as exc:
-        return (1, "", str(exc), command_display)
-
-    return (
-        int(process.returncode),
-        str(process.stdout or "").strip(),
-        str(process.stderr or "").strip(),
-        command_display,
+    return _run_local_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+        override_env_var="AUTOLAB_REPORT_AGENT_COMMAND",
     )
 
 

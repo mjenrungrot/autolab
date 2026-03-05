@@ -514,6 +514,40 @@ def _write_sidecar(
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _write_design_context_quality(repo: Path, *, valid: bool = True) -> None:
+    path = repo / "experiments" / "plan" / "iter1" / "design_context_quality.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": "2026-03-05T00:00:00Z",
+        "iteration_id": "iter1",
+        "experiment_id": "",
+        "context_mode": "present",
+        "available": {
+            "discuss_items": 1,
+            "research_items": 0,
+            "open_questions": 0,
+            "promotion_candidates": 0,
+        },
+        "uptake": {
+            "requirements_total": 1,
+            "requirements_with_context_refs": 1,
+            "requirements_with_resolved_context": 1,
+            "context_refs_total": 1,
+            "resolved_context_refs": 1,
+            "resolved_discuss_context_refs": 1,
+            "resolved_research_context_refs": 0,
+            "promoted_constraints_total": 0,
+            "resolved_promoted_constraints": 0,
+        },
+        "score": {"value": 1, "max": 1},
+        "diagnostics": [],
+    }
+    if not valid:
+        payload["score"] = {"value": "bad", "max": 1}
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def _valid_plan_execution_task_detail(
     *, reason_code: str = "completed", task_id: str = "T1"
 ) -> dict[str, object]:
@@ -850,6 +884,197 @@ def test_schema_checks_fails_for_project_wide_sidecar_with_experiment_identity(
     assert result.returncode == 1
     assert "research.json schema violation" in result.stdout
     assert "should not be valid under" in result.stdout
+
+
+def test_schema_checks_validates_optional_design_context_quality_schema(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_design_context_quality(repo, valid=True)
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fails_for_invalid_design_context_quality_schema(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_design_context_quality(repo, valid=False)
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "design_context_quality.json schema violation" in result.stdout
+
+
+def test_schema_checks_fails_for_unknown_research_linkage_ids(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="research", scope_kind="project_wide")
+    sidecar_path = (
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "research.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    findings = payload.get("findings")
+    assert isinstance(findings, list) and isinstance(findings[0], dict)
+    findings[0]["question_ids"] = ["missing-question"]
+    findings[0]["source_ids"] = ["missing-source"]
+    sidecar_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "references unknown question id 'missing-question'" in result.stdout
+    assert "references unknown source id 'missing-source'" in result.stdout
+
+
+def test_schema_checks_fails_for_research_source_fingerprint_mismatch(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    docs_path = repo / "docs" / "artifact_contracts.md"
+    docs_path.parent.mkdir(parents=True, exist_ok=True)
+    docs_path.write_text("# Artifact Contracts\n", encoding="utf-8")
+    _write_sidecar(repo, kind="research", scope_kind="project_wide")
+    sidecar_path = (
+        repo / ".autolab" / "context" / "sidecars" / "project_wide" / "research.json"
+    )
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    sources = payload.get("sources")
+    assert isinstance(sources, list) and isinstance(sources[0], dict)
+    sources[0]["path"] = "docs/artifact_contracts.md"
+    sources[0]["fingerprint"] = "sha256:wrong"
+    sidecar_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert (
+        "sources[0].fingerprint does not match docs/artifact_contracts.md"
+        in result.stdout
+    )
+
+
+def test_schema_checks_fails_design_for_project_wide_requirement_using_experiment_sidecar(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="discuss", scope_kind="experiment")
+    design_path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
+    design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    assert isinstance(design_payload, dict)
+    requirements = design_payload.get("implementation_requirements")
+    assert isinstance(requirements, list) and isinstance(requirements[0], dict)
+    requirements[0]["scope_kind"] = "project_wide"
+    requirements[0]["context_refs"] = ["experiment:discuss:preferences:preference-1"]
+    design_path.write_text(
+        yaml.safe_dump(design_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert (
+        "project_wide requirement may not reference experiment sidecar" in result.stdout
+    )
+
+
+def test_schema_checks_fails_design_for_missing_project_map_context_ref(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    design_path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
+    design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    assert isinstance(design_payload, dict)
+    requirements = design_payload.get("implementation_requirements")
+    assert isinstance(requirements, list) and isinstance(requirements[0], dict)
+    requirements[0]["context_refs"] = ["project_map"]
+    design_path.write_text(
+        yaml.safe_dump(design_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "context_ref 'project_map' could not be resolved" in result.stdout
+
+
+def test_schema_checks_fails_design_for_invalid_experiment_sidecar_identity(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    _write_sidecar(repo, kind="discuss", scope_kind="experiment")
+    sidecar_path = (
+        repo
+        / "experiments"
+        / "plan"
+        / "iter1"
+        / "context"
+        / "sidecars"
+        / "discuss.json"
+    )
+    sidecar_payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar_payload["experiment_id"] = "wrong-experiment"
+    sidecar_path.write_text(
+        json.dumps(sidecar_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    design_path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
+    design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    assert isinstance(design_payload, dict)
+    requirements = design_payload.get("implementation_requirements")
+    assert isinstance(requirements, list) and isinstance(requirements[0], dict)
+    requirements[0]["context_refs"] = ["experiment:discuss:preferences:preference-1"]
+    design_path.write_text(
+        yaml.safe_dump(design_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert (
+        "context_ref 'experiment:discuss:preferences:preference-1' could not be resolved"
+        in result.stdout
+    )
+
+
+def test_schema_checks_fails_design_for_duplicate_requirement_ids(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    design_path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
+    design_payload = yaml.safe_load(design_path.read_text(encoding="utf-8"))
+    assert isinstance(design_payload, dict)
+    requirements = design_payload.get("implementation_requirements")
+    assert isinstance(requirements, list) and len(requirements) >= 1
+    duplicate_requirement = dict(requirements[0])
+    requirements.append(duplicate_requirement)
+    design_path.write_text(
+        yaml.safe_dump(design_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "duplicates requirement_id 'R1'" in result.stdout
 
 
 def test_schema_checks_pass_with_runtime_state_history_keys(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.24
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.25
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -91,7 +91,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Command categories (onboarding-first).**
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
@@ -106,11 +106,13 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Generated project views.** `autolab docs generate` defaults to the legacy registry view for compatibility (`--view registry`). Use `--view project|roadmap|state|requirements|sidecar|all` for projection views and `--iteration-id <id>` for iteration-scoped projections. The generated `project`, `state`, and `sidecar` views include wave observability projections from `plan_graph.json`, `plan_check_result.json`, `plan_execution_state.json`, and `plan_execution_summary.json`, including retry/block/deferred/skipped detail and critical-path timing notes. Optional discuss/research context sidecars live at `.autolab/context/sidecars/project_wide/{discuss,research}.json` and `experiments/<type>/<iteration_id>/context/sidecars/{discuss,research}.json`; when present they are schema-validated, carry dependency fingerprints for staleness checks, and must identify the scope root they belong to. Project-wide sidecars omit experiment identity fields; experiment sidecars carry `iteration_id` and `experiment_id`. When those observability artifacts are stale or mismatched for the selected iteration, the views keep rendering and surface diagnostics instead of failing where possible. Use `--output-dir <path>` to write markdown view files instead of printing to stdout; the output path must stay within the repository.
 
+**Discuss and research sidecars.** `autolab discuss` captures scope-specific intent before planning. Use `--scope project_wide|experiment`, `--answers-file <json>` for deterministic non-interactive runs, `--non-interactive` to materialize the current/default questionnaire without prompting, and `--write-question-pack <path>` to export the exact question pack used. `autolab research` is the optional evidence pass: it resolves the same sidecar lineage, answers unresolved discuss questions (or explicit `--question` prompts), and writes `research.json` / `research.md`. Override the local research CLI with `AUTOLAB_RESEARCH_AGENT_COMMAND`; if unset, Autolab falls back to `claude` or `codex` when available.
+
 **Prompt render (no execution).** `autolab render` resolves the stage prompt pack without running transitions or verifiers, then prints one prompt-pack view to stdout. It defaults to `state.stage` and `--view runner`. Use `--stage <stage>` to override, `--view runner|audit|brief|human|context` to select output, and `--stats` for prompt-debugging diagnostics. `autolab render` is read-only and does not write `.autolab/prompts/rendered/*` artifacts.
 
 `runner` is the primary execution payload that Autolab sends to runner stdin. `audit`, `brief`, `human`, and `context` are companion views for policy checks, retry/handoff context, and inspection tooling. The render `context` view always surfaces a `context_resolution` block, using optional discuss/research sidecars when present, so downstream tooling can see the exact component order, selected `project_map` / `context_delta` / sidecars, effective merged items, and dependency-based staleness diagnostics.
 
-Runner packets are intentionally slim: mission, strict outputs, required inputs, stop conditions, and non-negotiables. Status vocabulary and other verification-policy payloads (file budgets, evidence schemas, raw verifier blobs) stay in companion views, not runner prompts.
+Runner packets are intentionally slim: mission, strict outputs, required inputs, stop conditions, and non-negotiables. Design and implementation stages receive compact discuss/research summaries plus promoted-constraint references in brief/runtime context, not raw sidecar JSON. Status vocabulary and other verification-policy payloads (file budgets, evidence schemas, raw verifier blobs) stay in companion views, not runner prompts.
 Memory guidance is stage-opt-in via `shared/memory_brief.md`; orchestration handles todo/documentation reconciliation after opted-in stages.
 
 ```bash
@@ -158,6 +160,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 
 - **hypothesis** -- `hypothesis.md`; advances when metric/target/criteria fields are present.
 - **design** -- `design.yaml`; advances when required keys are present (including `implementation_requirements` and `extract_parser`).
+- **design context quality** -- `design_context_quality.json`; advisory verifier output scoring how much discuss/research context was available and explicitly referenced by `design.yaml`.
 - **implementation** -- `implementation_plan.md` + code changes; wave execution also produces `plan_execution_state.json` and `plan_execution_summary.json` with timings, retries, critical-path, conflict, and evidence data. Advances to review (requires Dry Run section when `dry_run: true`). Prompt-pack views are resolved at runtime; inspect with `autolab render --stage implementation --view runner|audit|brief|human|context` (stdout only; no rendered file writes).
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
 - **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.

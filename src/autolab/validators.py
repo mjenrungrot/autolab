@@ -28,6 +28,8 @@ from autolab.constants import (
     VERIFIER_COMMAND_TIMEOUT_SECONDS,
 )
 from autolab.models import StageCheckError, _coerce_bool
+from autolab.sidecar_context import resolve_context_sidecars
+from autolab.sidecar_tools import parse_context_ref, resolve_context_ref
 from autolab.slurm_job_list import (
     canonical_slurm_job_bullet,
     is_slurm_manifest,
@@ -155,7 +157,12 @@ def _validate_stage_readiness(
         design_path = iteration_dir / "design.yaml"
         design_contract_details["design_path"] = design_path.as_posix()
         try:
-            _validate_design(design_path, iteration_id)
+            _validate_design(
+                design_path,
+                iteration_id,
+                repo_root=repo_root,
+                experiment_id=experiment_id,
+            )
         except StageCheckError as exc:
             details = {
                 "stage": stage,
@@ -372,7 +379,145 @@ def _validate_implementation_plan(path: Path, *, require_dry_run: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _validate_design(path: Path, iteration_id: str) -> None:
+def _validate_design_context_artifacts(
+    *,
+    repo_root: Path,
+    design_payload: dict[str, Any],
+    iteration_id: str,
+    experiment_id: str,
+) -> None:
+    implementation_requirements = design_payload.get("implementation_requirements")
+    if not isinstance(implementation_requirements, list):
+        return
+    context_resolution_cache: dict[str, dict[str, Any]] = {}
+
+    def _resolution_for(scope_kind: str) -> dict[str, Any]:
+        normalized = str(scope_kind).strip().lower()
+        if normalized not in {"experiment", "project_wide"}:
+            normalized = "experiment" if str(iteration_id).strip() else "project_wide"
+        cached = context_resolution_cache.get(normalized)
+        if isinstance(cached, dict):
+            return cached
+        resolved = resolve_context_sidecars(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            scope_kind=normalized,
+        )
+        context_resolution_cache[normalized] = resolved
+        return resolved
+
+    for index, requirement in enumerate(implementation_requirements):
+        if not isinstance(requirement, dict):
+            continue
+        requirement_scope_kind = str(requirement.get("scope_kind", "")).strip()
+        context_refs = requirement.get("context_refs", [])
+        if context_refs is not None and not isinstance(context_refs, list):
+            raise StageCheckError(
+                f"design.yaml implementation_requirements[{index}] context_refs must be a list"
+            )
+        if isinstance(context_refs, list):
+            for ref_index, raw_ref in enumerate(context_refs):
+                ref = str(raw_ref).strip()
+                if not ref:
+                    raise StageCheckError(
+                        f"design.yaml implementation_requirements[{index}] context_refs[{ref_index}] must be non-empty"
+                    )
+                parsed = parse_context_ref(ref)
+                if parsed is None:
+                    raise StageCheckError(
+                        f"design.yaml implementation_requirements[{index}] context_ref '{ref}' is invalid"
+                    )
+                if requirement_scope_kind == "project_wide":
+                    if (
+                        parsed.get("kind") == "sidecar"
+                        and parsed.get("scope_kind") == "experiment"
+                    ):
+                        raise StageCheckError(
+                            f"design.yaml implementation_requirements[{index}] project_wide requirement may not reference experiment sidecar '{ref}'"
+                        )
+                    if (
+                        parsed.get("kind") == "artifact"
+                        and parsed.get("artifact_kind") == "context_delta"
+                    ):
+                        raise StageCheckError(
+                            f"design.yaml implementation_requirements[{index}] project_wide requirement may not reference context_delta"
+                        )
+                if (
+                    resolve_context_ref(
+                        repo_root,
+                        iteration_id=iteration_id,
+                        experiment_id=experiment_id,
+                        raw_ref=ref,
+                        design_payload=design_payload,
+                        scope_kind=requirement_scope_kind,
+                        context_resolution=_resolution_for(requirement_scope_kind),
+                    )
+                    is None
+                ):
+                    raise StageCheckError(
+                        f"design.yaml implementation_requirements[{index}] context_ref '{ref}' could not be resolved"
+                    )
+
+        promoted_constraints = requirement.get("promoted_constraints", [])
+        if promoted_constraints is not None and not isinstance(
+            promoted_constraints, list
+        ):
+            raise StageCheckError(
+                f"design.yaml implementation_requirements[{index}] promoted_constraints must be a list"
+            )
+        if isinstance(promoted_constraints, list):
+            if promoted_constraints and requirement_scope_kind != "project_wide":
+                raise StageCheckError(
+                    f"design.yaml implementation_requirements[{index}] promoted_constraints are only valid for project_wide requirements"
+                )
+            for promoted_index, promoted in enumerate(promoted_constraints):
+                if not isinstance(promoted, dict):
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] promoted_constraints[{promoted_index}] must be a mapping"
+                    )
+                source_ref = str(promoted.get("source_ref", "")).strip()
+                if not source_ref:
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] promoted_constraints[{promoted_index}] missing source_ref"
+                    )
+                parsed = parse_context_ref(source_ref)
+                if (
+                    parsed is None
+                    or parsed.get("kind") != "sidecar"
+                    or parsed.get("scope_kind") != "experiment"
+                ):
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] promoted_constraints[{promoted_index}] source_ref must target an experiment sidecar item"
+                    )
+                if (
+                    resolve_context_ref(
+                        repo_root,
+                        iteration_id=iteration_id,
+                        experiment_id=experiment_id,
+                        raw_ref=source_ref,
+                        design_payload=design_payload,
+                        scope_kind="experiment",
+                        context_resolution=_resolution_for("experiment"),
+                    )
+                    is None
+                ):
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] promoted_constraints[{promoted_index}] source_ref '{source_ref}' could not be resolved"
+                    )
+
+
+def _validate_design(
+    path: Path,
+    iteration_id: str,
+    *,
+    repo_root: Path | None = None,
+    experiment_id: str = "",
+) -> None:
     if yaml is None:
         raise StageCheckError("design validation requires PyYAML")
     if not path.exists():
@@ -433,6 +578,7 @@ def _validate_design(path: Path, iteration_id: str) -> None:
             "design.yaml implementation_requirements must be a non-empty list"
         )
     allowed_scope_kinds = {"experiment", "project_wide"}
+    seen_requirement_ids: set[str] = set()
     for index, requirement in enumerate(implementation_requirements):
         if not isinstance(requirement, dict):
             raise StageCheckError(
@@ -445,6 +591,11 @@ def _validate_design(path: Path, iteration_id: str) -> None:
             raise StageCheckError(
                 f"design.yaml implementation_requirements[{index}] missing requirement_id"
             )
+        if requirement_id in seen_requirement_ids:
+            raise StageCheckError(
+                "design.yaml implementation_requirements"
+                f"[{index}] duplicates requirement_id '{requirement_id}'"
+            )
         if not description:
             raise StageCheckError(
                 f"design.yaml implementation_requirements[{index}] missing description"
@@ -454,6 +605,7 @@ def _validate_design(path: Path, iteration_id: str) -> None:
                 "design.yaml implementation_requirements"
                 f"[{index}] scope_kind must be one of {sorted(allowed_scope_kinds)}"
             )
+        seen_requirement_ids.add(requirement_id)
 
     extract_parser = payload.get("extract_parser")
     if not isinstance(extract_parser, dict):
@@ -471,6 +623,17 @@ def _validate_design(path: Path, iteration_id: str) -> None:
         raise StageCheckError(
             "design.yaml extract_parser kind=command requires non-empty command"
         )
+    effective_repo_root = (
+        repo_root
+        if isinstance(repo_root, Path)
+        else (path.parents[3] if len(path.parents) >= 4 else path.parent)
+    )
+    _validate_design_context_artifacts(
+        repo_root=effective_repo_root,
+        design_payload=payload,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1032,6 +1195,17 @@ def _build_verification_command_specs(
                 f"{python_bin} .autolab/verifiers/schema_checks.py --stage {shlex.quote(stage)} --json",
             )
         )
+    if stage == "design":
+        design_context_quality_path = (
+            repo_root / ".autolab" / "verifiers" / "design_context_quality.py"
+        )
+        if design_context_quality_path.exists():
+            command_specs.append(
+                (
+                    "design_context_quality",
+                    f"{python_bin} .autolab/verifiers/design_context_quality.py --stage {shlex.quote(stage)} --json",
+                )
+            )
 
     if not command_specs:
         command_specs.append(("noop", "true"))

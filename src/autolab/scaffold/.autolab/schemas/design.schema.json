@@ -123,6 +123,24 @@
             "type": "string",
             "enum": ["experiment", "project_wide"]
           },
+          "context_refs": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "promoted_constraints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "source_ref", "summary", "rationale"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "source_ref": {"type": "string", "minLength": 1},
+                "summary": {"type": "string", "minLength": 1},
+                "rationale": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          },
           "expected_artifacts": {
             "type": "array",
             "items": {"type": "string", "minLength": 1}

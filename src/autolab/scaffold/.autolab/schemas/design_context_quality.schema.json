@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DesignContextQuality",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "iteration_id",
+    "experiment_id",
+    "context_mode",
+    "available",
+    "uptake",
+    "score",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "context_mode": {
+      "type": "string",
+      "enum": ["absent", "present"]
+    },
+    "available": {
+      "type": "object",
+      "required": ["discuss_items", "research_items", "open_questions", "promotion_candidates"],
+      "properties": {
+        "discuss_items": {"type": "integer", "minimum": 0},
+        "research_items": {"type": "integer", "minimum": 0},
+        "open_questions": {"type": "integer", "minimum": 0},
+        "promotion_candidates": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "uptake": {
+      "type": "object",
+      "required": [
+        "requirements_total",
+        "requirements_with_context_refs",
+        "requirements_with_resolved_context",
+        "context_refs_total",
+        "resolved_context_refs",
+        "resolved_discuss_context_refs",
+        "resolved_research_context_refs",
+        "promoted_constraints_total",
+        "resolved_promoted_constraints"
+      ],
+      "properties": {
+        "requirements_total": {"type": "integer", "minimum": 0},
+        "requirements_with_context_refs": {"type": "integer", "minimum": 0},
+        "requirements_with_resolved_context": {"type": "integer", "minimum": 0},
+        "context_refs_total": {"type": "integer", "minimum": 0},
+        "resolved_context_refs": {"type": "integer", "minimum": 0},
+        "resolved_discuss_context_refs": {"type": "integer", "minimum": 0},
+        "resolved_research_context_refs": {"type": "integer", "minimum": 0},
+        "promoted_constraints_total": {"type": "integer", "minimum": 0},
+        "resolved_promoted_constraints": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "score": {
+      "type": "object",
+      "required": ["value", "max"],
+      "properties": {
+        "value": {"type": "integer", "minimum": 0},
+        "max": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

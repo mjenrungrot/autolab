@@ -142,6 +142,8 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "trace",
             "tui",
             "render",
+            "discuss",
+            "research",
             "verify",
             "verify-golden",
             "lint",

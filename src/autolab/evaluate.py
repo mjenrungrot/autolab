@@ -102,7 +102,12 @@ def _eval_design(
     iteration_dir: Path,
     iteration_id: str,
 ) -> EvalResult:
-    _validate_design(iteration_dir / "design.yaml", iteration_id)
+    _validate_design(
+        iteration_dir / "design.yaml",
+        iteration_id,
+        repo_root=repo_root,
+        experiment_id=str(state.get("experiment_id", "")).strip(),
+    )
     return EvalResult("implementation", "complete", "'design' checks passed")
 
 
