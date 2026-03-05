@@ -287,18 +287,29 @@ def test_protected_file_violation_includes_remediation_hint(
     assert "Remediation:" in payload.get("error", "")
 
 
-def test_substitute_runner_command_supports_audit_and_retry_tokens() -> None:
+def test_substitute_runner_command_supports_audit_brief_and_human_tokens() -> None:
     rendered = runners._substitute_runner_command(
-        "runner --prompt {prompt_path} --audit {prompt_audit_path} --retry {prompt_retry_brief_path}",
+        (
+            "runner --prompt {prompt_runner_path} "
+            "--prompt-legacy {prompt_path} "
+            "--audit {prompt_audit_path} "
+            "--brief {prompt_brief_path} "
+            "--brief-legacy {prompt_retry_brief_path} "
+            "--human {prompt_human_path}"
+        ),
         stage="implementation",
-        prompt_path=Path("/tmp/implementation.runner.md"),
+        prompt_runner_path=Path("/tmp/implementation.runner.md"),
         prompt_template_path=Path("/tmp/stage_implementation_runner.md"),
         prompt_context_path=Path("/tmp/implementation.context.json"),
         prompt_audit_path=Path("/tmp/implementation.audit.md"),
-        prompt_retry_brief_path=Path("/tmp/implementation.retry_brief.md"),
+        prompt_brief_path=Path("/tmp/implementation.brief.md"),
+        prompt_human_path=Path("/tmp/implementation.human.md"),
         iteration_id="iter1",
         workspace_dir=Path("/tmp/workspace"),
         core_add_dirs="",
     )
     assert "--audit /tmp/implementation.audit.md" in rendered
-    assert "--retry /tmp/implementation.retry_brief.md" in rendered
+    assert "--brief /tmp/implementation.brief.md" in rendered
+    assert "--prompt-legacy /tmp/implementation.runner.md" in rendered
+    assert "--brief-legacy /tmp/implementation.brief.md" in rendered
+    assert "--human /tmp/implementation.human.md" in rendered

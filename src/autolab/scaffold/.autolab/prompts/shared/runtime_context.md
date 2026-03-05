@@ -3,14 +3,13 @@
 
 Autolab resolves stage placeholders before runner execution and writes:
 
-- `.autolab/prompts/rendered/{{stage}}.md`
+- `.autolab/prompts/rendered/{{stage}}.runner.md`
+- `.autolab/prompts/rendered/{{stage}}.audit.md`
+- `.autolab/prompts/rendered/{{stage}}.brief.md`
+- `.autolab/prompts/rendered/{{stage}}.human.md`
 - `.autolab/prompts/rendered/{{stage}}.context.json`
 
-Implementation stage uses a prompt-pack layout:
-- `.autolab/prompts/rendered/implementation.runner.md`
-- `.autolab/prompts/rendered/implementation.context.json`
-- `.autolab/prompts/rendered/implementation.audit.md`
-- `.autolab/prompts/rendered/implementation.retry_brief.md`
+`{{stage}}.runner.md` is the primary execution payload sent to the runner. Audit/brief/human/context packets are companion artifacts for policy, review, and handoff context.
 
 Resolved placeholders must be concrete for required tokens and must match `.autolab/state.json`.
 If any required token remains unresolved, this stage must fail before work starts.

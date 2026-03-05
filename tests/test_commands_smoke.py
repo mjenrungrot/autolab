@@ -167,15 +167,31 @@ def test_installed_console_script_can_run_render(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation_runner.md"
+    prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation.runner.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(
         "# Stage: implementation\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
         encoding="utf-8",
     )
-    audit_prompt_path = workspace / ".autolab" / "prompts" / "stage_implementation.md"
+    audit_prompt_path = (
+        workspace / ".autolab" / "prompts" / "stage_implementation.audit.md"
+    )
     audit_prompt_path.write_text(
         "# Stage: implementation (audit)\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
+        encoding="utf-8",
+    )
+    brief_prompt_path = (
+        workspace / ".autolab" / "prompts" / "stage_implementation.brief.md"
+    )
+    brief_prompt_path.write_text(
+        "# Stage: implementation (brief)\n\n{{brief_summary}}\n",
+        encoding="utf-8",
+    )
+    human_prompt_path = (
+        workspace / ".autolab" / "prompts" / "stage_implementation.human.md"
+    )
+    human_prompt_path.write_text(
+        "# Stage: implementation (human packet)\n\n{{brief_summary}}\n",
         encoding="utf-8",
     )
 

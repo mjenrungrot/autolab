@@ -4,16 +4,33 @@ This guide describes how to author scaffold stage prompts under `src/autolab/sca
 
 ## Core conventions
 
-- Stage files use `stage_<name>.md` (for example `stage_design.md`).
+- Stage prompts are audience-specific:
+  - `stage_<name>.runner.md`
+  - `stage_<name>.audit.md`
+  - `stage_<name>.brief.md`
+  - `stage_<name>.human.md`
 - Stage metadata is canonical in `.autolab/workflow.yaml` (prompt file mapping, required tokens, verifier capabilities).
-- Stages may optionally declare `runner_prompt_file` in `.autolab/workflow.yaml` when runner-facing prompt text differs from audit contract text.
+- Every stage should map runner/audit/brief/human prompt files in `.autolab/workflow.yaml`.
+- `stage_<name>.runner.md` is the primary execution payload; audit/brief/human/context outputs are companion artifacts.
 - `required_outputs` entries in `.autolab/workflow.yaml` should be concrete relative paths; use `<RUN_ID>` token for run-scoped artifacts (for example `runs/<RUN_ID>/run_manifest.json`).
 - Registry/policy output paths must use angle-bracket pattern tokens (for example `<RUN_ID>`). Prompt-style mustache tokens (for example `{{run_id}}`) are reserved for prompt rendering only.
 - Shared includes live under `prompts/shared/` and are referenced with:
   - `{{shared:guardrails.md}}`
   - `{{shared:repo_scope.md}}`
-  - `{{shared:runtime_context.md}}`
 - Prompt token placeholders are rendered by Autolab before runner execution.
+
+## Runner hard rules
+
+Runner prompts must stay task-solving only. Keep policy/audit payloads out of runner text.
+
+- Never add a manual `## STATUS VOCABULARY` section in runner prompts.
+- Only mutator runner stages (`launch`, `slurm_monitor`, `extract_results`) may include `{{shared:status_vocabulary.md}}`; all other runner stages must omit status vocabulary.
+- Do not include `## FILE LENGTH BUDGET`, `## VERIFICATION RITUAL`, `## EVIDENCE RECORD FORMAT`, `## EVIDENCE POINTERS`, `## RUN ARTIFACTS`, `## FILE CHECKLIST`, or `## CHECKLIST`.
+- Do not include `{{shared:verification_ritual.md}}`, `{{shared:verifier_common.md}}`, or `{{shared:runtime_context.md}}` in runner prompts.
+- Do not include raw blob tokens in runner prompts: `{{diff_summary}}`, `{{verifier_outputs}}`, `{{verifier_errors}}`, `{{dry_run_output}}`.
+- If a runner uses optional stage tokens, include a `## MISSING-INPUT FALLBACKS` section.
+- Runner prompts must not render sentinel values such as `unavailable:`, `unknown`, or `none`.
+- Runner headings must be unique (no duplicate `## ...` headings).
 
 ## Supported tokens
 
@@ -52,17 +69,13 @@ For per-token descriptions and stage guidance, see `docs/prompt_token_reference.
 
 Autolab writes rendered artifacts to:
 
-- `.autolab/prompts/rendered/<stage>.md`
+- `.autolab/prompts/rendered/<stage>.runner.md`
+- `.autolab/prompts/rendered/<stage>.audit.md`
+- `.autolab/prompts/rendered/<stage>.brief.md`
+- `.autolab/prompts/rendered/<stage>.human.md`
 - `.autolab/prompts/rendered/<stage>.context.json`
 
-Implementation stage uses a prompt-pack layout:
-
-- `.autolab/prompts/rendered/implementation.runner.md`
-- `.autolab/prompts/rendered/implementation.context.json`
-- `.autolab/prompts/rendered/implementation.audit.md`
-- `.autolab/prompts/rendered/implementation.retry_brief.md`
-
-These files are the exact payload passed to agent runners.
+`<stage>.runner.md` is the primary payload passed to the runner process. `<stage>.audit.md`, `<stage>.brief.md`, `<stage>.human.md`, and `<stage>.context.json` are companion artifacts exposed for policy, review/handoff, and tooling.
 
 ## Stage prompt structure
 
@@ -79,6 +92,8 @@ Then include:
 - missing-input fallback behavior
 - explicit verifier command (`autolab verify --stage <stage>`)
 - failure/retry note
+
+For runner prompts, keep this minimal: mission, strict outputs, required inputs, stop conditions, and a short non-negotiables block.
 
 ## Methodology-rich hypothesis prompts
 
@@ -105,8 +120,8 @@ stage boundaries clear:
 
 ## Adding a new stage prompt
 
-1. Add `src/autolab/scaffold/.autolab/prompts/stage_<name>.md`.
-1. Register the stage in `.autolab/workflow.yaml` (`prompt_file`, `required_tokens`, `required_outputs`, `verifier_categories`, `classifications`).
+1. Add `stage_<name>.runner.md`, `.audit.md`, `.brief.md`, and `.human.md` under `src/autolab/scaffold/.autolab/prompts/`.
+1. Register the stage in `.autolab/workflow.yaml` (`runner_prompt_file`, `prompt_file`, `brief_prompt_file`, `human_prompt_file`, `required_tokens`, `required_outputs`, `verifier_categories`, `classifications`).
 1. If the stage has hard contracts, add schema/verifier checks under `.autolab/verifiers/` and `.autolab/schemas/`.
 1. Run tests and `autolab sync-scaffold --force` in downstream repos.
 
@@ -130,6 +145,6 @@ Do not use `{{run_id}}` in workflow output contracts.
 When adding a new prompt token:
 
 1. Add token resolution logic in `src/autolab/prompts.py`.
-1. Add the token to `ALLOWED_TOKENS` in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py`.
-1. Add/adjust stage required/optional token metadata in `.autolab/workflow.yaml` (`required_tokens`, `optional_tokens`).
-1. Add a render test fixture that asserts rendered prompt output has no unresolved placeholders for affected stage(s).
+1. Add/adjust stage required/optional token metadata in `.autolab/workflow.yaml` (`required_tokens`, `optional_tokens`); `prompt_lint.py` derives allowed tokens from workflow/registry metadata at runtime.
+1. If the token is runtime-injected and not represented in stage token contracts, update `_resolve_allowed_tokens()` supplemental tokens in `src/autolab/scaffold/.autolab/verifiers/prompt_lint.py` and keep `_FALLBACK_ALLOWED_TOKENS` in sync for fallback mode.
+1. Update `docs/prompt_token_reference.md` and add render/lint tests that prove affected stages have no unresolved or unsupported tokens.

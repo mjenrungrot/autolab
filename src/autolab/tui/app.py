@@ -2385,7 +2385,8 @@ class AutolabCockpitApp(App[None]):
                     yield Button("Open Rendered", id="file-open-rendered")
                     yield Button("Open Context", id="file-open-context")
                     yield Button("Open Audit", id="file-open-audit")
-                    yield Button("Open Retry", id="file-open-retry")
+                    yield Button("Open Brief", id="file-open-brief")
+                    yield Button("Open Human", id="file-open-human")
                     yield Button("Open Template", id="file-open-prompt")
                     yield Button("Open State", id="file-open-state")
                     yield Button("Filter: All", id="file-toggle-missing-filter")
@@ -3400,9 +3401,9 @@ class AutolabCockpitApp(App[None]):
                 "Show Excerpt" if self._show_full_prompt else "Show Full Prompt"
             )
             prompt_text = (
-                render_preview.prompt_text
+                render_preview.runner_text
                 if self._show_full_prompt
-                else (render_preview.prompt_excerpt or render_preview.prompt_text)
+                else (render_preview.runner_excerpt or render_preview.runner_text)
             )
             prompt_markdown = build_preview_markdown(
                 prompt_text,
@@ -3411,8 +3412,8 @@ class AutolabCockpitApp(App[None]):
             )
             if (
                 not self._show_full_prompt
-                and render_preview.prompt_excerpt
-                and render_preview.prompt_excerpt != render_preview.prompt_text
+                and render_preview.runner_excerpt
+                and render_preview.runner_excerpt != render_preview.runner_text
             ):
                 prompt_markdown = (
                     f"{prompt_markdown}\n\n"
@@ -5304,7 +5305,8 @@ class AutolabCockpitApp(App[None]):
             "file-open-rendered": "open_rendered_prompt",
             "file-open-context": "open_render_context",
             "file-open-audit": "open_rendered_audit",
-            "file-open-retry": "open_retry_brief",
+            "file-open-brief": "open_rendered_brief",
+            "file-open-human": "open_rendered_human",
             "file-open-prompt": "open_stage_prompt",
             "file-open-state": "open_state_history",
             "file-run-loop": "run_loop",
@@ -5499,12 +5501,12 @@ class AutolabCockpitApp(App[None]):
 
         if action_id == "open_rendered_prompt":
             preview = snapshot.render_preview
-            if preview.status != "ok" or not preview.prompt_text.strip():
+            if preview.status != "ok" or not preview.runner_text.strip():
                 self.notify("Rendered prompt preview is not available.")
                 return
             await self._open_text_viewer(
                 title=f"Rendered Prompt ({preview.stage})",
-                text=preview.prompt_text,
+                text=preview.runner_text,
                 editor_path=preview.template_path,
                 source_path=preview.template_path,
                 render_hint="markdown",
@@ -5540,14 +5542,28 @@ class AutolabCockpitApp(App[None]):
             )
             return
 
-        if action_id == "open_retry_brief":
+        if action_id == "open_rendered_brief":
             preview = snapshot.render_preview
-            if preview.status != "ok" or not preview.retry_brief_text.strip():
-                self.notify("Retry brief is not available for this stage.")
+            if preview.status != "ok" or not preview.brief_text.strip():
+                self.notify("Rendered brief is not available for this stage.")
                 return
             await self._open_text_viewer(
-                title=f"Retry Brief ({preview.stage})",
-                text=preview.retry_brief_text,
+                title=f"Rendered Brief ({preview.stage})",
+                text=preview.brief_text,
+                editor_path=None,
+                source_path=None,
+                render_hint="markdown",
+            )
+            return
+
+        if action_id == "open_rendered_human":
+            preview = snapshot.render_preview
+            if preview.status != "ok" or not preview.human_text.strip():
+                self.notify("Rendered human packet is not available for this stage.")
+                return
+            await self._open_text_viewer(
+                title=f"Rendered Human Packet ({preview.stage})",
+                text=preview.human_text,
                 editor_path=None,
                 source_path=None,
                 render_hint="markdown",

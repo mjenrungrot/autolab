@@ -584,12 +584,21 @@ def _cmd_init(args: argparse.Namespace) -> int:
         created.append(verifier_policy_path)
     _ensure_json_file(agent_result_path, _default_agent_result(), created)
     if scaffold_source is None:
-        for stage, prompt_file in STAGE_PROMPT_FILES.items():
-            _ensure_text_file(
-                autolab_dir / "prompts" / prompt_file,
-                _default_stage_prompt_text(stage),
-                created,
+        for stage in STAGE_PROMPT_FILES.keys():
+            audience_files = (
+                ("audit", STAGE_PROMPT_FILES.get(stage, "")),
+                ("runner", STAGE_RUNNER_PROMPT_FILES.get(stage, "")),
+                ("brief", STAGE_BRIEF_PROMPT_FILES.get(stage, "")),
+                ("human", STAGE_HUMAN_PROMPT_FILES.get(stage, "")),
             )
+            for audience, prompt_file in audience_files:
+                if not prompt_file:
+                    continue
+                _ensure_text_file(
+                    autolab_dir / "prompts" / prompt_file,
+                    _default_stage_prompt_text(stage, audience=audience),
+                    created,
+                )
     init_experiment_type = (
         _resolve_experiment_type_from_backlog(
             repo_root,

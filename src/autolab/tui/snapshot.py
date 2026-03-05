@@ -484,10 +484,11 @@ def _load_render_preview(
             stage="",
             status="unavailable",
             template_path=None,
-            prompt_text="",
-            prompt_excerpt="Render preview unavailable: no stage is selected.",
+            runner_text="",
+            runner_excerpt="Render preview unavailable: no stage is selected.",
             audit_text="",
-            retry_brief_text="",
+            brief_text="",
+            human_text="",
             context_payload={},
             error_message="no stage is selected",
         )
@@ -500,10 +501,11 @@ def _load_render_preview(
             stage=stage_name,
             status="error",
             template_path=None,
-            prompt_text="",
-            prompt_excerpt=f"Render preview unavailable.\n{message}",
+            runner_text="",
+            runner_excerpt=f"Render preview unavailable.\n{message}",
             audit_text="",
-            retry_brief_text="",
+            brief_text="",
+            human_text="",
             context_payload={},
             error_message=message,
         )
@@ -525,10 +527,11 @@ def _load_render_preview(
             stage=stage_name,
             status="error",
             template_path=template_path,
-            prompt_text="",
-            prompt_excerpt=f"Render preview failed.\n{message}",
+            runner_text="",
+            runner_excerpt=f"Render preview failed.\n{message}",
             audit_text="",
-            retry_brief_text="",
+            brief_text="",
+            human_text="",
             context_payload={},
             error_message=message,
         )
@@ -537,10 +540,11 @@ def _load_render_preview(
         stage=stage_name,
         status="ok",
         template_path=template_path,
-        prompt_text=bundle.prompt_text,
-        prompt_excerpt=_build_render_excerpt(bundle.prompt_text),
+        runner_text=bundle.prompt_text,
+        runner_excerpt=_build_render_excerpt(bundle.prompt_text),
         audit_text=bundle.audit_text,
-        retry_brief_text=bundle.retry_brief_text,
+        brief_text=bundle.brief_text,
+        human_text=bundle.human_text,
         context_payload=dict(bundle.context_payload),
         error_message="",
     )
@@ -705,14 +709,18 @@ def _build_recommended_actions(
                         reason="Review the human-readable audit contract for this stage.",
                     )
                 )
-            if (
-                current_stage == "implementation"
-                and render_preview.retry_brief_text.strip()
-            ):
+            if current_stage == "implementation" and render_preview.brief_text.strip():
                 recommended.append(
                     RecommendedAction(
-                        action_id="open_retry_brief",
-                        reason="Use the retry brief blockers before making edits.",
+                        action_id="open_rendered_brief",
+                        reason="Use the concise stage brief before making edits.",
+                    )
+                )
+            if render_preview.human_text.strip():
+                recommended.append(
+                    RecommendedAction(
+                        action_id="open_rendered_human",
+                        reason="Inspect the human-review packet for this stage.",
                     )
                 )
             recommended.append(

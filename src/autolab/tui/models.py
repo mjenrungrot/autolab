@@ -81,10 +81,11 @@ class RenderPreview:
     stage: str
     status: RenderPreviewStatus
     template_path: Path | None
-    prompt_text: str
-    prompt_excerpt: str
+    runner_text: str
+    runner_excerpt: str
     audit_text: str = ""
-    retry_brief_text: str = ""
+    brief_text: str = ""
+    human_text: str = ""
     context_payload: dict[str, Any] = field(default_factory=dict)
     error_message: str = ""
 

@@ -627,7 +627,7 @@ def test_prompt_lint_passes_for_scaffold_prompts(tmp_path: Path) -> None:
     repo = _setup_review_repo(tmp_path)
     _write_review_result(repo, include_docs_check=True)
 
-    result = _run_prompt_lint(repo, stage="design")
+    result = _run_prompt_lint(repo, stage="implementation")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "prompt_lint: PASS" in result.stdout
@@ -635,16 +635,15 @@ def test_prompt_lint_passes_for_scaffold_prompts(tmp_path: Path) -> None:
 
 def test_prompt_lint_fails_on_unsupported_token(tmp_path: Path) -> None:
     repo = _setup_review_repo(tmp_path)
-    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.runner.md"
     prompt_path.write_text(
         (
-            "# Stage: design\n\n"
+            "# Stage: design (runner)\n\n"
             "## ROLE\nx\n\n"
             "## PRIMARY OBJECTIVE\nx\n\n"
-            "{{shared:guardrails.md}}\n{{shared:repo_scope.md}}\n{{shared:runtime_context.md}}\n\n"
             "## OUTPUTS (STRICT)\n- x\n\n"
             "## REQUIRED INPUTS\n- x {{unknown_token}}\n\n"
-            "## FILE CHECKLIST (machine-auditable)\n{{shared:checklist.md}}\n\n"
+            "## STOP CONDITIONS\n- x\n\n"
             "## FAILURE / RETRY BEHAVIOR\n- x\n"
         ),
         encoding="utf-8",
@@ -654,6 +653,287 @@ def test_prompt_lint_fails_on_unsupported_token(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "unsupported token" in result.stdout
+
+
+def test_prompt_lint_accepts_workflow_declared_optional_runner_tokens(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    stages = workflow.get("stages", {})
+    implementation = stages.get("implementation", {})
+    if isinstance(implementation, dict):
+        raw_optional = implementation.get("optional_tokens", [])
+        optional_tokens = raw_optional if isinstance(raw_optional, list) else []
+        if "custom_optional_token" not in optional_tokens:
+            optional_tokens.append("custom_optional_token")
+        implementation["optional_tokens"] = optional_tokens
+    workflow_path.write_text(
+        yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
+    )
+
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip()
+        + "\n\n## MISSING-INPUT FALLBACKS\n"
+        + "- If unavailable, continue without it.\n"
+        + "- optional={{custom_optional_token}}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_rejects_status_vocab_transitively_for_non_mutator_runner(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n{{ shared:guardrails.md }}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "includes status vocabulary in runner template for non-mutator stage"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_allows_status_vocab_for_mutator_runner_via_transitive_include(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_launch.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n{{ shared:guardrails.md }}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="launch")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_rejects_banned_runner_shared_include_with_whitespace(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n{{ shared:verification_ritual.md }}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "includes audit-only shared block in runner template: {{shared:verification_ritual.md}}"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_rejects_banned_runner_shared_include_transitively(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    shared_path = repo / ".autolab" / "prompts" / "shared" / "runner_bad_include.md"
+    shared_path.write_text("{{ shared:verifier_common.md }}\n", encoding="utf-8")
+
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n{{shared:runner_bad_include.md}}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "includes audit-only shared block in runner template: {{shared:verifier_common.md}}"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_requires_runner_non_negotiables_include_or_section(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    text = text.replace("{{shared:runner_non_negotiables.md}}\n", "")
+    prompt_path.write_text(text, encoding="utf-8")
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "runner template must include {{shared:runner_non_negotiables.md}}"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_accepts_runner_non_negotiables_section_without_shared_include(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    text = text.replace("{{shared:runner_non_negotiables.md}}\n", "")
+    prompt_path.write_text(
+        text.rstrip() + "\n\n## NON-NEGOTIABLES\n- Keep edits in scope.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_requires_all_runner_required_tokens(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    text = text.replace("- `iteration_path={{iteration_path}}`\n", "")
+    prompt_path.write_text(text, encoding="utf-8")
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "missing required token(s) for stage 'implementation': iteration_path"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_requires_missing_input_fallbacks_when_optional_tokens_used(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\nOptional context: {{review_feedback}}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 1
+    assert (
+        "uses optional token(s) but is missing '## MISSING-INPUT FALLBACKS' safe-fallback section"
+        in result.stdout
+    )
+
+
+def test_prompt_lint_uses_workflow_terminal_stage_metadata(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    stages = workflow.get("stages", {})
+    implementation = stages.get("implementation", {})
+    if isinstance(implementation, dict):
+        classifications = implementation.get("classifications", {})
+        if not isinstance(classifications, dict):
+            classifications = {}
+        classifications["terminal"] = True
+        implementation["classifications"] = classifications
+    workflow_path.write_text(
+        yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
+    )
+
+    audit_prompt = repo / ".autolab" / "prompts" / "stage_implementation.audit.md"
+    audit_text = audit_prompt.read_text(encoding="utf-8")
+    audit_text = audit_text.replace("{{shared:guardrails.md}}\n", "")
+    audit_text = audit_text.replace("{{shared:repo_scope.md}}\n", "")
+    audit_prompt.write_text(audit_text, encoding="utf-8")
+
+    result = _run_prompt_lint(repo, stage="implementation")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "prompt_lint: PASS" in result.stdout
+
+
+def test_prompt_lint_rejects_banned_runner_sections(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n## FILE LENGTH BUDGET\n- Keep short.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "includes banned runner section: ## FILE LENGTH BUDGET" in result.stdout
+
+
+def test_prompt_lint_rejects_runner_duplicate_headings(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\n## ROLE\nduplicate\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert "duplicate runner heading" in result.stdout
+
+
+def test_prompt_lint_rejects_runner_raw_blob_tokens(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.runner.md"
+    original = prompt_path.read_text(encoding="utf-8")
+    prompt_path.write_text(
+        original.rstrip() + "\n\nRaw blob: {{diff_summary}}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_prompt_lint(repo, stage="design")
+
+    assert result.returncode == 1
+    assert (
+        "uses banned raw-blob token(s) in runner template: diff_summary"
+        in result.stdout
+    )
 
 
 def test_prompt_lint_fails_when_prompt_uses_nonrequired_token_without_optional_contract(

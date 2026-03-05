@@ -392,11 +392,12 @@ def _substitute_runner_command(
     template: str,
     *,
     stage: str,
-    prompt_path: Path,
+    prompt_runner_path: Path,
     prompt_template_path: Path,
     prompt_context_path: Path,
     prompt_audit_path: Path,
-    prompt_retry_brief_path: Path,
+    prompt_brief_path: Path,
+    prompt_human_path: Path,
     iteration_id: str,
     workspace_dir: Path,
     core_add_dirs: str,
@@ -404,11 +405,16 @@ def _substitute_runner_command(
     command = str(template)
     replacements = {
         "{stage}": shlex.quote(stage),
-        "{prompt_path}": shlex.quote(str(prompt_path)),
+        "{prompt_runner_path}": shlex.quote(str(prompt_runner_path)),
+        # Back-compat alias: old runner token used in existing verifier_policy configs.
+        "{prompt_path}": shlex.quote(str(prompt_runner_path)),
         "{prompt_template_path}": shlex.quote(str(prompt_template_path)),
         "{prompt_context_path}": shlex.quote(str(prompt_context_path)),
         "{prompt_audit_path}": shlex.quote(str(prompt_audit_path)),
-        "{prompt_retry_brief_path}": shlex.quote(str(prompt_retry_brief_path)),
+        "{prompt_brief_path}": shlex.quote(str(prompt_brief_path)),
+        # Back-compat alias: pre-audience implementation retry brief token.
+        "{prompt_retry_brief_path}": shlex.quote(str(prompt_brief_path)),
+        "{prompt_human_path}": shlex.quote(str(prompt_human_path)),
         "{iteration_id}": shlex.quote(iteration_id),
         "{workspace_dir}": shlex.quote(str(workspace_dir)),
         "{core_add_dirs}": core_add_dirs,
@@ -491,12 +497,12 @@ def _invoke_agent_runner(
     command = _substitute_runner_command(
         runner.command,
         stage=stage,
-        prompt_path=prompt_bundle.rendered_path,
+        prompt_runner_path=prompt_bundle.rendered_path,
         prompt_template_path=prompt_bundle.template_path,
         prompt_context_path=prompt_bundle.context_path,
         prompt_audit_path=prompt_bundle.audit_path or prompt_bundle.rendered_path,
-        prompt_retry_brief_path=prompt_bundle.retry_brief_path
-        or prompt_bundle.rendered_path,
+        prompt_brief_path=prompt_bundle.brief_path or prompt_bundle.rendered_path,
+        prompt_human_path=prompt_bundle.human_path or prompt_bundle.rendered_path,
         iteration_id=iteration_id,
         workspace_dir=workspace_dir,
         core_add_dirs=core_add_dirs,
@@ -528,14 +534,23 @@ def _invoke_agent_runner(
     env = os.environ.copy()
     env["AUTOLAB_STAGE"] = stage
     env["AUTOLAB_ITERATION_ID"] = iteration_id
+    env["AUTOLAB_PROMPT_RUNNER_PATH"] = str(prompt_bundle.rendered_path)
+    # Back-compat alias for external runner scripts.
     env["AUTOLAB_PROMPT_PATH"] = str(prompt_bundle.rendered_path)
     env["AUTOLAB_PROMPT_TEMPLATE_PATH"] = str(prompt_bundle.template_path)
     env["AUTOLAB_PROMPT_CONTEXT_PATH"] = str(prompt_bundle.context_path)
     env["AUTOLAB_PROMPT_AUDIT_PATH"] = str(
         prompt_bundle.audit_path or prompt_bundle.rendered_path
     )
+    env["AUTOLAB_PROMPT_BRIEF_PATH"] = str(
+        prompt_bundle.brief_path or prompt_bundle.rendered_path
+    )
+    # Back-compat alias for pre-audience retry brief path consumers.
     env["AUTOLAB_PROMPT_RETRY_BRIEF_PATH"] = str(
-        prompt_bundle.retry_brief_path or prompt_bundle.rendered_path
+        prompt_bundle.brief_path or prompt_bundle.rendered_path
+    )
+    env["AUTOLAB_PROMPT_HUMAN_PATH"] = str(
+        prompt_bundle.human_path or prompt_bundle.rendered_path
     )
     env["AUTOLAB_STATE_FILE"] = str(state_path)
     env["AUTOLAB_REPO_ROOT"] = str(repo_root)

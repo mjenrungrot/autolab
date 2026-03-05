@@ -24,6 +24,8 @@ class StageSpec:
     verifier_categories: dict[str, bool]
     optional_tokens: frozenset[str] = field(default_factory=frozenset)
     runner_prompt_file: str = ""
+    brief_prompt_file: str = ""
+    human_prompt_file: str = ""
     required_outputs_any_of: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
     required_outputs_if: tuple[
         tuple[tuple[tuple[str, str], ...], tuple[str, ...]], ...
@@ -102,8 +104,10 @@ def _parse_stage_spec(name: str, raw: dict[str, Any]) -> StageSpec:
 
     return StageSpec(
         name=name,
-        prompt_file=str(raw.get("prompt_file", f"stage_{name}.md")),
+        prompt_file=str(raw.get("prompt_file", f"stage_{name}.audit.md")),
         runner_prompt_file=str(raw.get("runner_prompt_file", "")).strip(),
+        brief_prompt_file=str(raw.get("brief_prompt_file", "")).strip(),
+        human_prompt_file=str(raw.get("human_prompt_file", "")).strip(),
         required_tokens=frozenset(str(t) for t in required_tokens_raw),
         optional_tokens=frozenset(str(t) for t in optional_tokens_raw),
         required_outputs=tuple(required_outputs),
@@ -169,6 +173,24 @@ def registry_runner_prompt_files(registry: dict[str, StageSpec]) -> dict[str, st
         name: spec.runner_prompt_file
         for name, spec in registry.items()
         if spec.runner_prompt_file
+    }
+
+
+def registry_brief_prompt_files(registry: dict[str, StageSpec]) -> dict[str, str]:
+    """Return per-stage brief prompt files for stages that declare one."""
+    return {
+        name: spec.brief_prompt_file
+        for name, spec in registry.items()
+        if spec.brief_prompt_file
+    }
+
+
+def registry_human_prompt_files(registry: dict[str, StageSpec]) -> dict[str, str]:
+    """Return per-stage human prompt files for stages that declare one."""
+    return {
+        name: spec.human_prompt_file
+        for name, spec in registry.items()
+        if spec.human_prompt_file
     }
 
 

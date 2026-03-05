@@ -30,10 +30,11 @@ Token records:
 - `token`: `{{run_group}}`; `meaning`: JSON list of replicate run IDs for multi-run iterations (empty list for single runs); `typical_stages`: launch, extract_results.
 - `token`: `{{replicate_count}}`; `meaning`: Number of replicates configured in design.yaml (1 for single runs); `typical_stages`: launch, extract_results.
 - `token`: `{{task_context}}`; `meaning`: Resolved task context for assistant mode (task_id, title, description, acceptance criteria); `typical_stages`: assistant phases (select, implement).
+- `token`: `{{brief_summary}}`; `meaning`: Compact stage summary bullets used by brief/human packets; `typical_stages`: all stages (brief/human audiences).
 
 Notes:
 
 - Stage-required tokens are defined in `src/autolab/scaffold/.autolab/workflow.yaml`.
 - Unsupported tokens fail `prompt_lint`.
 - Required unresolved tokens fail prompt rendering before runner execution.
-- Implementation stage renders a prompt pack (`implementation.runner.md`, `implementation.context.json`, `implementation.audit.md`, `implementation.retry_brief.md`); token rules are unchanged.
+- Stage rendering produces audience packets (`<stage>.runner.md`, `<stage>.audit.md`, `<stage>.brief.md`, `<stage>.human.md`, `<stage>.context.json`).

@@ -104,7 +104,8 @@ Edit `.autolab/verifier_policy.yaml`:
 
 ## Step 3: Customize prompts (optional)
 
-Stage prompts live in `.autolab/prompts/stage_*.md`. Each prompt:
+Stage prompts live in `.autolab/prompts/stage_*.runner.md`, `.audit.md`,
+`.brief.md`, and `.human.md`. Each prompt:
 
 - Defines the agent's role and objectives for that stage
 - Includes shared guardrails, scope rules, and verification rituals
@@ -119,7 +120,7 @@ Preview the resolved prompt for the current state or a specific stage without ru
 ```bash
 autolab render
 autolab render --stage implementation
-autolab render --stage design --context
+autolab render --stage design --audience context
 ```
 
 ## Step 4: Run your first stage
