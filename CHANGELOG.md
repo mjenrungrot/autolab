@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.11] - 2026-03-04
+
+### Summary
+
+- Fixed the cockpit TUI header so narrow terminals keep a compact single-line status rail instead of expanding into a tall blank region.
+- Added regression coverage to lock status-rail/workspace placement in narrow viewport sizes.
+
+<!-- autolab:range v1.2.10..v1.2.11 -->
+
 ## [1.2.10] - 2026-03-04
 
 ### Summary
