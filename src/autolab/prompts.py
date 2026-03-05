@@ -1240,6 +1240,11 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     if not isinstance(runner_scope, dict):
         runner_scope = {}
     scope_mode = str(runner_scope.get("mode", "")).strip() or "unknown"
+    scope_kind = str(runner_scope.get("scope_kind", "")).strip() or "unknown"
+    scope_root = str(runner_scope.get("scope_root", "")).strip() or "unknown"
+    project_wide_root = (
+        str(runner_scope.get("project_wide_root", "")).strip() or "unknown"
+    )
     scope_workspace = str(runner_scope.get("workspace_dir", "")).strip() or "unknown"
     allowed_dirs = runner_scope.get("allowed_edit_dirs")
     if isinstance(allowed_dirs, list):
@@ -1249,11 +1254,11 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
     else:
         allowed_dirs_text = ""
     if not allowed_dirs_text:
-        allowed_dirs_text = "(iteration workspace only)"
+        allowed_dirs_text = "(scope root only)"
     disallowed_text = (
-        "all paths outside the iteration workspace and allowed dirs"
-        if allowed_dirs_text != "(iteration workspace only)"
-        else "all paths outside the iteration workspace"
+        "all paths outside the scope root and allowed dirs"
+        if allowed_dirs_text != "(scope root only)"
+        else "all paths outside the scope root"
     )
     project_data_roots_raw = context_payload.get("project_data_roots")
     project_data_roots = (
@@ -1308,6 +1313,9 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- sync_status: {sync_status}\n"
         f"- todo_focus: {todo_focus_summary}\n"
         f"- edit_scope_mode: {scope_mode}\n"
+        f"- scope_kind: {scope_kind}\n"
+        f"- scope_root: {scope_root}\n"
+        f"- project_wide_root: {project_wide_root}\n"
         f"- workspace_dir: {scope_workspace}\n"
         f"- allowed_edit_dirs: {allowed_dirs_text}\n"
         f"- disallowed_edit_dirs: {disallowed_text}\n"

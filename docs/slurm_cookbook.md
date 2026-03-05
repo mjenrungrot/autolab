@@ -32,7 +32,7 @@ Key policy knobs for SLURM:
 - `requirements_by_stage.slurm_monitor.env_smoke: true` -- validates monitor-stage run health while polling/syncing
 - `launch.slurm_submit_timeout_seconds: 30` -- submit-time timeout for `sbatch` probing in launch
 - `launch.local_timeout_seconds: 900` -- local launch timeout used for small-example testing
-- `agent_runner.edit_scope.mode: "iteration_plus_core"` -- allows runner to update SLURM scripts
+- `agent_runner.edit_scope.mode: "scope_root_plus_core"` -- allows runner to update SLURM scripts
 - `autorun.todo_fallback.slurm.stage: "hypothesis"` -- fallback behavior when no tasks remain
 
 ## Launch Lifecycle

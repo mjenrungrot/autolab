@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from autolab.constants import ACTIVE_STAGES, DECISION_STAGES
+from autolab.scope import _detect_scope_kind_from_plan_contract, _resolve_scope_context
 from autolab.state import (
     _normalize_state,
-    _resolve_iteration_directory,
     _resolve_repo_root,
 )
 from autolab.utils import (
@@ -222,26 +222,10 @@ def _detect_scope(
     repo_root: Path,
     iteration_dir: Path | None,
 ) -> str:
-    if iteration_dir is None:
-        return "experiment"
-    plan_contract_paths = [
-        repo_root / ".autolab" / "plan_contract.json",
-        iteration_dir / "plan_contract.json",
-    ]
-    for path in plan_contract_paths:
-        payload = _load_json_if_exists(path)
-        if not isinstance(payload, dict):
-            continue
-        tasks = payload.get("tasks")
-        if not isinstance(tasks, list):
-            continue
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            scope_kind = str(task.get("scope_kind", "")).strip().lower()
-            if scope_kind == "project_wide":
-                return "project_wide"
-    return "experiment"
+    return _detect_scope_kind_from_plan_contract(
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
+    )
 
 
 def _compute_wave_and_tasks(
@@ -507,17 +491,11 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     experiment_id = str(state.get("experiment_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
 
-    iteration_dir: Path | None = None
-    if iteration_id:
-        try:
-            iteration_dir, _iteration_type = _resolve_iteration_directory(
-                repo_root,
-                iteration_id=iteration_id,
-                experiment_id=experiment_id,
-                require_exists=False,
-            )
-        except Exception:
-            iteration_dir = None
+    current_scope, scope_root, iteration_dir = _resolve_scope_context(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+    )
 
     existing_handoff = _load_existing_handoff(autolab_dir)
     latest_verification, latest_passed_at = _latest_verification_summary(repo_root)
@@ -552,11 +530,6 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     )
 
     wave_summary, task_summary = _compute_wave_and_tasks(iteration_dir)
-    current_scope = _detect_scope(repo_root=repo_root, iteration_dir=iteration_dir)
-    if current_scope == "project_wide":
-        scope_root = repo_root
-    else:
-        scope_root = iteration_dir if iteration_dir is not None else repo_root
     handoff_md_path = scope_root / _HANDOFF_MD_FILENAME
     handoff_json_path = autolab_dir / _HANDOFF_FILENAME
 

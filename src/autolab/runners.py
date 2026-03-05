@@ -26,6 +26,7 @@ from autolab.config import (
     _load_verifier_policy,
     _resolve_run_agent_mode,
 )
+from autolab.scope import _resolve_project_wide_root
 from autolab.state import (
     _load_state,
     _normalize_state,
@@ -245,6 +246,8 @@ def _is_within_scope(path: str, allowed_roots: tuple[str, ...]) -> bool:
         return True
     for root in allowed_roots:
         candidate = root.strip().strip("/")
+        if candidate in {"", "."}:
+            return True
         if not candidate:
             continue
         if normalized == candidate or normalized.startswith(f"{candidate}/"):
@@ -380,7 +383,7 @@ def _build_core_add_dir_flags(
     edit_scope: AgentRunnerEditScopeConfig,
     runner: str = DEFAULT_AGENT_RUNNER_NAME,
 ) -> tuple[str, tuple[Path, ...]]:
-    if edit_scope.mode == "iteration_only":
+    if edit_scope.mode == "scope_root_only":
         return ("", ())
 
     resolved_dirs = _resolve_core_add_dirs(
@@ -408,6 +411,7 @@ def _substitute_runner_command(
     prompt_human_path: Path,
     iteration_id: str,
     workspace_dir: Path,
+    scope_root: Path,
     core_add_dirs: str,
 ) -> str:
     command = str(template)
@@ -425,6 +429,7 @@ def _substitute_runner_command(
         "{prompt_human_path}": shlex.quote(str(prompt_human_path)),
         "{iteration_id}": shlex.quote(iteration_id),
         "{workspace_dir}": shlex.quote(str(workspace_dir)),
+        "{scope_root}": shlex.quote(str(scope_root)),
         "{core_add_dirs}": core_add_dirs,
     }
     for token, value in replacements.items():
@@ -595,12 +600,22 @@ def _invoke_agent_runner(
         raise StageCheckError(
             f"prompt rendering requires valid state at {state_path}: {exc}"
         ) from exc
-    workspace_dir = _resolve_runner_workspace(
-        repo_root,
-        iteration_id=iteration_id,
-        experiment_id=str(prompt_state.get("experiment_id", "")).strip(),
-        ensure_iteration_dir=runner.edit_scope.ensure_iteration_dir,
-    )
+    task_scope_kind = ""
+    if isinstance(task_packet, dict):
+        task_scope_kind = str(task_packet.get("scope_kind", "")).strip().lower()
+    if task_scope_kind not in {"experiment", "project_wide"}:
+        task_scope_kind = "experiment"
+    project_wide_root = _resolve_project_wide_root(repo_root)
+    if task_scope_kind == "project_wide":
+        workspace_dir = project_wide_root
+    else:
+        workspace_dir = _resolve_runner_workspace(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=str(prompt_state.get("experiment_id", "")).strip(),
+            ensure_iteration_dir=runner.edit_scope.ensure_iteration_dir,
+        )
+    scope_root = workspace_dir
     core_add_dirs, resolved_core_dirs = _build_core_add_dir_flags(
         repo_root,
         edit_scope=runner.edit_scope,
@@ -608,6 +623,9 @@ def _invoke_agent_runner(
     )
     runner_scope = {
         "mode": runner.edit_scope.mode,
+        "scope_kind": task_scope_kind,
+        "scope_root": str(scope_root),
+        "project_wide_root": str(project_wide_root),
         "workspace_dir": str(workspace_dir),
         "allowed_edit_dirs": [
             str(path.relative_to(repo_root)) for path in resolved_core_dirs
@@ -715,6 +733,7 @@ def _invoke_agent_runner(
         prompt_human_path=prompt_human_path,
         iteration_id=iteration_id,
         workspace_dir=workspace_dir,
+        scope_root=scope_root,
         core_add_dirs=core_add_dirs,
     )
     use_git_scope = _is_git_worktree(repo_root)
@@ -757,6 +776,7 @@ def _invoke_agent_runner(
     env["AUTOLAB_STATE_FILE"] = str(state_path)
     env["AUTOLAB_REPO_ROOT"] = str(repo_root)
     env["AUTOLAB_WORKSPACE_DIR"] = str(workspace_dir)
+    env["AUTOLAB_SCOPE_ROOT"] = str(scope_root)
     env["AUTOLAB_CORE_ADD_DIRS"] = ",".join(str(path) for path in resolved_core_dirs)
 
     timeout: float | None = (
@@ -768,6 +788,9 @@ def _invoke_agent_runner(
         .replace("+00:00", "Z"),
         "stage": stage,
         "runner": runner.runner,
+        "scope_kind": task_scope_kind,
+        "scope_root": str(scope_root),
+        "project_wide_root": str(project_wide_root),
         "workspace_dir": str(workspace_dir),
         "edit_scope_mode": runner.edit_scope.mode,
         "allowed_roots": list(allowed_roots),

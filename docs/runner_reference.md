@@ -28,6 +28,7 @@ The runner command string supports these substitution tokens:
 
 - `token`: `{stage}`; `replaced_with`: Current stage name; `example`: `implementation`.
 - `token`: `{workspace_dir}`; `replaced_with`: Absolute path to runner workspace; `example`: `/home/user/myproject/experiments/plan/iter1`.
+- `token`: `{scope_root}`; `replaced_with`: Absolute path to effective edit scope root; `example`: `/home/user/myproject/src`.
 - `token`: `{prompt_runner_path}`; `replaced_with`: Path to rendered runner prompt; `example`: `.autolab/prompts/rendered/implementation.runner.md`.
 - `token`: `{prompt_path}`; `replaced_with`: Deprecated alias for `{prompt_runner_path}`; `example`: `.autolab/prompts/rendered/implementation.runner.md`.
 - `token`: `{prompt_template_path}`; `replaced_with`: Path to source prompt template; `example`: `.autolab/prompts/stage_implementation.runner.md`.
@@ -47,6 +48,7 @@ Set by Autolab before runner invocation:
 - `variable`: `AUTOLAB_ITERATION_ID`; `value`: Current iteration ID; `purpose`: Scoping.
 - `variable`: `AUTOLAB_STATE_FILE`; `value`: Absolute path to state.json; `purpose`: State access.
 - `variable`: `AUTOLAB_WORKSPACE_DIR`; `value`: Absolute path to runner workspace; `purpose`: Working directory.
+- `variable`: `AUTOLAB_SCOPE_ROOT`; `value`: Absolute path to effective scope root; `purpose`: Scope-aware execution context.
 - `variable`: `AUTOLAB_PROMPT_RUNNER_PATH`; `value`: Path to rendered runner prompt; `purpose`: Prompt input.
 - `variable`: `AUTOLAB_PROMPT_PATH`; `value`: Deprecated alias for `AUTOLAB_PROMPT_RUNNER_PATH`; `purpose`: Backward compatibility.
 - `variable`: `AUTOLAB_PROMPT_TEMPLATE_PATH`; `value`: Path to source prompt template; `purpose`: Debug/template traceability.
@@ -68,30 +70,38 @@ Set by Autolab before runner invocation:
 
 Configured via `agent_runner.edit_scope.mode`:
 
-### `iteration_plus_core` (default)
+Scope root resolution:
+
+- `scope_kind=experiment` => active iteration directory
+- `scope_kind=project_wide` => `scope_roots.project_wide_root` (default `.`)
+
+### `scope_root_plus_core` (default)
 
 Allows edits to:
 
-- The current iteration directory: `experiments/<type>/<iteration_id>/`
+- The effective scope root (iteration directory or configured project-wide root)
 - Core directories listed in `edit_scope.core_dirs` (default: `src`, `scripts`, `.autolab`, `docs`, `paper`, `tests`)
 
-Best for: normal implementation work that spans experiment artifacts and shared code.
+Best for: normal work that may span the active scope root and shared code.
 
-### `iteration_only`
+### `scope_root_only`
 
 Allows edits only to:
 
-- The current iteration directory: `experiments/<type>/<iteration_id>/`
+- The effective scope root
 - `core_dirs` is ignored
 
-Best for: strict isolation when you want to prevent any shared-code changes.
+Best for: strict isolation when you want edits confined to the resolved scope root.
 
 ### Configuration example
 
 ```yaml
+scope_roots:
+  project_wide_root: "."
+
 agent_runner:
   edit_scope:
-    mode: "iteration_plus_core"
+    mode: "scope_root_plus_core"
     core_dirs:
       - "src"
       - "scripts"
@@ -100,7 +110,7 @@ agent_runner:
     ensure_iteration_dir: true
 ```
 
-When `ensure_iteration_dir: true`, the iteration directory is created before runner invocation if it does not exist.
+When `ensure_iteration_dir: true`, the iteration directory is created before runner invocation for experiment-scoped runs if it does not exist.
 
 ## Scope Violation Detection
 

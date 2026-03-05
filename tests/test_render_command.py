@@ -119,6 +119,46 @@ def test_render_context_appends_separator_and_json(tmp_path: Path, capsys) -> No
     context = json.loads(captured.out)
     assert context["stage"] == "design"
     assert context["iteration_id"] == "iter1"
+    assert context["runner_scope"]["mode"] == "scope_root_plus_core"
+    assert context["runner_scope"]["scope_kind"] == "experiment"
+
+
+def test_render_context_uses_project_wide_scope_root(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+    (repo / "src").mkdir(exist_ok=True)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.write_text(
+        policy_path.read_text(encoding="utf-8")
+        + "\nscope_roots:\n  project_wide_root: src\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_contract.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "tasks": [{"task_id": "T1", "scope_kind": "project_wide"}],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        ["render", "--state-file", str(state_path), "--view", "context"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    context = json.loads(captured.out)
+    assert context["runner_scope"]["scope_kind"] == "project_wide"
+    assert context["runner_scope"]["scope_root"] == str((repo / "src").resolve())
+    assert context["runner_scope"]["workspace_dir"] == str((repo / "src").resolve())
 
 
 def test_render_human_view_prints_human_packet(tmp_path: Path, capsys) -> None:

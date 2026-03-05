@@ -71,6 +71,7 @@ def test_is_within_scope_basic() -> None:
     assert _is_within_scope("src/foo.py", ("src", "docs"))
     assert _is_within_scope("docs/readme.md", ("src", "docs"))
     assert not _is_within_scope("other/bar.py", ("src", "docs"))
+    assert _is_within_scope("any/relative/path.txt", (".",))
 
 
 def test_scope_violation_detected_via_snapshot(tmp_path: Path) -> None:

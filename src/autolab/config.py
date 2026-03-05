@@ -515,7 +515,7 @@ def _load_agent_runner_edit_scope(runner: dict[str, Any]) -> AgentRunnerEditScop
             "ensure_iteration_dir", DEFAULT_AGENT_RUNNER_ENSURE_ITERATION_DIR
         )
     )
-    if mode == "iteration_only":
+    if mode == "scope_root_only":
         core_dirs = []
 
     return AgentRunnerEditScopeConfig(

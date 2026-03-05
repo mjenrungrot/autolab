@@ -252,6 +252,13 @@ plan_execution:
     on_wave_retry_exhausted: human_review
     require_verification_commands: true
 # ---------------------------------------------------------------------------
+# Scope roots
+# ---------------------------------------------------------------------------
+scope_roots:
+  # Project-wide task root. Must be repo-relative and point to an existing
+  # directory. `.` means repository root.
+  project_wide_root: .
+# ---------------------------------------------------------------------------
 # Agent runner configuration
 # ---------------------------------------------------------------------------
 agent_runner:
@@ -274,7 +281,7 @@ agent_runner:
     - implementation_review
     - update_docs
   edit_scope:
-    mode: iteration_plus_core
+    mode: scope_root_plus_core
     core_dirs: [src, scripts, .autolab, docs, paper, tests]
     ensure_iteration_dir: true
   timeout_seconds: 3600
