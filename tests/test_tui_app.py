@@ -34,16 +34,27 @@ def _write_state_file(repo_root: Path, *, stage: str = "design") -> Path:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    prompt_path = repo_root / ".autolab" / "prompts" / f"stage_{stage}.md"
-    prompt_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_path.write_text(f"# Stage {stage}\n", encoding="utf-8")
-    if stage == "implementation":
-        runner_prompt_path = (
-            repo_root / ".autolab" / "prompts" / "stage_implementation_runner.md"
-        )
-        runner_prompt_path.write_text(
-            "# Stage implementation runner\n", encoding="utf-8"
-        )
+    prompts_dir = repo_root / ".autolab" / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    (prompts_dir / f"stage_{stage}.runner.md").write_text(
+        f"# Stage {stage}\n", encoding="utf-8"
+    )
+    (prompts_dir / f"stage_{stage}.audit.md").write_text(
+        "# Audit\n\n## ROLE\nx\n\n## PRIMARY OBJECTIVE\nx\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / f"stage_{stage}.brief.md").write_text(
+        f"# Stage: {stage} (brief)\n\n{{{{brief_summary}}}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / f"stage_{stage}.human.md").write_text(
+        f"# Stage: {stage} (human packet)\n\n{{{{brief_summary}}}}\n",
+        encoding="utf-8",
+    )
+    # Legacy combined filename (compat fallback for older prompt layouts).
+    (prompts_dir / f"stage_{stage}.md").write_text(
+        f"# Stage {stage}\n", encoding="utf-8"
+    )
 
     return state_path
 
@@ -190,10 +201,22 @@ def _write_run_manifest(
 
 
 def _write_design_prompt(repo_root: Path, *, lines: int = 40) -> None:
-    prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.runner.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(
         "# Stage design\n\n" + "\n".join(f"line {index}" for index in range(1, lines)),
+        encoding="utf-8",
+    )
+    (repo_root / ".autolab" / "prompts" / "stage_design.audit.md").write_text(
+        "# Audit\n\n## ROLE\nx\n\n## PRIMARY OBJECTIVE\nx\n",
+        encoding="utf-8",
+    )
+    (repo_root / ".autolab" / "prompts" / "stage_design.brief.md").write_text(
+        "# Stage: design (brief)\n\n{{brief_summary}}\n",
+        encoding="utf-8",
+    )
+    (repo_root / ".autolab" / "prompts" / "stage_design.human.md").write_text(
+        "# Stage: design (human packet)\n\n{{brief_summary}}\n",
         encoding="utf-8",
     )
 
@@ -542,7 +565,7 @@ def test_files_buttons_open_rendered_prompt_and_context(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
-def test_files_buttons_open_audit_and_retry_for_implementation(
+def test_files_buttons_open_audit_brief_and_human_for_implementation(
     tmp_path: Path,
 ) -> None:
     async def _run() -> None:
@@ -561,15 +584,26 @@ def test_files_buttons_open_audit_and_retry_for_implementation(
             assert "Rendered Audit (implementation)" in str(title.render())
             assert await _click_when_visible(pilot, "#close") is True
 
-            await pilot.click("#file-open-retry")
+            await pilot.click("#file-open-brief")
             await pilot.pause()
             _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
             title = app.screen.query_one("#artifact-path", app_module.Label)
-            assert "Retry Brief (implementation)" in str(title.render())
-            retry_content = app.screen.query_one(
+            assert "Rendered Brief (implementation)" in str(title.render())
+            brief_content = app.screen.query_one(
                 "#artifact-content", app_module.Markdown
             )
-            assert "Implementation Retry Brief" in retry_content._markdown
+            assert "Stage: implementation (brief)" in brief_content._markdown
+            assert await _click_when_visible(pilot, "#close") is True
+
+            await pilot.click("#file-open-human")
+            await pilot.pause()
+            _assert_fullscreen_modal_dialog(app, "#artifact-dialog")
+            title = app.screen.query_one("#artifact-path", app_module.Label)
+            assert "Rendered Human Packet (implementation)" in str(title.render())
+            human_content = app.screen.query_one(
+                "#artifact-content", app_module.Markdown
+            )
+            assert "Stage: implementation (human packet)" in human_content._markdown
             assert await _click_when_visible(pilot, "#close") is True
 
     asyncio.run(_run())
@@ -580,7 +614,7 @@ def test_artifact_viewer_truncates_long_text_with_indicator(tmp_path: Path) -> N
         repo_root = tmp_path / "repo"
         state_path = _write_state_file(repo_root)
         _write_design_prompt(repo_root, lines=5)
-        prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.md"
+        prompt_path = repo_root / ".autolab" / "prompts" / "stage_design.audit.md"
         prompt_path.write_text(
             "line\n".join(f"line {idx}" for idx in range(1, 201)),
             encoding="utf-8",

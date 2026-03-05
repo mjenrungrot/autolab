@@ -109,16 +109,13 @@ def test_render_context_appends_separator_and_json(tmp_path: Path, capsys) -> No
     _write_backlog(repo)
 
     exit_code = commands_module.main(
-        ["render", "--state-file", str(state_path), "--context"]
+        ["render", "--state-file", str(state_path), "--audience", "context"]
     )
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    separator = "----- AUTOLAB CONTEXT JSON -----\n"
-    assert separator in captured.out
-    _, context_text = captured.out.split(separator, 1)
-    context = json.loads(context_text)
+    context = json.loads(captured.out)
     assert context["stage"] == "design"
     assert context["iteration_id"] == "iter1"
 
@@ -148,7 +145,7 @@ def test_render_fails_when_prompt_template_missing(tmp_path: Path, capsys) -> No
     _copy_scaffold(repo)
     state_path = _write_state(repo, stage="design")
     _write_backlog(repo)
-    (repo / ".autolab" / "prompts" / "stage_design.md").unlink()
+    (repo / ".autolab" / "prompts" / "stage_design.runner.md").unlink()
 
     exit_code = commands_module.main(["render", "--state-file", str(state_path)])
 
@@ -323,22 +320,22 @@ def test_render_implementation_audit_and_retry_brief_modes(
     )
 
     exit_code = commands_module.main(
-        ["render", "--state-file", str(state_path), "--audit"]
+        ["render", "--state-file", str(state_path), "--audience", "audit"]
     )
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Implementation Auditor" in captured.out
 
     exit_code = commands_module.main(
-        ["render", "--state-file", str(state_path), "--retry-brief"]
+        ["render", "--state-file", str(state_path), "--audience", "brief"]
     )
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "Implementation Retry Brief" in captured.out
+    assert "Stage: implementation (brief)" in captured.out
     assert "Fix dry_run failure in trainer integration." in captured.out
 
 
-def test_render_retry_brief_fails_for_non_implementation_stage(
+def test_render_brief_mode_is_available_for_non_implementation_stage(
     tmp_path: Path, capsys
 ) -> None:
     repo = tmp_path / "repo"
@@ -348,11 +345,11 @@ def test_render_retry_brief_fails_for_non_implementation_stage(
     _write_backlog(repo)
 
     exit_code = commands_module.main(
-        ["render", "--state-file", str(state_path), "--retry-brief"]
+        ["render", "--state-file", str(state_path), "--audience", "brief"]
     )
     captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "--retry-brief is only available" in captured.err
+    assert exit_code == 0
+    assert "Stage: design (brief)" in captured.out
 
 
 def test_render_fails_fast_when_implementation_runner_template_missing(
@@ -363,11 +360,10 @@ def test_render_fails_fast_when_implementation_runner_template_missing(
     _copy_scaffold(repo)
     state_path = _write_state(repo, stage="implementation")
     _write_backlog(repo)
-    (repo / ".autolab" / "prompts" / "stage_implementation_runner.md").unlink()
+    (repo / ".autolab" / "prompts" / "stage_implementation.runner.md").unlink()
 
     exit_code = commands_module.main(["render", "--state-file", str(state_path)])
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "implementation runner prompt is missing" in captured.err
-    assert "sync-scaffold --force" in captured.err
+    assert "stage prompt is missing" in captured.err

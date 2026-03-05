@@ -12,7 +12,6 @@ import yaml
 from autolab.constants import PROMPT_TOKEN_PATTERN
 from autolab.models import StageCheckError
 from autolab.prompts import (
-    _extract_hypothesis_target_delta,
     _parse_signed_delta,
     _suggest_decision_from_metrics,
     _target_comparison_text,
@@ -100,6 +99,22 @@ def _write_backlog(repo: Path) -> None:
     path.write_text(yaml.safe_dump(backlog, sort_keys=False), encoding="utf-8")
 
 
+def _set_stage_prompt_mapping(
+    repo: Path, *, stage: str, mapping_key: str, mapping_value: str
+) -> None:
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    stages = workflow.get("stages")
+    assert isinstance(stages, dict)
+    stage_spec = stages.get(stage)
+    assert isinstance(stage_spec, dict)
+    stage_spec[mapping_key] = mapping_value
+    workflow_path.write_text(
+        yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8"
+    )
+
+
 def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -107,17 +122,106 @@ def test_render_design_prompt_accepts_required_hypothesis_id(tmp_path: Path) -> 
     state = _write_state(repo, stage="design")
     _write_backlog(repo)
 
-    template_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    template_path = _resolve_stage_prompt_path(repo, "design", prompt_role="runner")
     bundle = _render_stage_prompt(
         repo, stage="design", state=state, template_path=template_path, runner_scope={}
     )
 
     assert "{{hypothesis_id}}" not in bundle.prompt_text
-    assert "hypothesis_id: h1" in bundle.prompt_text
-    assert ".autolab/verifiers/template_fill.py --stage design" in bundle.prompt_text
+    assert "iteration_id=iter1" in bundle.prompt_text
+    assert "iteration_path=experiments/plan/iter1" in bundle.prompt_text
+    assert bundle.context_payload.get("hypothesis_id") == "h1"
 
 
-def test_render_prompt_auto_injects_registry_boilerplate_when_missing(
+def test_render_runner_prompt_replaces_empty_token_values_with_blank(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / "custom_runner_blank.md"
+    template_path.write_text(
+        (
+            "# Stage: design (runner)\n\n"
+            "## ROLE\nx\n\n"
+            "## PRIMARY OBJECTIVE\nx\n\n"
+            "task_context={{task_context}}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = _render_stage_prompt(
+        repo, stage="design", state=state, template_path=template_path, runner_scope={}
+    )
+
+    assert "task_context=" in bundle.prompt_text
+    assert "unavailable:" not in bundle.prompt_text
+
+
+def test_render_runner_prompt_rejects_unavailable_marker(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / "custom_runner_unavailable.md"
+    template_path.write_text(
+        (
+            "# Stage: design (runner)\n\n"
+            "## ROLE\nx\n\n"
+            "## PRIMARY OBJECTIVE\nx\n\n"
+            "paper_targets={{paper_targets}}\n"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StageCheckError, match="disallowed sentinel marker"):
+        _render_stage_prompt(
+            repo,
+            stage="design",
+            state=state,
+            template_path=template_path,
+            runner_scope={},
+        )
+
+
+def test_render_runner_prompt_rejects_unknown_none_markers(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+
+    template_path = repo / ".autolab" / "prompts" / "custom_runner_unknown.md"
+    template_path.write_text(
+        (
+            "# Stage: design (runner)\n\n"
+            "## ROLE\nx\n\n"
+            "## PRIMARY OBJECTIVE\nx\n\n"
+            "sync_status: unknown\n"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StageCheckError, match="disallowed sentinel marker"):
+        _render_stage_prompt(
+            repo,
+            stage="design",
+            state=state,
+            template_path=template_path,
+            runner_scope={},
+        )
+
+
+def test_render_runner_prompt_does_not_auto_inject_audit_boilerplate_when_missing(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -144,17 +248,10 @@ def test_render_prompt_auto_injects_registry_boilerplate_when_missing(
         repo, stage="design", state=state, template_path=template_path, runner_scope={}
     )
 
-    assert "## OUTPUTS (STRICT)" in bundle.prompt_text
-    assert "- experiments/plan/iter1/design.yaml" in bundle.prompt_text
-    assert "## REQUIRED INPUTS" in bundle.prompt_text
-    assert "- `iter1`" in bundle.prompt_text
-    assert "- `experiments/plan/iter1`" in bundle.prompt_text
-    assert "- `h1`" in bundle.prompt_text
-    assert "## FILE CHECKLIST" in bundle.prompt_text
-    assert "## VERIFIER MAPPING" in bundle.prompt_text
-    assert bundle.prompt_text.index("## VERIFIER MAPPING") < bundle.prompt_text.index(
-        "## STEPS"
-    )
+    assert "## OUTPUTS (STRICT)" not in bundle.prompt_text
+    assert "## FILE CHECKLIST" not in bundle.prompt_text
+    assert "## VERIFIER MAPPING" not in bundle.prompt_text
+    assert "## STEPS" in bundle.prompt_text
 
 
 def test_render_prompt_manual_boilerplate_sections_override_auto_injection(
@@ -234,9 +331,12 @@ def test_render_prompt_rejects_legacy_literal_placeholder_tokens(
         "implementation",
         "implementation_review",
         "launch",
+        "slurm_monitor",
         "extract_results",
         "update_docs",
         "decide_repeat",
+        "human_review",
+        "stop",
     ],
 )
 def test_render_scaffold_prompts_have_no_unresolved_tokens(
@@ -248,7 +348,7 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(
     state = _write_state(repo, stage=stage)
     if stage == "launch":
         state["pending_run_id"] = "20260101T000000Z_ab12cd"
-    if stage in {"extract_results", "update_docs", "decide_repeat"}:
+    if stage in {"slurm_monitor", "extract_results", "update_docs", "decide_repeat"}:
         state["last_run_id"] = "run_001"
     _write_backlog(repo)
 
@@ -263,7 +363,93 @@ def test_render_scaffold_prompts_have_no_unresolved_tokens(
     }
     assert not unresolved_tokens
     assert "<ITERATION_ID>" not in bundle.prompt_text
-    assert "## Runtime Stage Context" in bundle.prompt_text
+    assert "## Runtime Stage Context" not in bundle.prompt_text
+    assert bundle.context_payload.get("stage") == stage
+    assert "rendered_packets" in bundle.context_payload
+
+
+@pytest.mark.parametrize(
+    "prompt_role,mapping_key",
+    [
+        ("runner", "runner_prompt_file"),
+        ("audit", "prompt_file"),
+        ("brief", "brief_prompt_file"),
+        ("human", "human_prompt_file"),
+    ],
+)
+def test_resolve_stage_prompt_requires_explicit_role_mapping(
+    tmp_path: Path,
+    prompt_role: str,
+    mapping_key: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _set_stage_prompt_mapping(
+        repo,
+        stage="design",
+        mapping_key=mapping_key,
+        mapping_value="",
+    )
+
+    with pytest.raises(
+        StageCheckError,
+        match=rf"no stage prompt mapping is defined.*role '{prompt_role}'",
+    ):
+        _resolve_stage_prompt_path(repo, "design", prompt_role=prompt_role)
+
+
+def test_resolve_runner_prompt_no_legacy_implementation_runner_fallback(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    (repo / ".autolab" / "workflow.yaml").unlink()
+    (repo / ".autolab" / "prompts" / "stage_implementation.runner.md").unlink()
+    assert (repo / ".autolab" / "prompts" / "stage_implementation_runner.md").exists()
+
+    with pytest.raises(
+        StageCheckError,
+        match="stage prompt is missing for 'implementation' role 'runner'",
+    ):
+        _resolve_stage_prompt_path(repo, "implementation", prompt_role="runner")
+
+
+def test_resolve_audit_prompt_no_legacy_single_file_fallback_without_registry(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    (repo / ".autolab" / "workflow.yaml").unlink()
+    (repo / ".autolab" / "prompts" / "stage_design.audit.md").unlink()
+    assert (repo / ".autolab" / "prompts" / "stage_design.md").exists()
+
+    with pytest.raises(
+        StageCheckError, match="stage prompt is missing for 'design' role 'audit'"
+    ):
+        _resolve_stage_prompt_path(repo, "design", prompt_role="audit")
+
+
+@pytest.mark.parametrize("stage", ["slurm_monitor", "human_review", "stop"])
+@pytest.mark.parametrize(
+    "prompt_role,suffix",
+    [("runner", "runner"), ("audit", "audit"), ("brief", "brief"), ("human", "human")],
+)
+def test_resolve_stage_prompt_paths_cover_slurm_and_terminal_stages(
+    tmp_path: Path,
+    stage: str,
+    prompt_role: str,
+    suffix: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+
+    resolved = _resolve_stage_prompt_path(repo, stage, prompt_role=prompt_role)
+    assert resolved.name == f"stage_{stage}.{suffix}.md"
+    assert resolved.exists()
 
 
 def test_render_implementation_prompt_includes_project_data_root_hints(
@@ -292,9 +478,12 @@ def test_render_implementation_prompt_includes_project_data_root_hints(
 
     data_root = str((repo / "data").resolve())
     curated_root = str((repo / "data" / "curated_yt_drummers").resolve())
-    assert data_root in bundle.prompt_text
-    assert curated_root in bundle.prompt_text
-    assert "project_data_media_counts" in bundle.prompt_text
+    project_data_roots = bundle.context_payload.get("project_data_roots", [])
+    project_data_media_counts = bundle.context_payload.get("project_data_media_counts")
+    assert data_root in project_data_roots
+    assert curated_root in project_data_roots
+    assert isinstance(project_data_media_counts, dict)
+    assert curated_root in project_data_media_counts
 
 
 def test_render_prompt_includes_codebase_context_bundle_paths_and_summaries(
@@ -395,11 +584,17 @@ def test_render_prompt_includes_codebase_context_bundle_paths_and_summaries(
         runner_scope={},
     )
 
-    assert "codebase_project_map_path" in bundle.prompt_text
-    assert ".autolab/context/project_map.json" in bundle.prompt_text
-    assert "codebase_experiment_delta_map_path" in bundle.prompt_text
-    assert delta_path in bundle.prompt_text
-    assert "languages=python; experiments=1; concerns=0" in bundle.prompt_text
+    assert (
+        bundle.context_payload.get("codebase_project_map_path")
+        == ".autolab/context/project_map.json"
+    )
+    assert (
+        bundle.context_payload.get("codebase_experiment_delta_map_path") == delta_path
+    )
+    assert (
+        bundle.context_payload.get("codebase_project_map_summary")
+        == "languages=python; experiments=1; concerns=0"
+    )
 
 
 def test_render_implementation_prompt_pack_metadata_and_texts(
@@ -427,16 +622,81 @@ def test_render_implementation_prompt_pack_metadata_and_texts(
     assert bundle.context_path.name == "implementation.context.json"
     assert bundle.audit_path is not None
     assert bundle.audit_path.name == "implementation.audit.md"
-    assert bundle.retry_brief_path is not None
-    assert bundle.retry_brief_path.name == "implementation.retry_brief.md"
-    assert "implementation_plan.md" in bundle.prompt_text
+    assert bundle.brief_path is not None
+    assert bundle.brief_path.name == "implementation.brief.md"
+    assert bundle.human_path is not None
+    assert bundle.human_path.name == "implementation.human.md"
     assert "Implementation Auditor" in bundle.audit_text
-    assert "Implementation Retry Brief" in bundle.retry_brief_text
+    assert "Stage: implementation (brief)" in bundle.brief_text
+    assert "Stage: implementation (human packet)" in bundle.human_text
     assert "rendered_audit_path" in bundle.context_payload
-    assert "rendered_retry_brief_path" in bundle.context_payload
+    assert "rendered_brief_path" in bundle.context_payload
+    assert "rendered_human_path" in bundle.context_payload
 
 
-def test_render_implementation_retry_brief_distills_blockers(
+@pytest.mark.parametrize(
+    "prompt_role,suffix",
+    [("audit", "audit"), ("brief", "brief"), ("human", "human")],
+)
+def test_render_stage_raises_when_sidecar_template_missing(
+    tmp_path: Path,
+    prompt_role: str,
+    suffix: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+    (repo / ".autolab" / "prompts" / f"stage_design.{suffix}.md").unlink()
+
+    template_path = _resolve_stage_prompt_path(repo, "design", prompt_role="runner")
+    with pytest.raises(StageCheckError, match=rf"role '{prompt_role}'"):
+        _render_stage_prompt(
+            repo,
+            stage="design",
+            state=state,
+            template_path=template_path,
+            runner_scope={},
+            write_outputs=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "prompt_role,suffix",
+    [("audit", "audit"), ("brief", "brief"), ("human", "human")],
+)
+def test_render_stage_raises_when_sidecar_template_has_invalid_include(
+    tmp_path: Path,
+    prompt_role: str,
+    suffix: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="design")
+    _write_backlog(repo)
+    invalid_template_path = repo / ".autolab" / "prompts" / f"stage_design.{suffix}.md"
+    invalid_template_path.write_text(
+        "# broken\n{{shared:missing_sidecar_include.md}}\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(repo, "design", prompt_role="runner")
+    with pytest.raises(
+        StageCheckError, match="prompt shared include 'missing_sidecar_include.md'"
+    ):
+        _render_stage_prompt(
+            repo,
+            stage="design",
+            state=state,
+            template_path=template_path,
+            runner_scope={},
+            write_outputs=False,
+        )
+
+
+def test_render_implementation_brief_distills_blockers(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -501,11 +761,11 @@ def test_render_implementation_retry_brief_distills_blockers(
     )
 
     bullet_lines = [
-        line for line in bundle.retry_brief_text.splitlines() if line.startswith("- ")
+        line for line in bundle.brief_text.splitlines() if line.startswith("- ")
     ]
     assert 3 <= len(bullet_lines) <= 7
-    assert "Fix failing dry run in training loop." in bundle.retry_brief_text
-    assert "python -m pkg.train exited with code 1" in bundle.retry_brief_text
+    assert "Fix failing dry run in training loop." in bundle.brief_text
+    assert "python -m pkg.train exited with code 1" in bundle.brief_text
 
 
 _NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")

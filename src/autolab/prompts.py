@@ -17,7 +17,10 @@ from autolab.constants import (
     PROMPT_REQUIRED_TOKENS_BY_STAGE,
     PROMPT_SHARED_INCLUDE_PATTERN,
     PROMPT_TOKEN_PATTERN,
+    STAGE_BRIEF_PROMPT_FILES,
+    STAGE_HUMAN_PROMPT_FILES,
     STAGE_PROMPT_FILES,
+    STAGE_RUNNER_PROMPT_FILES,
 )
 from autolab.config import (
     _load_launch_execute_policy,
@@ -29,6 +32,8 @@ from autolab.dataset_discovery import discover_media_inputs, summarize_root_coun
 from autolab.models import RenderedPromptBundle, StageCheckError
 from autolab.registry import (
     StageSpec,
+    registry_brief_prompt_files,
+    registry_human_prompt_files,
     load_registry,
     registry_prompt_files,
     registry_required_tokens,
@@ -38,7 +43,6 @@ from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _append_log,
     _compact_json,
-    _compact_log_text,
     _detect_priority_host_mode,
     _extract_log_snippet,
     _extract_matching_lines,
@@ -54,30 +58,47 @@ def _resolve_stage_prompt_path(
     repo_root: Path, stage: str, *, prompt_role: str = "runner"
 ) -> Path:
     registry = load_registry(repo_root)
-    reg_prompt_files = registry_prompt_files(registry) if registry else {}
-    reg_runner_prompt_files = registry_runner_prompt_files(registry) if registry else {}
+    has_registry_workflow = bool(registry)
 
-    prompt_name = ""
-    if prompt_role == "audit":
-        prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage, "")
-    elif stage == "implementation":
-        prompt_name = (
-            reg_runner_prompt_files.get(stage) or "stage_implementation_runner.md"
-        )
+    if prompt_role == "runner":
+        role_mapping = registry_runner_prompt_files(registry) if registry else {}
+        fallback_mapping = STAGE_RUNNER_PROMPT_FILES
+    elif prompt_role == "audit":
+        role_mapping = registry_prompt_files(registry) if registry else {}
+        fallback_mapping = STAGE_PROMPT_FILES
+    elif prompt_role == "brief":
+        role_mapping = registry_brief_prompt_files(registry) if registry else {}
+        fallback_mapping = STAGE_BRIEF_PROMPT_FILES
+    elif prompt_role == "human":
+        role_mapping = registry_human_prompt_files(registry) if registry else {}
+        fallback_mapping = STAGE_HUMAN_PROMPT_FILES
     else:
-        prompt_name = reg_prompt_files.get(stage) or STAGE_PROMPT_FILES.get(stage, "")
+        raise StageCheckError(
+            f"unsupported prompt role '{prompt_role}' for stage '{stage}'"
+        )
 
-    if prompt_name is None or not str(prompt_name).strip():
-        raise StageCheckError(f"no stage prompt mapping is defined for '{stage}'")
-    candidate = repo_root / ".autolab" / "prompts" / prompt_name
+    if has_registry_workflow:
+        if stage not in registry:
+            raise StageCheckError(
+                f"no stage prompt mapping is defined for stage '{stage}' role '{prompt_role}'"
+            )
+        prompt_name = str(role_mapping.get(stage, "")).strip()
+    else:
+        prompt_name = str(fallback_mapping.get(stage, "")).strip()
+
+    if not prompt_name:
+        raise StageCheckError(
+            f"no stage prompt mapping is defined for stage '{stage}' role '{prompt_role}'"
+        )
+
+    prompts_dir = repo_root / ".autolab" / "prompts"
+    candidate = prompts_dir / prompt_name
     if candidate.exists():
         return candidate
-    if stage == "implementation" and prompt_role == "runner":
-        raise StageCheckError(
-            "implementation runner prompt is missing "
-            f"({candidate}). Run `autolab sync-scaffold --force` to restore prompt-pack assets."
-        )
-    raise StageCheckError(f"stage prompt is missing for '{stage}' ({candidate})")
+
+    raise StageCheckError(
+        f"stage prompt is missing for '{stage}' role '{prompt_role}' ({candidate})"
+    )
 
 
 def _resolve_prompt_shared_path(repo_root: Path, shared_name: str) -> Path:
@@ -110,23 +131,54 @@ def _render_prompt_includes(repo_root: Path, text: str, *, stage: str) -> str:
     return rendered
 
 
-def _default_stage_prompt_text(stage: str) -> str:
+def _default_stage_prompt_text(stage: str, *, audience: str = "audit") -> str:
     title = stage.replace("_", " ").title()
+    if audience == "runner":
+        return (
+            f"# Stage: {stage} (runner)\n\n"
+            "## ROLE\n"
+            "You are the stage runner executor.\n\n"
+            "## PRIMARY OBJECTIVE\n"
+            f"Complete stage '{stage}' and emit required stage outputs.\n\n"
+            "## OUTPUTS (STRICT)\n"
+            "- Emit the required stage artifacts only.\n\n"
+            "## REQUIRED INPUTS\n"
+            "- `.autolab/state.json`\n\n"
+            "## STOP CONDITIONS\n"
+            "- Stop if required inputs are missing.\n"
+            "- Stop if an edit would violate allowed edit scope from the context packet.\n"
+            "- Stop if verification cannot run.\n\n"
+            "## NON-NEGOTIABLES\n"
+            "- Use `.autolab/prompts/rendered/{{stage}}.context.json` as the source of runtime facts.\n"
+            "- Keep edits minimal and in scope.\n"
+            "- Do not invent verifier outcomes.\n\n"
+            "## FAILURE / RETRY BEHAVIOR\n"
+            "- On failure, report blockers clearly in stage artifacts.\n"
+        )
+    if audience == "brief":
+        return f"# Stage: {stage} (brief)\n\n## SUMMARY\n{{{{brief_summary}}}}\n"
+    if audience == "human":
+        return (
+            f"# Stage: {stage} (human packet)\n\n"
+            "## ROLE\n"
+            "You are preparing a human-facing decision packet.\n\n"
+            "## SUMMARY\n"
+            "{{brief_summary}}\n"
+        )
     return (
-        f"# {title} Stage Prompt\n\n"
-        "This prompt was bootstrapped by `autolab init`.\n"
-        "Update it with your project-specific instructions for this stage.\n\n"
-        "## Hard Guardrails (Read First)\n"
-        "- Do not modify experiments whose backlog `type` is `done`; legacy closed statuses (`done`, `completed`, `closed`, `resolved`) are also treated as read-only unless a human explicitly re-opens them.\n\n"
-        "- If the mapped experiment type is `done`, do not edit that experiment and wait for an explicit reopen/retype.\n\n"
-        "## Repository Path Scope\n"
-        "- Required stage artifacts may be under `{{iteration_path}}/...` and `.autolab/...` when specified.\n"
-        "- Do not restrict analysis or edits to `experiments/` only.\n"
-        "- `src/` contains core implementation that should work across multiple experiments or the broader codebase.\n"
-        "- `experiments/` can contain experiment-specific implementation to prevent context flooding; move reusable logic to `src/` when multiple experiments need it.\n"
-        "- `scripts/` contains useful miscellaneous task utilities.\n"
-        "- `autolab/` is a valid target when task scope is orchestration, policy, prompt, or runner behavior.\n"
-        "- Keep diffs minimal and avoid unrelated files.\n"
+        f"# Stage: {title} (audit)\n\n"
+        "## ROLE\n"
+        "You are the stage audit contract owner.\n\n"
+        "## PRIMARY OBJECTIVE\n"
+        f"Define auditable policy and verifier expectations for stage '{stage}'.\n\n"
+        "## OUTPUTS (STRICT)\n"
+        "- Stage outputs listed in workflow contract.\n\n"
+        "## REQUIRED INPUTS\n"
+        "- `.autolab/state.json`\n\n"
+        "## FILE CHECKLIST\n"
+        "- [ ] Required outputs are concrete and schema-valid.\n\n"
+        "## FAILURE / RETRY BEHAVIOR\n"
+        "- Verification failure triggers retry/escalation per policy.\n"
     )
 
 
@@ -810,8 +862,10 @@ def _build_prompt_context(
     stage_metadata: dict[str, Any] = {}
     if isinstance(stage_spec, StageSpec):
         stage_metadata = {
-            "prompt_file": stage_spec.prompt_file,
             "runner_prompt_file": stage_spec.runner_prompt_file,
+            "audit_prompt_file": stage_spec.prompt_file,
+            "brief_prompt_file": stage_spec.brief_prompt_file,
+            "human_prompt_file": stage_spec.human_prompt_file,
             "required_outputs": list(stage_spec.required_outputs),
             "required_outputs_any_of": [
                 list(group) for group in stage_spec.required_outputs_any_of
@@ -829,12 +883,20 @@ def _build_prompt_context(
         }
     protected_files = _load_protected_files(policy, auto_mode=False)
 
+    retry_counters = {
+        "stage_attempt": stage_attempt,
+        "max_stage_attempts": max_stage_attempts,
+        "remaining_attempts": remaining_attempts,
+    }
+    launch_execute_text = "true" if launch_execute else "false"
+
     return {
+        "context_schema_version": "2.0",
         "generated_at": _utc_now(),
         "stage": stage,
         "host_mode": host_mode,
         "launch_mode": launch_mode,
-        "launch_execute": "true" if launch_execute else "false",
+        "launch_execute": launch_execute_text,
         "iteration_id": iteration_id,
         "iteration_path": iteration_path,
         "experiment_id": experiment_id,
@@ -878,13 +940,64 @@ def _build_prompt_context(
         "codebase_experiment_delta_summary": codebase_context_bundle.get(
             "codebase_experiment_delta_summary", ""
         ),
-        "retry_counters": {
-            "stage_attempt": stage_attempt,
-            "max_stage_attempts": max_stage_attempts,
-            "remaining_attempts": remaining_attempts,
-        },
+        "retry_counters": retry_counters,
         "protected_files": protected_files,
         "stage_metadata": stage_metadata,
+        "runtime": {
+            "stage": stage,
+            "host_mode": host_mode,
+            "launch_mode": launch_mode,
+            "launch_execute": launch_execute_text,
+            "state_snapshot": state_excerpt,
+            "retry_counters": retry_counters,
+        },
+        "scope": {
+            "runner_scope": scope_payload,
+            "protected_files": protected_files,
+        },
+        "artifacts": {
+            "iteration_id": iteration_id,
+            "iteration_path": iteration_path,
+            "run_id": run_id,
+            "hypothesis_id": hypothesis_id,
+            "codebase_project_map_path": codebase_context_bundle.get(
+                "codebase_project_map_path", ""
+            ),
+            "codebase_project_map_summary": codebase_context_bundle.get(
+                "codebase_project_map_summary", ""
+            ),
+            "codebase_experiment_delta_map_path": codebase_context_bundle.get(
+                "codebase_experiment_delta_map_path", ""
+            ),
+            "codebase_experiment_delta_summary": codebase_context_bundle.get(
+                "codebase_experiment_delta_summary", ""
+            ),
+        },
+        "verification": {
+            "verifier_outputs": verifier_outputs,
+            "verifier_errors": verifier_errors,
+            "review_feedback": review_feedback,
+            "dry_run_output": dry_run_output,
+        },
+        "metrics": {
+            "metrics_summary": metrics_summary,
+            "target_comparison": target_comparison,
+            "decision_suggestion": decision_suggestion,
+            "auto_metrics_evidence": auto_metrics_evidence_record,
+        },
+        "handoff": {
+            "todo_focus": todo_focus_payload,
+            "agent_result": agent_result_payload,
+            "task_context": task_context_text,
+            "diff_summary": diff_summary,
+        },
+        "policy": {
+            "python_bin": python_bin,
+            "paper_targets": paper_targets,
+            "recommended_memory_estimate": recommended_memory_estimate,
+            "available_memory_gb": available_memory_gb,
+        },
+        "stage_contract": stage_metadata,
     }
 
 
@@ -897,10 +1010,10 @@ def _sanitize_retry_blocker(text: str, *, max_chars: int = 240) -> str:
     return compact[: max_chars - 3].rstrip() + "..."
 
 
-def _implementation_retry_blockers(
-    repo_root: Path, *, context_payload: dict[str, Any]
+def _collect_stage_brief_items(
+    repo_root: Path, *, context_payload: dict[str, Any], stage: str
 ) -> list[str]:
-    blockers: list[str] = []
+    items: list[str] = []
     seen: set[str] = set()
 
     iteration_id = str(context_payload.get("iteration_id", "")).strip()
@@ -922,13 +1035,13 @@ def _implementation_retry_blockers(
     if isinstance(review_payload, dict):
         review_status = str(review_payload.get("status", "")).strip()
         if review_status in {"needs_retry", "failed"}:
-            blockers.append(f"review_result status is '{review_status}'")
+            items.append(f"review_result status is '{review_status}'")
         findings = review_payload.get("blocking_findings")
         if isinstance(findings, list):
             for finding in findings:
                 normalized = _sanitize_retry_blocker(str(finding))
                 if normalized:
-                    blockers.append(normalized)
+                    items.append(normalized)
 
     verification_payload = _load_json_if_exists(
         repo_root / ".autolab" / "verification_result.json"
@@ -939,7 +1052,7 @@ def _implementation_retry_blockers(
                 str(verification_payload.get("message", ""))
             )
             if verification_message:
-                blockers.append(verification_message)
+                items.append(verification_message)
         details = verification_payload.get("details")
         commands = details.get("commands") if isinstance(details, dict) else None
         if isinstance(commands, list):
@@ -959,7 +1072,7 @@ def _implementation_retry_blockers(
                     )
                 )
                 if detail:
-                    blockers.append(f"{name}: {detail}")
+                    items.append(f"{name}: {detail}")
 
     for fallback_source in (
         context_payload.get("verifier_errors"),
@@ -976,15 +1089,15 @@ def _implementation_retry_blockers(
                 continue
             if len(candidate) < 24:
                 continue
-            blockers.append(candidate)
-            if len(blockers) >= 12:
+            items.append(candidate)
+            if len(items) >= 12:
                 break
-        if len(blockers) >= 12:
+        if len(items) >= 12:
             break
 
     deduped: list[str] = []
-    for blocker in blockers:
-        normalized = blocker.strip()
+    for item in items:
+        normalized = item.strip()
         if not normalized:
             continue
         key = normalized.lower()
@@ -995,17 +1108,17 @@ def _implementation_retry_blockers(
     return deduped
 
 
-def _build_implementation_retry_brief(
-    repo_root: Path, *, context_payload: dict[str, Any]
+def _build_stage_brief_summary(
+    repo_root: Path, *, context_payload: dict[str, Any], stage: str
 ) -> str:
-    blockers = _implementation_retry_blockers(
-        repo_root, context_payload=context_payload
+    brief_items = _collect_stage_brief_items(
+        repo_root, context_payload=context_payload, stage=stage
     )
-    selected = blockers[:7]
+    selected = brief_items[:7]
     while len(selected) < 3:
         if len(selected) == 0:
             selected.append(
-                "No prior blocking findings were recorded; treat this as a fresh implementation pass."
+                f"No prior blocking findings were recorded for stage '{stage}'."
             )
         elif len(selected) == 1:
             selected.append(
@@ -1013,17 +1126,11 @@ def _build_implementation_retry_brief(
             )
         else:
             selected.append(
-                "After edits, run `autolab verify --stage implementation` and record concrete failures in `implementation_plan.md`."
+                f"After edits, run `autolab verify --stage {stage}` and record concrete evidence in required stage artifacts."
             )
 
-    lines = [
-        "# Implementation Retry Brief",
-        "",
-        "Use this blocker summary for focused remediation. Do not paste raw logs or transcripts.",
-        "",
-    ]
+    lines = []
     lines.extend(f"- {entry}" for entry in selected)
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -1083,6 +1190,7 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         "project_data_media_counts": _to_text(
             context.get("project_data_media_counts"), "project_data_media_counts"
         ),
+        "brief_summary": _to_text(context.get("brief_summary"), "brief_summary"),
     }
 
 
@@ -1318,10 +1426,21 @@ def _render_stage_prompt(
     runner_scope: dict[str, Any] | None = None,
     write_outputs: bool = True,
 ) -> RenderedPromptBundle:
+    def _runner_sentinel_violations(rendered_text: str) -> list[str]:
+        violations: list[str] = []
+        if re.search(r"(?i)\bunavailable:\s*", rendered_text):
+            violations.append("unavailable:")
+        if re.search(r"(?im)(?:[:=]\s*)(unknown|none)\s*$", rendered_text):
+            violations.append("value sentinel unknown/none")
+        if re.search(r"(?im)^\s*[-*]\s*(unknown|none)\s*$", rendered_text):
+            violations.append("bullet sentinel unknown/none")
+        return violations
+
     def _render_template_text(
         *,
         source_path: Path,
         source_text: str,
+        audience: str,
         inject_registry_boilerplate: bool,
         required_tokens: set[str],
         token_values: dict[str, str],
@@ -1379,13 +1498,11 @@ def _render_stage_prompt(
             text = str(value).strip()
             if text:
                 return text
+            if audience == "runner":
+                return ""
             return f"unavailable: {token}"
 
         rendered_text = PROMPT_TOKEN_PATTERN.sub(_replace_token, template_text)
-        if "{{stage_context}}" not in template_text:
-            stage_context_block = token_values.get("stage_context", "").strip()
-            if stage_context_block:
-                rendered_text = f"{rendered_text.rstrip()}\n\n{stage_context_block}\n"
 
         unresolved_tokens = sorted(
             {
@@ -1435,77 +1552,115 @@ def _render_stage_prompt(
     context_payload["stage_context"] = _build_runtime_stage_context_block(
         context_payload
     )
+    context_payload["brief_summary"] = _build_stage_brief_summary(
+        repo_root, context_payload=context_payload, stage=stage
+    )
     token_values = _context_token_values(context_payload)
     reg_required = registry_required_tokens(registry) if registry else {}
     required_tokens = reg_required.get(stage) or PROMPT_REQUIRED_TOKENS_BY_STAGE.get(
         stage, {"iteration_id"}
     )
 
-    rendered_text = _render_template_text(
+    runner_text = _render_template_text(
         source_path=template_path,
         source_text=runner_template_text,
+        audience="runner",
+        inject_registry_boilerplate=False,
+        required_tokens=required_tokens,
+        token_values=token_values,
+        context_payload=context_payload,
+    )
+    runner_sentinel_violations = _runner_sentinel_violations(runner_text)
+    if runner_sentinel_violations:
+        raise StageCheckError(
+            (
+                f"rendered runner prompt contains disallowed sentinel marker(s) "
+                f"for stage '{stage}' at {template_path}: "
+                f"{', '.join(sorted(set(runner_sentinel_violations)))}"
+            )
+        )
+
+    def _load_sidecar_template(prompt_role: str) -> tuple[Path, str]:
+        sidecar_template_path = _resolve_stage_prompt_path(
+            repo_root, stage, prompt_role=prompt_role
+        )
+        try:
+            sidecar_template_text = sidecar_template_path.read_text(encoding="utf-8")
+            sidecar_template_text = _render_prompt_includes(
+                repo_root, sidecar_template_text, stage=stage
+            )
+            return sidecar_template_path, sidecar_template_text
+        except StageCheckError:
+            raise
+        except Exception as exc:
+            raise StageCheckError(
+                f"stage {prompt_role} prompt could not be read at {sidecar_template_path}: {exc}"
+            ) from exc
+
+    audit_template_path, audit_template_text = _load_sidecar_template("audit")
+    brief_template_path, brief_template_text = _load_sidecar_template("brief")
+    human_template_path, human_template_text = _load_sidecar_template("human")
+
+    audit_text = _render_template_text(
+        source_path=audit_template_path,
+        source_text=audit_template_text,
+        audience="audit",
         inject_registry_boilerplate=True,
         required_tokens=required_tokens,
         token_values=token_values,
         context_payload=context_payload,
     )
+    brief_text = _render_template_text(
+        source_path=brief_template_path,
+        source_text=brief_template_text,
+        audience="brief",
+        inject_registry_boilerplate=False,
+        required_tokens=required_tokens,
+        token_values=token_values,
+        context_payload=context_payload,
+    )
+    human_text = _render_template_text(
+        source_path=human_template_path,
+        source_text=human_template_text,
+        audience="human",
+        inject_registry_boilerplate=False,
+        required_tokens=required_tokens,
+        token_values=token_values,
+        context_payload=context_payload,
+    )
 
-    audit_template_path: Path | None = None
-    audit_text = ""
-    retry_brief_text = ""
     rendered_dir = repo_root / ".autolab" / "prompts" / "rendered"
-    if stage == "implementation":
-        rendered_path = rendered_dir / "implementation.runner.md"
-        context_path = rendered_dir / "implementation.context.json"
-        audit_path = rendered_dir / "implementation.audit.md"
-        retry_brief_path = rendered_dir / "implementation.retry_brief.md"
-
-        audit_template_path = _resolve_stage_prompt_path(
-            repo_root, stage, prompt_role="audit"
-        )
-        try:
-            audit_template_text = audit_template_path.read_text(encoding="utf-8")
-            audit_template_text = _render_prompt_includes(
-                repo_root, audit_template_text, stage=stage
-            )
-        except Exception as exc:
-            raise StageCheckError(
-                f"implementation audit prompt could not be read at {audit_template_path}: {exc}"
-            ) from exc
-
-        audit_text = _render_template_text(
-            source_path=audit_template_path,
-            source_text=audit_template_text,
-            inject_registry_boilerplate=True,
-            required_tokens=required_tokens,
-            token_values=token_values,
-            context_payload=context_payload,
-        )
-        retry_brief_text = _build_implementation_retry_brief(
-            repo_root, context_payload=context_payload
-        )
-    else:
-        rendered_path = rendered_dir / f"{stage}.md"
-        context_path = rendered_dir / f"{stage}.context.json"
-        audit_path = None
-        retry_brief_path = None
+    rendered_path = rendered_dir / f"{stage}.runner.md"
+    context_path = rendered_dir / f"{stage}.context.json"
+    audit_path = rendered_dir / f"{stage}.audit.md"
+    brief_path = rendered_dir / f"{stage}.brief.md"
+    human_path = rendered_dir / f"{stage}.human.md"
 
     if write_outputs:
         rendered_dir.mkdir(parents=True, exist_ok=True)
-        rendered_path.write_text(rendered_text, encoding="utf-8")
-        if isinstance(audit_path, Path):
-            audit_path.write_text(audit_text, encoding="utf-8")
-        if isinstance(retry_brief_path, Path):
-            retry_brief_path.write_text(retry_brief_text, encoding="utf-8")
+        rendered_path.write_text(runner_text, encoding="utf-8")
+        audit_path.write_text(audit_text, encoding="utf-8")
+        brief_path.write_text(brief_text, encoding="utf-8")
+        human_path.write_text(human_text, encoding="utf-8")
 
     context_payload = {
         **context_payload,
         "template_path": str(template_path),
         "rendered_prompt_path": str(rendered_path),
         "rendered_context_path": str(context_path),
-        "audit_template_path": str(audit_template_path) if audit_template_path else "",
-        "rendered_audit_path": str(audit_path) if audit_path else "",
-        "rendered_retry_brief_path": str(retry_brief_path) if retry_brief_path else "",
+        "rendered_packets": {
+            "runner": str(rendered_path),
+            "audit": str(audit_path),
+            "brief": str(brief_path),
+            "human": str(human_path),
+            "context": str(context_path),
+        },
+        "audit_template_path": str(audit_template_path),
+        "brief_template_path": str(brief_template_path),
+        "human_template_path": str(human_template_path),
+        "rendered_audit_path": str(audit_path),
+        "rendered_brief_path": str(brief_path),
+        "rendered_human_path": str(human_path),
     }
     if write_outputs:
         _write_json(context_path, context_payload)
@@ -1514,11 +1669,15 @@ def _render_stage_prompt(
         template_path=template_path,
         rendered_path=rendered_path,
         context_path=context_path,
-        prompt_text=rendered_text,
+        prompt_text=runner_text,
         context_payload=context_payload,
         audit_template_path=audit_template_path,
         audit_path=audit_path,
-        retry_brief_path=retry_brief_path,
+        brief_template_path=brief_template_path,
+        brief_path=brief_path,
+        human_template_path=human_template_path,
+        human_path=human_path,
         audit_text=audit_text,
-        retry_brief_text=retry_brief_text,
+        brief_text=brief_text,
+        human_text=human_text,
     )

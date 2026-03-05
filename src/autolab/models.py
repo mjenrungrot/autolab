@@ -89,9 +89,13 @@ class RenderedPromptBundle:
     context_payload: dict[str, Any]
     audit_template_path: Path | None = None
     audit_path: Path | None = None
-    retry_brief_path: Path | None = None
+    brief_template_path: Path | None = None
+    brief_path: Path | None = None
+    human_template_path: Path | None = None
+    human_path: Path | None = None
     audit_text: str = ""
-    retry_brief_text: str = ""
+    brief_text: str = ""
+    human_text: str = ""
 
 
 @dataclass(frozen=True)

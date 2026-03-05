@@ -25,12 +25,21 @@ OUTPUTS_SECTION_PATTERN = re.compile(
 
 
 def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
-    prompt_file = spec.get("prompt_file", "")
-    if not prompt_file:
+    # Prefer runner prompt in audience-aware layouts, but also accept audit/legacy
+    # prompt coverage to preserve compatibility for mixed migrations.
+    candidate_files: list[str] = []
+    runner_file = str(spec.get("runner_prompt_file", "")).strip()
+    if runner_file:
+        candidate_files.append(runner_file)
+    prompt_file = str(spec.get("prompt_file", "")).strip()
+    if prompt_file and prompt_file not in candidate_files:
+        candidate_files.append(prompt_file)
+    if not candidate_files:
         return []
-    prompt_path = prompts_dir / prompt_file
-    if not prompt_path.exists():
-        return [f"{prompt_path} is missing"]
+    candidate_paths = [prompts_dir / filename for filename in candidate_files]
+    existing_paths = [path for path in candidate_paths if path.exists()]
+    if not existing_paths:
+        return [f"{candidate_paths[0]} is missing"]
 
     required_outputs = spec.get("required_outputs", [])
     if not isinstance(required_outputs, list):
@@ -49,26 +58,33 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
     if not required_outputs and not required_outputs_any_of and not required_outputs_if:
         return []
 
-    text = prompt_path.read_text(encoding="utf-8")
-    match = OUTPUTS_SECTION_PATTERN.search(text)
-    if not match:
+    outputs_sections: list[str] = []
+    for prompt_path in existing_paths:
+        text = prompt_path.read_text(encoding="utf-8")
+        match = OUTPUTS_SECTION_PATTERN.search(text)
+        if match:
+            outputs_sections.append(match.group(1))
+    if not outputs_sections:
         # Auto-injection at render time will supply this section, so pass
         return []
-
-    outputs_text = match.group(1)
 
     def _mentions_output(raw_output: str) -> bool:
         normalized = str(raw_output).replace("<RUN_ID>", "").replace("{{run_id}}", "")
         filename = Path(normalized).name
         return bool(
-            filename and (filename in outputs_text or str(raw_output) in outputs_text)
+            filename
+            and any(
+                filename in outputs_text or str(raw_output) in outputs_text
+                for outputs_text in outputs_sections
+            )
         )
 
     failures: list[str] = []
+    prompt_label = ", ".join(str(path) for path in existing_paths)
     for output in required_outputs:
         if not _mentions_output(str(output)):
             failures.append(
-                f"{prompt_path} OUTPUTS section does not mention required output '{output}' from workflow.yaml"
+                f"{prompt_label} OUTPUTS section does not mention required output '{output}' from workflow.yaml"
             )
 
     for group in required_outputs_any_of:
@@ -79,7 +95,7 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
             continue
         if not any(_mentions_output(item) for item in normalized_group):
             failures.append(
-                f"{prompt_path} OUTPUTS section does not mention any required one-of outputs: {normalized_group}"
+                f"{prompt_label} OUTPUTS section does not mention any required one-of outputs: {normalized_group}"
             )
 
     for rule in required_outputs_if:
@@ -94,7 +110,7 @@ def _check_stage(stage: str, spec: dict, prompts_dir: Path) -> list[str]:
                 continue
             if not _mentions_output(output_text):
                 failures.append(
-                    f"{prompt_path} OUTPUTS section does not mention conditional required output '{output_text}' from workflow.yaml"
+                    f"{prompt_label} OUTPUTS section does not mention conditional required output '{output_text}' from workflow.yaml"
                 )
     return failures
 

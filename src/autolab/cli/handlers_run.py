@@ -137,33 +137,28 @@ def _cmd_render(args: argparse.Namespace) -> int:
         print(f"autolab render: ERROR {exc}", file=sys.stderr)
         return 1
 
-    rendered_text = bundle.prompt_text
-    if bool(getattr(args, "audit", False)):
-        if not bundle.audit_text:
-            print(
-                "autolab render: ERROR --audit is only available for stage 'implementation'",
-                file=sys.stderr,
-            )
-            return 1
+    audience = str(getattr(args, "audience", "runner") or "runner").strip().lower()
+    if audience == "runner":
+        rendered_text = bundle.prompt_text
+    elif audience == "audit":
         rendered_text = bundle.audit_text
-    elif bool(getattr(args, "retry_brief", False)):
-        if not bundle.retry_brief_text:
-            print(
-                "autolab render: ERROR --retry-brief is only available for stage 'implementation'",
-                file=sys.stderr,
-            )
-            return 1
-        rendered_text = bundle.retry_brief_text
+    elif audience == "brief":
+        rendered_text = bundle.brief_text
+    elif audience == "human":
+        rendered_text = bundle.human_text
+    elif audience == "context":
+        rendered_text = json.dumps(bundle.context_payload, indent=2)
+    else:
+        print(
+            f"autolab render: ERROR unsupported audience '{audience}'",
+            file=sys.stderr,
+        )
+        return 1
 
     if rendered_text:
         sys.stdout.write(rendered_text)
-    if not rendered_text.endswith("\n"):
-        sys.stdout.write("\n")
-
-    if bool(getattr(args, "context", False)):
-        sys.stdout.write("\n----- AUTOLAB CONTEXT JSON -----\n")
-        sys.stdout.write(json.dumps(bundle.context_payload, indent=2))
-        sys.stdout.write("\n")
+        if not rendered_text.endswith("\n"):
+            sys.stdout.write("\n")
 
     return 0
 

@@ -37,7 +37,10 @@ from autolab.constants import (
     DEFAULT_VERIFIER_POLICY,
     ITERATION_ID_SAFE_PATTERN,
     LOCK_STALE_SECONDS,
+    STAGE_BRIEF_PROMPT_FILES,
+    STAGE_HUMAN_PROMPT_FILES,
     STAGE_PROMPT_FILES,
+    STAGE_RUNNER_PROMPT_FILES,
     TERMINAL_STAGES,
 )
 from autolab.registry import load_registry, StageSpec

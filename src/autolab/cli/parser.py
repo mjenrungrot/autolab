@@ -115,20 +115,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Render a specific stage instead of state.stage.",
     )
     render.add_argument(
-        "--context",
-        action="store_true",
-        help="Append resolved prompt context JSON after prompt text.",
-    )
-    render_output_mode = render.add_mutually_exclusive_group()
-    render_output_mode.add_argument(
-        "--audit",
-        action="store_true",
-        help="Render the stage audit contract (implementation stage only).",
-    )
-    render_output_mode.add_argument(
-        "--retry-brief",
-        action="store_true",
-        help="Render the distilled retry blocker brief (implementation stage only).",
+        "--audience",
+        choices=("runner", "audit", "brief", "human", "context"),
+        default="runner",
+        help="Select which rendered packet to print (default: runner).",
     )
     render.set_defaults(handler=_cmd_render)
 

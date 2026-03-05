@@ -11,11 +11,14 @@ import re
 from pathlib import Path
 
 from autolab.registry import (
+    registry_brief_prompt_files,
+    registry_human_prompt_files,
     load_registry,
     registry_active_stages,
     registry_all_stages,
     registry_decision_stages,
     registry_prompt_files,
+    registry_runner_prompt_files,
     registry_required_tokens,
     registry_runner_eligible,
     registry_terminal_stages,
@@ -38,17 +41,29 @@ _FALLBACK_DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
 _FALLBACK_RUNNER_ELIGIBLE_STAGES = _FALLBACK_ACTIVE_STAGES
 _FALLBACK_ALL_STAGES = set(_FALLBACK_ACTIVE_STAGES + _FALLBACK_TERMINAL_STAGES)
 _FALLBACK_STAGE_PROMPT_FILES = {
-    "hypothesis": "stage_hypothesis.md",
-    "design": "stage_design.md",
-    "implementation": "stage_implementation.md",
-    "implementation_review": "stage_implementation_review.md",
-    "launch": "stage_launch.md",
-    "slurm_monitor": "stage_slurm_monitor.md",
-    "extract_results": "stage_extract_results.md",
-    "update_docs": "stage_update_docs.md",
-    "decide_repeat": "stage_decide_repeat.md",
-    "human_review": "stage_human_review.md",
-    "stop": "stage_stop.md",
+    "hypothesis": "stage_hypothesis.audit.md",
+    "design": "stage_design.audit.md",
+    "implementation": "stage_implementation.audit.md",
+    "implementation_review": "stage_implementation_review.audit.md",
+    "launch": "stage_launch.audit.md",
+    "slurm_monitor": "stage_slurm_monitor.audit.md",
+    "extract_results": "stage_extract_results.audit.md",
+    "update_docs": "stage_update_docs.audit.md",
+    "decide_repeat": "stage_decide_repeat.audit.md",
+    "human_review": "stage_human_review.audit.md",
+    "stop": "stage_stop.audit.md",
+}
+_FALLBACK_STAGE_RUNNER_PROMPT_FILES = {
+    stage: filename.replace(".audit.md", ".runner.md")
+    for stage, filename in _FALLBACK_STAGE_PROMPT_FILES.items()
+}
+_FALLBACK_STAGE_BRIEF_PROMPT_FILES = {
+    stage: filename.replace(".audit.md", ".brief.md")
+    for stage, filename in _FALLBACK_STAGE_PROMPT_FILES.items()
+}
+_FALLBACK_STAGE_HUMAN_PROMPT_FILES = {
+    stage: filename.replace(".audit.md", ".human.md")
+    for stage, filename in _FALLBACK_STAGE_PROMPT_FILES.items()
 }
 _FALLBACK_PROMPT_REQUIRED_TOKENS_BY_STAGE = {
     "hypothesis": {"iteration_id", "iteration_path", "hypothesis_id"},
@@ -194,6 +209,21 @@ STAGE_PROMPT_FILES = (
     registry_prompt_files(_BUNDLED_REGISTRY)
     if _BUNDLED_REGISTRY
     else _FALLBACK_STAGE_PROMPT_FILES
+)
+STAGE_RUNNER_PROMPT_FILES = (
+    registry_runner_prompt_files(_BUNDLED_REGISTRY)
+    if _BUNDLED_REGISTRY
+    else _FALLBACK_STAGE_RUNNER_PROMPT_FILES
+)
+STAGE_BRIEF_PROMPT_FILES = (
+    registry_brief_prompt_files(_BUNDLED_REGISTRY)
+    if _BUNDLED_REGISTRY
+    else _FALLBACK_STAGE_BRIEF_PROMPT_FILES
+)
+STAGE_HUMAN_PROMPT_FILES = (
+    registry_human_prompt_files(_BUNDLED_REGISTRY)
+    if _BUNDLED_REGISTRY
+    else _FALLBACK_STAGE_HUMAN_PROMPT_FILES
 )
 SLURM_JOB_LIST_PATH = Path("docs/slurm_job_list.md")
 PROMPT_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")

@@ -41,15 +41,35 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     max_retries = _resolve_stage_max_retries(policy, stage_name)
     python_bin = _resolve_policy_python_bin(policy)
 
-    # Resolve prompt file paths
+    # Resolve prompt file paths (runner/audit/brief/human)
     prompt_path = repo_root / ".autolab" / "prompts" / spec.prompt_file
     runner_prompt_path = prompt_path
+    brief_prompt_path = prompt_path
+    human_prompt_path = prompt_path
     try:
         runner_prompt_path = _resolve_stage_prompt_path(
             repo_root, stage_name, prompt_role="runner"
         )
     except StageCheckError:
-        runner_prompt_path = prompt_path
+        pass
+    try:
+        prompt_path = _resolve_stage_prompt_path(
+            repo_root, stage_name, prompt_role="audit"
+        )
+    except StageCheckError:
+        pass
+    try:
+        brief_prompt_path = _resolve_stage_prompt_path(
+            repo_root, stage_name, prompt_role="brief"
+        )
+    except StageCheckError:
+        pass
+    try:
+        human_prompt_path = _resolve_stage_prompt_path(
+            repo_root, stage_name, prompt_role="human"
+        )
+    except StageCheckError:
+        pass
 
     try:
         resolved_prompt_path = prompt_path.relative_to(repo_root).as_posix()
@@ -61,6 +81,14 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         ).as_posix()
     except ValueError:
         resolved_runner_prompt_path = str(runner_prompt_path)
+    try:
+        resolved_brief_prompt_path = brief_prompt_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        resolved_brief_prompt_path = str(brief_prompt_path)
+    try:
+        resolved_human_prompt_path = human_prompt_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        resolved_human_prompt_path = str(human_prompt_path)
 
     # Determine which verifier scripts would run
     verifier_scripts: list[str] = []
@@ -122,10 +150,14 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     if output_json:
         payload: dict[str, Any] = {
             "stage": stage_name,
-            "prompt_file": spec.prompt_file,
-            "resolved_prompt_path": resolved_prompt_path,
+            "audit_prompt_file": spec.prompt_file,
+            "resolved_audit_prompt_path": resolved_prompt_path,
             "runner_prompt_file": spec.runner_prompt_file or None,
             "resolved_runner_prompt_path": resolved_runner_prompt_path,
+            "brief_prompt_file": spec.brief_prompt_file or None,
+            "resolved_brief_prompt_path": resolved_brief_prompt_path,
+            "human_prompt_file": spec.human_prompt_file or None,
+            "resolved_human_prompt_path": resolved_human_prompt_path,
             "required_tokens": sorted(spec.required_tokens),
             "optional_tokens": sorted(spec.optional_tokens),
             "required_outputs": output_notes,
@@ -145,11 +177,14 @@ def _cmd_explain(args: argparse.Namespace) -> int:
     else:
         print(f"autolab explain stage {stage_name}")
         print("")
-        print(f"prompt_file: {spec.prompt_file}")
-        print(f"resolved_prompt_path: {resolved_prompt_path}")
-        if spec.runner_prompt_file:
-            print(f"runner_prompt_file: {spec.runner_prompt_file}")
-            print(f"resolved_runner_prompt_path: {resolved_runner_prompt_path}")
+        print(f"audit_prompt_file: {spec.prompt_file}")
+        print(f"resolved_audit_prompt_path: {resolved_prompt_path}")
+        print(f"runner_prompt_file: {spec.runner_prompt_file}")
+        print(f"resolved_runner_prompt_path: {resolved_runner_prompt_path}")
+        print(f"brief_prompt_file: {spec.brief_prompt_file}")
+        print(f"resolved_brief_prompt_path: {resolved_brief_prompt_path}")
+        print(f"human_prompt_file: {spec.human_prompt_file}")
+        print(f"resolved_human_prompt_path: {resolved_human_prompt_path}")
         print(f"required_tokens: {', '.join(sorted(spec.required_tokens)) or '(none)'}")
         print(f"optional_tokens: {', '.join(sorted(spec.optional_tokens)) or '(none)'}")
         required_outputs_text = (

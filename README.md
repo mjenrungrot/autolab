@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.11
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.12
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -99,14 +99,18 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `skip`, `focus`, and `experiment move`).
 
-**Prompt render (no execution).** `autolab render` prints the resolved stage prompt without running transitions or verifiers. It defaults to `state.stage`. Use `--stage <stage>` to override, and `--context` to append resolved context JSON. For `implementation`, default output is the runner prompt; use `--audit` or `--retry-brief` for prompt-pack views.
+**Prompt render (no execution).** `autolab render` resolves the stage prompt pack without running transitions or verifiers, then prints one audience packet. It defaults to `state.stage` and `--audience runner`. Use `--stage <stage>` to override and `--audience runner|audit|brief|human|context` to select output.
+
+`runner` is the primary execution payload (`.autolab/prompts/rendered/<stage>.runner.md`) that Autolab sends to runner stdin. `audit`, `brief`, `human`, and `context` are companion artifacts for policy checks, retry/handoff context, and inspection tooling.
+
+Runner packets are intentionally slim: mission, strict outputs, required inputs, stop conditions, and non-negotiables. Status vocabulary and other audit policy payloads (verification rituals, file budgets, evidence schemas, raw verifier blobs) stay in companion artifacts, not runner prompts.
 
 ```bash
 autolab render
 autolab render --stage implementation
-autolab render --stage design --context
-autolab render --stage implementation --audit
-autolab render --stage implementation --retry-brief
+autolab render --stage design --audience context
+autolab render --stage implementation --audience audit
+autolab render --stage implementation --audience brief
 ```
 
 **Interactive cockpit.** `autolab tui` launches a mode-based Textual inspector (`Home`, `Runs`, `Files`, `Console`, `Help`) with render-aware guidance:
@@ -114,7 +118,7 @@ autolab render --stage implementation --retry-brief
 - Home shows stage status, blockers, required artifacts, and a rendered prompt preview so users can see what Autolab will run.
 - Home includes a dedicated "Handoff & Resume" card (scope, wave/task status, blockers/decisions, recommended next command, safe resume status).
 - Home can resolve `human_review` directly (`pass|retry|stop`) using the same unlock + confirm flow as other mutating actions.
-- Files supports quick-open for rendered prompt, render context, rendered audit contract, implementation retry brief, prompt template, state, and stage artifacts.
+- Files supports quick-open for rendered prompt, render context, rendered audit contract, rendered brief, rendered human packet, prompt template, state, and stage artifacts.
 - Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
 
@@ -141,7 +145,7 @@ Each stage produces specific artifacts and has defined exit behavior:
 
 - **hypothesis** -- `hypothesis.md`; advances when metric/target/criteria fields are present.
 - **design** -- `design.yaml`; advances when required keys are present.
-- **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`). Prompt-pack outputs for this stage are rendered under `.autolab/prompts/rendered/` as `implementation.runner.md`, `implementation.context.json`, `implementation.audit.md`, and `implementation.retry_brief.md`.
+- **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`). The stage prompt pack is rendered under `.autolab/prompts/rendered/` as `<stage>.runner.md`, `<stage>.audit.md`, `<stage>.brief.md`, `<stage>.human.md`, and `<stage>.context.json`.
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
 - **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.
 - **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.

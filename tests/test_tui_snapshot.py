@@ -161,21 +161,34 @@ def test_snapshot_render_preview_ok_without_rendered_output_writes(
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"
     _write_state(state_path, stage="design")
-    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompts_dir = repo / ".autolab" / "prompts"
+    prompt_path = prompts_dir / "stage_design.runner.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(
         "# Stage design\n\nstage: {{stage}}\niteration_id: {{iteration_id}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_design.audit.md").write_text(
+        "# Stage design audit\n\n## ROLE\nx\n\n## PRIMARY OBJECTIVE\nx\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_design.brief.md").write_text(
+        "# Stage: design (brief)\n\n{{brief_summary}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_design.human.md").write_text(
+        "# Stage: design (human packet)\n\n{{brief_summary}}\n",
         encoding="utf-8",
     )
 
     snapshot = load_cockpit_snapshot(state_path)
 
     assert snapshot.render_preview.status == "ok"
-    assert "stage: design" in snapshot.render_preview.prompt_text.lower()
+    assert "stage: design" in snapshot.render_preview.runner_text.lower()
     assert snapshot.recommended_actions
     assert snapshot.recommended_actions[0].action_id == "open_rendered_prompt"
     rendered_dir = repo / ".autolab" / "prompts" / "rendered"
-    assert not (rendered_dir / "design.md").exists()
+    assert not (rendered_dir / "design.runner.md").exists()
     assert not (rendered_dir / "design.context.json").exists()
 
 
@@ -185,7 +198,7 @@ def test_snapshot_render_preview_failure_is_nonfatal(
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"
     _write_state(state_path, stage="design")
-    prompt_path = repo / ".autolab" / "prompts" / "stage_design.md"
+    prompt_path = repo / ".autolab" / "prompts" / "stage_design.runner.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text("# Stage design\n", encoding="utf-8")
 
@@ -203,7 +216,7 @@ def test_snapshot_render_preview_failure_is_nonfatal(
     assert snapshot.recommended_actions[0].action_id == "open_stage_prompt"
 
 
-def test_snapshot_render_preview_includes_audit_and_retry_for_implementation(
+def test_snapshot_render_preview_includes_audit_brief_and_human_for_implementation(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -211,12 +224,20 @@ def test_snapshot_render_preview_includes_audit_and_retry_for_implementation(
     _write_state(state_path, stage="implementation")
     prompts_dir = repo / ".autolab" / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
-    (prompts_dir / "stage_implementation_runner.md").write_text(
+    (prompts_dir / "stage_implementation.runner.md").write_text(
         "# Runner\nstage: {{stage}}\n",
         encoding="utf-8",
     )
-    (prompts_dir / "stage_implementation.md").write_text(
+    (prompts_dir / "stage_implementation.audit.md").write_text(
         "# Audit\nstage: {{stage}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_implementation.brief.md").write_text(
+        "# Brief\n{{brief_summary}}\n",
+        encoding="utf-8",
+    )
+    (prompts_dir / "stage_implementation.human.md").write_text(
+        "# Human\n{{brief_summary}}\n",
         encoding="utf-8",
     )
 
@@ -224,7 +245,8 @@ def test_snapshot_render_preview_includes_audit_and_retry_for_implementation(
 
     assert snapshot.render_preview.status == "ok"
     assert snapshot.render_preview.audit_text
-    assert "Implementation Retry Brief" in snapshot.render_preview.retry_brief_text
+    assert snapshot.render_preview.brief_text
+    assert snapshot.render_preview.human_text
 
 
 def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> None:
@@ -458,7 +480,7 @@ def test_resolve_stage_prompt_path_handles_known_and_unknown_stage(
     _write_state(state_path, stage="design")
     snapshot = load_cockpit_snapshot(state_path)
     prompt_path = resolve_stage_prompt_path(snapshot, "design")
-    assert prompt_path == snapshot.autolab_dir / "prompts" / "stage_design.md"
+    assert prompt_path == snapshot.autolab_dir / "prompts" / "stage_design.audit.md"
     assert resolve_stage_prompt_path(snapshot, "unknown_stage") is None
 
 

@@ -179,8 +179,10 @@ def test_registry_runner_prompt_file_loaded_for_implementation(tmp_path: Path) -
     design = registry.get("design")
     assert implementation is not None
     assert design is not None
-    assert implementation.runner_prompt_file == "stage_implementation_runner.md"
-    assert design.runner_prompt_file == ""
+    assert implementation.runner_prompt_file == "stage_implementation.runner.md"
+    assert design.runner_prompt_file == "stage_design.runner.md"
+    assert implementation.brief_prompt_file == "stage_implementation.brief.md"
+    assert implementation.human_prompt_file == "stage_implementation.human.md"
 
 
 def test_registry_run_scoped_required_outputs_use_run_id_pattern(

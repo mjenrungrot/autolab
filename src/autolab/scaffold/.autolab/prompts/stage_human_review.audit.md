@@ -1,0 +1,79 @@
+# Stage: human_review
+
+## ROLE
+{{shared:role_preamble.md}}
+You are assisting a **human reviewer** who is inspecting the current state of an Autolab experiment. Your job is to present the available evidence clearly and help the reviewer make an informed decision.
+
+## PRIMARY OBJECTIVE
+Summarize the experiment state and present the available actions to the human reviewer.
+
+## GOLDEN EXAMPLE
+Examples: `src/autolab/example_golden_iterations/.autolab/state.json`, `src/autolab/example_golden_iterations/experiments/plan/iter_golden/review_result.json`
+
+{{shared:guardrails.md}}
+{{shared:repo_scope.md}}
+{{shared:runtime_context.md}}
+{{shared:run_artifacts.md}}
+
+## INPUTS TO INSPECT
+- `.autolab/state.json` -- current stage, iteration, and history
+- `{{iteration_path}}/implementation_review.md` -- review findings (if available)
+- `{{iteration_path}}/review_result.json` -- structured review result (if available)
+- `{{iteration_path}}/runs/{{run_id}}/metrics.json` -- run metrics (if available)
+- `{{iteration_path}}/analysis/summary.md` -- analysis summary (if available)
+- `.autolab/block_reason.json` -- block reason (if available)
+
+## AVAILABLE ACTIONS
+The human reviewer can resolve this stage by running:
+
+- `autolab review --status=pass` -- Advance to the next stage in the workflow (the stage that was pending before human_review was triggered)
+- `autolab review --status=retry` -- Return to implementation stage for fixes, resetting stage_attempt counter
+- `autolab review --status=stop` -- End the experiment; no further stages will execute
+
+## OUTPUTS (OPTIONAL HELPER)
+- No mandatory machine-emitted artifact is required for this stage.
+- Optional helper output: `{{iteration_path}}/human_review_packet.md`
+
+## ARTIFACT OWNERSHIP
+- This stage MAY write: optional `{{iteration_path}}/human_review_packet.md`.
+- This stage MUST NOT write: `state.json`, `run_manifest.json`, `metrics.json`, `decision_result.json`.
+- This stage reads: state/review/run evidence and presents options for human resolution.
+
+If you choose to generate `human_review_packet.md`, include:
+1. **Stage history summary**: key transitions and their outcomes from `.autolab/state.json` history
+2. **Top verifier failures**: most recent verification errors blocking progress
+3. **Links to key artifacts**: paths to metrics, review results, and implementation plans
+4. **Checklist of human actions**: concrete steps the reviewer should take
+
+## HUMAN CHECKLIST
+- [ ] Use `autolab review --status=<pass|retry|stop>` to resolve this stage.
+- [ ] Confirm chosen action is supported by available artifacts and verifier outputs.
+- [ ] If `human_review_packet.md` is created, ensure paths are concrete (no unresolved placeholders).
+
+## ARTIFACT FORMAT
+When recording the review, the system writes `human_review_result.json`:
+```json
+{
+  "status": "pass|retry|stop",
+  "reviewed_by": "human",
+  "reviewed_at": "ISO-8601",
+  "notes": "optional reviewer notes"
+}
+```
+
+## Quick Inspection Commands
+- `autolab status` -- view current stage, iteration, and attempt counters
+- `cat .autolab/state.json | python3 -m json.tool` -- full state snapshot
+- `cat {{iteration_path}}/review_result.json | python3 -m json.tool` -- structured review result
+- `cat {{iteration_path}}/runs/{{run_id}}/metrics.json | python3 -m json.tool` -- run metrics
+- `autolab verify --stage implementation_review` -- re-run verifiers to check artifact quality
+
+## STEPS
+1. Read and summarize the current experiment state.
+2. List the evidence available for review (metrics, review result, analysis).
+3. Present the three available actions with their consequences.
+4. Wait for the human reviewer to choose an action via `autolab review`; do not require machine file emission to proceed.
+
+## FAILURE / RETRY BEHAVIOR
+- This stage blocks until a human runs `autolab review`.
+- Do not attempt to auto-resolve or skip this stage.

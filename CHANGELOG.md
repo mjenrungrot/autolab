@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.12] - 2026-03-04
+
+### Summary
+
+- Refactored stage prompting into strict audience-scoped packets (`runner`, `audit`, `brief`, `human`, `context`) and removed legacy single-file fallback behavior.
+- Hardened runner prompt policy/lint contracts (non-negotiables, required token presence, status-vocabulary scoping, banned audit payload leakage, transitive include checks).
+- Expanded prompt/render/TUI/CLI regression coverage and aligned docs/scaffold guidance with the strict prompt-pack model.
+
+<!-- autolab:range v1.2.11..v1.2.12 -->
+
 ## [1.2.11] - 2026-03-04
 
 ### Summary
