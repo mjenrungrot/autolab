@@ -167,6 +167,544 @@ def _write_iteration_docs_fixture(repo: Path, *, iteration_id: str) -> None:
     )
 
 
+def _write_wave_observability_fixture(
+    repo: Path,
+    state_path: Path,
+    *,
+    iteration_id: str = "iter_obs",
+) -> None:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = iteration_id
+    state["experiment_id"] = "e_fixture"
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    _write_iteration_docs_fixture(repo, iteration_id=iteration_id)
+    (repo / ".autolab" / "traceability_latest.json").write_text(
+        json.dumps(
+            {
+                "iteration_id": iteration_id,
+                "traceability_path": f"experiments/plan/{iteration_id}/traceability_coverage.json",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "backlog.yaml").write_text(
+        "\n".join(
+            [
+                "hypotheses:",
+                "  - id: h_fixture",
+                "    status: open",
+                "    title: Wave observability fixture",
+                "    success_metric: accuracy",
+                "    target_delta: 0.1",
+                "experiments:",
+                "  - id: e_fixture",
+                "    hypothesis_id: h_fixture",
+                "    status: in_progress",
+                "    type: plan",
+                f"    iteration_id: {iteration_id}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    context_dir = repo / ".autolab" / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "bundle.json").write_text(
+        json.dumps(
+            {
+                "focus_iteration_id": iteration_id,
+                "focus_experiment_id": "e_fixture",
+                "project_map_path": ".autolab/context/project_map.json",
+                "selected_experiment_delta_path": f"experiments/plan/{iteration_id}/context_delta.json",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (context_dir / "project_map.json").write_text(
+        json.dumps(
+            {
+                "scan_mode": "full",
+                "paths": ["src", f"experiments/plan/{iteration_id}"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    iteration_dir = repo / "experiments" / "plan" / iteration_id
+    (iteration_dir / "context_delta.json").write_text(
+        json.dumps(
+            {
+                "iteration_id": iteration_id,
+                "experiment_id": "e_fixture",
+                "changed_paths": ["src/model.py"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    (repo / ".autolab" / "plan_graph.json").write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"task_id": "T1"},
+                    {"task_id": "T2"},
+                    {"task_id": "T3"},
+                    {"task_id": "T4"},
+                    {"task_id": "T5"},
+                ],
+                "edges": [
+                    {"from": "T1", "to": "T2"},
+                    {"from": "T2", "to": "T3"},
+                    {"from": "T2", "to": "T4"},
+                    {"from": "T2", "to": "T5"},
+                ],
+                "waves": [
+                    {"wave": 1, "tasks": ["T1"]},
+                    {"wave": 2, "tasks": ["T2", "T3", "T4", "T5"]},
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "errors": [
+                    "same-wave write conflict: tasks T2 and T3 overlap in writes/touches"
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    execution_state = {
+        "schema_version": "1.0",
+        "generated_at": "2026-03-01T00:00:00Z",
+        "updated_at": "2026-03-01T00:00:10Z",
+        "stage": "implementation",
+        "iteration_id": iteration_id,
+        "contract_path": ".autolab/plan_contract.json",
+        "contract_hash": "fixture-hash",
+        "plan_file": f"experiments/plan/{iteration_id}/implementation_plan.md",
+        "run_unit": "wave",
+        "waves_total": 2,
+        "task_status": {
+            "T1": "completed",
+            "T2": "failed",
+            "T3": "pending",
+            "T4": "blocked",
+            "T5": "pending",
+        },
+        "task_attempt_counts": {"T1": 1, "T2": 2, "T3": 0, "T4": 0, "T5": 0},
+        "task_retry_counts": {"T1": 0, "T2": 1, "T3": 0, "T4": 0, "T5": 0},
+        "task_last_error": {
+            "T1": "",
+            "T2": "tests failed",
+            "T3": "",
+            "T4": "",
+            "T5": "",
+        },
+        "task_files_changed": {
+            "T1": [],
+            "T2": ["src/model.py"],
+            "T3": [],
+            "T4": [],
+            "T5": [],
+        },
+        "task_started_at": {
+            "T1": "2026-03-01T00:00:00Z",
+            "T2": "2026-03-01T00:00:12Z",
+            "T3": "",
+            "T4": "",
+            "T5": "",
+        },
+        "task_completed_at": {
+            "T1": "2026-03-01T00:00:12Z",
+            "T2": "2026-03-01T00:00:19Z",
+            "T3": "",
+            "T4": "",
+            "T5": "",
+        },
+        "task_duration_seconds": {
+            "T1": 12.0,
+            "T2": 7.0,
+            "T3": 0.0,
+            "T4": 0.0,
+            "T5": 0.0,
+        },
+        "task_reason_code": {
+            "T1": "completed",
+            "T2": "verification_failed",
+            "T3": "wave_retry_pending",
+            "T4": "dependency_blocked",
+            "T5": "fail_fast_skipped",
+        },
+        "task_reason_detail": {
+            "T1": "",
+            "T2": "tests failed",
+            "T3": "waiting for retried wave",
+            "T4": "waiting on dependency T2",
+            "T5": "skipped after T2 failure",
+        },
+        "task_runner_report_path": {
+            "T1": ".autolab/runner_execution_report.T1.json",
+            "T2": ".autolab/runner_execution_report.T2.json",
+            "T3": "",
+            "T4": "",
+            "T5": "",
+        },
+        "task_verification_status": {
+            "T1": "passed",
+            "T2": "failed",
+            "T3": "not_run",
+            "T4": "not_run",
+            "T5": "not_run",
+        },
+        "task_verification_commands": {
+            "T1": ["pytest -q tests/test_model.py"],
+            "T2": ["pytest -q tests/test_model.py"],
+            "T3": [],
+            "T4": [],
+            "T5": [],
+        },
+        "task_expected_artifacts_missing": {
+            "T1": [],
+            "T2": [],
+            "T3": [],
+            "T4": [],
+            "T5": [],
+        },
+        "task_blocked_by": {
+            "T1": [],
+            "T2": [],
+            "T3": ["T2"],
+            "T4": ["T2"],
+            "T5": ["T2"],
+        },
+        "wave_retry_counts": {"1": 0, "2": 1},
+        "wave_status": {"1": "completed", "2": "failed"},
+        "wave_started_at": {"1": "2026-03-01T00:00:00Z", "2": "2026-03-01T00:00:12Z"},
+        "wave_completed_at": {
+            "1": "2026-03-01T00:00:12Z",
+            "2": "2026-03-01T00:00:19Z",
+        },
+        "wave_duration_seconds": {"1": 12.0, "2": 7.0},
+        "wave_attempt_history": {
+            "1": [
+                {
+                    "attempt": 1,
+                    "status": "completed",
+                    "started_at": "2026-03-01T00:00:00Z",
+                    "completed_at": "2026-03-01T00:00:12Z",
+                    "duration_seconds": 12.0,
+                    "retry_reason": "",
+                    "detail": "",
+                }
+            ],
+            "2": [
+                {
+                    "attempt": 1,
+                    "status": "failed",
+                    "started_at": "2026-03-01T00:00:12Z",
+                    "completed_at": "2026-03-01T00:00:19Z",
+                    "duration_seconds": 7.0,
+                    "retry_reason": "verification_failed",
+                    "detail": "tests failed",
+                }
+            ],
+        },
+        "wave_retry_reasons": {"1": [], "2": ["verification_failed"]},
+        "wave_out_of_contract_paths": {"1": [], "2": []},
+        "current_wave": 2,
+    }
+    (iteration_dir / "plan_execution_state.json").write_text(
+        json.dumps(execution_state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    execution_summary = {
+        "schema_version": "1.0",
+        "generated_at": "2026-03-01T00:00:10Z",
+        "stage": "implementation",
+        "iteration_id": iteration_id,
+        "plan_file": f"experiments/plan/{iteration_id}/implementation_plan.md",
+        "contract_hash": "fixture-hash",
+        "run_unit": "wave",
+        "tasks_total": 5,
+        "tasks_completed": 1,
+        "tasks_failed": 1,
+        "tasks_blocked": 1,
+        "tasks_pending": 2,
+        "tasks_skipped": 1,
+        "tasks_deferred": 1,
+        "waves_total": 2,
+        "waves_executed": 2,
+        "wave_details": [
+            {
+                "wave": 1,
+                "status": "completed",
+                "attempts": 1,
+                "retries_used": 0,
+                "tasks": ["T1"],
+                "started_at": "2026-03-01T00:00:00Z",
+                "completed_at": "2026-03-01T00:00:12Z",
+                "duration_seconds": 12.0,
+                "last_attempt_duration_seconds": 12.0,
+                "timing_available": True,
+                "attempt_history": execution_state["wave_attempt_history"]["1"],
+                "retry_reasons": [],
+                "out_of_contract_paths": [],
+                "completed_task_ids": ["T1"],
+                "failed_task_ids": [],
+                "blocked_task_ids": [],
+                "skipped_task_ids": [],
+                "deferred_task_ids": [],
+                "pending_task_ids": [],
+                "retry_pending": False,
+                "critical_path": False,
+            },
+            {
+                "wave": 2,
+                "status": "failed",
+                "attempts": 1,
+                "retries_used": 1,
+                "tasks": ["T2", "T3", "T4", "T5"],
+                "started_at": "2026-03-01T00:00:12Z",
+                "completed_at": "2026-03-01T00:00:19Z",
+                "duration_seconds": 7.0,
+                "last_attempt_duration_seconds": 7.0,
+                "timing_available": True,
+                "attempt_history": execution_state["wave_attempt_history"]["2"],
+                "retry_reasons": ["verification_failed"],
+                "out_of_contract_paths": [],
+                "completed_task_ids": [],
+                "failed_task_ids": ["T2"],
+                "blocked_task_ids": ["T4"],
+                "skipped_task_ids": ["T5"],
+                "deferred_task_ids": ["T3"],
+                "pending_task_ids": ["T3", "T5"],
+                "retry_pending": True,
+                "critical_path": True,
+            },
+        ],
+        "task_details": [
+            {
+                "task_id": "T1",
+                "status": "completed",
+                "wave": 1,
+                "attempts": 1,
+                "retries_used": 0,
+                "last_error": "",
+                "scope_kind": "experiment",
+                "files_changed": [],
+                "started_at": "2026-03-01T00:00:00Z",
+                "completed_at": "2026-03-01T00:00:12Z",
+                "duration_seconds": 12.0,
+                "timing_available": True,
+                "reason_code": "completed",
+                "reason_detail": "",
+                "blocked_by": [],
+                "runner_report_path": ".autolab/runner_execution_report.T1.json",
+                "runner_status": "completed",
+                "runner_exit_code": 0,
+                "verification_status": "passed",
+                "verification_commands": ["pytest -q tests/test_model.py"],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "completed",
+                    "runner_exit_code": 0,
+                    "verification_status": "passed",
+                    "files_changed_count": 0,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "done",
+                },
+                "critical_path": False,
+            },
+            {
+                "task_id": "T2",
+                "status": "failed",
+                "wave": 2,
+                "attempts": 2,
+                "retries_used": 1,
+                "last_error": "tests failed",
+                "scope_kind": "experiment",
+                "files_changed": ["src/model.py"],
+                "started_at": "2026-03-01T00:00:12Z",
+                "completed_at": "2026-03-01T00:00:19Z",
+                "duration_seconds": 7.0,
+                "timing_available": True,
+                "reason_code": "verification_failed",
+                "reason_detail": "tests failed",
+                "blocked_by": [],
+                "runner_report_path": ".autolab/runner_execution_report.T2.json",
+                "runner_status": "completed",
+                "runner_exit_code": 0,
+                "verification_status": "failed",
+                "verification_commands": ["pytest -q tests/test_model.py"],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "completed",
+                    "runner_exit_code": 0,
+                    "verification_status": "failed",
+                    "files_changed_count": 1,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "tests failed",
+                },
+                "critical_path": True,
+            },
+            {
+                "task_id": "T3",
+                "status": "pending",
+                "wave": 2,
+                "attempts": 0,
+                "retries_used": 0,
+                "last_error": "",
+                "scope_kind": "experiment",
+                "files_changed": [],
+                "started_at": "",
+                "completed_at": "",
+                "duration_seconds": 0.0,
+                "timing_available": False,
+                "reason_code": "wave_retry_pending",
+                "reason_detail": "waiting for retried wave",
+                "blocked_by": ["T2"],
+                "runner_report_path": "",
+                "runner_status": "unavailable",
+                "runner_exit_code": None,
+                "verification_status": "not_run",
+                "verification_commands": [],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "unavailable",
+                    "runner_exit_code": None,
+                    "verification_status": "not_run",
+                    "files_changed_count": 0,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "waiting for retry",
+                },
+                "critical_path": True,
+            },
+            {
+                "task_id": "T4",
+                "status": "blocked",
+                "wave": 2,
+                "attempts": 0,
+                "retries_used": 0,
+                "last_error": "",
+                "scope_kind": "experiment",
+                "files_changed": [],
+                "started_at": "",
+                "completed_at": "",
+                "duration_seconds": 0.0,
+                "timing_available": False,
+                "reason_code": "dependency_blocked",
+                "reason_detail": "waiting on dependency T2",
+                "blocked_by": ["T2"],
+                "runner_report_path": "",
+                "runner_status": "unavailable",
+                "runner_exit_code": None,
+                "verification_status": "not_run",
+                "verification_commands": [],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "unavailable",
+                    "runner_exit_code": None,
+                    "verification_status": "not_run",
+                    "files_changed_count": 0,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "blocked on dependency T2",
+                },
+                "critical_path": False,
+            },
+            {
+                "task_id": "T5",
+                "status": "pending",
+                "wave": 2,
+                "attempts": 0,
+                "retries_used": 0,
+                "last_error": "",
+                "scope_kind": "experiment",
+                "files_changed": [],
+                "started_at": "",
+                "completed_at": "",
+                "duration_seconds": 0.0,
+                "timing_available": False,
+                "reason_code": "fail_fast_skipped",
+                "reason_detail": "skipped after T2 failure",
+                "blocked_by": ["T2"],
+                "runner_report_path": "",
+                "runner_status": "unavailable",
+                "runner_exit_code": None,
+                "verification_status": "not_run",
+                "verification_commands": [],
+                "expected_artifacts_missing": [],
+                "evidence_summary": {
+                    "runner_status": "unavailable",
+                    "runner_exit_code": None,
+                    "verification_status": "not_run",
+                    "files_changed_count": 0,
+                    "expected_artifacts_missing_count": 0,
+                    "text": "skipped after fail-fast",
+                },
+                "critical_path": False,
+            },
+        ],
+        "critical_path": {
+            "status": "available",
+            "mode": "measured_partial",
+            "task_ids": ["T1", "T2", "T3"],
+            "wave_ids": [1, 2],
+            "duration_seconds": 19.0,
+            "weight": 20.0,
+            "basis_note": "measured path with structural fallback for tasks lacking timing",
+        },
+        "file_conflicts": [
+            {
+                "kind": "same_wave_write_conflict",
+                "wave": 2,
+                "tasks": ["T2", "T3"],
+                "paths": [],
+                "conflict_group": "",
+                "detail": "same-wave write conflict: tasks T2 and T3 overlap in writes/touches",
+            }
+        ],
+        "diagnostics": [],
+        "observability_summary": {
+            "waves_total": 2,
+            "waves_executed": 2,
+            "tasks_total": 5,
+            "tasks_completed": 1,
+            "tasks_failed": 1,
+            "tasks_blocked": 1,
+            "tasks_pending": 2,
+            "tasks_skipped": 1,
+            "tasks_deferred": 1,
+            "retrying_waves": 1,
+            "conflict_count": 1,
+        },
+    }
+    (iteration_dir / "plan_execution_summary.json").write_text(
+        json.dumps(execution_summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -612,6 +1150,140 @@ def test_docs_generate_reports_stale_handoff_iteration_mismatch(
     assert "iter_target" in output
 
 
+def test_docs_generate_state_view_includes_wave_observability_sections(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _write_wave_observability_fixture(repo, state_path)
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "state"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Wave Observability" in output
+    assert "## Critical Path" in output
+    assert "| 2 | failed | T2, T3, T4, T5 |" in output
+    assert "blocked_tasks: T4" in output
+    assert "deferred_tasks: T3" in output
+    assert "skipped_tasks: T5" in output
+    assert (
+        "| T2 | 2 | failed | 2 | 1 | 7.0 | verification_failed (tests failed) | - | failed | tests failed | yes |"
+        in output
+    )
+
+
+@pytest.mark.parametrize(
+    ("view", "expected_snippet"),
+    [
+        ("project", "- mode: `measured_partial`"),
+        (
+            "sidecar",
+            "| plan_execution_summary.json | `experiments/plan/iter_obs/plan_execution_summary.json` | present | critical_path=measured_partial |",
+        ),
+    ],
+)
+def test_docs_generate_project_and_sidecar_views_include_wave_observability_artifacts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    view: str,
+    expected_snippet: str,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _write_wave_observability_fixture(repo, state_path)
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", view]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Wave Observability" in output
+    assert expected_snippet in output
+
+
+def test_docs_generate_sidecar_view_reports_stale_observability_artifacts_as_diagnostics(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _write_wave_observability_fixture(repo, state_path, iteration_id="iter_target")
+
+    summary_path = (
+        repo / "experiments" / "plan" / "iter_target" / "plan_execution_summary.json"
+    )
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary_payload["iteration_id"] = "iter_stale"
+    summary_path.write_text(
+        json.dumps(summary_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_graph.json").write_text(
+        json.dumps(
+            {
+                "nodes": [{"task_id": "Z9"}],
+                "edges": [],
+                "waves": [{"wave": 1, "tasks": ["Z9"]}],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "errors": [
+                    "same-wave write conflict: tasks Z9 and Z10 overlap in writes/touches"
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(
+            ["docs", "generate", "--state-file", str(state_path), "--view", "sidecar"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "## Wave Observability" in output
+    assert (
+        "| plan_execution_summary.json | `experiments/plan/iter_target/plan_execution_summary.json` | stale |"
+        in output
+    )
+    assert (
+        "| plan_graph.json | `.autolab/plan_graph.json` | stale | waves=0 |" in output
+    )
+    assert (
+        "stale plan_execution_summary.json: iteration_id differs from requested iteration_id "
+        "(iter_stale != iter_target); ignoring artifact"
+    ) in output
+    assert (
+        "stale plan_graph.json: graph tasks do not overlap selected iteration execution tasks; ignoring artifact"
+        in output
+    )
+    assert (
+        "stale plan_check_result.json: ignoring artifact because plan_graph.json was ignored as stale for the selected iteration"
+        in output
+    )
+
+
 def test_update_command_routes_to_handler(
     monkeypatch,
 ) -> None:
@@ -850,6 +1522,45 @@ def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
     resume_out = capsys.readouterr().out
     assert "autolab resume" in resume_out
     assert "mode: preview" in resume_out
+
+
+def test_progress_reports_wave_observability_sections(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _write_wave_observability_fixture(repo, state_path)
+
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    output = capsys.readouterr().out
+    assert "critical_path:" in output
+    assert (
+        "status=available mode=measured_partial duration=19.0s weight=20.0 waves=2 tasks=3"
+        in output
+    )
+    assert (
+        "basis: measured path with structural fallback for tasks lacking timing"
+        in output
+    )
+    assert "wave_details:" in output
+    assert "retry_reasons: verification_failed" in output
+    assert "failed_tasks: T2" in output
+    assert "blocked_tasks: T4" in output
+    assert "deferred_tasks: T3" in output
+    assert "skipped_tasks: T5" in output
+    assert "pending_tasks: T3, T5" in output
+    assert "file_conflicts:" in output
+    assert "same_wave_write_conflict" in output
+    assert "task_evidence:" in output
+    assert (
+        "task=T2 wave=2 status=failed attempts=2 retries=1 critical_path=yes" in output
+    )
+    assert "reason: verification_failed (tests failed)" in output
+    assert (
+        "task=T4 wave=2 status=blocked attempts=0 retries=0 critical_path=no" in output
+    )
+    assert "blocked_by: T2" in output
 
 
 def test_handoff_uses_configured_project_wide_root(

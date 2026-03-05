@@ -52,7 +52,9 @@ def test_snapshot_handles_missing_optional_files(tmp_path: Path) -> None:
     assert "design" in {item.name for item in snapshot.stage_items}
 
 
-def test_snapshot_loads_handoff_summary_when_available(tmp_path: Path) -> None:
+def test_snapshot_loads_handoff_summary_when_available(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"
     _write_state(state_path, stage="implementation")
@@ -111,9 +113,29 @@ def test_snapshot_loads_handoff_summary_when_available(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    captured: dict[str, Path | None] = {}
+    derived = {
+        "status": "available",
+        "summary": {"waves_total": 4, "waves_executed": 1},
+    }
+
+    def _fake_build_wave_observability(
+        repo_root: Path, *, iteration_dir: Path | None, **_kwargs
+    ):
+        captured["repo_root"] = repo_root
+        captured["iteration_dir"] = iteration_dir
+        return derived
+
+    monkeypatch.setattr(
+        "autolab.tui.snapshot.build_wave_observability",
+        _fake_build_wave_observability,
+    )
     snapshot = load_cockpit_snapshot(state_path)
 
     assert snapshot.handoff is not None
+    assert snapshot.handoff.wave_observability == derived
+    assert captured["repo_root"] == repo
+    assert captured["iteration_dir"] == repo / "experiments" / "plan" / "iter1"
     assert snapshot.handoff.current_scope == "experiment"
     assert snapshot.handoff.wave_current == 2
     assert snapshot.handoff.wave_total == 4

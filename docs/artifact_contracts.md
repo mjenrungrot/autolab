@@ -215,9 +215,22 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Path**: `experiments/<type>/<iteration_id>/plan_execution_state.json`
 - **Format**: JSON
 - **Schema**: `.autolab/schemas/plan_execution_state.schema.json`
-- **Required fields**: contract hash/path, wave cursor/retry state, per-task status/attempt/error/file tracking
+- **Required fields**: contract hash/path, wave cursor/retry state, per-task status/attempt/error/file tracking, per-task timing/reason/verification state, per-wave attempt history, retry reasons, and out-of-contract edit paths
 - **Produced when**: implementation executes contract-driven waves
-- **Consumed by**: implementation scheduler resume/retry logic and handoff summaries
+- **Consumed by**: implementation scheduler resume/retry logic, `plan_execution_summary.json` projection, handoff summaries, and generated docs/TUI observability views
+
+## plan_execution_summary.json
+
+- **Path**: `experiments/<type>/<iteration_id>/plan_execution_summary.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/plan_execution_summary.schema.json`
+- **Required fields**:
+  - execution identity: `schema_version`, `generated_at`, `stage`, `iteration_id`, `plan_file`, `contract_hash`, `run_unit`
+  - counters: `tasks_total`, `tasks_completed`, `tasks_failed`, `tasks_blocked`, `tasks_pending`, `tasks_skipped`, `tasks_deferred`, `waves_total`, `waves_executed`
+  - observability projections: `wave_details`, `task_details`, `critical_path`, `file_conflicts`, `diagnostics`, `observability_summary`
+- **Produced when**: implementation executes or resumes contract-driven waves
+- **Consumed by**: traceability coverage, handoff generation, `autolab progress`, generated `project|state|sidecar` views, and the TUI Waves view
+- **Consumer behavior note**: generated docs and progress surfaces should treat stale or mismatched observability payloads as diagnostics when possible instead of crashing the whole view.
 
 ## auto_decision.json
 
@@ -243,20 +256,22 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Required fields**:
   - `schema_version`, `generated_at`, `state_file`
   - `iteration_id`, `experiment_id`, `current_scope`, `scope_root`, `current_stage`
-  - `wave`, `task_status`
+  - `wave`, `task_status` (including `skipped` and `deferred`)
   - `latest_verifier_summary`, `blocking_failures`, `pending_human_decisions`
   - `files_changed_since_last_green_point`
   - `recommended_next_command`, `safe_resume_point`
+  - `wave_observability` (`wave_summary`, `task_summary`, `summary`, `critical_path`, `file_conflicts`, `waves`, `tasks`, `diagnostics`, `source_paths`)
   - `last_green_at`, `baseline_snapshot`
   - `handoff_json_path`, `handoff_markdown_path`
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
-- **Consumed by**: `autolab resume`, `autolab tui` Home handoff panel, takeover automation
+- **Consumed by**: `autolab resume`, `autolab tui` Home and Waves panels, takeover automation, and generated docs state/sidecar views
+- **Presentation note**: CLI/docs consumers render wave retry/block/deferred/skipped detail, critical-path timing context, and observability diagnostics from `wave_observability`.
 
 ## handoff.md
 
 - **Path**: `<scope-root>/handoff.md`
 - **Format**: Markdown
-- **Content**: Human-readable handoff summary (scope, stage, wave/task status, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
+- **Content**: Human-readable handoff summary (scope, stage, wave/task status, critical path, per-wave timings/retries, blocked/deferred/skipped tasks, file conflicts, per-task evidence, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)

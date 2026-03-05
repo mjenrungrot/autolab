@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
+
 from autolab.cli.support import *
 from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
+from autolab.wave_observability import build_wave_observability
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
@@ -431,6 +434,245 @@ def _docs_safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except Exception:
         return int(default)
+
+
+def _docs_safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _docs_non_empty_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            output.append(text)
+    return output
+
+
+def _docs_format_seconds(value: Any, *, blank: str = "n/a") -> str:
+    if value in ("", None):
+        return blank
+    numeric = _docs_safe_float(value, float("nan"))
+    if math.isnan(numeric):
+        return blank
+    return f"{numeric:.3f}".rstrip("0").rstrip(".") + "s"
+
+
+def _docs_merge_diagnostics(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            merged.append(text)
+    return merged
+
+
+def _docs_collect_execution_task_ids(
+    *,
+    plan_execution_state_payload: dict[str, Any] | None,
+    plan_execution_summary_payload: dict[str, Any] | None,
+) -> set[str]:
+    task_ids: set[str] = set()
+    if isinstance(plan_execution_summary_payload, dict):
+        for row in plan_execution_summary_payload.get("task_details", []):
+            if not isinstance(row, dict):
+                continue
+            task_id = str(row.get("task_id", "")).strip()
+            if task_id:
+                task_ids.add(task_id)
+        for row in plan_execution_summary_payload.get("wave_details", []):
+            if not isinstance(row, dict):
+                continue
+            task_ids.update(_docs_non_empty_strings(row.get("tasks")))
+        critical_path = plan_execution_summary_payload.get("critical_path")
+        if isinstance(critical_path, dict):
+            task_ids.update(_docs_non_empty_strings(critical_path.get("task_ids")))
+    if isinstance(plan_execution_state_payload, dict):
+        task_status = plan_execution_state_payload.get("task_status")
+        if isinstance(task_status, dict):
+            for raw_task_id in task_status.keys():
+                task_id = str(raw_task_id).strip()
+                if task_id:
+                    task_ids.add(task_id)
+    return task_ids
+
+
+def _docs_collect_plan_graph_task_ids(
+    plan_graph_payload: dict[str, Any] | None,
+) -> set[str]:
+    task_ids: set[str] = set()
+    if not isinstance(plan_graph_payload, dict):
+        return task_ids
+    for row in plan_graph_payload.get("nodes", []):
+        if not isinstance(row, dict):
+            continue
+        task_id = str(row.get("task_id", "")).strip()
+        if task_id:
+            task_ids.add(task_id)
+    for row in plan_graph_payload.get("waves", []):
+        if not isinstance(row, dict):
+            continue
+        task_ids.update(_docs_non_empty_strings(row.get("tasks")))
+    return task_ids
+
+
+def _docs_validate_iteration_scoped_observability_payload(
+    *,
+    artifact_name: str,
+    payload: dict[str, Any] | None,
+    iteration_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    if not isinstance(payload, dict):
+        return (payload, "")
+    artifact_iteration_id = str(payload.get("iteration_id", "")).strip()
+    if artifact_iteration_id and iteration_id and artifact_iteration_id != iteration_id:
+        return (
+            None,
+            (
+                f"stale {artifact_name}: iteration_id differs from requested "
+                f"iteration_id ({artifact_iteration_id} != {iteration_id}); ignoring artifact"
+            ),
+        )
+    return (payload, "")
+
+
+def _docs_compare_observability_execution_payloads(
+    *,
+    plan_execution_state_payload: dict[str, Any] | None,
+    plan_execution_summary_payload: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(plan_execution_state_payload, dict) or not isinstance(
+        plan_execution_summary_payload, dict
+    ):
+        return []
+
+    diagnostics: list[str] = []
+    for field in ("contract_hash", "run_unit"):
+        state_value = str(plan_execution_state_payload.get(field, "")).strip()
+        summary_value = str(plan_execution_summary_payload.get(field, "")).strip()
+        if state_value and summary_value and state_value != summary_value:
+            diagnostics.append(
+                "plan_execution_state.json and plan_execution_summary.json "
+                f"{field} differ ({state_value} != {summary_value})"
+            )
+
+    state_plan_file = str(plan_execution_state_payload.get("plan_file", "")).strip()
+    summary_plan_file = str(plan_execution_summary_payload.get("plan_file", "")).strip()
+    if state_plan_file and summary_plan_file and state_plan_file != summary_plan_file:
+        diagnostics.append(
+            "plan_execution_state.json and plan_execution_summary.json plan_file differ "
+            f"({state_plan_file} != {summary_plan_file})"
+        )
+    return diagnostics
+
+
+def _docs_sanitize_plan_graph_payload(
+    *,
+    plan_graph_payload: dict[str, Any] | None,
+    execution_task_ids: set[str],
+) -> tuple[dict[str, Any] | None, bool, str]:
+    if not isinstance(plan_graph_payload, dict):
+        return (plan_graph_payload, False, "")
+    graph_task_ids = _docs_collect_plan_graph_task_ids(plan_graph_payload)
+    if not graph_task_ids or not execution_task_ids:
+        return (plan_graph_payload, False, "")
+
+    overlap = graph_task_ids & execution_task_ids
+    if not overlap:
+        return (
+            None,
+            True,
+            (
+                "stale plan_graph.json: graph tasks do not overlap selected iteration "
+                "execution tasks; ignoring artifact"
+            ),
+        )
+
+    extras = sorted(graph_task_ids - execution_task_ids)
+    missing = sorted(execution_task_ids - graph_task_ids)
+    notes: list[str] = []
+    if extras:
+        suffix = "..." if len(extras) > 5 else ""
+        notes.append(f"extra={', '.join(extras[:5])}{suffix}")
+    if missing:
+        suffix = "..." if len(missing) > 5 else ""
+        notes.append(f"missing={', '.join(missing[:5])}{suffix}")
+    if notes:
+        return (
+            plan_graph_payload,
+            False,
+            "plan_graph.json task set differs from selected iteration execution tasks "
+            f"({'; '.join(notes)})",
+        )
+    return (plan_graph_payload, False, "")
+
+
+def _docs_sanitize_plan_check_result_payload(
+    *,
+    plan_check_result_payload: dict[str, Any] | None,
+    graph_ignored_as_stale: bool,
+) -> tuple[dict[str, Any] | None, bool, str]:
+    if not isinstance(plan_check_result_payload, dict):
+        return (plan_check_result_payload, False, "")
+    if not graph_ignored_as_stale:
+        return (plan_check_result_payload, False, "")
+    return (
+        None,
+        True,
+        (
+            "stale plan_check_result.json: ignoring artifact because "
+            "plan_graph.json was ignored as stale for the selected iteration"
+        ),
+    )
+
+
+def _docs_apply_critical_path_projection(
+    observability: dict[str, Any],
+    *,
+    critical_path: dict[str, Any],
+) -> dict[str, Any]:
+    projected = dict(observability)
+    critical_task_ids = {
+        str(item).strip()
+        for item in _docs_non_empty_strings(critical_path.get("task_ids"))
+    }
+    critical_wave_ids = {
+        _docs_safe_int(item, 0)
+        for item in critical_path.get("wave_ids", [])
+        if _docs_safe_int(item, 0) > 0
+    }
+
+    waves: list[dict[str, Any]] = []
+    for row in projected.get("waves", []):
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["critical_path"] = _docs_safe_int(item.get("wave"), 0) in critical_wave_ids
+        waves.append(item)
+
+    tasks: list[dict[str, Any]] = []
+    for row in projected.get("tasks", []):
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["critical_path"] = (
+            str(item.get("task_id", "")).strip() in critical_task_ids
+        )
+        tasks.append(item)
+
+    projected["critical_path"] = critical_path
+    projected["waves"] = waves
+    projected["tasks"] = tasks
+    return projected
 
 
 def _docs_path_within_repo_root(repo_root: Path, path: Path) -> bool:
@@ -862,6 +1104,150 @@ def _docs_collect_context(
         context_delta_pointer_error,
     )
 
+    plan_execution_state_path = (
+        iteration_dir / "plan_execution_state.json"
+        if iteration_dir is not None
+        else None
+    )
+    plan_execution_state_payload = None
+    plan_execution_state_error = "plan execution state path is unavailable"
+    if plan_execution_state_path is not None:
+        (
+            plan_execution_state_payload,
+            plan_execution_state_error,
+        ) = _docs_load_json_mapping(repo_root, plan_execution_state_path)
+
+    plan_execution_summary_path = (
+        iteration_dir / "plan_execution_summary.json"
+        if iteration_dir is not None
+        else None
+    )
+    plan_execution_summary_payload = None
+    plan_execution_summary_error = "plan execution summary path is unavailable"
+    if plan_execution_summary_path is not None:
+        (
+            plan_execution_summary_payload,
+            plan_execution_summary_error,
+        ) = _docs_load_json_mapping(repo_root, plan_execution_summary_path)
+
+    plan_graph_path = repo_root / ".autolab" / "plan_graph.json"
+    plan_graph_payload, plan_graph_error = _docs_load_json_mapping(
+        repo_root,
+        plan_graph_path,
+    )
+
+    plan_check_result_path = repo_root / ".autolab" / "plan_check_result.json"
+    plan_check_result_payload, plan_check_result_error = _docs_load_json_mapping(
+        repo_root,
+        plan_check_result_path,
+    )
+
+    observability_context_diagnostics: list[str] = []
+    (
+        plan_execution_state_payload,
+        stale_plan_execution_state_error,
+    ) = _docs_validate_iteration_scoped_observability_payload(
+        artifact_name="plan_execution_state.json",
+        payload=plan_execution_state_payload,
+        iteration_id=iteration_id,
+    )
+    if stale_plan_execution_state_error:
+        plan_execution_state_error = stale_plan_execution_state_error
+        observability_context_diagnostics.append(stale_plan_execution_state_error)
+
+    (
+        plan_execution_summary_payload,
+        stale_plan_execution_summary_error,
+    ) = _docs_validate_iteration_scoped_observability_payload(
+        artifact_name="plan_execution_summary.json",
+        payload=plan_execution_summary_payload,
+        iteration_id=iteration_id,
+    )
+    if stale_plan_execution_summary_error:
+        plan_execution_summary_error = stale_plan_execution_summary_error
+        observability_context_diagnostics.append(stale_plan_execution_summary_error)
+
+    observability_context_diagnostics.extend(
+        _docs_compare_observability_execution_payloads(
+            plan_execution_state_payload=plan_execution_state_payload,
+            plan_execution_summary_payload=plan_execution_summary_payload,
+        )
+    )
+
+    execution_task_ids = _docs_collect_execution_task_ids(
+        plan_execution_state_payload=plan_execution_state_payload,
+        plan_execution_summary_payload=plan_execution_summary_payload,
+    )
+    (
+        plan_graph_payload,
+        graph_ignored_as_stale,
+        plan_graph_diagnostic,
+    ) = _docs_sanitize_plan_graph_payload(
+        plan_graph_payload=plan_graph_payload,
+        execution_task_ids=execution_task_ids,
+    )
+    if plan_graph_diagnostic:
+        observability_context_diagnostics.append(plan_graph_diagnostic)
+        if graph_ignored_as_stale:
+            plan_graph_error = plan_graph_diagnostic
+
+    (
+        plan_check_result_payload,
+        plan_check_result_ignored_as_stale,
+        plan_check_result_diagnostic,
+    ) = _docs_sanitize_plan_check_result_payload(
+        plan_check_result_payload=plan_check_result_payload,
+        graph_ignored_as_stale=graph_ignored_as_stale,
+    )
+    if plan_check_result_diagnostic:
+        observability_context_diagnostics.append(plan_check_result_diagnostic)
+        if plan_check_result_ignored_as_stale:
+            plan_check_result_error = plan_check_result_diagnostic
+
+    wave_observability = build_wave_observability(
+        repo_root,
+        iteration_dir=iteration_dir,
+        graph_payload=plan_graph_payload,
+        plan_check_payload=plan_check_result_payload,
+        execution_state_payload=plan_execution_state_payload,
+        execution_summary_payload=plan_execution_summary_payload,
+    )
+    summary_critical_path = None
+    if isinstance(plan_execution_summary_payload, dict):
+        raw_summary_critical_path = plan_execution_summary_payload.get("critical_path")
+        if isinstance(raw_summary_critical_path, dict):
+            summary_critical_path = raw_summary_critical_path
+    if (
+        isinstance(summary_critical_path, dict)
+        and (
+            graph_ignored_as_stale
+            or not isinstance(plan_graph_payload, dict)
+            or not plan_graph_payload
+            or str(
+                wave_observability.get("critical_path", {}).get("status", "")
+            ).strip()
+            != "available"
+        )
+        and str(summary_critical_path.get("status", "")).strip() == "available"
+    ):
+        wave_observability = _docs_apply_critical_path_projection(
+            wave_observability,
+            critical_path=summary_critical_path,
+        )
+        observability_context_diagnostics.append(
+            "using plan_execution_summary.json critical_path projection because "
+            "plan_graph.json is unavailable or stale"
+        )
+    existing_wave_diagnostics = wave_observability.get("diagnostics")
+    if not isinstance(existing_wave_diagnostics, list):
+        existing_wave_diagnostics = []
+    merged_observability_diagnostics = _docs_merge_diagnostics(
+        [str(item).strip() for item in existing_wave_diagnostics if str(item).strip()],
+        observability_context_diagnostics,
+    )
+    wave_observability = dict(wave_observability)
+    wave_observability["diagnostics"] = merged_observability_diagnostics
+
     return (
         {
             "repo_root": repo_root,
@@ -913,6 +1299,20 @@ def _docs_collect_context(
             "context_delta_path": context_delta_path,
             "context_delta_payload": context_delta_payload,
             "context_delta_error": context_delta_error,
+            "plan_execution_state_path": plan_execution_state_path,
+            "plan_execution_state_payload": plan_execution_state_payload,
+            "plan_execution_state_error": plan_execution_state_error,
+            "plan_execution_summary_path": plan_execution_summary_path,
+            "plan_execution_summary_payload": plan_execution_summary_payload,
+            "plan_execution_summary_error": plan_execution_summary_error,
+            "plan_graph_path": plan_graph_path,
+            "plan_graph_payload": plan_graph_payload,
+            "plan_graph_error": plan_graph_error,
+            "plan_check_result_path": plan_check_result_path,
+            "plan_check_result_payload": plan_check_result_payload,
+            "plan_check_result_error": plan_check_result_error,
+            "observability_context_diagnostics": observability_context_diagnostics,
+            "wave_observability": wave_observability,
         },
         "",
     )
@@ -1064,6 +1464,241 @@ def _render_docs_registry_view(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _docs_wave_observability(context: dict[str, Any]) -> dict[str, Any]:
+    payload = context.get("wave_observability")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _docs_append_wave_observability_sections(
+    lines: list[str],
+    *,
+    context: dict[str, Any],
+    include_task_evidence: bool,
+) -> None:
+    observability = _docs_wave_observability(context)
+    summary = observability.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    critical_path = observability.get("critical_path")
+    if not isinstance(critical_path, dict):
+        critical_path = {}
+    waves = observability.get("waves")
+    if not isinstance(waves, list):
+        waves = []
+    conflicts = observability.get("file_conflicts")
+    if not isinstance(conflicts, list):
+        conflicts = []
+    tasks = observability.get("tasks")
+    if not isinstance(tasks, list):
+        tasks = []
+    critical_wave_ids = _docs_non_empty_strings(critical_path.get("wave_ids"))
+    critical_task_ids = _docs_non_empty_strings(critical_path.get("task_ids"))
+
+    lines.extend(
+        [
+            "",
+            "## Wave Observability",
+            f"- status: `{observability.get('status', 'unavailable')}`",
+            (
+                "- waves: "
+                f"total={_docs_safe_int(summary.get('waves_total', 0), 0)}, "
+                f"executed={_docs_safe_int(summary.get('waves_executed', 0), 0)}, "
+                f"retrying={_docs_safe_int(summary.get('retrying_waves', 0), 0)}"
+            ),
+            (
+                "- tasks: "
+                f"total={_docs_safe_int(summary.get('tasks_total', 0), 0)}, "
+                f"completed={_docs_safe_int(summary.get('tasks_completed', 0), 0)}, "
+                f"failed={_docs_safe_int(summary.get('tasks_failed', 0), 0)}, "
+                f"blocked={_docs_safe_int(summary.get('tasks_blocked', 0), 0)}, "
+                f"pending={_docs_safe_int(summary.get('tasks_pending', 0), 0)}, "
+                f"skipped={_docs_safe_int(summary.get('tasks_skipped', 0), 0)}, "
+                f"deferred={_docs_safe_int(summary.get('tasks_deferred', 0), 0)}"
+            ),
+            f"- conflicts: `{_docs_safe_int(summary.get('conflict_count', 0), 0)}`",
+            f"- plan_execution_summary_path: `{_docs_relpath(context['repo_root'], context.get('plan_execution_summary_path'))}`",
+            f"- plan_execution_state_path: `{_docs_relpath(context['repo_root'], context.get('plan_execution_state_path'))}`",
+            f"- plan_graph_path: `{_docs_relpath(context['repo_root'], context.get('plan_graph_path'))}`",
+            f"- plan_check_result_path: `{_docs_relpath(context['repo_root'], context.get('plan_check_result_path'))}`",
+            "",
+            "## Critical Path",
+            f"- status: `{critical_path.get('status', 'unavailable')}`",
+            f"- mode: `{critical_path.get('mode', 'unavailable')}`",
+            f"- weight: `{critical_path.get('weight', 0)}`",
+            f"- duration_seconds: `{critical_path.get('duration_seconds', 0)}`",
+            f"- wave_count: `{len(critical_wave_ids)}`",
+            f"- task_count: `{len(critical_task_ids)}`",
+            f"- waves: `{', '.join(critical_wave_ids) or '-'}`",
+            f"- tasks: `{', '.join(critical_task_ids) or '-'}`",
+            f"- basis: {critical_path.get('basis_note', '')}",
+            "",
+            "## Wave Details",
+            "",
+            "| Wave | Status | Tasks | Attempts | Retries | Duration (s) | Last Attempt (s) | Retry Pending | Critical Path |",
+            "|------|--------|-------|----------|---------|--------------|------------------|---------------|---------------|",
+        ]
+    )
+    if waves:
+        for entry in waves:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                "| {wave} | {status} | {tasks} | {attempts} | {retries} | {duration} | {last_attempt} | {retry_pending} | {critical} |".format(
+                    wave=_docs_markdown_escape(str(entry.get("wave", ""))),
+                    status=_docs_markdown_escape(str(entry.get("status", "unknown"))),
+                    tasks=_docs_markdown_escape(
+                        ", ".join(_docs_non_empty_strings(entry.get("tasks")))
+                        or "(none)"
+                    ),
+                    attempts=_docs_markdown_escape(str(entry.get("attempts", 0))),
+                    retries=_docs_markdown_escape(str(entry.get("retries_used", 0))),
+                    duration=_docs_markdown_escape(
+                        str(
+                            round(
+                                _docs_safe_float(entry.get("duration_seconds", 0), 0.0),
+                                3,
+                            )
+                        )
+                    ),
+                    last_attempt=_docs_markdown_escape(
+                        str(
+                            round(
+                                _docs_safe_float(
+                                    entry.get("last_attempt_duration_seconds", 0),
+                                    0.0,
+                                ),
+                                3,
+                            )
+                        )
+                    ),
+                    retry_pending="yes" if bool(entry.get("retry_pending")) else "no",
+                    critical="yes" if bool(entry.get("critical_path")) else "no",
+                )
+            )
+    else:
+        lines.append("| (none) |  |  |  |  |  |  |  |  |")
+
+    lines.extend(["", "## Wave Detail Notes", ""])
+    if waves:
+        for entry in waves:
+            if not isinstance(entry, dict):
+                continue
+            lines.extend(
+                [
+                    (
+                        f"- wave {entry.get('wave', '?')}: "
+                        f"timing={_docs_format_seconds(entry.get('duration_seconds', 0), blank='n/a')} "
+                        f"(last_attempt={_docs_format_seconds(entry.get('last_attempt_duration_seconds', 0), blank='n/a')}, "
+                        f"window={entry.get('started_at', '') or '-'} -> {entry.get('completed_at', '') or '-'})"
+                    ),
+                    f"  retry_reasons: {', '.join(_docs_non_empty_strings(entry.get('retry_reasons'))) or 'none'}",
+                    f"  blocked_tasks: {', '.join(_docs_non_empty_strings(entry.get('blocked_task_ids'))) or 'none'}",
+                    f"  deferred_tasks: {', '.join(_docs_non_empty_strings(entry.get('deferred_task_ids'))) or 'none'}",
+                    f"  skipped_tasks: {', '.join(_docs_non_empty_strings(entry.get('skipped_task_ids'))) or 'none'}",
+                    f"  pending_tasks: {', '.join(_docs_non_empty_strings(entry.get('pending_task_ids'))) or 'none'}",
+                    f"  failed_tasks: {', '.join(_docs_non_empty_strings(entry.get('failed_task_ids'))) or 'none'}",
+                    f"  out_of_contract_paths: {', '.join(_docs_non_empty_strings(entry.get('out_of_contract_paths'))) or 'none'}",
+                ]
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(
+        [
+            "",
+            "## File Conflicts",
+            "",
+            "| Wave | Kind | Tasks | Detail |",
+            "|------|------|-------|--------|",
+        ]
+    )
+    if conflicts:
+        for entry in conflicts:
+            if not isinstance(entry, dict):
+                continue
+            lines.append(
+                "| {wave} | {kind} | {tasks} | {detail} |".format(
+                    wave=_docs_markdown_escape(str(entry.get("wave", ""))),
+                    kind=_docs_markdown_escape(str(entry.get("kind", ""))),
+                    tasks=_docs_markdown_escape(
+                        ", ".join(
+                            str(item).strip()
+                            for item in entry.get("tasks", [])
+                            if str(item).strip()
+                        )
+                        or "(none)"
+                    ),
+                    detail=_docs_markdown_escape(str(entry.get("detail", ""))),
+                )
+            )
+    else:
+        lines.append("| (none) |  |  |  |")
+
+    if include_task_evidence:
+        lines.extend(
+            [
+                "",
+                "## Task Evidence",
+                "",
+                "| Task | Wave | Status | Attempts | Retries | Duration (s) | Reason | Blocked By | Verification | Evidence | Critical Path |",
+                "|------|------|--------|----------|---------|--------------|--------|------------|--------------|----------|---------------|",
+            ]
+        )
+        if tasks:
+            for entry in tasks:
+                if not isinstance(entry, dict):
+                    continue
+                evidence = entry.get("evidence_summary")
+                if not isinstance(evidence, dict):
+                    evidence = {}
+                reason_code = str(entry.get("reason_code", "")).strip()
+                reason_detail = str(entry.get("reason_detail", "")).strip()
+                reason_text = reason_code or "-"
+                if reason_detail:
+                    reason_text = (
+                        f"{reason_code} ({reason_detail})"
+                        if reason_code
+                        else reason_detail
+                    )
+                lines.append(
+                    "| {task} | {wave} | {status} | {attempts} | {retries} | {duration} | {reason} | {blocked_by} | {verification} | {evidence} | {critical} |".format(
+                        task=_docs_markdown_escape(str(entry.get("task_id", ""))),
+                        wave=_docs_markdown_escape(str(entry.get("wave", ""))),
+                        status=_docs_markdown_escape(str(entry.get("status", ""))),
+                        attempts=_docs_markdown_escape(str(entry.get("attempts", 0))),
+                        retries=_docs_markdown_escape(
+                            str(entry.get("retries_used", 0))
+                        ),
+                        duration=_docs_markdown_escape(
+                            str(
+                                round(
+                                    _docs_safe_float(
+                                        entry.get("duration_seconds", 0),
+                                        0.0,
+                                    ),
+                                    3,
+                                )
+                            )
+                        ),
+                        reason=_docs_markdown_escape(reason_text),
+                        blocked_by=_docs_markdown_escape(
+                            ", ".join(_docs_non_empty_strings(entry.get("blocked_by")))
+                            or "-"
+                        ),
+                        verification=_docs_markdown_escape(
+                            str(entry.get("verification_status", "not_run"))
+                            or "not_run"
+                        ),
+                        evidence=_docs_markdown_escape(
+                            str(evidence.get("text", "")) or "n/a"
+                        ),
+                        critical="yes" if bool(entry.get("critical_path")) else "no",
+                    )
+                )
+        else:
+            lines.append("| (none) |  |  |  |  |  |  |  |  |  |  |")
+
+
 def _render_docs_project_view(context: dict[str, Any]) -> str:
     repo_root = context["repo_root"]
     state = context["state"]
@@ -1153,6 +1788,11 @@ def _render_docs_project_view(context: dict[str, Any]) -> str:
             f"- focus_experiment_id: `{context_bundle.get('focus_experiment_id', '')}`",
         ]
     )
+    _docs_append_wave_observability_sections(
+        lines,
+        context=context,
+        include_task_evidence=False,
+    )
     diagnostics = []
     for key in (
         "backlog_error",
@@ -1163,10 +1803,20 @@ def _render_docs_project_view(context: dict[str, Any]) -> str:
         "context_bundle_error",
         "project_map_error",
         "context_delta_error",
+        "plan_execution_state_error",
+        "plan_execution_summary_error",
+        "plan_graph_error",
+        "plan_check_result_error",
     ):
         value = str(context.get(key, "")).strip()
         if value:
             diagnostics.append(value)
+    wave_observability = _docs_wave_observability(context)
+    wave_diagnostics = wave_observability.get("diagnostics")
+    if isinstance(wave_diagnostics, list):
+        diagnostics.extend(
+            str(item).strip() for item in wave_diagnostics if str(item).strip()
+        )
     lines.extend(["", "## Diagnostics"])
     if diagnostics:
         lines.extend(f"- {item}" for item in diagnostics)
@@ -1287,6 +1937,13 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
     pending_decisions = handoff_payload.get("pending_human_decisions")
     if not isinstance(pending_decisions, list):
         pending_decisions = []
+    wave_observability = _docs_wave_observability(context)
+    wave_summary = wave_observability.get("wave_summary")
+    if not isinstance(wave_summary, dict):
+        wave_summary = {}
+    task_summary = wave_observability.get("task_summary")
+    if not isinstance(task_summary, dict):
+        task_summary = {}
 
     lines: list[str] = [
         "# State View",
@@ -1312,11 +1969,15 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
         f"- pending_human_decisions: {len(pending_decisions)}",
         "",
         "## Wave and Task Status",
-        f"- wave: status={wave.get('status', 'unavailable')}, current={wave.get('current', '-')}, executed={wave.get('executed', 0)}, total={wave.get('total', 0)}",
-        f"- tasks: status={task_status.get('status', 'unavailable')}, total={task_status.get('total', 0)}, completed={task_status.get('completed', 0)}, failed={task_status.get('failed', 0)}, blocked={task_status.get('blocked', 0)}, pending={task_status.get('pending', 0)}",
-        "",
-        "## Diagnostics",
+        f"- wave: status={wave_summary.get('status', wave.get('status', 'unavailable'))}, current={wave_summary.get('current', wave.get('current', '-'))}, executed={wave_summary.get('executed', wave.get('executed', 0))}, total={wave_summary.get('total', wave.get('total', 0))}",
+        f"- tasks: status={task_summary.get('status', task_status.get('status', 'unavailable'))}, total={task_summary.get('total', task_status.get('total', 0))}, completed={task_summary.get('completed', task_status.get('completed', 0))}, failed={task_summary.get('failed', task_status.get('failed', 0))}, blocked={task_summary.get('blocked', task_status.get('blocked', 0))}, pending={task_summary.get('pending', task_status.get('pending', 0))}, skipped={task_summary.get('skipped', 0)}, deferred={task_summary.get('deferred', 0)}",
     ]
+    _docs_append_wave_observability_sections(
+        lines,
+        context=context,
+        include_task_evidence=True,
+    )
+    lines.extend(["", "## Diagnostics"])
     diagnostics = []
     handoff_error = str(context.get("handoff_error", "")).strip()
     if handoff_error:
@@ -1327,6 +1988,20 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
             message_text = str(message).strip()
             if message_text:
                 diagnostics.append(message_text)
+    for key in (
+        "plan_execution_state_error",
+        "plan_execution_summary_error",
+        "plan_graph_error",
+        "plan_check_result_error",
+    ):
+        value = str(context.get(key, "")).strip()
+        if value:
+            diagnostics.append(value)
+    wave_diagnostics = wave_observability.get("diagnostics")
+    if isinstance(wave_diagnostics, list):
+        diagnostics.extend(
+            str(item).strip() for item in wave_diagnostics if str(item).strip()
+        )
     if diagnostics:
         lines.extend(f"- {item}" for item in diagnostics)
     else:
@@ -1519,11 +2194,30 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
     traceability_payload = context.get("traceability_payload")
     if not isinstance(traceability_payload, dict):
         traceability_payload = {}
+    plan_execution_state_payload = context.get("plan_execution_state_payload")
+    if not isinstance(plan_execution_state_payload, dict):
+        plan_execution_state_payload = {}
+    plan_execution_summary_payload = context.get("plan_execution_summary_payload")
+    if not isinstance(plan_execution_summary_payload, dict):
+        plan_execution_summary_payload = {}
+    plan_graph_payload = context.get("plan_graph_payload")
+    if not isinstance(plan_graph_payload, dict):
+        plan_graph_payload = {}
+    plan_check_result_payload = context.get("plan_check_result_payload")
+    if not isinstance(plan_check_result_payload, dict):
+        plan_check_result_payload = {}
+    wave_observability = _docs_wave_observability(context)
+    critical_path = wave_observability.get("critical_path")
+    if not isinstance(critical_path, dict):
+        critical_path = {}
 
     def _status_from_error(payload: dict[str, Any], error: str) -> str:
+        error_text = str(error or "").strip()
+        if error_text.startswith("stale "):
+            return "stale"
         if payload:
             return "present"
-        if str(error).startswith("missing "):
+        if error_text.startswith("missing "):
             return "missing"
         return "invalid"
 
@@ -1601,6 +2295,58 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
             iteration=_docs_markdown_escape(str(context_delta.get("iteration_id", "")))
             or "n/a",
         ),
+        "| plan_execution_state.json | `{path}` | {status} | current_wave={current_wave} |".format(
+            path=_docs_relpath(repo_root, context.get("plan_execution_state_path")),
+            status=_status_from_error(
+                plan_execution_state_payload,
+                str(context.get("plan_execution_state_error", "")),
+            ),
+            current_wave=_docs_markdown_escape(
+                str(plan_execution_state_payload.get("current_wave", ""))
+            )
+            or "n/a",
+        ),
+        "| plan_execution_summary.json | `{path}` | {status} | critical_path={critical_path} |".format(
+            path=_docs_relpath(repo_root, context.get("plan_execution_summary_path")),
+            status=_status_from_error(
+                plan_execution_summary_payload,
+                str(context.get("plan_execution_summary_error", "")),
+            ),
+            critical_path=_docs_markdown_escape(
+                str(critical_path.get("mode", "unavailable"))
+            )
+            or "n/a",
+        ),
+        "| plan_graph.json | `{path}` | {status} | waves={waves} |".format(
+            path=_docs_relpath(repo_root, context.get("plan_graph_path")),
+            status=_status_from_error(
+                plan_graph_payload,
+                str(context.get("plan_graph_error", "")),
+            ),
+            waves=_docs_markdown_escape(
+                str(
+                    len(plan_graph_payload.get("waves", []))
+                    if isinstance(plan_graph_payload.get("waves"), list)
+                    else 0
+                )
+            )
+            or "n/a",
+        ),
+        "| plan_check_result.json | `{path}` | {status} | errors={errors} |".format(
+            path=_docs_relpath(repo_root, context.get("plan_check_result_path")),
+            status=_status_from_error(
+                plan_check_result_payload,
+                str(context.get("plan_check_result_error", "")),
+            ),
+            errors=_docs_markdown_escape(
+                str(
+                    len(plan_check_result_payload.get("errors", []))
+                    if isinstance(plan_check_result_payload.get("errors"), list)
+                    else 0
+                )
+            )
+            or "n/a",
+        ),
         "",
         "## Diagnostics",
     ]
@@ -1613,6 +2359,10 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
         "context_bundle_error",
         "project_map_error",
         "context_delta_error",
+        "plan_execution_state_error",
+        "plan_execution_summary_error",
+        "plan_graph_error",
+        "plan_check_result_error",
     ):
         value = str(context.get(key, "")).strip()
         if value:
@@ -1669,6 +2419,11 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
         lines.extend(f"- {item}" for item in diagnostics)
     else:
         lines.append("- none")
+    _docs_append_wave_observability_sections(
+        lines,
+        context=context,
+        include_task_evidence=False,
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 

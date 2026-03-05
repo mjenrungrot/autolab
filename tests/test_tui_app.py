@@ -111,7 +111,13 @@ def _write_todo_state(repo_root: Path) -> None:
     todo_state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_handoff_snapshot(repo_root: Path, state_path: Path) -> None:
+def _write_handoff_snapshot(
+    repo_root: Path,
+    state_path: Path,
+    *,
+    wave_observability: object | None = None,
+    write_wave_observability: bool = True,
+) -> None:
     handoff_md_path = repo_root / "experiments" / "plan" / "iter1" / "handoff.md"
     handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_md_path.write_text("# Autolab Handoff\n", encoding="utf-8")
@@ -132,6 +138,8 @@ def _write_handoff_snapshot(repo_root: Path, state_path: Path) -> None:
             "failed": 0,
             "blocked": 1,
             "pending": 1,
+            "skipped": 0,
+            "deferred": 0,
             "task_details": [],
         },
         "latest_verifier_summary": {
@@ -158,6 +166,10 @@ def _write_handoff_snapshot(repo_root: Path, state_path: Path) -> None:
         "handoff_json_path": str(repo_root / ".autolab" / "handoff.json"),
         "handoff_markdown_path": str(handoff_md_path),
     }
+    if write_wave_observability:
+        payload["wave_observability"] = (
+            {} if wave_observability is None else wave_observability
+        )
     handoff_json_path = repo_root / ".autolab" / "handoff.json"
     handoff_json_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_json_path.write_text(
@@ -2800,6 +2812,534 @@ def test_home_handoff_card_shows_resume_summary(tmp_path: Path) -> None:
             assert "Handoff & Resume" in rendered
             assert "safe_resume: ready" in rendered
             assert "next_command: autolab run" in rendered
+
+    asyncio.run(_run())
+
+
+def test_waves_view_renders_observability_and_updates_selection(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        wave_observability: dict[str, object] = {
+            "status": "available",
+            "summary": {
+                "waves_total": 2,
+                "waves_executed": 1,
+                "tasks_total": 3,
+                "tasks_completed": 1,
+                "tasks_failed": 1,
+                "tasks_blocked": 0,
+                "tasks_pending": 1,
+                "tasks_skipped": 0,
+                "tasks_deferred": 1,
+                "retrying_waves": 1,
+                "conflict_count": 1,
+            },
+            "critical_path": {
+                "mode": "measured_partial",
+                "wave_ids": [2],
+            },
+            "waves": [
+                {
+                    "wave": 1,
+                    "status": "completed",
+                    "duration_seconds": 12,
+                    "retries_used": 0,
+                    "tasks": ["task-a"],
+                },
+                {
+                    "wave": 2,
+                    "status": "failed",
+                    "duration_seconds": 7,
+                    "retries_used": 1,
+                    "retry_reasons": ["verification_failed"],
+                    "blocked_task_ids": ["task-c"],
+                    "deferred_task_ids": ["task-b"],
+                    "skipped_task_ids": [],
+                    "tasks": ["task-b", "task-c"],
+                },
+            ],
+            "tasks": [
+                {
+                    "task_id": "task-a",
+                    "wave": 1,
+                    "status": "completed",
+                    "reason_code": "completed",
+                    "evidence_summary": {"text": "done"},
+                },
+                {
+                    "task_id": "task-b",
+                    "wave": 2,
+                    "status": "pending",
+                    "reason_code": "wave_retry_pending",
+                    "evidence_summary": {"text": "waiting for retry"},
+                },
+                {
+                    "task_id": "task-c",
+                    "wave": 2,
+                    "status": "failed",
+                    "reason_code": "verification_failed",
+                    "evidence_summary": {"text": "tests failed"},
+                },
+            ],
+            "file_conflicts": [
+                {
+                    "wave": 2,
+                    "kind": "same_wave_write_conflict",
+                    "detail": "task-b and task-c touch same file",
+                }
+            ],
+        }
+        _write_handoff_snapshot(
+            repo_root,
+            state_path,
+            wave_observability=wave_observability,
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("5")
+            await pilot.pause()
+
+            status_mode = str(app.query_one("#status-mode", app_module.Static).render())
+            key_hints = str(app.query_one("#key-hints", app_module.Static).render())
+            selection = str(
+                app.query_one("#status-selection", app_module.Static).render()
+            )
+            assert "Mode: waves" in status_mode
+            assert "1-6 view" in key_hints
+            assert "Waves: 1/2" in selection
+
+            summary = str(
+                app.query_one("#waves-summary-card", app_module.Static).render()
+            )
+            assert "- status: available" in summary
+            assert "- waves: total=2 executed=1 retrying=1" in summary
+            assert (
+                "- tasks: total=3 completed=1 failed=1 blocked=0 pending=1 skipped=0 deferred=1"
+                in summary
+            )
+            assert "- conflicts: 1" in summary
+            assert "- critical_path: measured_partial (waves=2)" in summary
+
+            graph = str(app.query_one("#waves-graph-card", app_module.Static).render())
+            assert "- wave 1 [completed] -> task-a" in graph
+            assert "* wave 2 [failed] -> task-b, task-c" in graph
+
+            wave_labels = _list_item_label_texts(
+                app.query_one("#waves-list", app_module.ListView)
+            )
+            assert "wave 1: completed | duration=12s | retries=0" in wave_labels
+            assert "wave 2: failed | duration=7s | retries=1" in wave_labels
+
+            detail = str(
+                app.query_one("#waves-detail-card", app_module.Static).render()
+            )
+            conflicts = str(
+                app.query_one("#waves-conflicts-card", app_module.Static).render()
+            )
+            assert "- wave: 1" in detail
+            assert "task-a: completed [completed] done" in detail
+            assert "- none for selected wave" in conflicts
+
+            await pilot.press("end")
+            await pilot.pause()
+            selection = str(
+                app.query_one("#status-selection", app_module.Static).render()
+            )
+            detail = str(
+                app.query_one("#waves-detail-card", app_module.Static).render()
+            )
+            conflicts = str(
+                app.query_one("#waves-conflicts-card", app_module.Static).render()
+            )
+            assert "Waves: 2/2" in selection
+            assert "- wave: 2" in detail
+            assert "- retry_reasons: verification_failed" in detail
+            assert "- blocked_tasks: task-c" in detail
+            assert "- deferred_tasks: task-b" in detail
+            assert "task-c: failed [verification_failed] tests failed" in detail
+            assert (
+                "- same_wave_write_conflict: task-b and task-c touch same file"
+                in conflicts
+            )
+
+            await pilot.press("]")
+            await pilot.pause()
+            status_mode = str(app.query_one("#status-mode", app_module.Static).render())
+            assert "Mode: help" in status_mode
+
+            await pilot.press("[")
+            await pilot.pause()
+            status_mode = str(app.query_one("#status-mode", app_module.Static).render())
+            assert "Mode: waves" in status_mode
+
+            await pilot.press("home")
+            await pilot.pause()
+            selection = str(
+                app.query_one("#status-selection", app_module.Static).render()
+            )
+            assert "Waves: 1/2" in selection
+
+    asyncio.run(_run())
+
+
+def test_waves_view_preserves_selection_on_refresh_and_shows_global_conflicts(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        wave_observability: dict[str, object] = {
+            "status": "available",
+            "summary": {
+                "waves_total": 2,
+                "waves_executed": 2,
+                "tasks_total": 2,
+                "tasks_completed": 1,
+                "tasks_failed": 1,
+                "tasks_blocked": 0,
+                "tasks_pending": 0,
+                "tasks_skipped": 0,
+                "tasks_deferred": 0,
+                "retrying_waves": 0,
+                "conflict_count": 2,
+            },
+            "critical_path": {
+                "mode": "measured_partial",
+                "wave_ids": [2],
+            },
+            "waves": [
+                {
+                    "wave": 1,
+                    "status": "completed",
+                    "duration_seconds": 5,
+                    "retries_used": 0,
+                    "tasks": ["task-a"],
+                },
+                {
+                    "wave": 2,
+                    "status": "failed",
+                    "duration_seconds": 7,
+                    "retries_used": 1,
+                    "retry_reasons": ["verification_failed"],
+                    "tasks": ["task-b"],
+                },
+            ],
+            "tasks": [
+                {
+                    "task_id": "task-a",
+                    "wave": 1,
+                    "status": "completed",
+                    "reason_code": "completed",
+                    "evidence_summary": {"text": "done"},
+                },
+                {
+                    "task_id": "task-b",
+                    "wave": 2,
+                    "status": "failed",
+                    "reason_code": "verification_failed",
+                    "evidence_summary": {"text": "tests failed"},
+                },
+            ],
+            "file_conflicts": [
+                {
+                    "wave": 0,
+                    "kind": "same_wave_conflict_group_collision",
+                    "detail": "shared writer group spans multiple waves",
+                },
+                {
+                    "wave": 2,
+                    "kind": "same_wave_write_conflict",
+                    "detail": "task-b collides with generated metrics",
+                },
+            ],
+        }
+        _write_handoff_snapshot(
+            repo_root,
+            state_path,
+            wave_observability=wave_observability,
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("5")
+            await pilot.pause()
+
+            conflicts = str(
+                app.query_one("#waves-conflicts-card", app_module.Static).render()
+            )
+            assert (
+                "[global/unmapped] same_wave_conflict_group_collision: "
+                "shared writer group spans multiple waves"
+            ) in conflicts
+
+            await pilot.press("end")
+            await pilot.pause()
+            selection = str(
+                app.query_one("#status-selection", app_module.Static).render()
+            )
+            assert "Waves: 2/2" in selection
+
+            wave_observability["waves"][1]["duration_seconds"] = 8  # type: ignore[index]
+            wave_observability["waves"][1]["retry_reasons"] = [  # type: ignore[index]
+                "verification_failed",
+                "manual_retry",
+            ]
+            _write_handoff_snapshot(
+                repo_root,
+                state_path,
+                wave_observability=wave_observability,
+            )
+
+            await pilot.press("r")
+            await pilot.pause()
+
+            selection = str(
+                app.query_one("#status-selection", app_module.Static).render()
+            )
+            detail = str(
+                app.query_one("#waves-detail-card", app_module.Static).render()
+            )
+            conflicts = str(
+                app.query_one("#waves-conflicts-card", app_module.Static).render()
+            )
+            assert "Waves: 2/2" in selection
+            assert "- wave: 2" in detail
+            assert "- duration_seconds: 8" in detail
+            assert "- retry_reasons: verification_failed, manual_retry" in detail
+            assert (
+                "- same_wave_write_conflict: task-b collides with generated metrics"
+                in conflicts
+            )
+            assert (
+                "[global/unmapped] same_wave_conflict_group_collision: "
+                "shared writer group spans multiple waves"
+            ) in conflicts
+
+    asyncio.run(_run())
+
+
+def test_waves_selection_inspector_is_available(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        _write_handoff_snapshot(
+            repo_root,
+            state_path,
+            wave_observability={
+                "status": "available",
+                "summary": {
+                    "waves_total": 1,
+                    "waves_executed": 1,
+                    "tasks_total": 1,
+                    "tasks_completed": 1,
+                    "tasks_failed": 0,
+                    "tasks_blocked": 0,
+                    "tasks_pending": 0,
+                    "tasks_skipped": 0,
+                    "tasks_deferred": 0,
+                    "retrying_waves": 0,
+                    "conflict_count": 0,
+                },
+                "waves": [
+                    {
+                        "wave": 1,
+                        "status": "completed",
+                        "duration_seconds": 4,
+                        "retries_used": 0,
+                        "tasks": ["task-a"],
+                    }
+                ],
+                "tasks": [
+                    {
+                        "task_id": "task-a",
+                        "wave": 1,
+                        "status": "completed",
+                        "reason_code": "completed",
+                        "evidence_summary": {"text": "done"},
+                    }
+                ],
+                "file_conflicts": [],
+            },
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("5")
+            await pilot.pause()
+            await pilot.press("i")
+            await pilot.pause()
+
+            title = str(
+                app.screen.query_one(
+                    "#selection-inspector-title", app_module.Label
+                ).render()
+            )
+            content = str(
+                app.screen.query_one(
+                    "#selection-inspector-content", app_module.Static
+                ).render()
+            )
+            assert "Wave selection inspector" in title
+            assert "- wave: 1" in content
+            assert "File Conflicts" in content
+
+    asyncio.run(_run())
+
+
+def test_waves_view_handles_malformed_wave_entries_without_crashing(
+    tmp_path: Path,
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        _write_handoff_snapshot(
+            repo_root,
+            state_path,
+            wave_observability={
+                "status": "available",
+                "summary": {
+                    "waves_total": 2,
+                    "waves_executed": 1,
+                    "tasks_total": 0,
+                    "tasks_completed": 0,
+                    "tasks_failed": 1,
+                    "tasks_blocked": 0,
+                    "tasks_pending": 0,
+                    "tasks_skipped": 0,
+                    "tasks_deferred": 0,
+                    "retrying_waves": 0,
+                    "conflict_count": 1,
+                },
+                "critical_path": {
+                    "mode": "measured_partial",
+                    "wave_ids": ["two"],
+                },
+                "waves": [
+                    "not-a-dict",
+                    {
+                        "wave": "two",
+                        "status": "blocked",
+                        "duration_seconds": "n/a",
+                        "retries_used": "NaN",
+                        "retry_reasons": "bad-shape",
+                        "tasks": "task-z",
+                    },
+                    {
+                        "wave": 3,
+                        "status": "completed",
+                        "duration_seconds": 4,
+                        "retries_used": 0,
+                        "tasks": ["task-c"],
+                    },
+                ],
+                "file_conflicts": [
+                    {
+                        "wave": "missing-wave-map",
+                        "kind": "same_wave_write_conflict",
+                        "detail": "orphaned conflict still visible",
+                    }
+                ],
+            },
+        )
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("5")
+            await pilot.pause()
+
+            graph = str(app.query_one("#waves-graph-card", app_module.Static).render())
+            wave_labels = _list_item_label_texts(
+                app.query_one("#waves-list", app_module.ListView)
+            )
+            conflicts = str(
+                app.query_one("#waves-conflicts-card", app_module.Static).render()
+            )
+            assert "* wave two [blocked] -> (none)" in graph
+            assert "- wave 3 [completed] -> task-c" in graph
+            assert "wave two: blocked | duration=n/a | retries=NaN" in wave_labels
+            assert "wave 3: completed | duration=4s | retries=0" in wave_labels
+            assert (
+                "[global/unmapped] same_wave_write_conflict: "
+                "orphaned conflict still visible"
+            ) in conflicts
+
+    asyncio.run(_run())
+
+
+def test_waves_view_uses_fallback_wave_observability_in_app_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="implementation")
+        _write_handoff_snapshot(
+            repo_root,
+            state_path,
+            write_wave_observability=False,
+        )
+        derived = {
+            "status": "available",
+            "summary": {
+                "waves_total": 1,
+                "waves_executed": 1,
+                "tasks_total": 1,
+                "tasks_completed": 1,
+                "tasks_failed": 0,
+                "tasks_blocked": 0,
+                "tasks_pending": 0,
+                "tasks_skipped": 0,
+                "tasks_deferred": 0,
+                "retrying_waves": 0,
+                "conflict_count": 0,
+            },
+            "waves": [
+                {
+                    "wave": 9,
+                    "status": "completed",
+                    "duration_seconds": 3,
+                    "retries_used": 0,
+                    "tasks": ["task-fallback"],
+                }
+            ],
+            "tasks": [
+                {
+                    "task_id": "task-fallback",
+                    "wave": 9,
+                    "status": "completed",
+                    "reason_code": "completed",
+                    "evidence_summary": {"text": "derived"},
+                }
+            ],
+            "file_conflicts": [],
+        }
+
+        monkeypatch.setattr(
+            "autolab.tui.snapshot.build_wave_observability",
+            lambda repo_root, *, iteration_dir, **_kwargs: derived,
+        )
+
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("5")
+            await pilot.pause()
+
+            summary = str(
+                app.query_one("#waves-summary-card", app_module.Static).render()
+            )
+            graph = str(app.query_one("#waves-graph-card", app_module.Static).render())
+            detail = str(
+                app.query_one("#waves-detail-card", app_module.Static).render()
+            )
+            assert "- status: available" in summary
+            assert "- waves: total=1 executed=1 retrying=0" in summary
+            assert "- wave 9 [completed] -> task-fallback" in graph
+            assert "- wave: 9" in detail
+            assert "task-fallback: completed [completed] derived" in detail
 
     asyncio.run(_run())
 

@@ -7,7 +7,7 @@ from typing import Any, Literal
 ActionKind = Literal["view", "mutating"]
 ActionRisk = Literal["low", "medium", "high"]
 StageStatus = Literal["complete", "current", "blocked", "upcoming"]
-ViewMode = Literal["home", "runs", "files", "console", "help"]
+ViewMode = Literal["home", "runs", "files", "console", "waves", "help"]
 RenderPreviewStatus = Literal["ok", "unavailable", "error"]
 
 
@@ -178,6 +178,7 @@ class HandoffSummary:
     recommended_command: str
     safe_resume_status: str
     safe_resume_command: str
+    wave_observability: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

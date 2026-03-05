@@ -6,6 +6,7 @@ from pathlib import Path
 
 from autolab import plan_execution
 from autolab.models import PlanExecutionConfig, PlanExecutionImplementationConfig
+from autolab.wave_observability import build_wave_observability
 
 
 def _plan_config(
@@ -56,6 +57,10 @@ def _seed_plan_files(
     )
     (autolab_dir / "plan_graph.json").write_text(
         json.dumps(graph_payload),
+        encoding="utf-8",
+    )
+    (autolab_dir / "plan_check_result.json").write_text(
+        json.dumps({"schema_version": "1.0", "errors": []}),
         encoding="utf-8",
     )
     return repo_root, state_path, state, iteration_dir
@@ -335,6 +340,18 @@ def test_failure_mode_fail_fast_halts_remaining_wave_tasks(
     assert execution_state["task_attempt_counts"]["t1"] == 1
     assert execution_state["task_attempt_counts"]["t2"] == 0
     assert execution_state["task_status"]["t2"] == "pending"
+    assert execution_state["task_reason_code"]["t1"] == "runner_failed"
+    assert execution_state["task_reason_code"]["t2"] == "fail_fast_skipped"
+    assert execution_state["wave_attempt_history"]["1"][0]["status"] == "failed"
+
+    execution_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    task_details = {row["task_id"]: row for row in execution_summary["task_details"]}
+    assert execution_summary["tasks_skipped"] == 1
+    assert execution_summary["observability_summary"]["tasks_skipped"] == 1
+    assert task_details["t2"]["reason_code"] == "fail_fast_skipped"
+    assert execution_summary["wave_details"][0]["retry_pending"] is False
 
 
 def test_failure_mode_finish_wave_then_stop_runs_remaining_tasks(
@@ -412,3 +429,324 @@ def test_failure_mode_finish_wave_then_stop_runs_remaining_tasks(
     )
     assert execution_state["task_attempt_counts"]["t2"] == 1
     assert execution_state["task_status"]["t2"] == "completed"
+    assert execution_state["wave_attempt_history"]["1"][0]["status"] == "failed"
+
+    execution_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    assert execution_summary["tasks_completed"] == 1
+    assert execution_summary["tasks_failed"] == 1
+    assert execution_summary["wave_details"][0]["failed_task_ids"] == ["t1"]
+    assert execution_summary["wave_details"][0]["completed_task_ids"] == ["t2"]
+
+
+def test_blocked_wave_records_blocked_tasks_and_structural_critical_path(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "depends_on": ["missing_dependency"],
+                "writes": [],
+                "touches": [],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **_kwargs: {
+            "status": "completed",
+            "exit_code": 0,
+            "report_name": "runner_execution_report.plan.json",
+            "changed_paths": [],
+        },
+    )
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+    )
+
+    assert result.agent_status == "failed"
+    assert "blocked by unresolved dependencies" in result.summary
+
+    execution_state = json.loads(
+        (iteration_dir / "plan_execution_state.json").read_text(encoding="utf-8")
+    )
+    assert execution_state["task_status"]["t1"] == "blocked"
+    assert execution_state["task_reason_code"]["t1"] == "dependency_blocked"
+    assert execution_state["task_blocked_by"]["t1"] == ["missing_dependency"]
+
+    execution_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    assert execution_summary["tasks_blocked"] == 1
+    assert execution_summary["critical_path"]["mode"] == "structural"
+    assert execution_summary["wave_details"][0]["blocked_task_ids"] == ["t1"]
+
+
+def test_wave_observability_critical_path_respects_wave_barriers(
+    tmp_path: Path,
+) -> None:
+    iteration_dir = tmp_path / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    observability = build_wave_observability(
+        tmp_path,
+        iteration_dir=iteration_dir,
+        graph_payload={
+            "schema_version": "1.0",
+            "iteration_id": "iter1",
+            "nodes": [
+                {
+                    "task_id": "t1",
+                    "scope_kind": "experiment",
+                    "depth": 0,
+                    "can_run_in_parallel": True,
+                    "conflict_group": "",
+                },
+                {
+                    "task_id": "t2",
+                    "scope_kind": "experiment",
+                    "depth": 0,
+                    "can_run_in_parallel": True,
+                    "conflict_group": "",
+                },
+                {
+                    "task_id": "t3",
+                    "scope_kind": "experiment",
+                    "depth": 1,
+                    "can_run_in_parallel": True,
+                    "conflict_group": "",
+                },
+            ],
+            "edges": [{"from": "t1", "to": "t3"}],
+            "waves": [
+                {"wave": 1, "tasks": ["t1", "t2"]},
+                {"wave": 2, "tasks": ["t3"]},
+            ],
+        },
+        plan_check_payload={
+            "schema_version": "1.0",
+            "iteration_id": "iter1",
+            "errors": [],
+        },
+        execution_state_payload={"iteration_id": "iter1"},
+        execution_summary_payload={
+            "iteration_id": "iter1",
+            "wave_details": [
+                {
+                    "wave": 1,
+                    "status": "completed",
+                    "tasks": ["t1", "t2"],
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:10Z",
+                    "duration_seconds": 10.0,
+                },
+                {
+                    "wave": 2,
+                    "status": "completed",
+                    "tasks": ["t3"],
+                    "started_at": "2026-01-01T00:00:10Z",
+                    "completed_at": "2026-01-01T00:00:11Z",
+                    "duration_seconds": 1.0,
+                },
+            ],
+            "task_details": [
+                {
+                    "task_id": "t1",
+                    "status": "completed",
+                    "wave": 1,
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:01Z",
+                    "duration_seconds": 1.0,
+                },
+                {
+                    "task_id": "t2",
+                    "status": "completed",
+                    "wave": 1,
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "completed_at": "2026-01-01T00:00:10Z",
+                    "duration_seconds": 10.0,
+                },
+                {
+                    "task_id": "t3",
+                    "status": "completed",
+                    "wave": 2,
+                    "started_at": "2026-01-01T00:00:10Z",
+                    "completed_at": "2026-01-01T00:00:11Z",
+                    "duration_seconds": 1.0,
+                },
+            ],
+        },
+    )
+
+    assert observability["critical_path"]["mode"] == "measured_complete"
+    assert observability["critical_path"]["task_ids"] == ["t2", "t3"]
+    assert observability["critical_path"]["wave_ids"] == [1, 2]
+    assert observability["critical_path"]["duration_seconds"] == 11.0
+    assert "wave-barrier" in observability["critical_path"]["basis_note"]
+
+
+def test_wave_retry_pending_tracks_current_and_historical_state(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=1)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "depends_on": [],
+                "writes": [],
+                "touches": [],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    task_attempts = {"t1": 0}
+
+    def _runner(*_args, **kwargs):
+        report_name = str(kwargs.get("report_name", "")).strip()
+        if report_name == "runner_execution_report.plan.json":
+            return {
+                "status": "completed",
+                "exit_code": 0,
+                "report_name": report_name,
+                "changed_paths": [],
+            }
+        if report_name == "runner_execution_report.t1.json":
+            task_attempts["t1"] += 1
+            if task_attempts["t1"] == 1:
+                return {
+                    "status": "failed",
+                    "exit_code": 2,
+                    "report_name": report_name,
+                    "changed_paths": [],
+                }
+            return {
+                "status": "completed",
+                "exit_code": 0,
+                "report_name": report_name,
+                "changed_paths": [],
+            }
+        raise AssertionError(f"unexpected report_name: {report_name}")
+
+    monkeypatch.setattr(plan_execution, "_invoke_agent_runner", _runner)
+
+    first = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+    )
+    assert first.agent_status == "needs_retry"
+
+    first_state = json.loads(
+        (iteration_dir / "plan_execution_state.json").read_text(encoding="utf-8")
+    )
+    first_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    assert first_state["wave_retry_counts"]["1"] == 0
+    assert first_summary["wave_details"][0]["retries_used"] == 0
+    assert first_summary["wave_details"][0]["retry_pending"] is True
+    assert first_summary["wave_details"][0]["current_retry_reasons"] == [
+        "runner_failed"
+    ]
+    assert first_summary["wave_details"][0]["retry_reasons"] == ["runner_failed"]
+    assert first_summary["observability_summary"]["retrying_waves"] == 1
+
+    second = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+    )
+    assert second.agent_status == "complete"
+
+    second_state = json.loads(
+        (iteration_dir / "plan_execution_state.json").read_text(encoding="utf-8")
+    )
+    second_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    assert second_state["wave_retry_counts"]["1"] == 1
+    assert second_summary["wave_details"][0]["retries_used"] == 1
+    assert second_summary["wave_details"][0]["retry_pending"] is False
+    assert second_summary["wave_details"][0]["current_retry_reasons"] == []
+    assert second_summary["wave_details"][0]["retry_reasons"] == ["runner_failed"]
+    assert second_summary["observability_summary"]["retrying_waves"] == 0
+
+
+def test_wave_retry_budget_exhausted_does_not_count_unscheduled_retry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "depends_on": [],
+                "writes": [],
+                "touches": [],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **kwargs: {
+            "status": "completed"
+            if str(kwargs.get("report_name", "")).strip()
+            == "runner_execution_report.plan.json"
+            else "failed",
+            "exit_code": 0
+            if str(kwargs.get("report_name", "")).strip()
+            == "runner_execution_report.plan.json"
+            else 2,
+            "report_name": str(kwargs.get("report_name", "")).strip(),
+            "changed_paths": [],
+        },
+    )
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+    )
+
+    assert result.agent_status == "failed"
+    assert "(0/0)" in result.summary
+
+    execution_state = json.loads(
+        (iteration_dir / "plan_execution_state.json").read_text(encoding="utf-8")
+    )
+    execution_summary = json.loads(
+        (iteration_dir / "plan_execution_summary.json").read_text(encoding="utf-8")
+    )
+    assert execution_state["wave_retry_counts"]["1"] == 0
+    assert execution_summary["wave_details"][0]["retries_used"] == 0
+    assert execution_summary["wave_details"][0]["retry_pending"] is False
+    assert execution_summary["wave_details"][0]["current_retry_reasons"] == []

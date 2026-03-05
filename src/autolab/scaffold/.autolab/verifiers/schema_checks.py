@@ -45,6 +45,7 @@ if str(_VERIFIER_DIR) not in sys.path:
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -60,9 +61,10 @@ except Exception:  # pragma: no cover
     yaml = None
 
 try:
-    from jsonschema import Draft202012Validator
+    from jsonschema import Draft202012Validator, FormatChecker
 except Exception:  # pragma: no cover
     Draft202012Validator = None
+    FormatChecker = None
 
 try:
     from autolab.config import (
@@ -125,6 +127,40 @@ SCHEMAS: dict[str, str] = {
     "codebase_experiment_delta": "codebase_experiment_delta.schema.json",
     "codebase_context_bundle": "codebase_context_bundle.schema.json",
 }
+
+OBSERVABILITY_REASON_CODES = {
+    "",
+    "completed",
+    "dependency_blocked",
+    "fail_fast_skipped",
+    "wave_retry_pending",
+    "runner_failed",
+    "verification_failed",
+    "expected_artifacts_missing",
+    "out_of_contract_edits",
+    "task_exception",
+    "missing_task_result",
+    "pending",
+    "unknown",
+}
+
+TASK_KEYED_PLAN_EXECUTION_STATE_FIELDS = (
+    "task_status",
+    "task_attempt_counts",
+    "task_retry_counts",
+    "task_last_error",
+    "task_files_changed",
+    "task_started_at",
+    "task_completed_at",
+    "task_duration_seconds",
+    "task_reason_code",
+    "task_reason_detail",
+    "task_runner_report_path",
+    "task_verification_status",
+    "task_verification_commands",
+    "task_expected_artifacts_missing",
+    "task_blocked_by",
+)
 
 
 def _normalize_metric_names(raw_value: object) -> list[str]:
@@ -211,7 +247,10 @@ def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
     schema = _load_schema(schema_key)
     if _is_strict_schema_mode():
         schema = _patch_strict_additional_properties(schema)
-    validator = Draft202012Validator(schema)
+    validator_kwargs: dict[str, Any] = {}
+    if FormatChecker is not None:
+        validator_kwargs["format_checker"] = FormatChecker()
+    validator = Draft202012Validator(schema, **validator_kwargs)
     failures: list[str] = []
     for error in sorted(
         validator.iter_errors(payload), key=lambda item: _format_error_path(item.path)
@@ -219,6 +258,91 @@ def _schema_validate(payload: Any, *, schema_key: str, path: Path) -> list[str]:
         location = _format_error_path(error.path)
         failures.append(f"{path} schema violation at {location}: {error.message}")
     return failures
+
+
+def _load_plan_contract_task_ids(state: dict[str, Any]) -> set[str]:
+    iteration_dir = _iteration_dir(state)
+    task_ids: set[str] = set()
+    for path in (
+        iteration_dir / "plan_contract.json",
+        REPO_ROOT / ".autolab" / "plan_contract.json",
+    ):
+        if not path.exists():
+            continue
+        try:
+            payload = load_json(path)
+        except Exception:
+            continue
+        tasks = payload.get("tasks")
+        if not isinstance(tasks, list):
+            continue
+        for row in tasks:
+            if not isinstance(row, dict):
+                continue
+            task_id = str(row.get("task_id", "")).strip()
+            if task_id:
+                task_ids.add(task_id)
+    return task_ids
+
+
+def _validate_reason_code(
+    raw_value: Any,
+    *,
+    path_label: str,
+    allow_empty: bool,
+) -> list[str]:
+    reason_code = str(raw_value or "").strip().lower()
+    if not reason_code and allow_empty:
+        return []
+    if reason_code not in OBSERVABILITY_REASON_CODES:
+        allowed = ", ".join(
+            sorted(code or "<empty>" for code in OBSERVABILITY_REASON_CODES)
+        )
+        return [f"{path_label} must be one of [{allowed}]"]
+    return []
+
+
+def _validate_known_task_ids(
+    mapping: Any,
+    *,
+    path: Path,
+    field_name: str,
+    known_task_ids: set[str],
+) -> list[str]:
+    if not known_task_ids or not isinstance(mapping, dict):
+        return []
+    failures: list[str] = []
+    for raw_task_id in mapping.keys():
+        task_id = str(raw_task_id or "").strip()
+        if task_id and task_id not in known_task_ids:
+            failures.append(f"{path} {field_name} contains unknown task_id '{task_id}'")
+    return failures
+
+
+def _is_valid_timestamp(raw_value: Any) -> bool:
+    text = str(raw_value or "").strip()
+    if not text:
+        return False
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_timestamp(
+    raw_value: Any,
+    *,
+    path_label: str,
+    allow_empty: bool = False,
+) -> list[str]:
+    text = str(raw_value or "").strip()
+    if not text and allow_empty:
+        return []
+    if not _is_valid_timestamp(text):
+        return [f"{path_label} must be a valid date-time string"]
+    return []
 
 
 def _stage_requirements(policy: dict[str, Any], stage: str) -> dict[str, bool]:
@@ -798,7 +922,90 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
         payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
-    return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
+    failures = _schema_validate(payload, schema_key="plan_execution_summary", path=path)
+    failures.extend(
+        _validate_timestamp(
+            payload.get("generated_at"),
+            path_label=f"{path} generated_at",
+        )
+    )
+    known_task_ids = _load_plan_contract_task_ids(state)
+    task_details = payload.get("task_details")
+    if isinstance(task_details, list):
+        for index, row in enumerate(task_details):
+            if not isinstance(row, dict):
+                continue
+            failures.extend(
+                _validate_timestamp(
+                    row.get("started_at"),
+                    path_label=f"{path} task_details[{index}].started_at",
+                )
+            )
+            failures.extend(
+                _validate_timestamp(
+                    row.get("completed_at"),
+                    path_label=f"{path} task_details[{index}].completed_at",
+                )
+            )
+            task_id = str(row.get("task_id", "")).strip()
+            if known_task_ids and task_id and task_id not in known_task_ids:
+                failures.append(
+                    f"{path} task_details[{index}].task_id '{task_id}' is not declared in plan_contract.json"
+                )
+            failures.extend(
+                _validate_reason_code(
+                    row.get("reason_code"),
+                    path_label=f"{path} task_details[{index}].reason_code",
+                    allow_empty=False,
+                )
+            )
+    wave_details = payload.get("wave_details")
+    if isinstance(wave_details, list):
+        for wave_index, row in enumerate(wave_details):
+            if not isinstance(row, dict):
+                continue
+            failures.extend(
+                _validate_timestamp(
+                    row.get("started_at"),
+                    path_label=f"{path} wave_details[{wave_index}].started_at",
+                )
+            )
+            failures.extend(
+                _validate_timestamp(
+                    row.get("completed_at"),
+                    path_label=f"{path} wave_details[{wave_index}].completed_at",
+                )
+            )
+            attempt_history = row.get("attempt_history")
+            if isinstance(attempt_history, list):
+                for attempt_index, attempt in enumerate(attempt_history):
+                    if not isinstance(attempt, dict):
+                        continue
+                    failures.extend(
+                        _validate_timestamp(
+                            attempt.get("started_at"),
+                            path_label=(
+                                f"{path} wave_details[{wave_index}].attempt_history[{attempt_index}].started_at"
+                            ),
+                        )
+                    )
+                    failures.extend(
+                        _validate_timestamp(
+                            attempt.get("completed_at"),
+                            path_label=(
+                                f"{path} wave_details[{wave_index}].attempt_history[{attempt_index}].completed_at"
+                            ),
+                        )
+                    )
+    critical_path = payload.get("critical_path")
+    if isinstance(critical_path, dict) and known_task_ids:
+        for task_id in critical_path.get("task_ids", []):
+            normalized = str(task_id or "").strip()
+            if normalized and normalized not in known_task_ids:
+                failures.append(
+                    f"{path} critical_path.task_ids contains unknown task_id '{normalized}'"
+                )
+    return failures
 
 
 def _validate_plan_execution_state(state: dict[str, Any]) -> list[str]:
@@ -811,7 +1018,83 @@ def _validate_plan_execution_state(state: dict[str, Any]) -> list[str]:
         payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
-    return _schema_validate(payload, schema_key="plan_execution_state", path=path)
+    failures = _schema_validate(payload, schema_key="plan_execution_state", path=path)
+    failures.extend(
+        _validate_timestamp(
+            payload.get("generated_at"),
+            path_label=f"{path} generated_at",
+        )
+    )
+    failures.extend(
+        _validate_timestamp(
+            payload.get("updated_at"),
+            path_label=f"{path} updated_at",
+        )
+    )
+    known_task_ids = _load_plan_contract_task_ids(state)
+    for field_name in TASK_KEYED_PLAN_EXECUTION_STATE_FIELDS:
+        failures.extend(
+            _validate_known_task_ids(
+                payload.get(field_name),
+                path=path,
+                field_name=field_name,
+                known_task_ids=known_task_ids,
+            )
+        )
+    reason_codes = payload.get("task_reason_code")
+    if isinstance(reason_codes, dict):
+        for task_id, raw_reason_code in reason_codes.items():
+            task_label = str(task_id or "").strip() or "<empty>"
+            failures.extend(
+                _validate_reason_code(
+                    raw_reason_code,
+                    path_label=f"{path} task_reason_code['{task_label}']",
+                    allow_empty=True,
+                )
+            )
+    for field_name in (
+        "task_started_at",
+        "task_completed_at",
+        "wave_started_at",
+        "wave_completed_at",
+    ):
+        mapping = payload.get(field_name)
+        if not isinstance(mapping, dict):
+            continue
+        for key, raw_value in mapping.items():
+            label = str(key or "").strip() or "<empty>"
+            failures.extend(
+                _validate_timestamp(
+                    raw_value,
+                    path_label=f"{path} {field_name}['{label}']",
+                )
+            )
+    wave_attempt_history = payload.get("wave_attempt_history")
+    if isinstance(wave_attempt_history, dict):
+        for wave_key, attempts in wave_attempt_history.items():
+            if not isinstance(attempts, list):
+                continue
+            wave_label = str(wave_key or "").strip() or "<empty>"
+            for attempt_index, attempt in enumerate(attempts):
+                if not isinstance(attempt, dict):
+                    continue
+                failures.extend(
+                    _validate_timestamp(
+                        attempt.get("started_at"),
+                        path_label=(
+                            f"{path} wave_attempt_history['{wave_label}'][{attempt_index}].started_at"
+                        ),
+                    )
+                )
+                failures.extend(
+                    _validate_timestamp(
+                        attempt.get("completed_at"),
+                        path_label=(
+                            f"{path} wave_attempt_history['{wave_label}'][{attempt_index}].completed_at"
+                        ),
+                    )
+                )
+    return failures
 
 
 def _validate_traceability_coverage(state: dict[str, Any]) -> list[str]:
@@ -857,7 +1140,7 @@ def _validate_traceability_latest(state: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _validate_handoff() -> list[str]:
+def _validate_handoff(state: dict[str, Any]) -> list[str]:
     """Validate .autolab/handoff.json when present (optional artifact)."""
     path = REPO_ROOT / ".autolab" / "handoff.json"
     if not path.exists():
@@ -866,7 +1149,108 @@ def _validate_handoff() -> list[str]:
         payload = load_json(path)
     except Exception as exc:
         return [f"{path} {exc}"]
-    return _schema_validate(payload, schema_key="handoff", path=path)
+    failures = _schema_validate(payload, schema_key="handoff", path=path)
+    failures.extend(
+        _validate_timestamp(
+            payload.get("generated_at"),
+            path_label=f"{path} generated_at",
+        )
+    )
+    state_iteration_id = str(state.get("iteration_id", "")).strip()
+    payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+    if (
+        state_iteration_id
+        and payload_iteration_id
+        and payload_iteration_id != state_iteration_id
+    ):
+        failures.append(f"{path} iteration_id mismatch")
+    known_task_ids = _load_plan_contract_task_ids(state)
+    wave_observability = payload.get("wave_observability")
+    if isinstance(wave_observability, dict):
+        latest_verifier = payload.get("latest_verifier_summary")
+        if isinstance(latest_verifier, dict):
+            failures.extend(
+                _validate_timestamp(
+                    latest_verifier.get("generated_at"),
+                    path_label=f"{path} latest_verifier_summary.generated_at",
+                )
+            )
+        task_summary = wave_observability.get("task_summary")
+        if isinstance(task_summary, dict):
+            task_details = task_summary.get("task_details")
+            if isinstance(task_details, list):
+                for index, row in enumerate(task_details):
+                    if not isinstance(row, dict):
+                        continue
+                    failures.extend(
+                        _validate_timestamp(
+                            row.get("started_at"),
+                            path_label=(
+                                f"{path} wave_observability.task_summary.task_details[{index}].started_at"
+                            ),
+                        )
+                    )
+                    failures.extend(
+                        _validate_timestamp(
+                            row.get("completed_at"),
+                            path_label=(
+                                f"{path} wave_observability.task_summary.task_details[{index}].completed_at"
+                            ),
+                        )
+                    )
+                    task_id = str(row.get("task_id", "")).strip()
+                    if known_task_ids and task_id and task_id not in known_task_ids:
+                        failures.append(
+                            f"{path} wave_observability.task_summary.task_details[{index}].task_id '{task_id}' is not declared in plan_contract.json"
+                        )
+                    failures.extend(
+                        _validate_reason_code(
+                            row.get("reason_code"),
+                            path_label=(
+                                f"{path} wave_observability.task_summary.task_details[{index}].reason_code"
+                            ),
+                            allow_empty=False,
+                        )
+                    )
+        waves = wave_observability.get("waves")
+        if isinstance(waves, list):
+            for wave_index, row in enumerate(waves):
+                if not isinstance(row, dict):
+                    continue
+                failures.extend(
+                    _validate_timestamp(
+                        row.get("started_at"),
+                        path_label=f"{path} wave_observability.waves[{wave_index}].started_at",
+                    )
+                )
+                failures.extend(
+                    _validate_timestamp(
+                        row.get("completed_at"),
+                        path_label=f"{path} wave_observability.waves[{wave_index}].completed_at",
+                    )
+                )
+                attempt_history = row.get("attempt_history")
+                if isinstance(attempt_history, list):
+                    for attempt_index, attempt in enumerate(attempt_history):
+                        if not isinstance(attempt, dict):
+                            continue
+                        failures.extend(
+                            _validate_timestamp(
+                                attempt.get("started_at"),
+                                path_label=(
+                                    f"{path} wave_observability.waves[{wave_index}].attempt_history[{attempt_index}].started_at"
+                                ),
+                            )
+                        )
+                        failures.extend(
+                            _validate_timestamp(
+                                attempt.get("completed_at"),
+                                path_label=(
+                                    f"{path} wave_observability.waves[{wave_index}].attempt_history[{attempt_index}].completed_at"
+                                ),
+                            )
+                        )
+    return failures
 
 
 def _resolve_bundle_path(raw_path: Any) -> Path | None:
@@ -981,13 +1365,18 @@ def _validate_plan_contract(state: dict[str, Any], *, stage: str) -> list[str]:
 
 def _validate_plan_checker_outputs(state: dict[str, Any], *, stage: str) -> list[str]:
     """Validate checker outputs when they exist (or are required in implementation stage)."""
-    if stage != "implementation":
+    if stage not in {"implementation", "implementation_review"}:
         return []
     errors: list[str] = []
+    require_artifacts = stage == "implementation"
     for schema_key, path in (
         ("plan_check_result", REPO_ROOT / ".autolab" / "plan_check_result.json"),
         ("plan_graph", REPO_ROOT / ".autolab" / "plan_graph.json"),
     ):
+        if not path.exists():
+            if require_artifacts:
+                errors.append(f"{path} [Errno 2] No such file or directory")
+            continue
         try:
             payload = load_json(path)
         except Exception as exc:
@@ -1065,7 +1454,7 @@ def main() -> int:
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
     failures.extend(_validate_plan_execution_state(state))
-    failures.extend(_validate_handoff())
+    failures.extend(_validate_handoff(state))
     failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
