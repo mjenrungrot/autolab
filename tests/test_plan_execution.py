@@ -6,6 +6,7 @@ from pathlib import Path
 
 from autolab import plan_execution
 from autolab.models import PlanExecutionConfig, PlanExecutionImplementationConfig
+from autolab.plan_approval import record_plan_approval_decision
 from autolab.wave_observability import build_wave_observability
 
 
@@ -536,6 +537,169 @@ def test_planning_pass_accepts_zero_exit_code(monkeypatch, tmp_path: Path) -> No
     assert result.agent_status == "complete"
     assert result.exit_code == 0
     assert "planning pass failed" not in result.summary
+
+
+def test_plan_only_writes_plan_approval_and_skips_wave_execution(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **kwargs: {
+            "status": "completed",
+            "exit_code": 0,
+            "report_name": str(kwargs.get("report_name", "")).strip(),
+            "changed_paths": [],
+        },
+    )
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        plan_only=True,
+    )
+
+    approval_payload = json.loads(
+        (iteration_dir / "plan_approval.json").read_text(encoding="utf-8")
+    )
+    assert result.exit_code == 0
+    assert result.pause_reason == "plan_only"
+    assert result.proceed_to_evaluate is False
+    assert approval_payload["status"] == "pending"
+    assert approval_payload["requires_approval"] is True
+    assert not (iteration_dir / "plan_execution_state.json").exists()
+
+
+def test_high_risk_plan_requires_approval_before_wave_execution(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plan_execution,
+        "_invoke_agent_runner",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("task runner should not execute before approval")
+        ),
+    )
+
+    result = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+    )
+
+    approval_payload = json.loads(
+        (iteration_dir / "plan_approval.json").read_text(encoding="utf-8")
+    )
+    assert result.exit_code == 0
+    assert result.pause_reason == "plan_approval_required"
+    assert result.proceed_to_evaluate is False
+    assert approval_payload["status"] == "pending"
+    assert approval_payload["requires_approval"] is True
+    assert not (iteration_dir / "plan_execution_state.json").exists()
+
+
+def test_execute_approved_plan_runs_without_replanning(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = _plan_config(task_retry_max=0, wave_retry_max=0)
+    _patch_common_plan_execution(monkeypatch, config)
+    repo_root, state_path, state, iteration_dir = _seed_plan_files(
+        tmp_path,
+        tasks=[
+            {
+                "task_id": "t1",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "writes": [],
+                "touches": [],
+                "verification_commands": [],
+                "failure_policy": "fail_fast",
+            }
+        ],
+    )
+    calls: list[str] = []
+
+    def _runner(*_args, **kwargs):
+        report_name = str(kwargs.get("report_name", "")).strip()
+        calls.append(report_name)
+        if report_name == "runner_execution_report.plan.json":
+            return {
+                "status": "completed",
+                "exit_code": 0,
+                "report_name": report_name,
+                "changed_paths": [],
+            }
+        if report_name == "runner_execution_report.t1.json":
+            return {
+                "status": "completed",
+                "exit_code": 0,
+                "report_name": report_name,
+                "changed_paths": [],
+            }
+        raise AssertionError(f"unexpected report_name: {report_name}")
+
+    monkeypatch.setattr(plan_execution, "_invoke_agent_runner", _runner)
+
+    first = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        plan_only=True,
+    )
+    assert first.pause_reason == "plan_only"
+    record_plan_approval_decision(iteration_dir, status="approved", notes="looks good")
+
+    second = plan_execution.execute_implementation_plan_step(
+        repo_root,
+        state_path=state_path,
+        state=state,
+        run_agent_mode="policy",
+        auto_mode=False,
+        execute_approved_plan=True,
+    )
+
+    assert second.exit_code == 0
+    assert second.proceed_to_evaluate is True
+    assert calls == ["runner_execution_report.t1.json"]
 
 
 def test_substitute_task_command_supports_scope_root_token() -> None:

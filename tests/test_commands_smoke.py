@@ -776,6 +776,64 @@ def _write_wave_observability_fixture(
     )
 
 
+def _write_plan_approval_fixture(
+    repo: Path,
+    state_path: Path,
+    *,
+    iteration_id: str = "iter_plan",
+    status: str = "pending",
+    requires_approval: bool = True,
+) -> Path:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = iteration_id
+    state["experiment_id"] = "e_fixture"
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    iteration_dir = repo / "experiments" / "plan" / iteration_id
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "plan_approval.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": iteration_id,
+                "status": status,
+                "requires_approval": requires_approval,
+                "plan_hash": "plan-hash-1",
+                "risk_fingerprint": "risk-fingerprint-1",
+                "trigger_reasons": ["project_wide_tasks_present"]
+                if requires_approval
+                else [],
+                "counts": {
+                    "tasks_total": 3,
+                    "waves_total": 2,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 2,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "",
+                "reviewed_at": "",
+                "notes": "",
+                "source_paths": {
+                    "plan_contract": ".autolab/plan_contract.json",
+                    "plan_graph": ".autolab/plan_graph.json",
+                    "plan_check_result": ".autolab/plan_check_result.json",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (iteration_dir / "plan_approval.md").write_text(
+        "# Plan Approval\n",
+        encoding="utf-8",
+    )
+    return iteration_dir
+
+
 def test_status_docs_generate_and_policy_doctor_smoke(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1580,6 +1638,7 @@ def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
     assert handoff_payload["current_scope"] in {"experiment", "project_wide"}
     assert handoff_payload["current_stage"] == "hypothesis"
     assert "recommended_next_command" in handoff_payload
+    assert "plan_approval" not in handoff_payload
     handoff_md_path = Path(handoff_payload["handoff_markdown_path"])
     assert handoff_md_path.exists()
 
@@ -1780,6 +1839,33 @@ def test_experiment_subcommand_help_includes_create(
     assert "move" in captured.out
 
 
+def test_run_help_includes_plan_checkpoint_flags(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["run", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--plan-only" in captured.out
+    assert "--execute-approved-plan" in captured.out
+
+
+def test_approve_plan_help_shows_expected_statuses(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["approve-plan", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--status {approve,retry,stop}" in captured.out
+
+
 def test_experiment_create_help_shows_required_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1817,6 +1903,57 @@ def test_status_human_review_banner_mentions_human_review_decision(
     captured = capsys.readouterr()
     assert "*** HUMAN REVIEW REQUIRED ***" in captured.out
     assert "record the human review decision" in captured.out
+
+
+def test_status_shows_pending_plan_approval_and_next_commands(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _write_plan_approval_fixture(repo, state_path, status="pending")
+    _ = capsys.readouterr()
+
+    assert commands_module.main(["status", "--state-file", str(state_path)]) == 0
+    output = capsys.readouterr().out
+
+    assert "plan_approval:" in output
+    assert "status: pending" in output
+    assert "next_commands:" in output
+    assert "autolab approve-plan --status approve" in output
+
+
+def test_approve_plan_command_marks_plan_approved(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_plan_approval_fixture(repo, state_path, status="pending")
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            [
+                "approve-plan",
+                "--state-file",
+                str(state_path),
+                "--status",
+                "approve",
+                "--notes",
+                "safe to proceed",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(
+        (iteration_dir / "plan_approval.json").read_text(encoding="utf-8")
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    output = capsys.readouterr().out
+
+    assert payload["status"] == "approved"
+    assert payload["notes"] == "safe to proceed"
+    assert state["stage"] == "implementation"
+    assert "approved" in output
 
 
 def test_discuss_answers_file_writes_experiment_sidecar(

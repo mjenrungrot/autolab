@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.26] - 2026-03-05
+
+### Summary
+
+- Added promotion-safe implementation planning with required approval risk artifacts, plus `run --plan-only`, `approve-plan`, and `run --execute-approved-plan` for high-risk mixed-scope runs.
+- Hardened handoff and verification behavior around plan approval, wave observability, and generated verifier outputs, including stable schema-error reporting and safe omission of absent approval artifacts.
+- Updated golden fixtures, schemas, and regression coverage so the new implementation checkpoint flow validates cleanly across the full test suite.
+
+<!-- autolab:range v1.2.25..v1.2.26 -->
+
 ## [1.2.25] - 2026-03-05
 
 ### Summary

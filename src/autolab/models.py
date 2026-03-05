@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ class RunOutcome:
     stage_before: str
     stage_after: str
     message: str
+    pause_reason: str = ""
     commit_allowed: bool = True
     commit_task_id: str = ""
     commit_cycle_stage: str = ""
@@ -162,6 +163,16 @@ class ExtractRuntimeConfig:
 
 
 @dataclass(frozen=True)
+class PlanApprovalPolicyConfig:
+    enabled: bool
+    require_for_project_wide_tasks: bool
+    max_tasks_without_approval: int
+    max_waves_without_approval: int
+    max_project_wide_paths_without_approval: int
+    require_after_retries: bool
+
+
+@dataclass(frozen=True)
 class PlanExecutionImplementationConfig:
     enabled: bool
     run_unit: str
@@ -171,6 +182,16 @@ class PlanExecutionImplementationConfig:
     failure_mode: str
     on_wave_retry_exhausted: str
     require_verification_commands: bool
+    approval: PlanApprovalPolicyConfig = field(
+        default_factory=lambda: PlanApprovalPolicyConfig(
+            enabled=True,
+            require_for_project_wide_tasks=True,
+            max_tasks_without_approval=6,
+            max_waves_without_approval=2,
+            max_project_wide_paths_without_approval=3,
+            require_after_retries=True,
+        )
+    )
 
 
 @dataclass(frozen=True)

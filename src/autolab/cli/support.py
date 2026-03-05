@@ -147,6 +147,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "verify",
             "verify-golden",
             "lint",
+            "approve-plan",
             "review",
             "skip",
             "handoff",
@@ -320,6 +321,8 @@ def _run_once(
     auto_mode: bool = False,
     auto_decision: bool = False,
     strict_implementation_progress: bool = True,
+    plan_only: bool = False,
+    execute_approved_plan: bool = False,
 ) -> RunOutcome:
     engine = OrchestrationEngine()
     return engine.run_once(
@@ -332,6 +335,8 @@ def _run_once(
             auto_mode=auto_mode,
             auto_decision=auto_decision,
             strict_implementation_progress=strict_implementation_progress,
+            plan_only=plan_only,
+            execute_approved_plan=execute_approved_plan,
         )
     )
 

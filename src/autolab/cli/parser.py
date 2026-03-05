@@ -271,8 +271,21 @@ def _build_parser() -> argparse.ArgumentParser:
         const="force_off",
         help="Disable agent_runner even when policy enables it.",
     )
+    run_checkpoint_group = run.add_mutually_exclusive_group()
+    run_checkpoint_group.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Generate and validate the implementation plan, then stop before any wave executes.",
+    )
+    run_checkpoint_group.add_argument(
+        "--execute-approved-plan",
+        action="store_true",
+        help="Execute the current approved implementation plan without replanning.",
+    )
     run.set_defaults(run_agent_mode="policy")
     run.set_defaults(strict_implementation_progress=True)
+    run.set_defaults(plan_only=False)
+    run.set_defaults(execute_approved_plan=False)
     run.set_defaults(handler=_cmd_run)
 
     loop = subparsers.add_parser(
@@ -649,6 +662,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Human review decision: pass (continue to launch), retry (back to implementation), stop (end experiment)",
     )
     review.set_defaults(handler=_cmd_review)
+
+    approve_plan = subparsers.add_parser(
+        "approve-plan",
+        help="Record an approval decision for the current implementation plan checkpoint",
+    )
+    approve_plan.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    approve_plan.add_argument(
+        "--status",
+        required=True,
+        choices=("approve", "retry", "stop"),
+        help="Approval decision: approve (allow execution), retry (force replanning), stop (end experiment)",
+    )
+    approve_plan.add_argument(
+        "--notes",
+        default="",
+        help="Optional review notes to persist alongside the approval decision.",
+    )
+    approve_plan.set_defaults(handler=_cmd_approve_plan)
 
     experiment = subparsers.add_parser(
         "experiment", help="Experiment lifecycle management commands"

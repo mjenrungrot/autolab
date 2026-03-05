@@ -5,6 +5,10 @@ from __future__ import annotations
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
 from autolab.config import _load_agent_runner_config
+from autolab.plan_approval import (
+    load_plan_approval,
+    record_plan_approval_decision,
+)
 from autolab.render_debug import ALL_RENDER_VIEWS, build_render_stats_report
 from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
 
@@ -222,18 +226,41 @@ def _cmd_run(args: argparse.Namespace) -> int:
         with _periodic_run_lock_heartbeat(lock_path):
             _append_log(repo_root, f"run lock acquired: {lock_msg}")
             baseline_snapshot = _collect_change_snapshot(repo_root)
-            outcome = _run_once(
-                state_path,
-                args.decision,
-                run_agent_mode=run_agent_mode,
-                verify_before_evaluate=bool(getattr(args, "verify", False)),
-                assistant=assistant_mode,
-                auto_mode=False,
-                auto_decision=bool(getattr(args, "auto_decision", False)),
-                strict_implementation_progress=bool(
+            run_once_kwargs = {
+                "run_agent_mode": run_agent_mode,
+                "verify_before_evaluate": bool(getattr(args, "verify", False)),
+                "assistant": assistant_mode,
+                "auto_mode": False,
+                "auto_decision": bool(getattr(args, "auto_decision", False)),
+                "strict_implementation_progress": bool(
                     getattr(args, "strict_implementation_progress", True)
                 ),
-            )
+                "plan_only": bool(getattr(args, "plan_only", False)),
+                "execute_approved_plan": bool(
+                    getattr(args, "execute_approved_plan", False)
+                ),
+            }
+            try:
+                outcome = _run_once(
+                    state_path,
+                    args.decision,
+                    **run_once_kwargs,
+                )
+            except TypeError as exc:
+                if (
+                    not run_once_kwargs["plan_only"]
+                    and not run_once_kwargs["execute_approved_plan"]
+                    and ("plan_only" in str(exc) or "execute_approved_plan" in str(exc))
+                ):
+                    run_once_kwargs.pop("plan_only", None)
+                    run_once_kwargs.pop("execute_approved_plan", None)
+                    outcome = _run_once(
+                        state_path,
+                        args.decision,
+                        **run_once_kwargs,
+                    )
+                else:
+                    raise
             commit_outcome = _prepare_standard_commit_outcome(
                 repo_root,
                 outcome,
@@ -250,9 +277,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"assistant: {bool(getattr(args, 'assistant', False))}")
             print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
             print(f"auto_decision: {bool(getattr(args, 'auto_decision', False))}")
+            print(f"plan_only: {bool(getattr(args, 'plan_only', False))}")
+            print(
+                "execute_approved_plan: "
+                f"{bool(getattr(args, 'execute_approved_plan', False))}"
+            )
             print(f"stage_before: {outcome.stage_before}")
             print(f"stage_after: {outcome.stage_after}")
             print(f"transitioned: {outcome.transitioned}")
+            if outcome.pause_reason:
+                print(f"pause_reason: {outcome.pause_reason}")
             print(f"message: {outcome.message}")
             print(commit_summary)
             _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
@@ -416,6 +450,8 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 f"iteration {index}: {outcome.stage_before} -> {outcome.stage_after} "
                 f"(transitioned={outcome.transitioned}, exit={outcome.exit_code})"
             )
+            if outcome.pause_reason:
+                print(f"iteration {index}: pause_reason={outcome.pause_reason}")
             print(f"iteration {index}: {commit_summary}")
             _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
             if _handoff_payload is None:
@@ -463,6 +499,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 print(f"autolab loop: stop (terminal stage): {outcome.stage_after}")
                 if args.auto and outcome.stage_after == "human_review":
                     overall_exit_code = 1
+                break
+            if outcome.pause_reason == "plan_approval_required":
+                terminal_reason = "plan_approval_required"
+                print("autolab loop: stop (plan approval required)")
                 break
             if not outcome.transitioned:
                 continue_auto_after_implementation_wave = bool(
@@ -656,6 +696,98 @@ def _cmd_review(args: argparse.Namespace) -> int:
         )
     _append_log(repo_root, f"review command: {message}")
     print(f"autolab review: {message}")
+    return 0
+
+
+def _cmd_approve_plan(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab approve-plan: ERROR {exc}", file=sys.stderr)
+        return 1
+    if str(state.get("stage", "")).strip() != "implementation":
+        print(
+            "autolab approve-plan: ERROR current stage must be 'implementation'",
+            file=sys.stderr,
+        )
+        return 1
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    iteration_dir, _ = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        require_exists=False,
+    )
+
+    decision = str(args.status).strip().lower()
+    normalized_status = "approved" if decision == "approve" else decision
+    try:
+        approval_payload = record_plan_approval_decision(
+            iteration_dir,
+            status=normalized_status,
+            notes=str(getattr(args, "notes", "") or "").strip(),
+        )
+    except RuntimeError as exc:
+        print(f"autolab approve-plan: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    changed_files: list[Path] = [
+        iteration_dir / "plan_approval.json",
+        iteration_dir / "plan_approval.md",
+    ]
+    if normalized_status == "approved":
+        message = (
+            "implementation plan approval recorded: approved — "
+            "run `autolab run --execute-approved-plan` or `autolab run` to continue"
+        )
+    elif normalized_status == "retry":
+        message = (
+            "implementation plan approval recorded: retry — "
+            "rerun `autolab run` to regenerate the plan"
+        )
+    else:
+        state["stage"] = "stop"
+        state["stage_attempt"] = 0
+        state["current_task_id"] = ""
+        state["task_cycle_stage"] = "done"
+        state["task_change_baseline"] = {}
+        completed, backlog_path, completion_summary = (
+            _mark_backlog_experiment_completed(
+                repo_root,
+                str(state.get("experiment_id", "")).strip(),
+            )
+        )
+        _write_json(state_path, state)
+        changed_files.append(state_path)
+        if completed:
+            changed_files.append(backlog_path)
+        message = "implementation plan approval recorded: stop — experiment ended"
+        if completed:
+            message = f"{message}; {completion_summary}"
+
+    if normalized_status != "stop":
+        _write_json(state_path, state)
+        changed_files.append(state_path)
+
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=message,
+        changed_files=changed_files,
+    )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab approve-plan: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
+    approval_status = str(approval_payload.get("status", "")).strip()
+    _append_log(repo_root, f"approve-plan command: {approval_status} {message}")
+    print(f"autolab approve-plan: {message}")
     return 0
 
 

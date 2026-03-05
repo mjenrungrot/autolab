@@ -110,6 +110,11 @@ if [ -n "$staged_files" ]; then
   fi
 fi
 
+PYTHON_BIN="$python_bin" \
+MDFORMAT_BIN="$mdformat_bin" \
+YAMLFIX_BIN="$yamlfix_bin" \
+./scripts/check_style.sh
+
 default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
 if [ -z "$default_branch" ]; then
   default_branch="main"

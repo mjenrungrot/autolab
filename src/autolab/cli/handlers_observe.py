@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from autolab.cli.support import *
+from autolab.plan_approval import approval_next_commands, load_plan_approval
 from autolab.traceability import build_traceability_coverage
 
 
@@ -52,6 +53,51 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(
             "Run `autolab review --status=pass|retry|stop` to record the human review decision."
         )
+
+    if str(state.get("stage", "")).strip() == "implementation":
+        iteration_id = str(state.get("iteration_id", "")).strip()
+        experiment_id = str(state.get("experiment_id", "")).strip()
+        if iteration_id:
+            iteration_dir, _ = _resolve_iteration_directory(
+                repo_root,
+                iteration_id=iteration_id,
+                experiment_id=experiment_id,
+                require_exists=False,
+            )
+            approval = load_plan_approval(iteration_dir)
+            if approval:
+                counts = approval.get("counts")
+                if not isinstance(counts, dict):
+                    counts = {}
+                trigger_reasons = [
+                    str(item).strip()
+                    for item in approval.get("trigger_reasons", [])
+                    if str(item).strip()
+                ]
+                print("plan_approval:")
+                print(f"  status: {approval.get('status', '')}")
+                print(
+                    f"  requires_approval: {bool(approval.get('requires_approval', False))}"
+                )
+                print(f"  plan_hash: {approval.get('plan_hash', '')}")
+                print(f"  risk_fingerprint: {approval.get('risk_fingerprint', '')}")
+                print(
+                    "  counts: "
+                    f"tasks={int(counts.get('tasks_total', 0) or 0)} "
+                    f"waves={int(counts.get('waves_total', 0) or 0)} "
+                    f"project_wide_tasks={int(counts.get('project_wide_tasks', 0) or 0)} "
+                    f"project_wide_paths={int(counts.get('project_wide_unique_paths', 0) or 0)} "
+                    f"retries={int(counts.get('observed_retries', 0) or 0)}"
+                )
+                if trigger_reasons:
+                    print("  trigger_reasons:")
+                    for reason in trigger_reasons:
+                        print(f"    - {reason}")
+                next_commands = approval_next_commands(approval)
+                if next_commands:
+                    print("  next_commands:")
+                    for command in next_commands:
+                        print(f"    - {command}")
 
     # --- Lock status ---
     lock_path = autolab_dir / "lock"

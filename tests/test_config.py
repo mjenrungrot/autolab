@@ -512,6 +512,41 @@ def test_load_plan_execution_config_preserves_explicit_zero_retry_values(
     assert implementation.wave_retry_max == 0
 
 
+def test_load_plan_execution_config_reads_approval_policy(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_plan_execution_policy(
+        repo,
+        {
+            "enabled": True,
+            "run_unit": "wave",
+            "max_parallel_tasks": 1,
+            "task_retry_max": 0,
+            "wave_retry_max": 0,
+            "failure_mode": "finish_wave_then_stop",
+            "on_wave_retry_exhausted": "human_review",
+            "require_verification_commands": True,
+            "approval": {
+                "enabled": True,
+                "require_for_project_wide_tasks": False,
+                "max_tasks_without_approval": 9,
+                "max_waves_without_approval": 4,
+                "max_project_wide_paths_without_approval": 7,
+                "require_after_retries": False,
+            },
+        },
+    )
+
+    approval = _load_plan_execution_config(repo).implementation.approval
+
+    assert approval.enabled is True
+    assert approval.require_for_project_wide_tasks is False
+    assert approval.max_tasks_without_approval == 9
+    assert approval.max_waves_without_approval == 4
+    assert approval.max_project_wide_paths_without_approval == 7
+    assert approval.require_after_retries is False
+
+
 def test_load_plan_execution_config_rejects_zero_max_parallel_tasks(
     tmp_path: Path,
 ) -> None:

@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.25
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.26
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -33,7 +33,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@vX.Y.Z
 autolab sync-scaffold --force
 ```
 
-Enable commit hooks (staged-file formatting + default-branch version bump):
+Enable commit hooks (staged-file formatting + repo style check + default-branch version bump):
 
 ```bash
 ./scripts/install-hooks.sh
@@ -45,7 +45,7 @@ Run formatter/style checks locally:
 ./scripts/check_style.sh
 ```
 
-This also checks that the pinned release tag in `README.md` matches the current
+The pre-commit hook now runs `./scripts/check_style.sh` on every commit. It also checks that the pinned release tag in `README.md` matches the current
 `pyproject.toml` version, then syncs it to the next patch release and can sync
 the current `vX.Y.Z` tag to GitHub (`origin`) after each commit on the default
 branch.
@@ -91,20 +91,20 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Command categories (onboarding-first).**
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab approve-plan`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
 
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 
-**Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. See `docs/workflow_modes.md`.
+**Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. For high-risk implementation plans, use `autolab run --plan-only` to stop after planning, `autolab approve-plan --status approve|retry|stop` to record the checkpoint decision, and `autolab run --execute-approved-plan` to execute the approved plan without replanning. See `docs/workflow_modes.md`.
 
-**Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state, including critical-path duration/basis, per-wave timing windows, retry reasons, blocked/deferred/skipped tasks, file conflicts, and per-task evidence summaries. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `skip`, `focus`, and `experiment move`).
+**Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state, including critical-path duration/basis, per-wave timing windows, retry reasons, blocked/deferred/skipped tasks, file conflicts, per-task evidence summaries, and pending implementation plan approvals. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `approve-plan`, `skip`, `focus`, and `experiment move`).
 
 **Traceability coverage.** `autolab trace` builds a per-iteration end-to-end coverage artifact (`traceability_coverage.json`) linking hypothesis claim, design requirements, plan tasks, verification evidence, metrics, and decision context. Use `--iteration-id <id>` to render a non-active iteration and `--json` for machine-readable command output. A convenience pointer (`.autolab/traceability_latest.json`) is also updated for quick inspection.
 
-**Generated project views.** `autolab docs generate` defaults to the legacy registry view for compatibility (`--view registry`). Use `--view project|roadmap|state|requirements|sidecar|all` for projection views and `--iteration-id <id>` for iteration-scoped projections. The generated `project`, `state`, and `sidecar` views include wave observability projections from `plan_graph.json`, `plan_check_result.json`, `plan_execution_state.json`, and `plan_execution_summary.json`, including retry/block/deferred/skipped detail and critical-path timing notes. Optional discuss/research context sidecars live at `.autolab/context/sidecars/project_wide/{discuss,research}.json` and `experiments/<type>/<iteration_id>/context/sidecars/{discuss,research}.json`; when present they are schema-validated, carry dependency fingerprints for staleness checks, and must identify the scope root they belong to. Project-wide sidecars omit experiment identity fields; experiment sidecars carry `iteration_id` and `experiment_id`. When those observability artifacts are stale or mismatched for the selected iteration, the views keep rendering and surface diagnostics instead of failing where possible. Use `--output-dir <path>` to write markdown view files instead of printing to stdout; the output path must stay within the repository.
+**Generated project views.** `autolab docs generate` defaults to the legacy registry view for compatibility (`--view registry`). Use `--view project|roadmap|state|requirements|sidecar|all` for projection views and `--iteration-id <id>` for iteration-scoped projections. The generated `project`, `state`, and `sidecar` views include wave observability projections from `plan_graph.json`, `plan_check_result.json`, `plan_execution_state.json`, `plan_execution_summary.json`, and `plan_approval.json`, including retry/block/deferred/skipped detail, critical-path timing notes, and pending approval triggers. Optional discuss/research context sidecars live at `.autolab/context/sidecars/project_wide/{discuss,research}.json` and `experiments/<type>/<iteration_id>/context/sidecars/{discuss,research}.json`; when present they are schema-validated, carry dependency fingerprints for staleness checks, and must identify the scope root they belong to. Project-wide sidecars omit experiment identity fields; experiment sidecars carry `iteration_id` and `experiment_id`. When those observability artifacts are stale or mismatched for the selected iteration, the views keep rendering and surface diagnostics instead of failing where possible. Use `--output-dir <path>` to write markdown view files instead of printing to stdout; the output path must stay within the repository.
 
 **Discuss and research sidecars.** `autolab discuss` captures scope-specific intent before planning. Use `--scope project_wide|experiment`, `--answers-file <json>` for deterministic non-interactive runs, `--non-interactive` to materialize the current/default questionnaire without prompting, and `--write-question-pack <path>` to export the exact question pack used. `autolab research` is the optional evidence pass: it resolves the same sidecar lineage, answers unresolved discuss questions (or explicit `--question` prompts), and writes `research.json` / `research.md`. Override the local research CLI with `AUTOLAB_RESEARCH_AGENT_COMMAND`; if unset, Autolab falls back to `claude` or `codex` when available.
 

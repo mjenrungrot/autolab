@@ -257,6 +257,13 @@ plan_execution:
     failure_mode: finish_wave_then_stop
     on_wave_retry_exhausted: human_review
     require_verification_commands: true
+    approval:
+      enabled: true
+      require_for_project_wide_tasks: true
+      max_tasks_without_approval: 6
+      max_waves_without_approval: 2
+      max_project_wide_paths_without_approval: 3
+      require_after_retries: true
 # ---------------------------------------------------------------------------
 # Scope roots
 # ---------------------------------------------------------------------------

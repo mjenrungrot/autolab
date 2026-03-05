@@ -223,6 +223,28 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced when**: launch stage begins (system-owned run id allocation)
 - **Consumed by**: prompt rendering / launch stage runner context
 
+## plan_check_result.json
+
+- **Path**: `.autolab/plan_check_result.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/plan_check_result.schema.json`
+- **Required fields**:
+  - base checker output: `schema_version`, `generated_at`, `stage`, `iteration_id`, `passed`, `error_count`, `warning_count`, `errors`, `warnings`, `rule_results`, `artifacts`
+  - plan identity: `plan_hash`
+  - promotion safety: `promotion_checks` (per promoted requirement coverage/consumption rows)
+  - approval risk: `approval_risk` (`requires_approval`, `trigger_reasons`, `counts`, `policy`, `risk_fingerprint`)
+- **Produced when**: implementation plan contract validation runs
+- **Consumed by**: implementation execution gating, generated docs/state views, and `plan_approval.json`
+
+## plan_graph.json
+
+- **Path**: `.autolab/plan_graph.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/plan_graph.schema.json`
+- **Fields**: dependency nodes/edges plus wave bins
+- **Produced when**: implementation plan contract validation runs
+- **Consumed by**: implementation execution scheduler, wave observability, docs/TUI views, and `plan_approval.json`
+
 ## plan_execution_state.json
 
 - **Path**: `experiments/<type>/<iteration_id>/plan_execution_state.json`
@@ -244,6 +266,25 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced when**: implementation executes or resumes contract-driven waves
 - **Consumed by**: traceability coverage, handoff generation, `autolab progress`, generated `project|state|sidecar` views, and the TUI Waves view
 - **Consumer behavior note**: generated docs and progress surfaces should treat stale or mismatched observability payloads as diagnostics when possible instead of crashing the whole view.
+
+## plan_approval.json
+
+- **Path**: `experiments/<type>/<iteration_id>/plan_approval.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/plan_approval.schema.json`
+- **Required fields**:
+  - identity: `schema_version`, `generated_at`, `iteration_id`
+  - approval state: `status`, `requires_approval`, `plan_hash`, `risk_fingerprint`
+  - risk context: `trigger_reasons`, `counts`, `source_paths`
+  - review metadata: `reviewed_by`, `reviewed_at`, `notes`
+- **Produced when**: implementation planning/checkpoint logic runs, or `autolab approve-plan` records a decision
+- **Consumed by**: `autolab run --plan-only`, `autolab run`, `autolab run --execute-approved-plan`, `autolab approve-plan`, handoff/status surfaces, and generated `project|state|sidecar` views
+- **Status model**:
+  - `not_required`: risk policy does not require approval for the current plan
+  - `pending`: approval required before execution
+  - `approved`: current plan/risk fingerprint approved for execution
+  - `retry`: operator requested replanning before execution
+  - `stop`: operator ended the experiment from the checkpoint
 
 ## auto_decision.json
 
@@ -273,6 +314,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `latest_verifier_summary`, `blocking_failures`, `pending_human_decisions`
   - `files_changed_since_last_green_point`
   - `recommended_next_command`, `safe_resume_point`
+  - optional `plan_approval` snapshot when an iteration-scoped approval artifact exists
   - `wave_observability` (`wave_summary`, `task_summary`, `summary`, `critical_path`, `file_conflicts`, `waves`, `tasks`, `diagnostics`, `source_paths`)
   - `last_green_at`, `baseline_snapshot`
   - `handoff_json_path`, `handoff_markdown_path`
@@ -284,7 +326,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 
 - **Path**: `<scope-root>/handoff.md`
 - **Format**: Markdown
-- **Content**: Human-readable handoff summary (scope, stage, wave/task status, critical path, per-wave timings/retries, blocked/deferred/skipped tasks, file conflicts, per-task evidence, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
+- **Content**: Human-readable handoff summary (scope, stage, optional plan approval status/triggers, wave/task status, critical path, per-wave timings/retries, blocked/deferred/skipped tasks, file conflicts, per-task evidence, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)

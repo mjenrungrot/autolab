@@ -275,6 +275,7 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
                     }
                 ],
                 "retry_reasons": [],
+                "current_retry_reasons": [],
                 "out_of_contract_paths": [],
                 "completed_task_ids": ["T1"],
                 "failed_task_ids": [],
@@ -773,6 +774,98 @@ def test_schema_checks_fails_for_invalid_handoff_schema(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert ".autolab/handoff.json schema violation" in result.stdout
+
+
+def test_schema_checks_validates_optional_plan_approval_schema(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    plan_approval_path = repo / "experiments" / "plan" / "iter1" / "plan_approval.json"
+    plan_approval_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_approval_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "status": "pending",
+                "requires_approval": True,
+                "plan_hash": "plan-hash-1",
+                "risk_fingerprint": "risk-fingerprint-1",
+                "trigger_reasons": ["project_wide_tasks_present"],
+                "counts": {
+                    "tasks_total": 3,
+                    "waves_total": 2,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 2,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "",
+                "reviewed_at": "",
+                "notes": "",
+                "source_paths": {
+                    "plan_contract": ".autolab/plan_contract.json",
+                    "plan_graph": ".autolab/plan_graph.json",
+                    "plan_check_result": ".autolab/plan_check_result.json",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "schema_checks: PASS" in result.stdout
+
+
+def test_schema_checks_fails_for_invalid_plan_approval_schema(
+    tmp_path: Path,
+) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    plan_approval_path = repo / "experiments" / "plan" / "iter1" / "plan_approval.json"
+    plan_approval_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_approval_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "status": "bogus",
+                "requires_approval": True,
+                "plan_hash": "plan-hash-1",
+                "risk_fingerprint": "risk-fingerprint-1",
+                "trigger_reasons": ["project_wide_tasks_present"],
+                "counts": {
+                    "tasks_total": 3,
+                    "waves_total": 2,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 2,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "",
+                "reviewed_at": "",
+                "notes": "",
+                "source_paths": {
+                    "plan_contract": ".autolab/plan_contract.json",
+                    "plan_graph": ".autolab/plan_graph.json",
+                    "plan_check_result": ".autolab/plan_check_result.json",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "plan_approval.json schema violation" in result.stdout
 
 
 def test_schema_checks_validates_optional_sidecar_schemas(tmp_path: Path) -> None:

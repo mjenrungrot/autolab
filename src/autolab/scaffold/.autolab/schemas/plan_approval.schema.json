@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Implementation Plan Approval",
+  "description": "Approval checkpoint artifact for high-risk implementation plans.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "iteration_id",
+    "status",
+    "requires_approval",
+    "plan_hash",
+    "risk_fingerprint",
+    "trigger_reasons",
+    "counts",
+    "reviewed_by",
+    "reviewed_at",
+    "notes",
+    "source_paths"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["not_required", "pending", "approved", "retry", "stop", "superseded"]
+    },
+    "requires_approval": {
+      "type": "boolean"
+    },
+    "plan_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk_fingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trigger_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "tasks_total",
+        "waves_total",
+        "project_wide_tasks",
+        "project_wide_unique_paths",
+        "observed_retries",
+        "stage_attempt"
+      ],
+      "properties": {
+        "tasks_total": {"type": "integer", "minimum": 0},
+        "waves_total": {"type": "integer", "minimum": 0},
+        "project_wide_tasks": {"type": "integer", "minimum": 0},
+        "project_wide_unique_paths": {"type": "integer", "minimum": 0},
+        "observed_retries": {"type": "integer", "minimum": 0},
+        "stage_attempt": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "reviewed_by": {
+      "type": "string"
+    },
+    "reviewed_at": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "source_paths": {
+      "type": "object",
+      "required": ["plan_contract", "plan_graph", "plan_check_result"],
+      "properties": {
+        "plan_contract": {"type": "string", "minLength": 1},
+        "plan_graph": {"type": "string", "minLength": 1},
+        "plan_check_result": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

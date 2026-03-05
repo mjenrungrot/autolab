@@ -14,6 +14,9 @@
     "errors",
     "warnings",
     "rule_results",
+    "plan_hash",
+    "promotion_checks",
+    "approval_risk",
     "artifacts"
   ],
   "properties": {
@@ -84,6 +87,140 @@
         },
         "additionalProperties": false
       }
+    },
+    "plan_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "promotion_checks": {
+      "type": "object",
+      "required": ["status", "requirements"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail"]
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "requirement_id",
+              "scope_kind",
+              "status",
+              "promoted_constraint_ids",
+              "covering_task_ids",
+              "consumed_promoted_refs",
+              "missing_promoted_refs",
+              "illegal_task_refs"
+            ],
+            "properties": {
+              "requirement_id": {"type": "string", "minLength": 1},
+              "scope_kind": {
+                "type": "string",
+                "enum": ["experiment", "project_wide"]
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pass", "fail"]
+              },
+              "promoted_constraint_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "covering_task_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "consumed_promoted_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "missing_promoted_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "illegal_task_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "approval_risk": {
+      "type": "object",
+      "required": [
+        "requires_approval",
+        "trigger_reasons",
+        "counts",
+        "project_wide_task_ids",
+        "project_wide_unique_paths",
+        "policy",
+        "plan_hash",
+        "risk_fingerprint"
+      ],
+      "properties": {
+        "requires_approval": {"type": "boolean"},
+        "trigger_reasons": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "counts": {
+          "type": "object",
+          "required": [
+            "tasks_total",
+            "waves_total",
+            "project_wide_tasks",
+            "project_wide_unique_paths",
+            "observed_retries",
+            "stage_attempt"
+          ],
+          "properties": {
+            "tasks_total": {"type": "integer", "minimum": 0},
+            "waves_total": {"type": "integer", "minimum": 0},
+            "project_wide_tasks": {"type": "integer", "minimum": 0},
+            "project_wide_unique_paths": {"type": "integer", "minimum": 0},
+            "observed_retries": {"type": "integer", "minimum": 0},
+            "stage_attempt": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "project_wide_task_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "project_wide_unique_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "policy": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "require_for_project_wide_tasks",
+            "max_tasks_without_approval",
+            "max_waves_without_approval",
+            "max_project_wide_paths_without_approval",
+            "require_after_retries"
+          ],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "require_for_project_wide_tasks": {"type": "boolean"},
+            "max_tasks_without_approval": {"type": "integer", "minimum": 1},
+            "max_waves_without_approval": {"type": "integer", "minimum": 1},
+            "max_project_wide_paths_without_approval": {"type": "integer", "minimum": 0},
+            "require_after_retries": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        "plan_hash": {"type": "string", "minLength": 1},
+        "risk_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
     },
     "artifacts": {
       "type": "object",
