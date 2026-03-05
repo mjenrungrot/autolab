@@ -1,0 +1,5 @@
+schema_version: "1.0"
+pack_name: python_basic
+iteration_id: iter_fixture_python
+run_id: run_fixture_python
+description: Minimal python-hook parser fixture pack.

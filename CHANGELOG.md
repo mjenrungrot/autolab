@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.21] - 2026-03-05
+
+### Summary
+
+- Added first-class parser authoring commands: `autolab parser init` scaffolds parser modules plus capability manifests, and `autolab parser test` validates parser behavior in isolated or in-place modes.
+- Added packaged golden parser fixture packs and parser capability schemas/index, with stricter design-time capability validation (parser kind + metric compatibility) wired into scaffold schema checks.
+- Hardened scaffold sync and packaging contracts for parser assets by skipping Python cache artifacts (`__pycache__`, `*.pyc`) and expanding package-data coverage/tests for parser fixture repositories and expected outputs.
+
+<!-- autolab:range v1.2.20..v1.2.21 -->
+
 ## [1.2.20] - 2026-03-05
 
 ### Summary

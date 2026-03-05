@@ -152,6 +152,12 @@ def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
         "example_golden_iterations/experiments/plan/iter_golden/runs/*/*.json"
         in package_data
     )
+    assert "scaffold/.autolab/parser_fixtures/*/fixture.yaml" in package_data
+    assert "scaffold/.autolab/parser_fixtures/*/repo/**/*.json" in package_data
+    assert "scaffold/.autolab/parser_fixtures/*/repo/**/*.yaml" in package_data
+    assert "scaffold/.autolab/parser_fixtures/*/repo/**/*.py" in package_data
+    assert "scaffold/.autolab/parser_fixtures/*/expected/**/*.json" in package_data
+    assert "scaffold/.autolab/parser_fixtures/*/expected/**/*.md" in package_data
 
 
 def test_console_script_contract_points_to_main_entrypoint() -> None:
@@ -264,6 +270,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "resume" in help_text
     assert "tui" in help_text
     assert "render" in help_text
+    assert "parser" in help_text
     assert "todo" in help_text
     assert "policy" in help_text
     assert "update" in help_text
@@ -283,6 +290,20 @@ def test_init_help_includes_from_existing_flag(
     assert int(exc_info.value.code) == 0
     captured = capsys.readouterr()
     assert "--from-existing" in captured.out
+
+
+def test_parser_help_includes_init_and_test(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["parser", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "init" in captured.out
+    assert "test" in captured.out
 
 
 def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(

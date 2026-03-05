@@ -8,6 +8,7 @@ from autolab.cli.handlers_backlog import *
 from autolab.cli.handlers_project import *
 from autolab.cli.handlers_run import *
 from autolab.cli.handlers_admin import *
+from autolab.cli.handlers_parser import *
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -757,6 +758,76 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
     policy_preset.set_defaults(handler=_cmd_policy_apply_preset)
+
+    # Parser SDK
+    parser_command = subparsers.add_parser(
+        "parser",
+        help="Parser authoring and validation SDK commands",
+    )
+    parser_subparsers = parser_command.add_subparsers(dest="parser_command")
+
+    parser_init = parser_subparsers.add_parser(
+        "init",
+        help="Initialize parser module, capability manifest, and design extract_parser hook",
+    )
+    parser_init.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    parser_init.add_argument(
+        "--iteration-id",
+        default="",
+        help="Override target iteration_id (default: state.iteration_id).",
+    )
+    parser_init.add_argument(
+        "--module",
+        default="",
+        help="Optional parser module stem under parsers/ (default: <iteration_id>_extract_parser).",
+    )
+    parser_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite generated parser module when it already exists.",
+    )
+    parser_init.set_defaults(handler=_cmd_parser_init)
+
+    parser_test = parser_subparsers.add_parser(
+        "test",
+        help="Run deterministic parser extraction tests with capability validation",
+    )
+    parser_test.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    parser_test.add_argument(
+        "--iteration-id",
+        default="",
+        help="Override target iteration_id (default: state.iteration_id).",
+    )
+    parser_test.add_argument(
+        "--run-id",
+        default="",
+        help="Override run_id used for parser execution (default: state.last_run_id or parser_test_run).",
+    )
+    parser_test.add_argument(
+        "--fixture-pack",
+        default="",
+        help="Run against scaffold fixture pack name under .autolab/parser_fixtures/.",
+    )
+    parser_test.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Execute against the repository directly (default: isolated temp workspace).",
+    )
+    parser_test.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable parser test results.",
+    )
+    parser_test.set_defaults(handler=_cmd_parser_test)
 
     # Docs generation
     docs = subparsers.add_parser("docs", help="Generate documentation from registry")

@@ -132,7 +132,7 @@ RUN_LOCK_HEARTBEAT_INTERVAL_SECONDS = 60.0
 TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "Getting started",
-        ("init", "configure", "status", "progress", "docs", "explain"),
+        ("init", "configure", "status", "progress", "docs", "explain", "parser"),
     ),
     (
         "Run workflow",

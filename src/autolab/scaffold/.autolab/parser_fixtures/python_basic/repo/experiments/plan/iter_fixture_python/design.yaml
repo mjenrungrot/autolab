@@ -1,0 +1,29 @@
+schema_version: "1.0"
+id: "e_fixture_python"
+iteration_id: "iter_fixture_python"
+hypothesis_id: "h_fixture_python"
+entrypoint:
+  module: "pkg.train"
+  args: {}
+compute:
+  location: "local"
+metrics:
+  primary:
+    name: "validation_loss"
+    unit: "loss"
+    mode: "minimize"
+  secondary: []
+  success_delta: "-0.01"
+  aggregation: "mean"
+  baseline_comparison: "vs baseline"
+baselines:
+  - name: "baseline_current"
+    description: "baseline"
+implementation_requirements:
+  - requirement_id: "R1"
+    description: "fixture"
+    scope_kind: "experiment"
+extract_parser:
+  kind: "python"
+  module: "parsers.fixture_python_parser"
+  callable: "parse_results"

@@ -103,6 +103,8 @@ SCHEMAS: dict[str, str] = {
     "state": "state.schema.json",
     "backlog": "backlog.schema.json",
     "design": "design.schema.json",
+    "parser_capabilities": "parser_capabilities.schema.json",
+    "parser_capabilities_index": "parser_capabilities_index.schema.json",
     "agent_result": "agent_result.schema.json",
     "review_result": "review_result.schema.json",
     "run_manifest": "run_manifest.schema.json",
@@ -123,6 +125,17 @@ SCHEMAS: dict[str, str] = {
     "codebase_experiment_delta": "codebase_experiment_delta.schema.json",
     "codebase_context_bundle": "codebase_context_bundle.schema.json",
 }
+
+
+def _normalize_metric_names(raw_value: object) -> list[str]:
+    if not isinstance(raw_value, list):
+        return []
+    normalized: list[str] = []
+    for item in raw_value:
+        metric_name = str(item).strip()
+        if metric_name and metric_name not in normalized:
+            normalized.append(metric_name)
+    return normalized
 
 
 def _load_policy() -> dict:
@@ -325,6 +338,190 @@ def _validate_design(state: dict[str, Any], *, stage: str) -> list[str]:
         and str(payload.get("iteration_id")).strip() != iteration_id
     ):
         failures.append(f"{path} iteration_id mismatch with state")
+    return failures
+
+
+def _validate_parser_capabilities(
+    state: dict[str, Any], policy: dict[str, Any], *, stage: str
+) -> list[str]:
+    if stage not in {
+        "design",
+        "implementation",
+        "implementation_review",
+        "launch",
+        "extract_results",
+        "update_docs",
+        "decide_repeat",
+    }:
+        return []
+
+    extract = policy.get("extract_results")
+    if not isinstance(extract, dict):
+        extract = {}
+    parser_policy = extract.get("parser")
+    if not isinstance(parser_policy, dict):
+        parser_policy = {}
+    require_manifest = bool(parser_policy.get("require_capability_manifest", False))
+    require_index = bool(parser_policy.get("require_capability_index", False))
+
+    iteration_dir = _iteration_dir(state)
+    design_path = iteration_dir / "design.yaml"
+    manifest_path = iteration_dir / "parser_capabilities.json"
+    index_path = REPO_ROOT / ".autolab" / "parser_capabilities.json"
+
+    if (
+        not require_manifest
+        and not require_index
+        and not manifest_path.exists()
+        and not index_path.exists()
+    ):
+        return []
+
+    failures: list[str] = []
+    try:
+        design_payload = load_yaml(design_path)
+    except Exception as exc:
+        return [f"{design_path} {exc}"]
+
+    parser_block = design_payload.get("extract_parser")
+    design_parser_kind = ""
+    if isinstance(parser_block, dict):
+        design_parser_kind = str(parser_block.get("kind", "")).strip().lower()
+    primary_metric_name = ""
+    metrics_block = design_payload.get("metrics")
+    if isinstance(metrics_block, dict):
+        primary_block = metrics_block.get("primary")
+        if isinstance(primary_block, dict):
+            primary_metric_name = str(primary_block.get("name", "")).strip()
+
+    manifest_payload: dict[str, Any] | None = None
+    if not manifest_path.exists():
+        if require_manifest:
+            failures.append(
+                f"{manifest_path} is required by verifier_policy extract_results.parser.require_capability_manifest=true"
+            )
+    else:
+        try:
+            manifest_payload = load_json(manifest_path)
+        except Exception as exc:
+            failures.append(f"{manifest_path} {exc}")
+        else:
+            failures.extend(
+                _schema_validate(
+                    manifest_payload,
+                    schema_key="parser_capabilities",
+                    path=manifest_path,
+                )
+            )
+
+    manifest_parser_kind = ""
+    manifest_supported_metrics: list[str] = []
+    if isinstance(manifest_payload, dict):
+        manifest_parser = manifest_payload.get("parser")
+        if isinstance(manifest_parser, dict):
+            manifest_parser_kind = str(manifest_parser.get("kind", "")).strip().lower()
+        manifest_supported_metrics = _normalize_metric_names(
+            manifest_payload.get("supported_metrics")
+        )
+
+    if (
+        design_parser_kind
+        and manifest_parser_kind
+        and (design_parser_kind != manifest_parser_kind)
+    ):
+        failures.append(
+            "parser capability mismatch: "
+            f"design.extract_parser.kind='{design_parser_kind}' does not match "
+            f"parser_capabilities.parser.kind='{manifest_parser_kind}'"
+        )
+
+    if primary_metric_name and not manifest_supported_metrics:
+        failures.append(
+            "parser capability mismatch: parser_capabilities.supported_metrics must "
+            f"include design primary metric '{primary_metric_name}'"
+        )
+    elif (
+        primary_metric_name
+        and manifest_supported_metrics
+        and primary_metric_name not in manifest_supported_metrics
+    ):
+        failures.append(
+            "parser capability mismatch: "
+            f"design.metrics.primary.name='{primary_metric_name}' is not listed in "
+            "parser_capabilities.supported_metrics"
+        )
+
+    if not index_path.exists():
+        if require_index:
+            failures.append(
+                f"{index_path} is required by verifier_policy extract_results.parser.require_capability_index=true"
+            )
+        return failures
+
+    index_payload: dict[str, Any] | None = None
+    try:
+        index_payload = load_json(index_path)
+    except Exception as exc:
+        failures.append(f"{index_path} {exc}")
+    else:
+        failures.extend(
+            _schema_validate(
+                index_payload,
+                schema_key="parser_capabilities_index",
+                path=index_path,
+            )
+        )
+
+    if not isinstance(index_payload, dict):
+        return failures
+    iterations_map = index_payload.get("iterations")
+    if not isinstance(iterations_map, dict):
+        failures.append(f"{index_path} iterations must be a mapping")
+        return failures
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    entry = iterations_map.get(iteration_id)
+    if not isinstance(entry, dict):
+        failures.append(f"{index_path} iterations is missing key '{iteration_id}'")
+        return failures
+
+    entry_manifest_path = str(entry.get("manifest_path", "")).strip()
+    if entry_manifest_path:
+        expected_manifest_path = (
+            manifest_path.relative_to(REPO_ROOT).as_posix()
+            if manifest_path.is_relative_to(REPO_ROOT)
+            else str(manifest_path)
+        )
+        if entry_manifest_path != expected_manifest_path:
+            failures.append(
+                "parser capability mismatch: "
+                f"index manifest_path '{entry_manifest_path}' does not match "
+                f"'{expected_manifest_path}'"
+            )
+
+    entry_parser_kind = str(entry.get("parser_kind", "")).strip().lower()
+    if (
+        manifest_parser_kind
+        and entry_parser_kind
+        and (entry_parser_kind != manifest_parser_kind)
+    ):
+        failures.append(
+            "parser capability mismatch: "
+            f"index parser_kind '{entry_parser_kind}' does not match "
+            f"manifest parser kind '{manifest_parser_kind}'"
+        )
+
+    entry_supported = _normalize_metric_names(entry.get("supported_metrics"))
+    if (
+        primary_metric_name
+        and entry_supported
+        and primary_metric_name not in entry_supported
+    ):
+        failures.append(
+            "parser capability mismatch: "
+            f"index supported_metrics does not include design primary metric '{primary_metric_name}'"
+        )
+
     return failures
 
 
@@ -857,6 +1054,7 @@ def main() -> int:
     failures.extend(_validate_backlog_schema())
     failures.extend(_validate_agent_result())
     failures.extend(_validate_design(state, stage=stage))
+    failures.extend(_validate_parser_capabilities(state, policy, stage=stage))
     failures.extend(_validate_review_result(state, policy, stage=stage))
     failures.extend(_validate_run_manifest(state, stage=stage))
     failures.extend(_validate_replicate_run_manifests(state, stage=stage))

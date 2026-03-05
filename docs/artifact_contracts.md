@@ -40,6 +40,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `implementation_requirements` must be non-empty and include `scope_kind`
   - project-wide task execution uses `scope_roots.project_wide_root` from `.autolab/verifier_policy.yaml`
   - `extract_parser` is required (kind `python` or `command`)
+  - parser capability contract (when capability artifacts are present): parser kind and primary metric must align with `parser_capabilities.json`
   - `walltime_estimate` format: `HH:MM:SS`
   - `memory_estimate` format: `<number>[KMGT]B` (e.g. `64GB`)
 - **Producing stage**: design
@@ -119,6 +120,27 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - fallback: configure `.autolab/verifier_policy.yaml -> extract_results.summary.llm_command` when using `mode: llm_on_demand`
 - **Producing stage**: extract_results
 - **Consuming stages**: update_docs, decide_repeat
+
+## parser_capabilities.json
+
+- **Path**: `experiments/<type>/<iteration_id>/parser_capabilities.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/parser_capabilities.schema.json`
+- **Required fields**: `schema_version`, `iteration_id`, `parser`, `supported_metrics`, `output_contract`, `generated_at`
+- **Key constraints**:
+  - `parser.kind` must align with `design.yaml.extract_parser.kind`
+  - `supported_metrics` must include `design.metrics.primary.name`
+- **Produced by**: `autolab parser init` (or maintained manually)
+- **Consumed by**: `autolab parser test`, `schema_checks.py` (design+downstream stages when artifacts are present)
+
+## .autolab/parser_capabilities.json
+
+- **Path**: `.autolab/parser_capabilities.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/parser_capabilities_index.schema.json`
+- **Content**: global iteration-to-manifest index (`iterations[<iteration_id>] -> manifest_path/parser_kind/supported_metrics/updated_at`)
+- **Produced by**: `autolab parser init` (upsert)
+- **Consumed by**: `autolab parser test`, `schema_checks.py`
 
 ## docs_update.md
 
