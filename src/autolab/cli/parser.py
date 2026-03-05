@@ -833,12 +833,43 @@ def _build_parser() -> argparse.ArgumentParser:
     docs = subparsers.add_parser("docs", help="Generate documentation from registry")
     docs_subparsers = docs.add_subparsers(dest="docs_command")
     docs_generate = docs_subparsers.add_parser(
-        "generate", help="Generate stage flow, artifact map, and token reference"
+        "generate",
+        help=(
+            "Generate canonical-artifact projection views "
+            "(project, roadmap, state, requirements, sidecar)"
+        ),
     )
     docs_generate.add_argument(
         "--state-file",
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    docs_generate.add_argument(
+        "--view",
+        choices=(
+            "project",
+            "roadmap",
+            "state",
+            "requirements",
+            "sidecar",
+            "all",
+            "registry",
+        ),
+        default="registry",
+        help=(
+            "Select generated view to render "
+            "(default: registry; use all for canonical generated docs projection views)."
+        ),
+    )
+    docs_generate.add_argument(
+        "--iteration-id",
+        default="",
+        help="Override target iteration_id for iteration-scoped views (default: state.iteration_id).",
+    )
+    docs_generate.add_argument(
+        "--output-dir",
+        default="",
+        help="Optional output directory to write rendered view markdown files.",
     )
     docs_generate.set_defaults(handler=_cmd_docs_generate)
 

@@ -35,6 +35,21 @@ autolab status
 autolab run --verify
 ```
 
+Generate readable projections directly from canonical runtime artifacts:
+
+```bash
+autolab docs generate
+autolab docs generate --view roadmap
+autolab docs generate --view requirements --iteration-id <iteration_id>
+autolab docs generate --view all --output-dir docs/autolab_views
+autolab docs generate --view registry
+```
+
+`autolab docs generate` defaults to legacy compatibility output (`--view registry`).
+Use `--view project|roadmap|state|requirements|sidecar|all` for projection views,
+and keep `--view registry` when you need the compatibility mode. `--output-dir <path>` writes markdown view files to disk instead of stdout, and the path must
+resolve within the repository.
+
 ## Step 1: Initialize the scaffold
 
 ```bash

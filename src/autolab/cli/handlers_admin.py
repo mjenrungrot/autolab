@@ -394,17 +394,178 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_docs_generate(args: argparse.Namespace) -> int:
-    state_path = Path(args.state_file).expanduser().resolve()
-    repo_root = _resolve_repo_root(state_path)
-    registry = load_registry(repo_root)
+_DOCS_GENERATE_DEFAULT_VIEWS: tuple[str, ...] = (
+    "project",
+    "roadmap",
+    "state",
+    "requirements",
+    "sidecar",
+)
+_DOCS_VIEW_MAX_READ_BYTES = 2 * 1024 * 1024
 
-    if not registry:
-        print(
-            "autolab docs generate: ERROR could not load workflow.yaml registry",
-            file=sys.stderr,
+
+def _docs_relpath(repo_root: Path, path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        relative = path.relative_to(repo_root).as_posix()
+        return relative or "."
+    except ValueError:
+        return str(path)
+
+
+def _docs_markdown_escape(value: str) -> str:
+    return str(value or "").replace("|", "\\|")
+
+
+def _docs_append_error(existing: str, extra: str) -> str:
+    existing_text = str(existing or "").strip()
+    extra_text = str(extra or "").strip()
+    if existing_text and extra_text:
+        return f"{existing_text}; {extra_text}"
+    return existing_text or extra_text
+
+
+def _docs_safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _docs_path_within_repo_root(repo_root: Path, path: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(repo_root.resolve(strict=False))
+        return True
+    except Exception:
+        return False
+
+
+def _docs_read_text_limited(
+    repo_root: Path,
+    path: Path,
+) -> tuple[str | None, str]:
+    if not path.exists():
+        return (None, f"missing {_docs_relpath(repo_root, path)}")
+    if not path.is_file():
+        return (None, f"expected regular file at {_docs_relpath(repo_root, path)}")
+    try:
+        file_size = int(path.stat().st_size)
+    except Exception as exc:
+        return (None, f"could not stat {_docs_relpath(repo_root, path)}: {exc}")
+    if file_size > _DOCS_VIEW_MAX_READ_BYTES:
+        return (
+            None,
+            (
+                f"refusing to read {_docs_relpath(repo_root, path)}: "
+                f"{file_size} bytes exceeds {_DOCS_VIEW_MAX_READ_BYTES} byte limit"
+            ),
         )
-        return 1
+    try:
+        return (path.read_text(encoding="utf-8"), "")
+    except Exception as exc:
+        return (None, f"unable to read {_docs_relpath(repo_root, path)}: {exc}")
+
+
+def _docs_load_json_mapping(
+    repo_root: Path,
+    path: Path,
+) -> tuple[dict[str, Any] | None, str]:
+    payload_text, read_error = _docs_read_text_limited(repo_root, path)
+    if payload_text is None:
+        return (None, read_error)
+    try:
+        payload = json.loads(payload_text)
+    except Exception as exc:
+        return (None, f"invalid JSON at {_docs_relpath(repo_root, path)}: {exc}")
+    if not isinstance(payload, dict):
+        return (None, f"invalid JSON object at {_docs_relpath(repo_root, path)}")
+    return (payload, "")
+
+
+def _docs_load_yaml_mapping(
+    repo_root: Path,
+    path: Path,
+) -> tuple[dict[str, Any] | None, str]:
+    if _yaml_mod is None:
+        return (None, "PyYAML is unavailable")
+    payload_text, read_error = _docs_read_text_limited(repo_root, path)
+    if payload_text is None:
+        return (None, read_error)
+    try:
+        payload = _yaml_mod.safe_load(payload_text)
+    except Exception as exc:
+        return (None, f"invalid YAML at {_docs_relpath(repo_root, path)}: {exc}")
+    if not isinstance(payload, dict):
+        return (None, f"expected YAML mapping at {_docs_relpath(repo_root, path)}")
+    return (payload, "")
+
+
+def _docs_resolve_pointer_path(
+    repo_root: Path, raw_pointer: Any
+) -> tuple[Path | None, str]:
+    pointer_text = str(raw_pointer or "").strip()
+    if not pointer_text:
+        return (None, "")
+    try:
+        pointer_path = Path(pointer_text).expanduser()
+    except Exception as exc:
+        return (None, f"invalid pointer '{pointer_text}': {exc}")
+    candidate = pointer_path if pointer_path.is_absolute() else repo_root / pointer_path
+    try:
+        resolved = candidate.resolve(strict=False)
+    except Exception as exc:
+        return (None, f"invalid pointer '{pointer_text}': {exc}")
+    if not _docs_path_within_repo_root(repo_root, resolved):
+        return (
+            None,
+            f"pointer '{pointer_text}' resolves outside repository root",
+        )
+    if resolved.exists() and not resolved.is_file():
+        return (
+            None,
+            (
+                f"pointer '{pointer_text}' resolves to non-regular file "
+                f"{_docs_relpath(repo_root, resolved)}"
+            ),
+        )
+    return (resolved, "")
+
+
+def _docs_summarize_status_counts(rows: list[dict[str, Any]]) -> str:
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status", "")).strip().lower() or "unknown"
+        counts[status] = int(counts.get(status, 0)) + 1
+    if not counts:
+        return "none"
+    ordered_keys = sorted(counts.keys())
+    return ", ".join(f"{key}={counts[key]}" for key in ordered_keys)
+
+
+def _docs_select_views(raw_view: str) -> list[str]:
+    normalized = str(raw_view or "").strip().lower() or "registry"
+    if normalized == "all":
+        return list(_DOCS_GENERATE_DEFAULT_VIEWS)
+    return [normalized]
+
+
+def _docs_collect_context(
+    *,
+    state_path: Path,
+    iteration_override: str,
+) -> tuple[dict[str, Any] | None, str]:
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except RuntimeError as exc:
+        return (None, str(exc))
+    if iteration_override:
+        state = dict(state)
+        state["iteration_id"] = iteration_override
+
     policy = _load_verifier_policy(repo_root)
     scope_roots = policy.get("scope_roots")
     if not isinstance(scope_roots, dict):
@@ -418,21 +579,38 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
             scope_roots=scope_roots,
         )
     except StageCheckError as exc:
-        print(f"autolab docs generate: ERROR {exc}", file=sys.stderr)
-        return 1
-    detected_scope_kind = "unknown"
-    effective_scope_root = resolved_project_wide_root
+        return (None, str(exc))
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+
     try:
-        state = _normalize_state(_load_state(state_path))
-        detected_scope_kind, effective_scope_root, _iteration_dir = (
+        detected_scope_kind, effective_scope_root, scope_iteration_dir = (
             _resolve_scope_context(
                 repo_root,
-                iteration_id=str(state.get("iteration_id", "")).strip(),
-                experiment_id=str(state.get("experiment_id", "")).strip(),
+                iteration_id=iteration_id,
+                experiment_id=experiment_id,
             )
         )
     except Exception:
-        pass
+        detected_scope_kind = "unknown"
+        effective_scope_root = resolved_project_wide_root
+        scope_iteration_dir = None
+
+    iteration_dir: Path | None = scope_iteration_dir
+    iteration_type = ""
+    if iteration_id:
+        try:
+            resolved_iteration_dir, iteration_type = _resolve_iteration_directory(
+                repo_root,
+                iteration_id=iteration_id,
+                experiment_id=experiment_id,
+                require_exists=False,
+            )
+            iteration_dir = resolved_iteration_dir
+        except StageCheckError:
+            iteration_dir = None
+
     try:
         resolved_project_wide_root_text = (
             resolved_project_wide_root.relative_to(repo_root).as_posix() or "."
@@ -448,9 +626,373 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
     except ValueError:
         effective_scope_root_text = str(effective_scope_root)
 
-    # 1. Stage flow diagram
-    print("# Autolab Stage Flow")
-    print("")
+    backlog_path = repo_root / ".autolab" / "backlog.yaml"
+    backlog_payload, backlog_error = _load_backlog_yaml(backlog_path)
+    backlog_hypotheses: list[dict[str, Any]] = []
+    backlog_experiments: list[dict[str, Any]] = []
+    active_backlog_entry: dict[str, Any] | None = None
+    active_backlog_error = ""
+    if backlog_payload is not None:
+        hypotheses = backlog_payload.get("hypotheses")
+        if isinstance(hypotheses, list):
+            backlog_hypotheses = [row for row in hypotheses if isinstance(row, dict)]
+        experiments = backlog_payload.get("experiments")
+        if isinstance(experiments, list):
+            backlog_experiments = [row for row in experiments if isinstance(row, dict)]
+        active_backlog_entry, active_backlog_error = _find_backlog_experiment_entry(
+            backlog_payload,
+            experiment_id=experiment_id,
+            iteration_id=iteration_id,
+        )
+
+    design_path = (
+        iteration_dir / "design.yaml"
+        if iteration_dir is not None
+        else repo_root / "experiments" / "plan" / iteration_id / "design.yaml"
+    )
+    design_payload, design_error = _docs_load_yaml_mapping(repo_root, design_path)
+
+    plan_contract_path = (
+        iteration_dir / "plan_contract.json"
+        if iteration_dir is not None
+        else repo_root / "experiments" / "plan" / iteration_id / "plan_contract.json"
+    )
+    plan_contract_payload, plan_contract_error = _docs_load_json_mapping(
+        repo_root,
+        plan_contract_path,
+    )
+    if plan_contract_payload is None:
+        fallback_path = repo_root / ".autolab" / "plan_contract.json"
+        fallback_payload, fallback_error = _docs_load_json_mapping(
+            repo_root, fallback_path
+        )
+        if isinstance(fallback_payload, dict):
+            fallback_iteration_id = str(
+                fallback_payload.get("iteration_id", "")
+            ).strip()
+            if not fallback_iteration_id or fallback_iteration_id == iteration_id:
+                plan_contract_payload = fallback_payload
+                plan_contract_path = fallback_path
+                plan_contract_error = ""
+            else:
+                plan_contract_error = (
+                    "iteration-specific plan_contract.json missing and "
+                    f".autolab/plan_contract.json targets iteration '{fallback_iteration_id}'"
+                )
+        elif fallback_error:
+            plan_contract_error = plan_contract_error or fallback_error
+
+    handoff_path = repo_root / ".autolab" / "handoff.json"
+    handoff_payload, handoff_error = _docs_load_json_mapping(repo_root, handoff_path)
+    handoff_markdown_path, handoff_pointer_error = _docs_resolve_pointer_path(
+        repo_root,
+        handoff_payload.get("handoff_markdown_path", "") if handoff_payload else "",
+    )
+    handoff_error = _docs_append_error(handoff_error, handoff_pointer_error)
+
+    handoff_context_errors: list[str] = []
+    if isinstance(handoff_payload, dict):
+        handoff_iteration_id = str(handoff_payload.get("iteration_id", "")).strip()
+        handoff_experiment_id = str(handoff_payload.get("experiment_id", "")).strip()
+        if (
+            handoff_iteration_id
+            and iteration_id
+            and handoff_iteration_id != iteration_id
+        ):
+            handoff_context_errors.append(
+                "handoff iteration_id differs from requested iteration_id "
+                f"({handoff_iteration_id} != {iteration_id})"
+            )
+        if (
+            handoff_experiment_id
+            and experiment_id
+            and handoff_experiment_id != experiment_id
+        ):
+            handoff_context_errors.append(
+                "handoff experiment_id differs from requested experiment_id "
+                f"({handoff_experiment_id} != {experiment_id})"
+            )
+
+    trace_latest_path = repo_root / ".autolab" / "traceability_latest.json"
+    trace_latest_payload, trace_latest_error = _docs_load_json_mapping(
+        repo_root,
+        trace_latest_path,
+    )
+    traceability_latest_pointer_path = None
+    traceability_latest_iteration_id = ""
+    traceability_latest_pointer_error = ""
+    if isinstance(trace_latest_payload, dict):
+        traceability_latest_iteration_id = str(
+            trace_latest_payload.get("iteration_id", "")
+        ).strip()
+        (
+            traceability_latest_pointer_path,
+            traceability_latest_pointer_error,
+        ) = _docs_resolve_pointer_path(
+            repo_root,
+            trace_latest_payload.get("traceability_path", ""),
+        )
+    trace_latest_error = _docs_append_error(
+        trace_latest_error,
+        traceability_latest_pointer_error,
+    )
+
+    traceability_path = (
+        iteration_dir / "traceability_coverage.json"
+        if iteration_dir is not None
+        else None
+    )
+    traceability_payload = None
+    traceability_error = "traceability coverage path is unavailable"
+    if traceability_path is not None:
+        traceability_payload, traceability_error = _docs_load_json_mapping(
+            repo_root,
+            traceability_path,
+        )
+
+    traceability_selection_diagnostics: list[str] = []
+    pointer_iteration_mismatch = bool(
+        traceability_latest_iteration_id
+        and iteration_id
+        and traceability_latest_iteration_id != iteration_id
+    )
+    if pointer_iteration_mismatch and traceability_payload is not None:
+        traceability_selection_diagnostics.append(
+            "traceability_latest iteration_id differs from requested iteration_id "
+            f"({traceability_latest_iteration_id} != {iteration_id}); using iteration-scoped coverage"
+        )
+
+    if traceability_payload is None and traceability_latest_pointer_path is not None:
+        pointer_traceability_payload, pointer_traceability_error = (
+            _docs_load_json_mapping(
+                repo_root,
+                traceability_latest_pointer_path,
+            )
+        )
+        if isinstance(pointer_traceability_payload, dict):
+            pointer_payload_iteration_id = str(
+                pointer_traceability_payload.get("iteration_id", "")
+            ).strip()
+            selected_pointer_iteration_id = (
+                traceability_latest_iteration_id or pointer_payload_iteration_id
+            )
+            if (
+                selected_pointer_iteration_id
+                and iteration_id
+                and selected_pointer_iteration_id != iteration_id
+            ):
+                traceability_selection_diagnostics.append(
+                    "traceability_latest fallback iteration_id differs from requested "
+                    f"iteration_id ({selected_pointer_iteration_id} != {iteration_id}); "
+                    f"using fallback because iteration-scoped coverage is unavailable ({traceability_error})"
+                )
+            traceability_path = traceability_latest_pointer_path
+            traceability_payload = pointer_traceability_payload
+            traceability_error = ""
+        else:
+            traceability_error = _docs_append_error(
+                traceability_error,
+                f"traceability_latest fallback failed: {pointer_traceability_error}",
+            )
+
+    if pointer_iteration_mismatch and traceability_payload is None:
+        traceability_selection_diagnostics.append(
+            "traceability_latest iteration_id differs from requested iteration_id "
+            f"({traceability_latest_iteration_id} != {iteration_id})"
+        )
+
+    if isinstance(traceability_latest_pointer_path, Path) and isinstance(
+        traceability_path, Path
+    ):
+        try:
+            latest_pointer_resolved = traceability_latest_pointer_path.resolve(
+                strict=False
+            )
+            selected_traceability_resolved = traceability_path.resolve(strict=False)
+        except Exception:
+            latest_pointer_resolved = traceability_latest_pointer_path
+            selected_traceability_resolved = traceability_path
+        if latest_pointer_resolved != selected_traceability_resolved:
+            traceability_selection_diagnostics.append(
+                "traceability_latest.traceability_path differs from selected coverage path"
+            )
+
+    traceability_selection_error = "; ".join(
+        item for item in traceability_selection_diagnostics if item
+    )
+
+    context_bundle_path = repo_root / ".autolab" / "context" / "bundle.json"
+    context_bundle_payload, context_bundle_error = _docs_load_json_mapping(
+        repo_root,
+        context_bundle_path,
+    )
+
+    project_map_path, project_map_pointer_error = _docs_resolve_pointer_path(
+        repo_root,
+        context_bundle_payload.get("project_map_path", "")
+        if context_bundle_payload
+        else ".autolab/context/project_map.json",
+    )
+    project_map_payload = None
+    project_map_error = "project map path is unavailable"
+    if project_map_path is not None:
+        project_map_payload, project_map_error = _docs_load_json_mapping(
+            repo_root,
+            project_map_path,
+        )
+    project_map_error = _docs_append_error(project_map_error, project_map_pointer_error)
+
+    context_delta_path, context_delta_pointer_error = _docs_resolve_pointer_path(
+        repo_root,
+        context_bundle_payload.get("selected_experiment_delta_path", "")
+        if context_bundle_payload
+        else "",
+    )
+    if context_delta_path is None and iteration_dir is not None:
+        context_delta_path = iteration_dir / "context_delta.json"
+    context_delta_payload = None
+    context_delta_error = "context delta path is unavailable"
+    if context_delta_path is not None:
+        context_delta_payload, context_delta_error = _docs_load_json_mapping(
+            repo_root,
+            context_delta_path,
+        )
+    context_delta_error = _docs_append_error(
+        context_delta_error,
+        context_delta_pointer_error,
+    )
+
+    return (
+        {
+            "repo_root": repo_root,
+            "state_path": state_path,
+            "state": state,
+            "policy": policy,
+            "scope_roots": scope_roots,
+            "configured_project_wide_root": configured_project_wide_root,
+            "resolved_project_wide_root": resolved_project_wide_root,
+            "resolved_project_wide_root_text": resolved_project_wide_root_text,
+            "detected_scope_kind": detected_scope_kind,
+            "effective_scope_root": effective_scope_root,
+            "effective_scope_root_text": effective_scope_root_text,
+            "iteration_id": iteration_id,
+            "experiment_id": experiment_id,
+            "iteration_dir": iteration_dir,
+            "iteration_type": iteration_type,
+            "backlog_path": backlog_path,
+            "backlog_payload": backlog_payload,
+            "backlog_error": backlog_error,
+            "backlog_hypotheses": backlog_hypotheses,
+            "backlog_experiments": backlog_experiments,
+            "active_backlog_entry": active_backlog_entry,
+            "active_backlog_error": active_backlog_error,
+            "design_path": design_path,
+            "design_payload": design_payload,
+            "design_error": design_error,
+            "plan_contract_path": plan_contract_path,
+            "plan_contract_payload": plan_contract_payload,
+            "plan_contract_error": plan_contract_error,
+            "handoff_path": handoff_path,
+            "handoff_payload": handoff_payload,
+            "handoff_error": handoff_error,
+            "handoff_markdown_path": handoff_markdown_path,
+            "handoff_context_errors": handoff_context_errors,
+            "trace_latest_path": trace_latest_path,
+            "trace_latest_payload": trace_latest_payload,
+            "trace_latest_error": trace_latest_error,
+            "traceability_path": traceability_path,
+            "traceability_payload": traceability_payload,
+            "traceability_error": traceability_error,
+            "traceability_selection_error": traceability_selection_error,
+            "context_bundle_path": context_bundle_path,
+            "context_bundle_payload": context_bundle_payload,
+            "context_bundle_error": context_bundle_error,
+            "project_map_path": project_map_path,
+            "project_map_payload": project_map_payload,
+            "project_map_error": project_map_error,
+            "context_delta_path": context_delta_path,
+            "context_delta_payload": context_delta_payload,
+            "context_delta_error": context_delta_error,
+        },
+        "",
+    )
+
+
+def _docs_is_state_context_error(error_text: str) -> bool:
+    lowered = str(error_text or "").strip().lower()
+    if not lowered:
+        return False
+    if lowered.startswith("state file"):
+        return True
+    return "state." in lowered
+
+
+def _docs_collect_registry_fallback_context(
+    *,
+    state_path: Path,
+    iteration_override: str,
+    state_error: str,
+) -> dict[str, Any]:
+    repo_root = _resolve_repo_root(state_path)
+    policy = _load_verifier_policy(repo_root)
+    scope_roots = policy.get("scope_roots")
+    if not isinstance(scope_roots, dict):
+        scope_roots = {}
+    configured_project_wide_root = (
+        str(scope_roots.get("project_wide_root", ".")).strip() or "."
+    )
+
+    fallback_scope_error = ""
+    try:
+        resolved_project_wide_root = _resolve_project_wide_root(
+            repo_root,
+            scope_roots=scope_roots,
+        )
+    except StageCheckError as exc:
+        fallback_scope_error = str(exc)
+        resolved_project_wide_root = repo_root
+
+    try:
+        resolved_project_wide_root_text = (
+            resolved_project_wide_root.relative_to(repo_root).as_posix() or "."
+        )
+    except ValueError:
+        resolved_project_wide_root_text = str(resolved_project_wide_root)
+
+    fallback_diagnostics: list[str] = []
+    if state_error:
+        fallback_diagnostics.append(
+            f"state unavailable for registry view: {state_error}"
+        )
+    if fallback_scope_error:
+        fallback_diagnostics.append(fallback_scope_error)
+
+    return {
+        "repo_root": repo_root,
+        "state_path": state_path,
+        "state": {},
+        "policy": policy,
+        "scope_roots": scope_roots,
+        "configured_project_wide_root": configured_project_wide_root,
+        "resolved_project_wide_root": resolved_project_wide_root,
+        "resolved_project_wide_root_text": resolved_project_wide_root_text,
+        "detected_scope_kind": "unknown",
+        "effective_scope_root": resolved_project_wide_root,
+        "effective_scope_root_text": resolved_project_wide_root_text,
+        "iteration_id": iteration_override,
+        "experiment_id": "",
+        "docs_generate_context_error": "; ".join(fallback_diagnostics),
+    }
+
+
+def _render_docs_registry_view(
+    context: dict[str, Any],
+    *,
+    registry: dict[str, StageSpec],
+) -> str:
+    lines: list[str] = []
+    lines.append("# Autolab Stage Flow")
+    lines.append("")
     active = [
         name
         for name, spec in registry.items()
@@ -466,23 +1008,27 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
             flow_parts.append(f"{name} -> {spec.next_stage}")
         else:
             flow_parts.append(name)
-    print(" | ".join(flow_parts))
-    print("")
-
-    # 2. Scope roots
-    print("## Scope Roots")
-    print("")
-    print(f"- configured_project_wide_root: `{configured_project_wide_root}`")
-    print(f"- resolved_project_wide_root: `{resolved_project_wide_root_text}`")
-    print(f"- detected_scope_kind: `{detected_scope_kind}`")
-    print(f"- effective_scope_root: `{effective_scope_root_text}`")
-    print("")
-
-    # 3. Artifact map
-    print("## Artifact Map")
-    print("")
-    print("| Stage | Required Outputs |")
-    print("|-------|-----------------|")
+    lines.append(" | ".join(flow_parts))
+    lines.append("")
+    lines.append("## Scope Roots")
+    lines.append("")
+    lines.append(
+        f"- configured_project_wide_root: `{context.get('configured_project_wide_root', '.')}`"
+    )
+    lines.append(
+        f"- resolved_project_wide_root: `{context.get('resolved_project_wide_root_text', '.')}`"
+    )
+    lines.append(
+        f"- detected_scope_kind: `{context.get('detected_scope_kind', 'unknown')}`"
+    )
+    lines.append(
+        f"- effective_scope_root: `{context.get('effective_scope_root_text', '.')}`"
+    )
+    lines.append("")
+    lines.append("## Artifact Map")
+    lines.append("")
+    lines.append("| Stage | Required Outputs |")
+    lines.append("|-------|-----------------|")
     for name, spec in registry.items():
         outputs_parts: list[str] = []
         if spec.required_outputs:
@@ -492,34 +1038,753 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
         for conditions, outputs in spec.required_outputs_if:
             condition_text = ", ".join(f"{key}={value}" for key, value in conditions)
             outputs_parts.append(f"when {condition_text}: {', '.join(outputs)}")
-        outputs = "; ".join(outputs_parts) if outputs_parts else "(none)"
-        print(f"| {name} | {outputs} |")
-    print("")
-
-    # 4. Token reference
-    print("## Token Reference")
-    print("")
-    print("| Stage | Required Tokens |")
-    print("|-------|----------------|")
+        outputs_text = "; ".join(outputs_parts) if outputs_parts else "(none)"
+        lines.append(f"| {name} | {outputs_text} |")
+    lines.append("")
+    lines.append("## Token Reference")
+    lines.append("")
+    lines.append("| Stage | Required Tokens |")
+    lines.append("|-------|----------------|")
     for name, spec in registry.items():
         tokens = (
             ", ".join(sorted(spec.required_tokens))
             if spec.required_tokens
             else "(none)"
         )
-        print(f"| {name} | {tokens} |")
-    print("")
-
-    # 5. Classifications
-    print("## Classifications")
-    print("")
-    print("| Stage | Active | Terminal | Decision | Runner Eligible |")
-    print("|-------|--------|----------|----------|----------------|")
+        lines.append(f"| {name} | {tokens} |")
+    lines.append("")
+    lines.append("## Classifications")
+    lines.append("")
+    lines.append("| Stage | Active | Terminal | Decision | Runner Eligible |")
+    lines.append("|-------|--------|----------|----------|----------------|")
     for name, spec in registry.items():
-        print(
+        lines.append(
             f"| {name} | {spec.is_active} | {spec.is_terminal} | {spec.is_decision} | {spec.is_runner_eligible} |"
         )
+    return "\n".join(lines).rstrip() + "\n"
 
+
+def _render_docs_project_view(context: dict[str, Any]) -> str:
+    repo_root = context["repo_root"]
+    state = context["state"]
+    backlog_hypotheses = context.get("backlog_hypotheses", [])
+    backlog_experiments = context.get("backlog_experiments", [])
+    active_backlog_entry = context.get("active_backlog_entry")
+    trace_summary = {}
+    traceability_payload = context.get("traceability_payload")
+    if isinstance(traceability_payload, dict):
+        raw_summary = traceability_payload.get("summary")
+        if isinstance(raw_summary, dict):
+            trace_summary = raw_summary
+    if not trace_summary:
+        trace_latest = context.get("trace_latest_payload")
+        if isinstance(trace_latest, dict):
+            raw_summary = trace_latest.get("summary")
+            if isinstance(raw_summary, dict):
+                trace_summary = raw_summary
+
+    context_bundle = context.get("context_bundle_payload")
+    if not isinstance(context_bundle, dict):
+        context_bundle = {}
+
+    lines: list[str] = [
+        "# Project View",
+        "",
+        f"- repo_root: `{repo_root}`",
+        f"- state_file: `{context.get('state_path')}`",
+        f"- iteration_id: `{context.get('iteration_id', '')}`",
+        f"- experiment_id: `{context.get('experiment_id', '')}`",
+        f"- stage: `{state.get('stage', '')}`",
+        f"- scope: `{context.get('detected_scope_kind', 'unknown')}`",
+        f"- scope_root: `{context.get('effective_scope_root_text', '.')}`",
+        f"- configured_project_wide_root: `{context.get('configured_project_wide_root', '.')}`",
+        f"- resolved_project_wide_root: `{context.get('resolved_project_wide_root_text', '.')}`",
+        "",
+        "## Roadmap Summary",
+        f"- hypotheses_total: {len(backlog_hypotheses)} ({_docs_summarize_status_counts(backlog_hypotheses)})",
+        f"- experiments_total: {len(backlog_experiments)} ({_docs_summarize_status_counts(backlog_experiments)})",
+    ]
+    if isinstance(active_backlog_entry, dict):
+        lines.append(
+            "- active_backlog_experiment: "
+            f"{active_backlog_entry.get('id', '')} "
+            f"(status={active_backlog_entry.get('status', '')}, "
+            f"type={active_backlog_entry.get('type', '') or 'plan'})"
+        )
+    else:
+        lines.append("- active_backlog_experiment: unavailable")
+
+    lines.extend(
+        [
+            "",
+            "## Coverage Snapshot",
+            "- traceability_latest_path: "
+            f"`{_docs_relpath(repo_root, context.get('trace_latest_path'))}`",
+            "- traceability_coverage_path: "
+            f"`{_docs_relpath(repo_root, context.get('traceability_path'))}`",
+        ]
+    )
+    if trace_summary:
+        lines.append(
+            "- rows: "
+            f"total={_docs_safe_int(trace_summary.get('rows_total', 0), 0)}, "
+            f"covered={_docs_safe_int(trace_summary.get('rows_covered', 0), 0)}, "
+            f"untested={_docs_safe_int(trace_summary.get('rows_untested', 0), 0)}, "
+            f"failed={_docs_safe_int(trace_summary.get('rows_failed', 0), 0)}"
+        )
+        lines.append(
+            "- requirements: "
+            f"total={_docs_safe_int(trace_summary.get('requirements_total', 0), 0)}, "
+            f"covered={_docs_safe_int(trace_summary.get('requirements_covered', 0), 0)}, "
+            f"untested={_docs_safe_int(trace_summary.get('requirements_untested', 0), 0)}, "
+            f"failed={_docs_safe_int(trace_summary.get('requirements_failed', 0), 0)}"
+        )
+    else:
+        lines.append("- summary: unavailable")
+
+    lines.extend(
+        [
+            "",
+            "## Context Bundle",
+            f"- context_bundle_path: `{_docs_relpath(repo_root, context.get('context_bundle_path'))}`",
+            f"- project_map_path: `{_docs_relpath(repo_root, context.get('project_map_path'))}`",
+            f"- selected_experiment_delta_path: `{_docs_relpath(repo_root, context.get('context_delta_path'))}`",
+            f"- focus_iteration_id: `{context_bundle.get('focus_iteration_id', '')}`",
+            f"- focus_experiment_id: `{context_bundle.get('focus_experiment_id', '')}`",
+        ]
+    )
+    diagnostics = []
+    for key in (
+        "backlog_error",
+        "active_backlog_error",
+        "trace_latest_error",
+        "traceability_error",
+        "traceability_selection_error",
+        "context_bundle_error",
+        "project_map_error",
+        "context_delta_error",
+    ):
+        value = str(context.get(key, "")).strip()
+        if value:
+            diagnostics.append(value)
+    lines.extend(["", "## Diagnostics"])
+    if diagnostics:
+        lines.extend(f"- {item}" for item in diagnostics)
+    else:
+        lines.append("- none")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_docs_roadmap_view(context: dict[str, Any]) -> str:
+    repo_root = context["repo_root"]
+    backlog_payload = context.get("backlog_payload")
+    backlog_hypotheses = context.get("backlog_hypotheses", [])
+    backlog_experiments = context.get("backlog_experiments", [])
+    active_iteration = str(context.get("iteration_id", "")).strip()
+    active_experiment = str(context.get("experiment_id", "")).strip()
+
+    lines: list[str] = [
+        "# Roadmap View",
+        "",
+        f"- backlog_path: `{_docs_relpath(repo_root, context.get('backlog_path'))}`",
+    ]
+    if not isinstance(backlog_payload, dict):
+        lines.extend(
+            [
+                "- status: unavailable",
+                "",
+                "## Diagnostics",
+                f"- {context.get('backlog_error', 'backlog is unavailable')}",
+            ]
+        )
+        return "\n".join(lines).rstrip() + "\n"
+
+    lines.extend(
+        [
+            "- status: available",
+            f"- hypotheses_total: {len(backlog_hypotheses)} ({_docs_summarize_status_counts(backlog_hypotheses)})",
+            f"- experiments_total: {len(backlog_experiments)} ({_docs_summarize_status_counts(backlog_experiments)})",
+            "",
+            "## Experiments",
+            "",
+            "| Experiment | Hypothesis | Status | Type | Iteration | Active |",
+            "|------------|------------|--------|------|-----------|--------|",
+        ]
+    )
+    if backlog_experiments:
+        for entry in backlog_experiments:
+            experiment_id = str(entry.get("id", "")).strip()
+            hypothesis_id = str(entry.get("hypothesis_id", "")).strip()
+            status = str(entry.get("status", "")).strip() or "unknown"
+            experiment_type = str(entry.get("type", "")).strip() or "plan"
+            iteration_id = str(entry.get("iteration_id", "")).strip()
+            is_active = experiment_id == active_experiment or (
+                iteration_id and iteration_id == active_iteration
+            )
+            lines.append(
+                "| {experiment} | {hypothesis} | {status} | {etype} | {iteration} | {active} |".format(
+                    experiment=_docs_markdown_escape(experiment_id),
+                    hypothesis=_docs_markdown_escape(hypothesis_id),
+                    status=_docs_markdown_escape(status),
+                    etype=_docs_markdown_escape(experiment_type),
+                    iteration=_docs_markdown_escape(iteration_id),
+                    active="yes" if is_active else "no",
+                )
+            )
+    else:
+        lines.append("| (none) |  |  |  |  |  |")
+
+    lines.extend(
+        [
+            "",
+            "## Hypotheses",
+            "",
+            "| Hypothesis | Status | Success Metric | Target Delta |",
+            "|------------|--------|----------------|--------------|",
+        ]
+    )
+    if backlog_hypotheses:
+        for entry in backlog_hypotheses:
+            hypothesis_id = str(entry.get("id", "")).strip()
+            status = str(entry.get("status", "")).strip() or "unknown"
+            success_metric = str(entry.get("success_metric", "")).strip()
+            target_delta = str(entry.get("target_delta", "")).strip()
+            lines.append(
+                "| {hypothesis} | {status} | {metric} | {delta} |".format(
+                    hypothesis=_docs_markdown_escape(hypothesis_id),
+                    status=_docs_markdown_escape(status),
+                    metric=_docs_markdown_escape(success_metric),
+                    delta=_docs_markdown_escape(target_delta),
+                )
+            )
+    else:
+        lines.append("| (none) |  |  |  |")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_docs_state_view(context: dict[str, Any]) -> str:
+    repo_root = context["repo_root"]
+    state = context["state"]
+    handoff_payload = context.get("handoff_payload")
+    if not isinstance(handoff_payload, dict):
+        handoff_payload = {}
+    wave = handoff_payload.get("wave")
+    if not isinstance(wave, dict):
+        wave = {}
+    task_status = handoff_payload.get("task_status")
+    if not isinstance(task_status, dict):
+        task_status = {}
+    safe_resume = handoff_payload.get("safe_resume_point")
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+    recommended = handoff_payload.get("recommended_next_command")
+    if not isinstance(recommended, dict):
+        recommended = {}
+    blocking_failures = handoff_payload.get("blocking_failures")
+    if not isinstance(blocking_failures, list):
+        blocking_failures = []
+    pending_decisions = handoff_payload.get("pending_human_decisions")
+    if not isinstance(pending_decisions, list):
+        pending_decisions = []
+
+    lines: list[str] = [
+        "# State View",
+        "",
+        f"- state_file: `{context.get('state_path')}`",
+        f"- iteration_id: `{state.get('iteration_id', '')}`",
+        f"- experiment_id: `{state.get('experiment_id', '')}`",
+        f"- stage: `{state.get('stage', '')}`",
+        f"- stage_attempt: `{state.get('stage_attempt', 0)}` / `{state.get('max_stage_attempts', 0)}`",
+        f"- last_run_id: `{state.get('last_run_id', '')}`",
+        f"- sync_status: `{state.get('sync_status', '')}`",
+        f"- assistant_mode: `{state.get('assistant_mode', '')}`",
+        f"- current_scope: `{context.get('detected_scope_kind', 'unknown')}`",
+        f"- effective_scope_root: `{context.get('effective_scope_root_text', '.')}`",
+        "",
+        "## Handoff Readiness",
+        f"- handoff_json_path: `{_docs_relpath(repo_root, context.get('handoff_path'))}`",
+        f"- handoff_markdown_path: `{_docs_relpath(repo_root, context.get('handoff_markdown_path'))}`",
+        f"- safe_resume_status: `{safe_resume.get('status', 'blocked')}`",
+        f"- safe_resume_command: `{safe_resume.get('command', '')}`",
+        f"- recommended_next_command: `{recommended.get('command', '')}`",
+        f"- blockers: {len(blocking_failures)}",
+        f"- pending_human_decisions: {len(pending_decisions)}",
+        "",
+        "## Wave and Task Status",
+        f"- wave: status={wave.get('status', 'unavailable')}, current={wave.get('current', '-')}, executed={wave.get('executed', 0)}, total={wave.get('total', 0)}",
+        f"- tasks: status={task_status.get('status', 'unavailable')}, total={task_status.get('total', 0)}, completed={task_status.get('completed', 0)}, failed={task_status.get('failed', 0)}, blocked={task_status.get('blocked', 0)}, pending={task_status.get('pending', 0)}",
+        "",
+        "## Diagnostics",
+    ]
+    diagnostics = []
+    handoff_error = str(context.get("handoff_error", "")).strip()
+    if handoff_error:
+        diagnostics.append(handoff_error)
+    handoff_context_errors = context.get("handoff_context_errors", [])
+    if isinstance(handoff_context_errors, list):
+        for message in handoff_context_errors:
+            message_text = str(message).strip()
+            if message_text:
+                diagnostics.append(message_text)
+    if diagnostics:
+        lines.extend(f"- {item}" for item in diagnostics)
+    else:
+        lines.append("- none")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_docs_requirements_view(context: dict[str, Any]) -> str:
+    repo_root = context["repo_root"]
+    design_payload = context.get("design_payload")
+    plan_contract_payload = context.get("plan_contract_payload")
+    traceability_payload = context.get("traceability_payload")
+
+    requirements: list[dict[str, Any]] = []
+    if isinstance(design_payload, dict):
+        raw_requirements = design_payload.get("implementation_requirements")
+        if isinstance(raw_requirements, list):
+            for row in raw_requirements:
+                if isinstance(row, dict):
+                    requirement_id = str(row.get("requirement_id", "")).strip()
+                    if requirement_id:
+                        requirements.append(row)
+
+    requirement_to_tasks: dict[str, list[str]] = {}
+    if isinstance(plan_contract_payload, dict):
+        raw_tasks = plan_contract_payload.get("tasks")
+        if isinstance(raw_tasks, list):
+            for row in raw_tasks:
+                if not isinstance(row, dict):
+                    continue
+                task_id = str(row.get("task_id", "")).strip()
+                if not task_id:
+                    continue
+                covers = row.get("covers_requirements")
+                if isinstance(covers, list):
+                    for raw_requirement_id in covers:
+                        requirement_id = str(raw_requirement_id).strip()
+                        if not requirement_id:
+                            continue
+                        requirement_to_tasks.setdefault(requirement_id, [])
+                        if task_id not in requirement_to_tasks[requirement_id]:
+                            requirement_to_tasks[requirement_id].append(task_id)
+
+    requirement_to_trace_statuses: dict[str, list[str]] = {}
+    if isinstance(traceability_payload, dict):
+        links = traceability_payload.get("links")
+        if isinstance(links, list):
+            for row in links:
+                if not isinstance(row, dict):
+                    continue
+                requirement_id = str(row.get("requirement_id", "")).strip()
+                status = str(row.get("coverage_status", "")).strip().lower()
+                if not requirement_id or not status:
+                    continue
+                requirement_to_trace_statuses.setdefault(requirement_id, [])
+                requirement_to_trace_statuses[requirement_id].append(status)
+
+    def _aggregate_requirement_status(
+        requirement_id: str,
+        *,
+        has_tasks: bool,
+    ) -> str:
+        statuses = requirement_to_trace_statuses.get(requirement_id, [])
+        if statuses:
+            if "failed" in statuses:
+                return "failed"
+            if "untested" in statuses:
+                return "untested"
+            if "covered" in statuses:
+                return "covered"
+            return "unknown"
+        if not has_tasks:
+            return "unmapped"
+        return "unknown"
+
+    lines: list[str] = [
+        "# Requirements View",
+        "",
+        f"- iteration_id: `{context.get('iteration_id', '')}`",
+        f"- design_path: `{_docs_relpath(repo_root, context.get('design_path'))}`",
+        f"- plan_contract_path: `{_docs_relpath(repo_root, context.get('plan_contract_path'))}`",
+        f"- traceability_coverage_path: `{_docs_relpath(repo_root, context.get('traceability_path'))}`",
+        "",
+        "| Requirement | Scope | Tasks | Coverage | Expected Artifacts | Description |",
+        "|-------------|-------|-------|----------|--------------------|-------------|",
+    ]
+    if requirements:
+        for row in requirements:
+            requirement_id = str(row.get("requirement_id", "")).strip()
+            scope_kind = str(row.get("scope_kind", "")).strip() or "unspecified"
+            description = str(row.get("description", "")).strip()
+            expected_artifacts_raw = row.get("expected_artifacts")
+            expected_artifacts: list[str] = []
+            if isinstance(expected_artifacts_raw, list):
+                expected_artifacts = [
+                    str(item).strip()
+                    for item in expected_artifacts_raw
+                    if str(item).strip()
+                ]
+            tasks = sorted(set(requirement_to_tasks.get(requirement_id, [])))
+            coverage = _aggregate_requirement_status(
+                requirement_id,
+                has_tasks=bool(tasks),
+            )
+            lines.append(
+                "| {requirement} | {scope} | {tasks} | {coverage} | {artifacts} | {description} |".format(
+                    requirement=_docs_markdown_escape(requirement_id),
+                    scope=_docs_markdown_escape(scope_kind),
+                    tasks=_docs_markdown_escape(
+                        ", ".join(tasks) if tasks else "(none)"
+                    ),
+                    coverage=_docs_markdown_escape(coverage),
+                    artifacts=_docs_markdown_escape(
+                        ", ".join(expected_artifacts)
+                        if expected_artifacts
+                        else "(none)"
+                    ),
+                    description=_docs_markdown_escape(description),
+                )
+            )
+    else:
+        lines.append("| (none) |  |  |  |  |  |")
+
+    covered = 0
+    untested = 0
+    failed = 0
+    unmapped = 0
+    unknown = 0
+    for row in requirements:
+        requirement_id = str(row.get("requirement_id", "")).strip()
+        tasks = requirement_to_tasks.get(requirement_id, [])
+        status = _aggregate_requirement_status(requirement_id, has_tasks=bool(tasks))
+        if status == "covered":
+            covered += 1
+        elif status == "untested":
+            untested += 1
+        elif status == "failed":
+            failed += 1
+        elif status == "unmapped":
+            unmapped += 1
+        else:
+            unknown += 1
+
+    lines.extend(
+        [
+            "",
+            "## Summary",
+            (
+                f"- requirements_total={len(requirements)}, covered={covered}, "
+                f"untested={untested}, failed={failed}, unmapped={unmapped}, unknown={unknown}"
+            ),
+            "",
+            "## Diagnostics",
+        ]
+    )
+    diagnostics = []
+    for key in (
+        "design_error",
+        "plan_contract_error",
+        "traceability_error",
+        "traceability_selection_error",
+    ):
+        value = str(context.get(key, "")).strip()
+        if value:
+            diagnostics.append(value)
+    if diagnostics:
+        lines.extend(f"- {item}" for item in diagnostics)
+    else:
+        lines.append("- none")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
+    repo_root = context["repo_root"]
+    trace_latest = context.get("trace_latest_payload")
+    if not isinstance(trace_latest, dict):
+        trace_latest = {}
+    handoff = context.get("handoff_payload")
+    if not isinstance(handoff, dict):
+        handoff = {}
+    bundle = context.get("context_bundle_payload")
+    if not isinstance(bundle, dict):
+        bundle = {}
+    project_map = context.get("project_map_payload")
+    if not isinstance(project_map, dict):
+        project_map = {}
+    context_delta = context.get("context_delta_payload")
+    if not isinstance(context_delta, dict):
+        context_delta = {}
+    traceability_payload = context.get("traceability_payload")
+    if not isinstance(traceability_payload, dict):
+        traceability_payload = {}
+
+    def _status_from_error(payload: dict[str, Any], error: str) -> str:
+        if payload:
+            return "present"
+        if str(error).startswith("missing "):
+            return "missing"
+        return "invalid"
+
+    handoff_md_path = context.get("handoff_markdown_path")
+    handoff_md_status = "missing"
+    if isinstance(handoff_md_path, Path):
+        handoff_md_status = "present" if handoff_md_path.exists() else "missing"
+
+    trace_summary = traceability_payload.get("summary")
+    if not isinstance(trace_summary, dict):
+        trace_summary = {}
+
+    lines: list[str] = [
+        "# Sidecar View",
+        "",
+        f"- iteration_id: `{context.get('iteration_id', '')}`",
+        f"- experiment_id: `{context.get('experiment_id', '')}`",
+        "",
+        "| Artifact | Path | Status | Note |",
+        "|----------|------|--------|------|",
+        "| handoff.json | `{path}` | {status} | safe_resume={safe_resume} |".format(
+            path=_docs_relpath(repo_root, context.get("handoff_path")),
+            status=_status_from_error(handoff, str(context.get("handoff_error", ""))),
+            safe_resume=_docs_markdown_escape(
+                str(handoff.get("safe_resume_point", {}).get("status", ""))
+                if isinstance(handoff.get("safe_resume_point"), dict)
+                else ""
+            )
+            or "n/a",
+        ),
+        "| handoff.md | `{path}` | {status} | human handoff snapshot |".format(
+            path=_docs_relpath(repo_root, handoff_md_path),
+            status=handoff_md_status,
+        ),
+        "| traceability_latest.json | `{path}` | {status} | iteration={iteration} |".format(
+            path=_docs_relpath(repo_root, context.get("trace_latest_path")),
+            status=_status_from_error(
+                trace_latest, str(context.get("trace_latest_error", ""))
+            ),
+            iteration=_docs_markdown_escape(str(trace_latest.get("iteration_id", "")))
+            or "n/a",
+        ),
+        "| traceability_coverage.json | `{path}` | {status} | rows_total={rows_total} |".format(
+            path=_docs_relpath(repo_root, context.get("traceability_path")),
+            status=_status_from_error(
+                traceability_payload,
+                str(context.get("traceability_error", "")),
+            ),
+            rows_total=_docs_safe_int(trace_summary.get("rows_total", 0), 0),
+        ),
+        "| context bundle | `{path}` | {status} | focus_iteration={iteration} |".format(
+            path=_docs_relpath(repo_root, context.get("context_bundle_path")),
+            status=_status_from_error(
+                bundle,
+                str(context.get("context_bundle_error", "")),
+            ),
+            iteration=_docs_markdown_escape(str(bundle.get("focus_iteration_id", "")))
+            or "n/a",
+        ),
+        "| project_map.json | `{path}` | {status} | scan_mode={scan_mode} |".format(
+            path=_docs_relpath(repo_root, context.get("project_map_path")),
+            status=_status_from_error(
+                project_map,
+                str(context.get("project_map_error", "")),
+            ),
+            scan_mode=_docs_markdown_escape(str(project_map.get("scan_mode", "")))
+            or "n/a",
+        ),
+        "| context_delta.json | `{path}` | {status} | iteration={iteration} |".format(
+            path=_docs_relpath(repo_root, context.get("context_delta_path")),
+            status=_status_from_error(
+                context_delta,
+                str(context.get("context_delta_error", "")),
+            ),
+            iteration=_docs_markdown_escape(str(context_delta.get("iteration_id", "")))
+            or "n/a",
+        ),
+        "",
+        "## Diagnostics",
+    ]
+    diagnostics: list[str] = []
+    for key in (
+        "handoff_error",
+        "trace_latest_error",
+        "traceability_error",
+        "traceability_selection_error",
+        "context_bundle_error",
+        "project_map_error",
+        "context_delta_error",
+    ):
+        value = str(context.get(key, "")).strip()
+        if value:
+            diagnostics.append(value)
+    handoff_context_errors = context.get("handoff_context_errors", [])
+    if isinstance(handoff_context_errors, list):
+        for message in handoff_context_errors:
+            message_text = str(message).strip()
+            if message_text:
+                diagnostics.append(message_text)
+
+    focus_iteration_id = str(bundle.get("focus_iteration_id", "")).strip()
+    target_iteration_id = str(context.get("iteration_id", "")).strip()
+    if (
+        focus_iteration_id
+        and target_iteration_id
+        and focus_iteration_id != target_iteration_id
+    ):
+        diagnostics.append(
+            "context bundle focus_iteration_id differs from requested iteration_id "
+            f"({focus_iteration_id} != {target_iteration_id})"
+        )
+    delta_iteration_id = str(context_delta.get("iteration_id", "")).strip()
+    if (
+        delta_iteration_id
+        and target_iteration_id
+        and delta_iteration_id != target_iteration_id
+    ):
+        diagnostics.append(
+            "context delta iteration_id differs from requested iteration_id "
+            f"({delta_iteration_id} != {target_iteration_id})"
+        )
+
+    latest_pointer, latest_pointer_error = _docs_resolve_pointer_path(
+        repo_root,
+        trace_latest.get("traceability_path", ""),
+    )
+    if latest_pointer_error and latest_pointer_error not in diagnostics:
+        diagnostics.append(latest_pointer_error)
+    coverage_path = context.get("traceability_path")
+    if isinstance(latest_pointer, Path) and isinstance(coverage_path, Path):
+        try:
+            latest_pointer_resolved = latest_pointer.resolve(strict=False)
+            coverage_path_resolved = coverage_path.resolve(strict=False)
+        except Exception:
+            latest_pointer_resolved = latest_pointer
+            coverage_path_resolved = coverage_path
+        if latest_pointer_resolved != coverage_path_resolved:
+            mismatch_message = "traceability_latest.traceability_path differs from selected coverage path"
+            if mismatch_message not in diagnostics:
+                diagnostics.append(mismatch_message)
+
+    if diagnostics:
+        lines.extend(f"- {item}" for item in diagnostics)
+    else:
+        lines.append("- none")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _cmd_docs_generate(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    iteration_override = str(getattr(args, "iteration_id", "") or "").strip()
+    selected_views = _docs_select_views(
+        str(getattr(args, "view", "registry") or "registry")
+    )
+    context, context_error = _docs_collect_context(
+        state_path=state_path,
+        iteration_override=iteration_override,
+    )
+    if context is None:
+        if selected_views == ["registry"] and _docs_is_state_context_error(
+            context_error
+        ):
+            context = _docs_collect_registry_fallback_context(
+                state_path=state_path,
+                iteration_override=iteration_override,
+                state_error=context_error,
+            )
+        else:
+            print(f"autolab docs generate: ERROR {context_error}", file=sys.stderr)
+            return 1
+
+    rendered_by_view: dict[str, str] = {}
+    for view in selected_views:
+        if view == "registry":
+            registry = load_registry(repo_root)
+            if not registry:
+                print(
+                    "autolab docs generate: ERROR could not load workflow.yaml registry",
+                    file=sys.stderr,
+                )
+                return 1
+            rendered_by_view[view] = _render_docs_registry_view(
+                context,
+                registry=registry,
+            )
+            continue
+        if view == "project":
+            rendered_by_view[view] = _render_docs_project_view(context)
+            continue
+        if view == "roadmap":
+            rendered_by_view[view] = _render_docs_roadmap_view(context)
+            continue
+        if view == "state":
+            rendered_by_view[view] = _render_docs_state_view(context)
+            continue
+        if view == "requirements":
+            rendered_by_view[view] = _render_docs_requirements_view(context)
+            continue
+        if view == "sidecar":
+            rendered_by_view[view] = _render_docs_sidecar_view(context)
+            continue
+        print(
+            f"autolab docs generate: ERROR unsupported view '{view}'", file=sys.stderr
+        )
+        return 1
+
+    output_dir_text = str(getattr(args, "output_dir", "") or "").strip()
+    if output_dir_text:
+        try:
+            requested_output_dir = Path(output_dir_text).expanduser()
+            output_dir = (
+                requested_output_dir.resolve(strict=False)
+                if requested_output_dir.is_absolute()
+                else (repo_root / requested_output_dir).resolve(strict=False)
+            )
+        except Exception as exc:
+            print(
+                f"autolab docs generate: ERROR invalid output-dir '{output_dir_text}': {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        if not _docs_path_within_repo_root(repo_root, output_dir):
+            print(
+                "autolab docs generate: ERROR output-dir resolves outside repository "
+                f"root: {output_dir}",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            if not output_dir.is_dir():
+                raise RuntimeError("resolved output-dir is not a directory")
+            written_paths: list[Path] = []
+            for view in selected_views:
+                output_path = (output_dir / f"{view}.md").resolve(strict=False)
+                if not _docs_path_within_repo_root(repo_root, output_path):
+                    raise RuntimeError(
+                        f"resolved output path escapes repository root: {output_path}"
+                    )
+                output_path.write_text(rendered_by_view[view], encoding="utf-8")
+                written_paths.append(output_path)
+        except Exception as exc:
+            print(
+                "autolab docs generate: ERROR failed writing docs output to "
+                f"{output_dir}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        print("autolab docs generate")
+        print(f"state_file: {state_path}")
+        print(f"iteration_id: {context.get('iteration_id', '')}")
+        print(f"views_written: {len(written_paths)}")
+        for output_path in written_paths:
+            print(f"- {output_path}")
+        return 0
+
+    for index, view in enumerate(selected_views):
+        if index > 0:
+            print("")
+        sys.stdout.write(rendered_by_view[view].rstrip() + "\n")
     return 0
 
 

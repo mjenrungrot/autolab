@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.21
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.22
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -103,6 +103,8 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `skip`, `focus`, and `experiment move`).
 
 **Traceability coverage.** `autolab trace` builds a per-iteration end-to-end coverage artifact (`traceability_coverage.json`) linking hypothesis claim, design requirements, plan tasks, verification evidence, metrics, and decision context. Use `--iteration-id <id>` to render a non-active iteration and `--json` for machine-readable command output. A convenience pointer (`.autolab/traceability_latest.json`) is also updated for quick inspection.
+
+**Generated project views.** `autolab docs generate` defaults to the legacy registry view for compatibility (`--view registry`). Use `--view project|roadmap|state|requirements|sidecar|all` for projection views and `--iteration-id <id>` for iteration-scoped projections. Use `--output-dir <path>` to write markdown view files instead of printing to stdout; the output path must stay within the repository.
 
 **Prompt render (no execution).** `autolab render` resolves the stage prompt pack without running transitions or verifiers, then prints one prompt-pack view to stdout. It defaults to `state.stage` and `--view runner`. Use `--stage <stage>` to override, `--view runner|audit|brief|human|context` to select output, and `--stats` for prompt-debugging diagnostics. `autolab render` is read-only and does not write `.autolab/prompts/rendered/*` artifacts.
 
