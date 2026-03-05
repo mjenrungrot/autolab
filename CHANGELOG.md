@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.20] - 2026-03-05
+
+### Summary
+
+- Tightened project-wide expected-artifact verification so `scope_kind=project_wide` only accepts artifacts under configured `scope_roots.project_wide_root`.
+- Added regression tests for project-wide out-of-scope artifact rejection, project-wide scope-violation enforcement in runner execution, and `{scope_root}` token substitution in runner commands.
+- Added failure-path coverage for invalid `scope_roots.project_wide_root` in `autolab render` and `autolab docs generate`, and documented scope-root path constraints in README.
+
+<!-- autolab:range v1.2.19..v1.2.20 -->
+
 ## [1.2.19] - 2026-03-05
 
 ### Summary

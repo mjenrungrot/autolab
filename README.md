@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.19
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.20
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -131,7 +131,7 @@ autolab render --stage design --view runner --stats
 
 Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk and backlog-steering actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
 
-**Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `scope_root_plus_core`; set `scope_root_only` for strict isolation. Project-wide tasks resolve through `scope_roots.project_wide_root`. See `docs/runner_reference.md`.
+**Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `scope_root_plus_core`; set `scope_root_only` for strict isolation. Project-wide tasks resolve through `scope_roots.project_wide_root` (must be repo-relative, non-empty, not `..`-escaping, and point to an existing directory). See `docs/runner_reference.md`.
 
 Runner cutover: `launch`, `slurm_monitor`, and `extract_results` are deterministic runtime stages and are no longer runner-eligible. Keep `agent_runner.stages` limited to active runner stages (`hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`).
 Deterministic stage behavior: `run_agent_mode=policy|force_off` bypasses runner invocation, while `run_agent_mode=force_on` fails fast on `launch`, `slurm_monitor`, and `extract_results`.

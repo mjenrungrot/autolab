@@ -236,9 +236,27 @@ def test_expected_artifacts_accept_scope_root_relative_paths(tmp_path: Path) -> 
         repo_root=tmp_path,
         iteration_dir=iteration_dir,
         scope_root=scope_root,
-        task={"expected_artifacts": ["out.txt"]},
+        task={"expected_artifacts": ["out.txt"], "scope_kind": "project_wide"},
     )
     assert missing == []
+
+
+def test_expected_artifacts_reject_project_wide_files_outside_scope_root(
+    tmp_path: Path,
+) -> None:
+    scope_root = tmp_path / "src"
+    scope_root.mkdir(parents=True)
+    iteration_dir = tmp_path / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True)
+    (tmp_path / "out.txt").write_text("outside\n", encoding="utf-8")
+
+    missing = plan_execution._task_expected_artifacts_missing(
+        repo_root=tmp_path,
+        iteration_dir=iteration_dir,
+        scope_root=scope_root,
+        task={"expected_artifacts": ["out.txt"], "scope_kind": "project_wide"},
+    )
+    assert missing == ["out.txt"]
 
 
 def test_failure_mode_fail_fast_halts_remaining_wave_tasks(
