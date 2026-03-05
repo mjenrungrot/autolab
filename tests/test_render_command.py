@@ -161,6 +161,37 @@ def test_render_context_uses_project_wide_scope_root(tmp_path: Path, capsys) -> 
     assert context["runner_scope"]["workspace_dir"] == str((repo / "src").resolve())
 
 
+def test_render_fails_with_invalid_project_wide_root(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.write_text(
+        policy_path.read_text(encoding="utf-8")
+        + "\nscope_roots:\n  project_wide_root: missing_dir\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_contract.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "tasks": [{"task_id": "T1", "scope_kind": "project_wide"}],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(["render", "--state-file", str(state_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "scope_roots.project_wide_root" in captured.err
+
+
 def test_render_human_view_prints_human_packet(tmp_path: Path, capsys) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

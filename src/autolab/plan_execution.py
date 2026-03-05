@@ -340,8 +340,18 @@ def _task_expected_artifacts_missing(
     scope_root: Path,
     task: dict[str, Any],
 ) -> list[str]:
+    scope_root_resolved = scope_root.resolve()
+
+    def _within_scope_root(path: Path) -> bool:
+        try:
+            path.resolve().relative_to(scope_root_resolved)
+            return True
+        except ValueError:
+            return False
+
     missing: list[str] = []
     raw_artifacts = task.get("expected_artifacts", [])
+    scope_kind = str(task.get("scope_kind", "")).strip().lower()
     if not isinstance(raw_artifacts, list):
         return missing
     for raw_artifact in raw_artifacts:
@@ -360,6 +370,10 @@ def _task_expected_artifacts_missing(
                     repo_root / artifact_path,
                 ]
             )
+        if scope_kind == "project_wide":
+            candidates = [
+                candidate for candidate in candidates if _within_scope_root(candidate)
+            ]
         if any(candidate.exists() for candidate in candidates):
             continue
         missing.append(artifact)

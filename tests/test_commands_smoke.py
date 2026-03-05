@@ -79,6 +79,25 @@ def test_docs_generate_includes_scope_roots_section(
     assert "`src`" in output
 
 
+def test_docs_generate_fails_with_invalid_project_wide_root(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_text = policy_path.read_text(encoding="utf-8")
+    policy_path.write_text(
+        policy_text + "\nscope_roots:\n  project_wide_root: missing_dir\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(["docs", "generate", "--state-file", str(state_path)]) == 1
+    )
+    err = capsys.readouterr().err
+    assert "scope_roots.project_wide_root" in err
+
+
 def test_update_command_routes_to_handler(
     monkeypatch,
 ) -> None:

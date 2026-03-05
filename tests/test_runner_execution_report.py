@@ -340,7 +340,8 @@ def test_substitute_runner_command_supports_audit_brief_and_human_tokens() -> No
             "--audit {prompt_audit_path} "
             "--brief {prompt_brief_path} "
             "--brief-legacy {prompt_retry_brief_path} "
-            "--human {prompt_human_path}"
+            "--human {prompt_human_path} "
+            "--scope-root {scope_root}"
         ),
         stage="implementation",
         prompt_runner_path=Path("/tmp/implementation.runner.md"),
@@ -359,6 +360,7 @@ def test_substitute_runner_command_supports_audit_brief_and_human_tokens() -> No
     assert "--prompt-legacy /tmp/implementation.runner.md" in rendered
     assert "--brief-legacy /tmp/implementation.brief.md" in rendered
     assert "--human /tmp/implementation.human.md" in rendered
+    assert "--scope-root /tmp/scope_root" in rendered
 
 
 def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
@@ -600,3 +602,51 @@ def test_project_wide_task_uses_configured_scope_root(
     context_payload = json.loads(context_path.read_text(encoding="utf-8"))
     assert context_payload["runner_scope"]["scope_kind"] == "project_wide"
     assert context_payload["runner_scope"]["scope_root"] == str(repo_root / "src")
+
+
+def test_project_wide_task_enforces_scope_violation_detection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "src").mkdir(parents=True, exist_ok=True)
+    policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        "scope_roots:\n  project_wide_root: src\n",
+        encoding="utf-8",
+    )
+    state_path = _configure_runner_environment(
+        monkeypatch,
+        repo_root,
+        process_factory=_ExitZeroProcess,
+        delta_paths=["docs/outside.md"],
+    )
+    monkeypatch.setattr(
+        runners,
+        "_resolve_runner_workspace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("project_wide tasks should not resolve iteration workspace")
+        ),
+    )
+
+    task_packet = {
+        "task_id": "Tpw2",
+        "objective": "Project-wide update under configured scope root.",
+        "scope_kind": "project_wide",
+        "depends_on": [],
+        "reads": ["src/config.yaml"],
+        "writes": ["src/config.yaml"],
+        "touches": ["src/config.yaml"],
+        "expected_artifacts": ["src/config.yaml"],
+        "verification_commands": [],
+    }
+    with pytest.raises(StageCheckError, match="out_of_scope"):
+        runners._invoke_agent_runner(
+            repo_root,
+            state_path=state_path,
+            stage="implementation",
+            iteration_id="iter1",
+            run_agent_mode="policy",
+            task_packet=task_packet,
+        )
