@@ -140,8 +140,25 @@ class AutoCommitConfig:
 @dataclass(frozen=True)
 class LaunchRuntimeConfig:
     execute: bool
+    script_generation: str
     local_timeout_seconds: float
     slurm_submit_timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class SlurmMonitorRuntimeConfig:
+    poll_command_template: str
+    poll_timeout_seconds: float
+    sync_command_template: str
+    sync_timeout_seconds: float
+
+
+@dataclass(frozen=True)
+class ExtractRuntimeConfig:
+    require_parser_hook: bool
+    summary_mode: str
+    summary_llm_command: str
+    summary_llm_timeout_seconds: float
 
 
 @dataclass(frozen=True)

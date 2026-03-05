@@ -694,6 +694,9 @@ def _ensure_iteration_skeleton(
             '    scope_kind: "experiment"\n'
             "    expected_artifacts:\n"
             '      - "implementation_plan.md"\n'
+            "extract_parser:\n"
+            '  kind: "command"\n'
+            '  command: "python3 -m scripts.extract_results --run-id {run_id} --iteration-path {iteration_path}"\n'
         ),
         created,
     )
@@ -817,8 +820,14 @@ def _ensure_iteration_skeleton(
         created,
     )
     _ensure_text_file(
-        iteration_dir / "analysis" / "summary.md",
-        "# Analysis Summary\n\nInitial summary.\n",
+        iteration_dir / "analysis" / "README.md",
+        (
+            "# Analysis Artifacts\n\n"
+            "`analysis/summary.md` is produced by the `extract_results` stage.\n"
+            "Use `design.yaml.extract_parser` to write the summary directly, or configure\n"
+            "`.autolab/verifier_policy.yaml -> extract_results.summary.llm_command`\n"
+            "for on-demand summary generation when parser output is missing.\n"
+        ),
         created,
     )
     _ensure_text_file(

@@ -16,6 +16,8 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 - `iteration_path={{iteration_path}}`
 - `run_id={{run_id}}`
 
+{{shared:memory_brief.md}}
+
 ## STOP CONDITIONS
 - Stop when required input files are missing.
 - Stop when a required edit is outside allowed edit scope.

@@ -8,7 +8,9 @@ import pytest
 import yaml
 
 from autolab.launch_runtime import (
+    _ensure_launch_scripts,
     _execute_launch_runtime,
+    _execute_slurm_monitor_runtime,
     _fits_current_allocation,
     _parse_memory_to_mb,
     _parse_walltime_to_seconds,
@@ -61,10 +63,14 @@ def _seed_scripts(
 
 
 def _seed_policy(repo: Path, *, launch_block: dict[str, object]) -> None:
+    _write_policy(repo, {"launch": launch_block})
+
+
+def _write_policy(repo: Path, payload: dict[str, object]) -> None:
     policy_path = repo / ".autolab" / "verifier_policy.yaml"
     policy_path.parent.mkdir(parents=True, exist_ok=True)
     policy_path.write_text(
-        yaml.safe_dump({"launch": launch_block}, sort_keys=False),
+        yaml.safe_dump(payload, sort_keys=False),
         encoding="utf-8",
     )
 
@@ -94,6 +100,56 @@ def _base_state(*, iteration_id: str, pending_run_id: str) -> dict[str, object]:
         },
         "task_change_baseline": {},
         "history": [],
+    }
+
+
+def _seed_slurm_manifest(
+    iteration_dir: Path,
+    *,
+    run_id: str = "run_001",
+    status: str = "submitted",
+    sync_status: str = "pending",
+    job_id: str | None = "12345",
+) -> Path:
+    run_dir = iteration_dir / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, object] = {
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "iteration_id": iteration_dir.name,
+        "host_mode": "slurm",
+        "launch_mode": "slurm",
+        "status": status,
+        "command": "sbatch launch/run_slurm.sbatch",
+        "resource_request": {"cpus": 1, "memory": "8GB", "gpu_count": 0},
+        "artifact_sync_to_local": {"status": sync_status},
+        "timestamps": {"started_at": "2026-01-01T00:00:00Z"},
+    }
+    if job_id is not None:
+        manifest["job_id"] = job_id
+        manifest["slurm"] = {"job_id": job_id}
+        manifest["resource_request"] = {
+            "cpus": 1,
+            "memory": "8GB",
+            "gpu_count": 0,
+            "job_id": job_id,
+        }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return run_dir
+
+
+def _slurm_monitor_state(
+    *, iteration_id: str, run_id: str = "run_001"
+) -> dict[str, object]:
+    return {
+        "iteration_id": iteration_id,
+        "experiment_id": "e1",
+        "pending_run_id": run_id,
+        "last_run_id": run_id,
+        "sync_status": "pending",
     }
 
 
@@ -418,6 +474,376 @@ def test_execute_launch_runtime_honors_launch_execute_false(tmp_path: Path) -> N
     result = _execute_launch_runtime(repo, state=state)
     assert result.run_id == "run_001"
     assert result.changed_files == ()
+
+
+# ---------------------------------------------------------------------------
+# Launch script generation policy
+# ---------------------------------------------------------------------------
+
+
+def test_launch_script_generation_missing_only_preserves_existing_scripts(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(
+        iteration_dir,
+        local_script='echo "custom-missing-only-local"\n',
+        slurm_script='echo "custom-missing-only-slurm"\n',
+    )
+
+    local_script = iteration_dir / "launch" / "run_local.sh"
+    slurm_script = iteration_dir / "launch" / "run_slurm.sbatch"
+    local_before = local_script.read_text(encoding="utf-8")
+    slurm_before = slurm_script.read_text(encoding="utf-8")
+    design_payload = yaml.safe_load(
+        (iteration_dir / "design.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(design_payload, dict)
+
+    changed_files: list[Path] = []
+    _ensure_launch_scripts(
+        repo_root=repo,
+        iteration_dir=iteration_dir,
+        iteration_id="iter1",
+        design_payload=design_payload,
+        script_generation_mode="missing_only",
+        changed_files=changed_files,
+    )
+
+    assert changed_files == []
+    assert local_script.read_text(encoding="utf-8") == local_before
+    assert slurm_script.read_text(encoding="utf-8") == slurm_before
+
+
+def test_launch_script_generation_always_rewrites_existing_scripts(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_design(iteration_dir, mode="local")
+    _seed_scripts(
+        iteration_dir,
+        local_script='echo "custom-always-local"\n',
+        slurm_script='echo "custom-always-slurm"\n',
+    )
+
+    local_script = iteration_dir / "launch" / "run_local.sh"
+    slurm_script = iteration_dir / "launch" / "run_slurm.sbatch"
+    design_payload = yaml.safe_load(
+        (iteration_dir / "design.yaml").read_text(encoding="utf-8")
+    )
+    assert isinstance(design_payload, dict)
+
+    changed_files: list[Path] = []
+    _ensure_launch_scripts(
+        repo_root=repo,
+        iteration_dir=iteration_dir,
+        iteration_id="iter1",
+        design_payload=design_payload,
+        script_generation_mode="always",
+        changed_files=changed_files,
+    )
+
+    local_after = local_script.read_text(encoding="utf-8")
+    slurm_after = slurm_script.read_text(encoding="utf-8")
+    assert "custom-always-local" not in local_after
+    assert "custom-always-slurm" not in slurm_after
+    assert 'RUN_ID="${AUTOLAB_RUN_ID:-${RUN_ID:-}}"' in local_after
+    assert "#SBATCH --job-name=autolab-iter1" in slurm_after
+    assert set(changed_files) == {local_script, slurm_script}
+
+
+# ---------------------------------------------------------------------------
+# SLURM monitor command-template runtime
+# ---------------------------------------------------------------------------
+
+
+def test_slurm_monitor_poll_template_requires_job_id(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_slurm_manifest(iteration_dir, job_id=None)
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo running",
+                    "poll_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    state = _slurm_monitor_state(iteration_id="iter1")
+    with pytest.raises(StageCheckError, match="lacks job_id"):
+        _execute_slurm_monitor_runtime(repo, state=state)
+
+
+def test_slurm_monitor_poll_running_transitions_manifest_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _seed_slurm_manifest(
+        iteration_dir, status="submitted", sync_status="pending"
+    )
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo R",
+                    "poll_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    calls: list[object] = []
+
+    def _fake_run(*args, **kwargs):
+        calls.append(args[0] if args else kwargs.get("args"))
+        return subprocess.CompletedProcess(
+            args=args[0] if args else kwargs.get("args"),
+            returncode=0,
+            stdout="R\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    result = _execute_slurm_monitor_runtime(repo, state=state)
+
+    assert calls, "poll command was not executed"
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "running"
+    assert manifest["artifact_sync_to_local"]["status"] == "pending"
+    assert state["sync_status"] == "pending"
+    assert result.status == "running"
+    assert result.sync_status == "pending"
+    assert any(
+        path.name == "slurm_monitor.poll.stdout.log" for path in result.changed_files
+    )
+    assert any(
+        path.name == "slurm_monitor.poll.stderr.log" for path in result.changed_files
+    )
+
+
+def test_slurm_monitor_poll_then_sync_success_marks_synced(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _seed_slurm_manifest(
+        iteration_dir, status="submitted", sync_status="pending"
+    )
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo completed-{job_id}",
+                    "poll_timeout_seconds": 10,
+                    "sync_command_template": "echo sync-{run_id}",
+                    "sync_timeout_seconds": 30,
+                }
+            }
+        },
+    )
+
+    call_args: list[object] = []
+
+    def _fake_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        call_args.append(command)
+        if len(call_args) == 1:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="COMPLETED\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="synced\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    result = _execute_slurm_monitor_runtime(repo, state=state)
+
+    assert len(call_args) == 2
+    assert "12345" in str(call_args[0])
+    assert "run_001" in str(call_args[1])
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "synced"
+    assert manifest["artifact_sync_to_local"]["status"] == "completed"
+    assert state["sync_status"] == "completed"
+    assert result.status == "synced"
+    assert result.sync_status == "completed"
+    changed_names = {path.name for path in result.changed_files}
+    assert "slurm_monitor.poll.stdout.log" in changed_names
+    assert "slurm_monitor.sync.stdout.log" in changed_names
+
+
+def test_slurm_monitor_poll_command_failure_raises_stage_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_slurm_manifest(iteration_dir)
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo fail",
+                    "poll_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    def _fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0] if args else kwargs.get("args"),
+            returncode=3,
+            stdout="",
+            stderr="poll failed\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    with pytest.raises(StageCheckError, match="poll command failed"):
+        _execute_slurm_monitor_runtime(repo, state=state)
+
+
+def test_slurm_monitor_poll_timeout_raises_stage_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_slurm_manifest(iteration_dir)
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo timeout",
+                    "poll_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    def _fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="echo timeout", timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    with pytest.raises(StageCheckError, match="poll command timed out"):
+        _execute_slurm_monitor_runtime(repo, state=state)
+
+
+def test_slurm_monitor_sync_command_failure_raises_stage_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_slurm_manifest(iteration_dir, status="completed", sync_status="pending")
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo completed",
+                    "poll_timeout_seconds": 10,
+                    "sync_command_template": "echo sync",
+                    "sync_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    def _fake_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        if "sync" in str(command):
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=8,
+                stdout="",
+                stderr="sync failed\n",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="COMPLETED\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    with pytest.raises(StageCheckError, match="sync command failed"):
+        _execute_slurm_monitor_runtime(repo, state=state)
+
+
+def test_slurm_monitor_sync_timeout_raises_stage_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _seed_slurm_manifest(iteration_dir, status="completed", sync_status="pending")
+    _write_policy(
+        repo,
+        {
+            "slurm": {
+                "monitor": {
+                    "poll_command_template": "echo completed",
+                    "poll_timeout_seconds": 10,
+                    "sync_command_template": "echo sync",
+                    "sync_timeout_seconds": 10,
+                }
+            }
+        },
+    )
+
+    def _fake_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args")
+        if "sync" in str(command):
+            raise subprocess.TimeoutExpired(cmd="echo sync", timeout=10)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="COMPLETED\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = _slurm_monitor_state(iteration_id="iter1")
+    with pytest.raises(StageCheckError, match="sync command timed out"):
+        _execute_slurm_monitor_runtime(repo, state=state)
 
 
 # ---------------------------------------------------------------------------

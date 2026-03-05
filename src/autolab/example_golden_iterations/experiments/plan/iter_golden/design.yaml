@@ -33,6 +33,9 @@ implementation_requirements:
     description: Add deterministic seed handling for augmentation schedule tests.
     scope_kind: project_wide
     expected_artifacts: [implementation_plan.md, plan_contract.json]
+extract_parser:
+  kind: command
+  command: "python -m tools.extract_results --run-id {run_id} --iteration-path {iteration_path}"
 variants:
   - name: aug_schedule_calibrated
     changes:

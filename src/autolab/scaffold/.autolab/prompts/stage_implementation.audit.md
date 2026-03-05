@@ -20,6 +20,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/imp
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:memory_brief.md}}
 {{shared:skill_playbook.md}}
 
 > **Scope check**: Before editing any file, confirm it is inside `allowed_edit_dirs` from your runtime context.

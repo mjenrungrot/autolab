@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.15
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.16
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -129,6 +129,8 @@ Safety behavior is unchanged: starts locked (read-only), mutating actions requir
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `iteration_plus_core`; set `iteration_only` for strict isolation. See `docs/runner_reference.md`.
 
+Runner cutover: `launch`, `slurm_monitor`, and `extract_results` are deterministic runtime stages and are no longer runner-eligible. Keep `agent_runner.stages` limited to active runner stages (`hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`).
+
 **Commit and quality gates.** `auto_commit.mode` controls commit behavior (`meaningful_only` default, `always`, `disabled`). `meaningful_change` settings gate implementation progress, verification success, and git-based checks. Override with `--no-strict-implementation-progress` for experiments. See `docs/runner_reference.md`.
 
 **Guardrails.** `autorun.guardrails` caps same-decision streaks, no-progress cycles, update-docs churn, and generated todo count. Breach action defaults to `human_review`. Fallback tasks are configurable per host mode (`local` / `slurm`). See `docs/workflow_modes.md`.
@@ -147,15 +149,21 @@ Safety behavior is unchanged: starts locked (read-only), mutating actions requir
 Each stage produces specific artifacts and has defined exit behavior:
 
 - **hypothesis** -- `hypothesis.md`; advances when metric/target/criteria fields are present.
-- **design** -- `design.yaml`; advances when required keys are present.
+- **design** -- `design.yaml`; advances when required keys are present (including `implementation_requirements` and `extract_parser`).
 - **implementation** -- `implementation_plan.md` + code changes; advances to review (requires Dry Run section when `dry_run: true`). Prompt-pack views are resolved at runtime; inspect with `autolab render --stage implementation --view runner|audit|brief|human|context` (stdout only; no rendered file writes).
 - **implementation_review** -- `implementation_review.md`, `review_result.json`; `pass` -> launch, `needs_retry` -> implementation, `failed` -> human_review.
 - **launch** -- executes `launch/run_local.sh` (local) or submits `launch/run_slurm.sbatch` via `sbatch` (SLURM), writes `runs/<run_id>/run_manifest.json`, then advances to slurm_monitor.
 - **slurm_monitor** -- updates `runs/<run_id>/run_manifest.json` (and `docs/slurm_job_list.md` for SLURM); local runs auto-skip to extraction.
-- **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting.
+- **extract_results** -- `runs/<run_id>/metrics.json`, `analysis/summary.md`; assumes local evidence or emits `partial|failed` with explicit missing-evidence accounting. Summary contract: parser hook writes `analysis/summary.md`, or `extract_results.summary.llm_command` must be configured when using `mode: llm_on_demand`.
 - **update_docs** -- `docs_update.md`; advances when run evidence references are present.
 - **decide_repeat** -- `decision_result.json`; decides next iteration or terminal action.
 - assistant audit trail: `.autolab/task_history.jsonl`
+
+## Migration Notes
+
+- Runner cutover: remove deterministic stages (`launch`, `slurm_monitor`, `extract_results`) from `agent_runner.stages`; keep only `hypothesis`, `design`, `implementation`, `implementation_review`, `update_docs`, `decide_repeat`.
+- Extract parser contract: `design.yaml` now requires `extract_parser` (schema-level).
+- Summary contract: if parser does not write `analysis/summary.md`, configure `.autolab/verifier_policy.yaml -> extract_results.summary.llm_command`.
 
 **Failure and retry.** Verifier failure increments `state.stage_attempt` and marks `needs_retry` while below `max_stage_attempts`. When the budget is exhausted the workflow escalates to `human_review`. `implementation_review` can explicitly return `pass`, `needs_retry`, or `failed`.
 

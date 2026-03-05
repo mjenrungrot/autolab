@@ -10,6 +10,7 @@ Implement the approved design scope and produce `{{iteration_path}}/implementati
 {{shared:guardrails.md}}
 {{shared:repo_scope.md}}
 {{shared:runtime_context.md}}
+{{shared:memory_brief.md}}
 
 ## OUTPUTS (STRICT)
 - Updated repository files required by this iteration

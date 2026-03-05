@@ -8,7 +8,13 @@ try:
 except Exception:
     yaml = None
 
-from autolab.constants import DECISION_STAGES, TERMINAL_STAGES
+from autolab.constants import (
+    DECISION_STAGES,
+    RUNNER_ELIGIBLE_STAGES,
+    TERMINAL_STAGES,
+    TODO_DOC_SYNC_POST_STAGES,
+    TODO_DOC_SYNC_PRE_STAGES,
+)
 from autolab.models import EvalResult, RunOutcome, StageCheckError
 from autolab.registry import load_registry
 from autolab.config import (
@@ -24,7 +30,11 @@ from autolab.config import (
 from autolab.evaluate import _evaluate_stage
 from autolab.plan_execution import execute_implementation_plan_step
 from autolab.runners import _invoke_agent_runner
-from autolab.launch_runtime import _execute_launch_runtime
+from autolab.extract_runtime import _execute_extract_runtime
+from autolab.launch_runtime import (
+    _execute_launch_runtime,
+    _execute_slurm_monitor_runtime,
+)
 from autolab.state import (
     _append_state_history,
     _infer_unique_experiment_id_from_backlog,
@@ -59,6 +69,36 @@ from autolab.state import _resolve_repo_root
 from autolab.prompts import _suggest_decision_from_metrics
 from autolab.todo_sync import select_decision_from_todo
 from autolab.validators import _run_verification_step, _validate_stage_readiness
+
+
+def _orchestrator_todo_pre_sync(
+    repo_root: Path,
+    state: dict[str, Any] | None,
+    *,
+    host_mode: str | None = None,
+) -> tuple[list[Path], str]:
+    stage = ""
+    if isinstance(state, dict):
+        stage = str(state.get("stage", "")).strip()
+    if stage not in TODO_DOC_SYNC_PRE_STAGES:
+        return ([], "")
+    return _safe_todo_pre_sync(repo_root, state, host_mode=host_mode)
+
+
+def _orchestrator_todo_post_sync(
+    repo_root: Path,
+    state: dict[str, Any] | None,
+    *,
+    run_outcome: dict[str, Any] | None = None,
+) -> tuple[list[Path], str]:
+    stage_before = ""
+    if isinstance(run_outcome, dict):
+        stage_before = str(run_outcome.get("stage_before", "")).strip()
+    if not stage_before and isinstance(state, dict):
+        stage_before = str(state.get("stage", "")).strip()
+    if stage_before not in TODO_DOC_SYNC_POST_STAGES:
+        return ([], "")
+    return _safe_todo_post_sync(repo_root, state, run_outcome=run_outcome)
 
 
 def _stage_outputs_satisfied(
@@ -277,7 +317,7 @@ def _handle_stage_failure(
         stage_after=state["stage"],
         message=message,
     )
-    post_sync_changed, post_sync_message = _safe_todo_post_sync(
+    post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
         repo_root,
         state,
         run_outcome=_outcome_payload(outcome),
@@ -440,8 +480,8 @@ def _run_once_standard(
         state = _normalize_state(raw_state)
     except StateError as exc:
         message = f"invalid state: {exc}"
-        pre_sync_changed, _ = _safe_todo_pre_sync(repo_root, None)
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        pre_sync_changed, _ = _orchestrator_todo_pre_sync(repo_root, None)
+        post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root, None, run_outcome=None
         )
         summary = _append_todo_message(message, post_sync_message)
@@ -500,7 +540,7 @@ def _run_once_standard(
         )
         _write_json(state_path, state)
         state_bootstrap_changed.append(state_path)
-        pre_sync_changed, _ = _safe_todo_pre_sync(
+        pre_sync_changed, _ = _orchestrator_todo_pre_sync(
             repo_root, state, host_mode=detected_host_mode
         )
         if state_bootstrap_changed:
@@ -519,7 +559,7 @@ def _run_once_standard(
             stage_after="stop",
             message=message,
         )
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root,
             state,
             run_outcome=_outcome_payload(outcome),
@@ -542,7 +582,7 @@ def _run_once_standard(
             message=summary,
         )
 
-    pre_sync_changed, _ = _safe_todo_pre_sync(
+    pre_sync_changed, _ = _orchestrator_todo_pre_sync(
         repo_root, state, host_mode=detected_host_mode
     )
     if state_bootstrap_changed:
@@ -568,7 +608,7 @@ def _run_once_standard(
             stage_after=stage_before,
             message=message,
         )
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root,
             state,
             run_outcome=_outcome_payload(outcome),
@@ -678,7 +718,7 @@ def _run_once_standard(
                 stage_after=stage_before,
                 message=message,
             )
-            post_sync_changed, post_sync_message = _safe_todo_post_sync(
+            post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
                 repo_root,
                 state,
                 run_outcome=_outcome_payload(outcome),
@@ -887,7 +927,7 @@ def _run_once_standard(
             stage_after=selected_decision,
             message=message,
         )
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root,
             state,
             run_outcome=_outcome_payload(outcome),
@@ -996,7 +1036,25 @@ def _run_once_standard(
             )
 
     implementation_exec_result = None
-    if _resolve_run_agent_mode(run_agent_mode) != "force_off":
+    deterministic_stages = {"launch", "slurm_monitor", "extract_results"}
+    effective_run_agent_mode = _resolve_run_agent_mode(run_agent_mode)
+    if stage_before in deterministic_stages:
+        if effective_run_agent_mode == "force_on":
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=(
+                    f"run_agent_mode=force_on is incompatible with deterministic stage '{stage_before}'"
+                ),
+                verification=verification_summary,
+            )
+        _append_log(
+            repo_root, f"agent runner bypassed for deterministic stage={stage_before}"
+        )
+    elif effective_run_agent_mode != "force_off":
         open_todo_count = _todo_open_count(repo_root)
         _skip_agent_runner = False
         if open_todo_count > 0 and not _has_open_stage_todo_task(
@@ -1048,7 +1106,7 @@ def _run_once_standard(
                             auto_mode=auto_mode,
                         )
                         implementation_exec_result = None
-                else:
+                elif stage_before in set(RUNNER_ELIGIBLE_STAGES):
                     _invoke_agent_runner(
                         repo_root,
                         state_path=state_path,
@@ -1092,7 +1150,7 @@ def _run_once_standard(
             stage_after=stage_after,
             message=implementation_exec_result.summary,
         )
-        post_sync_changed, post_sync_message = _safe_todo_post_sync(
+        post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
             repo_root,
             state,
             run_outcome=_outcome_payload(outcome),
@@ -1130,6 +1188,34 @@ def _run_once_standard(
                 stage_before=stage_before,
                 pre_sync_changed=pre_sync_changed,
                 detail=f"launch execution failed: {exc}",
+                verification=verification_summary,
+            )
+    elif stage_before == "slurm_monitor":
+        try:
+            monitor_result = _execute_slurm_monitor_runtime(repo_root, state=state)
+            pre_sync_changed.extend(monitor_result.changed_files)
+        except StageCheckError as exc:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=f"slurm monitor execution failed: {exc}",
+                verification=verification_summary,
+            )
+    elif stage_before == "extract_results":
+        try:
+            extract_result = _execute_extract_runtime(repo_root, state=state)
+            pre_sync_changed.extend(extract_result.changed_files)
+        except StageCheckError as exc:
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=f"extract runtime failed: {exc}",
                 verification=verification_summary,
             )
 
@@ -1331,7 +1417,7 @@ def _run_once_standard(
         stage_after=stage_after,
         message=summary,
     )
-    post_sync_changed, post_sync_message = _safe_todo_post_sync(
+    post_sync_changed, post_sync_message = _orchestrator_todo_post_sync(
         repo_root,
         state,
         run_outcome=_outcome_payload(outcome),

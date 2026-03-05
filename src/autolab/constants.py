@@ -38,7 +38,14 @@ _FALLBACK_ACTIVE_STAGES = (
 PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 _FALLBACK_TERMINAL_STAGES = ("human_review", "stop")
 _FALLBACK_DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
-_FALLBACK_RUNNER_ELIGIBLE_STAGES = _FALLBACK_ACTIVE_STAGES
+_FALLBACK_RUNNER_ELIGIBLE_STAGES = (
+    "hypothesis",
+    "design",
+    "implementation",
+    "implementation_review",
+    "update_docs",
+    "decide_repeat",
+)
 _FALLBACK_ALL_STAGES = set(_FALLBACK_ACTIVE_STAGES + _FALLBACK_TERMINAL_STAGES)
 _FALLBACK_STAGE_PROMPT_FILES = {
     "hypothesis": "stage_hypothesis.audit.md",
@@ -142,7 +149,7 @@ AGENT_RUNNER_CODEX_DANGEROUS_PRESET = "codex exec --dangerously-bypass-approvals
 AGENT_RUNNER_CLAUDE_DANGEROUS_PRESET = "env -u CLAUDECODE claude -p --dangerously-skip-permissions --output-format text --verbose -"
 DEFAULT_AGENT_RUNNER_NAME = "codex"
 DEFAULT_AGENT_RUNNER_COMMAND = AGENT_RUNNER_PRESETS[DEFAULT_AGENT_RUNNER_NAME]
-DEFAULT_AGENT_RUNNER_STAGES = tuple(ACTIVE_STAGES)
+DEFAULT_AGENT_RUNNER_STAGES = tuple(RUNNER_ELIGIBLE_STAGES)
 DEFAULT_AGENT_RUNNER_TIMEOUT_SECONDS = 3600.0
 DEFAULT_AGENT_RUNNER_EDIT_SCOPE_MODE = "iteration_plus_core"
 AGENT_RUNNER_EDIT_SCOPE_MODES = ("iteration_only", "iteration_plus_core")
@@ -186,6 +193,8 @@ ASSISTANT_CONTROL_COMMIT_PATHS = (
     ".autolab/todo_state.json",
     "docs/todo.md",
 )
+TODO_DOC_SYNC_PRE_STAGES = ("decide_repeat", "human_review")
+TODO_DOC_SYNC_POST_STAGES = ("implementation", "update_docs", "human_review")
 # ---------------------------------------------------------------------------
 # Canonical status vocabularies (mirrored from verifier_lib for package-side use)
 # ---------------------------------------------------------------------------
