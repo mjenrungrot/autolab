@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.10] - 2026-03-04
+
+### Summary
+
+- Fixed `autolab verify-golden` CLI wiring so internal verifier invocations resolve through the canonical `autolab.commands.main` entrypoint.
+- Updated golden verification setup to copy the full packaged `.autolab` fixture set, including `plan_contract.json`, to prevent implementation-stage verifier failures.
+
+<!-- autolab:range v1.2.9..v1.2.10 -->
+
 ## [1.2.9] - 2026-03-04
 
 ### Summary
