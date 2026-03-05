@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_golden",
+  "stage": "implementation",
+  "generated_at": "2026-02-01T11:40:00Z",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "scope_kind": "project_wide",
+      "depends_on": [],
+      "reads": [
+        "src/pkg/augment.py",
+        "tests/test_augment.py"
+      ],
+      "writes": [
+        "src/pkg/augment.py"
+      ],
+      "touches": [
+        "src/pkg/augment.py"
+      ],
+      "conflict_group": "augmentation",
+      "verification_commands": [
+        "python -m pytest tests/test_augment.py -q"
+      ],
+      "expected_artifacts": [
+        "implementation_plan.md",
+        "plan_contract.json"
+      ],
+      "failure_policy": "fail_fast",
+      "can_run_in_parallel": false,
+      "covers_requirements": [
+        "R2"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "scope_kind": "project_wide",
+      "depends_on": [
+        "T1"
+      ],
+      "reads": [
+        "src/pkg/train.py",
+        "configs/train_golden.yaml"
+      ],
+      "writes": [
+        "src/pkg/train.py",
+        "configs/train_golden.yaml"
+      ],
+      "touches": [
+        "src/pkg/train.py",
+        "configs/train_golden.yaml"
+      ],
+      "conflict_group": "training",
+      "verification_commands": [
+        "python -m pytest -q",
+        "python -m pkg.train --config configs/train_golden.yaml --dry-run"
+      ],
+      "expected_artifacts": [
+        "implementation_plan.md",
+        "plan_contract.json"
+      ],
+      "failure_policy": "fail_fast",
+      "can_run_in_parallel": false,
+      "covers_requirements": [
+        "R1"
+      ]
+    }
+  ]
+}

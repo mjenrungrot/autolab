@@ -24,6 +24,15 @@ metrics:
 baselines:
   - name: baseline_current
     description: Current production training recipe
+implementation_requirements:
+  - requirement_id: R1
+    description: Add calibrated augmentation schedule configuration and training wiring.
+    scope_kind: experiment
+    expected_artifacts: [implementation_plan.md, plan_contract.json]
+  - requirement_id: R2
+    description: Add deterministic seed handling for augmentation schedule tests.
+    scope_kind: project_wide
+    expected_artifacts: [implementation_plan.md, plan_contract.json]
 variants:
   - name: aug_schedule_calibrated
     changes:

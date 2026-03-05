@@ -148,6 +148,10 @@ BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
         "baselines:\n"
         '  - name: "baseline_current"\n'
         '    description: "TODO: describe current baseline"\n'
+        "implementation_requirements:\n"
+        '  - requirement_id: "R1"\n'
+        '    description: "TODO: define first implementation requirement"\n'
+        '    scope_kind: "experiment"\n'
     ),
     "implementation_plan.md": "# Implementation Plan\n\n- Implement the design requirements.\n",
     "implementation_review.md": "# Implementation Review\n\nReview notes.\n",
@@ -810,6 +814,7 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
         "compute",
         "metrics",
         "baselines",
+        "implementation_requirements",
     }
     missing = required - data.keys()
     if missing:
@@ -832,6 +837,18 @@ def _check_design(path: Path, iteration_id: str) -> list[Failure]:
     baselines = data.get("baselines")
     if not isinstance(baselines, list) or not baselines:
         return [Failure(str(path), "baselines must be a non-empty list")]
+
+    implementation_requirements = data.get("implementation_requirements")
+    if (
+        not isinstance(implementation_requirements, list)
+        or not implementation_requirements
+    ):
+        return [
+            Failure(
+                str(path),
+                "implementation_requirements must be a non-empty list",
+            )
+        ]
 
     return []
 

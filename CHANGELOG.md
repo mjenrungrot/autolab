@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.6] - 2026-03-04
+
+### Summary
+
+- Added a checked implementation plan contract loop with machine-readable DAG artifacts and execution gating before implementation runs.
+- Introduced new plan-contract/check-result/graph schemas and an `implementation_plan_contract` verifier integrated into stage verification and explain flows.
+- Updated design/workflow/prompt scaffolding plus golden fixtures and tests to require `implementation_requirements` and contract outputs end to end.
+
+<!-- autolab:range v1.2.5..v1.2.6 -->
+
 ## [1.2.5] - 2026-03-04
 
 ### Summary

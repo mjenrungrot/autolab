@@ -57,6 +57,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/des
 - Set `compute.memory_estimate` to a high value: use at least `64GB` when host capacity permits, otherwise use available memory divided safely for concurrent runs (recommended current value: `{{recommended_memory_estimate}}`, detected total RAM GB: `{{available_memory_gb}}`).
 - Include `metrics.primary`, `metrics.success_delta`, `metrics.aggregation`, `metrics.baseline_comparison`.
 - Provide non-empty `baselines`; include `variants` when proposing changes.
+- Include non-empty `implementation_requirements` with explicit `requirement_id`, `description`, and `scope_kind` (`experiment` or `project_wide`) so implementation planning can be machine-checked.
 - If using replicates, set `replicates.count`, `replicates.seed_strategy`, and `replicates.base_seed`; place the one-line rationale as an inline YAML comment on the `count` line (for example: `count: 3  # rationale: seed-variance estimation`). For exploratory single-run designs, use `count: 1` with `seed_strategy: fixed` and acknowledge that run-to-run variance is unobserved.
 
 ## SCHEMA GOTCHAS
@@ -110,6 +111,12 @@ metrics:
 baselines:
   - name: baseline
     description: existing system
+implementation_requirements:
+  - requirement_id: R1
+    description: Implement first scoped change needed to test the hypothesis
+    scope_kind: experiment
+    expected_artifacts:
+      - implementation_plan.md
 variants:
   - name: proposed
     changes: {}
@@ -125,6 +132,7 @@ variants:
 - [ ] `design.yaml` contains required top-level keys and valid YAML syntax.
 - [ ] `compute.location` is set and explicit.
 - [ ] `metrics` includes `primary`, `success_delta`, and `aggregation`.
+- [ ] `implementation_requirements` is non-empty and each item has requirement_id/description/scope_kind.
 - [ ] [guidance] `replicates.count` includes an inline `# rationale: ...` comment.
 - [ ] [guidance] When `replicates.count: 1`, the rationale explicitly notes the single-run variance limitation.
 

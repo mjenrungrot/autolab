@@ -10,7 +10,8 @@
     "entrypoint",
     "compute",
     "metrics",
-    "baselines"
+    "baselines",
+    "implementation_requirements"
   ],
   "properties": {
     "schema_version": {"type": "string", "const": "1.0"},
@@ -107,6 +108,27 @@
       },
       "required": ["count"],
       "additionalProperties": false
+    },
+    "implementation_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["requirement_id", "description", "scope_kind"],
+        "properties": {
+          "requirement_id": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "scope_kind": {
+            "type": "string",
+            "enum": ["experiment", "project_wide"]
+          },
+          "expected_artifacts": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1}
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

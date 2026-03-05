@@ -192,11 +192,11 @@ _HINT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
     (
         re.compile(
-            r"implementation_plan|depends_on|touches|scope_ok|change summary|outside allowed scope",
+            r"implementation_plan|plan_contract|plan_check_result|depends_on|touches|scope_ok|change summary|outside allowed scope",
             re.IGNORECASE,
         ),
-        "Repair implementation plan task-block fields and scope evidence.",
-        "python .autolab/verifiers/implementation_plan_lint.py --stage implementation --json",
+        "Repair implementation plan task-block fields, contract DAG checks, and scope evidence.",
+        "python .autolab/verifiers/implementation_plan_contract.py --stage implementation --json",
     ),
     (
         re.compile(r"placeholder|todo|tbd|fixme|ellipsis|template", re.IGNORECASE),

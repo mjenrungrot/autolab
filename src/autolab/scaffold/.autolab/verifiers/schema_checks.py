@@ -112,6 +112,9 @@ SCHEMAS: dict[str, str] = {
     "todo_focus": "todo_focus.schema.json",
     "plan_metadata": "plan_metadata.schema.json",
     "plan_execution_summary": "plan_execution_summary.schema.json",
+    "plan_contract": "plan_contract.schema.json",
+    "plan_check_result": "plan_check_result.schema.json",
+    "plan_graph": "plan_graph.schema.json",
 }
 
 
@@ -584,6 +587,58 @@ def _validate_plan_execution_summary(state: dict[str, Any]) -> list[str]:
     return _schema_validate(payload, schema_key="plan_execution_summary", path=path)
 
 
+def _validate_plan_contract(state: dict[str, Any], *, stage: str) -> list[str]:
+    """Validate implementation plan contract artifacts."""
+    if stage not in {"implementation", "implementation_review"}:
+        return []
+    iteration_dir = _iteration_dir(state)
+    errors: list[str] = []
+
+    canonical_path = REPO_ROOT / ".autolab" / "plan_contract.json"
+    snapshot_path = iteration_dir / "plan_contract.json"
+
+    for path in (canonical_path, snapshot_path):
+        try:
+            payload = load_json(path)
+        except Exception as exc:
+            errors.append(f"{path} {exc}")
+            continue
+        errors.extend(_schema_validate(payload, schema_key="plan_contract", path=path))
+        if (
+            str(payload.get("iteration_id", "")).strip()
+            and str(payload.get("iteration_id", "")).strip()
+            != str(state.get("iteration_id", "")).strip()
+        ):
+            errors.append(f"{path} iteration_id mismatch")
+        if str(payload.get("stage", "")).strip() not in {"", "implementation"}:
+            errors.append(f"{path} stage must be 'implementation'")
+    return errors
+
+
+def _validate_plan_checker_outputs(state: dict[str, Any], *, stage: str) -> list[str]:
+    """Validate checker outputs when they exist (or are required in implementation stage)."""
+    if stage != "implementation":
+        return []
+    errors: list[str] = []
+    for schema_key, path in (
+        ("plan_check_result", REPO_ROOT / ".autolab" / "plan_check_result.json"),
+        ("plan_graph", REPO_ROOT / ".autolab" / "plan_graph.json"),
+    ):
+        try:
+            payload = load_json(path)
+        except Exception as exc:
+            errors.append(f"{path} {exc}")
+            continue
+        errors.extend(_schema_validate(payload, schema_key=schema_key, path=path))
+        if (
+            str(payload.get("iteration_id", "")).strip()
+            and str(payload.get("iteration_id", "")).strip()
+            != str(state.get("iteration_id", "")).strip()
+        ):
+            errors.append(f"{path} iteration_id mismatch")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -644,6 +699,8 @@ def main() -> int:
     failures.extend(_validate_todo_focus(state))
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
+    failures.extend(_validate_plan_contract(state, stage=stage))
+    failures.extend(_validate_plan_checker_outputs(state, stage=stage))
 
     passed = not failures
 

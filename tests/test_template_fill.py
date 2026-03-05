@@ -54,6 +54,40 @@ def _run_template_fill(repo: Path, *, stage: str) -> subprocess.CompletedProcess
     )
 
 
+def _write_minimal_plan_contract(iteration_dir: Path) -> None:
+    payload = {
+        "schema_version": "1.0",
+        "iteration_id": iteration_dir.name,
+        "stage": "implementation",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "tasks": [
+            {
+                "task_id": "T1",
+                "scope_kind": "experiment",
+                "depends_on": [],
+                "reads": [f"experiments/plan/{iteration_dir.name}/design.yaml"],
+                "writes": [
+                    f"experiments/plan/{iteration_dir.name}/implementation_plan.md"
+                ],
+                "touches": [
+                    f"experiments/plan/{iteration_dir.name}/implementation_plan.md"
+                ],
+                "conflict_group": "",
+                "verification_commands": [
+                    "python -m pytest -q tests/test_template_fill.py"
+                ],
+                "expected_artifacts": ["implementation_plan.md", "plan_contract.json"],
+                "failure_policy": "fail_fast",
+                "can_run_in_parallel": False,
+                "covers_requirements": ["R1"],
+            }
+        ],
+    }
+    (iteration_dir / "plan_contract.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+
 def test_scaffold_line_limit_policy_sets_hypothesis_budget_to_180(
     tmp_path: Path,
 ) -> None:
@@ -190,6 +224,7 @@ def test_template_fill_detects_exact_bootstrap_implementation_template(
     _write_state(repo, stage="implementation")
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
+    _write_minimal_plan_contract(iteration_dir)
     (iteration_dir / "implementation_plan.md").write_text(
         "# Implementation Plan\n\n- Implement the design requirements.\n",
         encoding="utf-8",
@@ -367,6 +402,7 @@ def test_template_fill_implementation_evidence_requires_excerpt_and_command_for_
     _write_state(repo, stage="implementation")
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
+    _write_minimal_plan_contract(iteration_dir)
     (iteration_dir / "implementation_plan.md").write_text(
         (
             "# Implementation Plan\n\n"
@@ -394,6 +430,7 @@ def test_template_fill_implementation_evidence_allows_binary_artifacts_without_e
     _write_state(repo, stage="implementation")
     iteration_dir = repo / "experiments" / "plan" / "iter1"
     iteration_dir.mkdir(parents=True, exist_ok=True)
+    _write_minimal_plan_contract(iteration_dir)
     (iteration_dir / "implementation_plan.md").write_text(
         (
             "# Implementation Plan\n\n"

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Implementation Plan Contract",
+  "description": "Machine-checkable implementation task DAG for implementation stage execution gating.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "iteration_id",
+    "stage",
+    "generated_at",
+    "tasks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage": {
+      "type": "string",
+      "const": "implementation"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "scope_kind",
+          "depends_on",
+          "reads",
+          "writes",
+          "touches",
+          "conflict_group",
+          "verification_commands",
+          "expected_artifacts",
+          "failure_policy",
+          "can_run_in_parallel",
+          "covers_requirements"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope_kind": {
+            "type": "string",
+            "enum": [
+              "experiment",
+              "project_wide"
+            ]
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "touches": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "conflict_group": {
+            "type": "string"
+          },
+          "verification_commands": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "manual_only_rationale": {
+            "type": "string"
+          },
+          "expected_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "failure_policy": {
+            "type": "string",
+            "minLength": 1
+          },
+          "can_run_in_parallel": {
+            "type": "boolean"
+          },
+          "covers_requirements": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
