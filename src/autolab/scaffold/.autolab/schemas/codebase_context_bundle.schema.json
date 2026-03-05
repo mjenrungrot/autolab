@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodebaseContextBundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "scan_mode",
+    "project_map_path",
+    "project_map_summary",
+    "focus_iteration_id",
+    "focus_experiment_id",
+    "selected_experiment_delta_path",
+    "selected_experiment_delta_summary",
+    "experiment_delta_maps"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scan_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_map_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_map_summary": {
+      "type": "string"
+    },
+    "focus_iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "focus_experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_experiment_delta_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_experiment_delta_summary": {
+      "type": "string"
+    },
+    "experiment_delta_maps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["iteration_id", "experiment_id", "path", "summary"],
+        "properties": {
+          "iteration_id": {"type": "string", "minLength": 1},
+          "experiment_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "summary": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

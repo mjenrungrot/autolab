@@ -297,6 +297,111 @@ def test_render_implementation_prompt_includes_project_data_root_hints(
     assert "project_data_media_counts" in bundle.prompt_text
 
 
+def test_render_prompt_includes_codebase_context_bundle_paths_and_summaries(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+
+    (repo / ".autolab" / "context").mkdir(parents=True, exist_ok=True)
+    (repo / ".autolab" / "context" / "project_map.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "scan_mode": "fast_heuristic",
+                "repo_root": str(repo),
+                "stack": {"languages": ["python"], "manifests": [], "toolchains": []},
+                "architecture": {
+                    "top_level_dirs": ["src", "tests"],
+                    "ci_workflows": [],
+                    "discovered_experiments": [],
+                },
+                "conventions": {
+                    "testing_frameworks": ["pytest"],
+                    "linters": ["ruff"],
+                    "formatters": [],
+                    "package_managers": ["uv"],
+                },
+                "concerns": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    delta_path = "experiments/plan/iter1/context_delta.json"
+    (repo / "experiments" / "plan" / "iter1").mkdir(parents=True, exist_ok=True)
+    (repo / delta_path).write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "experiment_id": "e1",
+                "inherits_project_map": ".autolab/context/project_map.json",
+                "iteration_path": "experiments/plan/iter1",
+                "experiment_type": "plan",
+                "adds": {
+                    "available_artifacts": [],
+                    "assumptions": ["assume existing repo semantics"],
+                    "concerns": [],
+                    "latest_run": {"run_id": "", "status": "", "timestamp": ""},
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "context" / "bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "scan_mode": "fast_heuristic",
+                "project_map_path": ".autolab/context/project_map.json",
+                "project_map_summary": "languages=python; experiments=1; concerns=0",
+                "focus_iteration_id": "iter1",
+                "focus_experiment_id": "e1",
+                "selected_experiment_delta_path": delta_path,
+                "selected_experiment_delta_summary": "iteration=iter1; type=plan; latest_run=none",
+                "experiment_delta_maps": [
+                    {
+                        "iteration_id": "iter1",
+                        "experiment_id": "e1",
+                        "path": delta_path,
+                        "summary": "iteration=iter1; type=plan; latest_run=none",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=state,
+        template_path=template_path,
+        runner_scope={},
+    )
+
+    assert "codebase_project_map_path" in bundle.prompt_text
+    assert ".autolab/context/project_map.json" in bundle.prompt_text
+    assert "codebase_experiment_delta_map_path" in bundle.prompt_text
+    assert delta_path in bundle.prompt_text
+    assert "languages=python; experiments=1; concerns=0" in bundle.prompt_text
+
+
 def test_render_implementation_prompt_pack_metadata_and_texts(
     tmp_path: Path,
 ) -> None:

@@ -41,11 +41,23 @@ autolab run --verify
 autolab init --state-file .autolab/state.json
 ```
 
+For an existing repository, use the brownfield bootstrap path:
+
+```bash
+autolab init --from-existing --state-file .autolab/state.json --no-interactive
+```
+
+`--from-existing` keeps scaffold/state initialization, then adds a repo scan that
+infers likely experiment context, updates placeholder backlog entries when safe,
+and writes context inheritance artifacts (`project_map`, `context_delta`, bundle).
+
 This creates:
 
 - `.autolab/state.json` -- workflow state
 - `.autolab/backlog.yaml` -- experiment backlog
 - `.autolab/verifier_policy.yaml` -- verification policy
+- `.autolab/context/project_map.json` -- project-wide brownfield map (when `--from-existing`)
+- `.autolab/context/bundle.json` -- starter context bundle pointer set (when `--from-existing`)
 - `.autolab/prompts/` -- stage prompt templates
 - `.autolab/schemas/` -- JSON schemas for artifacts
 - `.autolab/verifiers/` -- verification scripts
@@ -170,6 +182,10 @@ autolab resume
   agent_result.json       # Last agent execution result
   handoff.json            # Machine handoff + safe resume snapshot
   todo_state.json         # Task tracking state
+  context/
+    project_map.json      # Project-wide brownfield map (from --from-existing)
+    project_map.md        # Human-readable project map summary
+    bundle.json           # Pointer bundle to project map + experiment delta
   prompts/
     stage_*.md            # Per-stage prompt templates
     shared/*.md           # Shared prompt fragments
@@ -184,6 +200,8 @@ experiments/
     implementation_plan.md
     implementation_review.md
     review_result.json
+    context_delta.json    # Experiment-specific context delta (from --from-existing)
+    context_delta.md      # Human-readable delta summary
     launch/
     runs/<run_id>/
     analysis/

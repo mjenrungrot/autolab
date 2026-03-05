@@ -116,6 +116,9 @@ SCHEMAS: dict[str, str] = {
     "plan_contract": "plan_contract.schema.json",
     "plan_check_result": "plan_check_result.schema.json",
     "plan_graph": "plan_graph.schema.json",
+    "codebase_project_map": "codebase_project_map.schema.json",
+    "codebase_experiment_delta": "codebase_experiment_delta.schema.json",
+    "codebase_context_bundle": "codebase_context_bundle.schema.json",
 }
 
 
@@ -600,6 +603,88 @@ def _validate_handoff() -> list[str]:
     return _schema_validate(payload, schema_key="handoff", path=path)
 
 
+def _resolve_bundle_path(raw_path: Any) -> Path | None:
+    candidate = str(raw_path or "").strip()
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path
+
+
+def _validate_codebase_context_maps(_state: dict[str, Any]) -> list[str]:
+    """Validate optional brownfield context artifacts when present."""
+    bundle_path = REPO_ROOT / ".autolab" / "context" / "bundle.json"
+    if not bundle_path.exists():
+        return []
+
+    try:
+        bundle_payload = load_json(bundle_path)
+    except Exception as exc:
+        return [f"{bundle_path} {exc}"]
+    failures = _schema_validate(
+        bundle_payload,
+        schema_key="codebase_context_bundle",
+        path=bundle_path,
+    )
+
+    project_map_path = _resolve_bundle_path(bundle_payload.get("project_map_path"))
+    if project_map_path is not None:
+        try:
+            project_payload = load_json(project_map_path)
+        except Exception as exc:
+            failures.append(f"{project_map_path} {exc}")
+            project_payload = None
+        if isinstance(project_payload, dict):
+            failures.extend(
+                _schema_validate(
+                    project_payload,
+                    schema_key="codebase_project_map",
+                    path=project_map_path,
+                )
+            )
+
+    delta_paths: list[Path] = []
+    selected_delta_path = _resolve_bundle_path(
+        bundle_payload.get("selected_experiment_delta_path")
+    )
+    if selected_delta_path is not None:
+        delta_paths.append(selected_delta_path)
+    raw_delta_maps = bundle_payload.get("experiment_delta_maps")
+    if isinstance(raw_delta_maps, list):
+        for entry in raw_delta_maps:
+            if not isinstance(entry, dict):
+                continue
+            resolved = _resolve_bundle_path(entry.get("path"))
+            if resolved is not None:
+                delta_paths.append(resolved)
+
+    deduped_paths: list[Path] = []
+    seen: set[str] = set()
+    for path in delta_paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_paths.append(path)
+
+    for delta_path in deduped_paths:
+        try:
+            delta_payload = load_json(delta_path)
+        except Exception as exc:
+            failures.append(f"{delta_path} {exc}")
+            continue
+        failures.extend(
+            _schema_validate(
+                delta_payload,
+                schema_key="codebase_experiment_delta",
+                path=delta_path,
+            )
+        )
+    return failures
+
+
 def _validate_plan_contract(state: dict[str, Any], *, stage: str) -> list[str]:
     """Validate implementation plan contract artifacts."""
     if stage not in {"implementation", "implementation_review"}:
@@ -713,6 +798,7 @@ def main() -> int:
     failures.extend(_validate_plan_metadata(state))
     failures.extend(_validate_plan_execution_summary(state))
     failures.extend(_validate_handoff())
+    failures.extend(_validate_codebase_context_maps(state))
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
 

@@ -183,6 +183,52 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: human takeover workflows and incident handoff review
 
+## codebase project map (`project_map.json` / `project_map.md`)
+
+- **Paths**:
+  - `.autolab/context/project_map.json`
+  - `.autolab/context/project_map.md`
+- **Format**:
+  - JSON (`project_map.json`, schema-validated)
+  - Markdown summary (`project_map.md`)
+- **Schema**: `.autolab/schemas/codebase_project_map.schema.json`
+- **Required content categories**:
+  - stack (languages/manifests/toolchains)
+  - architecture (top-level dirs, CI workflows, discovered experiments)
+  - conventions (testing, lint, formatter, package manager signals)
+  - concerns (risk/quality notes with evidence pointers)
+- **Produced by**: `autolab init --from-existing`
+- **Consumed by**: prompt context rendering (`## Runtime Stage Context` pointers and summaries), human onboarding
+
+## codebase experiment delta map (`context_delta.json` / `context_delta.md`)
+
+- **Paths**:
+  - `experiments/<type>/<iteration_id>/context_delta.json`
+  - `experiments/<type>/<iteration_id>/context_delta.md`
+- **Format**:
+  - JSON (`context_delta.json`, schema-validated)
+  - Markdown summary (`context_delta.md`)
+- **Schema**: `.autolab/schemas/codebase_experiment_delta.schema.json`
+- **Required content categories**:
+  - inheritance pointer to project map
+  - iteration/experiment identity and path
+  - experiment-specific additions (available artifacts, assumptions, concerns, latest run metadata)
+- **Produced by**: `autolab init --from-existing` for the selected focus iteration
+- **Consumed by**: prompt context rendering, experiment-scoped handoff context
+
+## codebase context bundle (`bundle.json`)
+
+- **Path**: `.autolab/context/bundle.json`
+- **Format**: JSON
+- **Schema**: `.autolab/schemas/codebase_context_bundle.schema.json`
+- **Required fields**:
+  - project map pointer and summary
+  - selected focus iteration/experiment ids
+  - selected experiment-delta pointer and summary
+  - list of available experiment-delta map entries
+- **Produced by**: `autolab init --from-existing`
+- **Consumed by**: prompt context assembly (project map + experiment delta pointer injection in runtime context)
+
 ## Pattern Paths vs Runtime Paths
 
 Throughout this document and in `workflow.yaml`, paths containing angle-bracket tokens like `<RUN_ID>`, `<ITERATION_ID>`, or `<type>` are **pattern paths** -- templates that are resolved at runtime.

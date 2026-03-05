@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodebaseProjectMap",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "scan_mode",
+    "repo_root",
+    "stack",
+    "architecture",
+    "conventions",
+    "concerns"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scan_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repo_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stack": {
+      "type": "object",
+      "required": ["languages", "manifests", "toolchains"],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "manifests": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "toolchains": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "architecture": {
+      "type": "object",
+      "required": ["top_level_dirs", "ci_workflows", "discovered_experiments"],
+      "properties": {
+        "top_level_dirs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "ci_workflows": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "discovered_experiments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "iteration_id",
+              "experiment_id",
+              "experiment_type",
+              "iteration_path",
+              "run_manifest_count",
+              "latest_run_id",
+              "latest_run_timestamp",
+              "latest_run_status"
+            ],
+            "properties": {
+              "iteration_id": {"type": "string", "minLength": 1},
+              "experiment_id": {"type": "string", "minLength": 1},
+              "experiment_type": {
+                "type": "string",
+                "enum": ["plan", "in_progress", "done"]
+              },
+              "iteration_path": {"type": "string", "minLength": 1},
+              "run_manifest_count": {"type": "integer", "minimum": 0},
+              "latest_run_id": {"type": "string"},
+              "latest_run_timestamp": {"type": "string"},
+              "latest_run_status": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "conventions": {
+      "type": "object",
+      "required": [
+        "testing_frameworks",
+        "linters",
+        "formatters",
+        "package_managers"
+      ],
+      "properties": {
+        "testing_frameworks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "linters": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "formatters": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "package_managers": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "summary", "evidence"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "minLength": 1},
+          "summary": {"type": "string", "minLength": 1},
+          "evidence": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "files_scanned": {"type": "integer", "minimum": 0},
+        "extension_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "key_files": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "project_data_roots": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "project_data_media_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "project_data_media_count_summary": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

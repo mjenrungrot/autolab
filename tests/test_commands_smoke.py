@@ -216,6 +216,19 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "Recommended onboarding flow:" in help_text
 
 
+def test_init_help_includes_from_existing_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["init", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--from-existing" in captured.out
+
+
 def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

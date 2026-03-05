@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.7
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.8
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -223,6 +223,19 @@ Bootstrap a new workspace and configure policy defaults interactively:
 ```bash
 autolab init --interactive
 ```
+
+Bootstrap an existing repository (brownfield) with inferred backlog/context defaults:
+
+```bash
+autolab init --from-existing --no-interactive
+```
+
+`--from-existing` scans the repo, infers likely experiment structure, seeds
+`verifier_policy.yaml` bootstrap metadata, and writes scope-aware context maps:
+
+- `.autolab/context/project_map.{json,md}`
+- `experiments/<type>/<iteration_id>/context_delta.{json,md}`
+- `.autolab/context/bundle.json`
 
 Reset `.autolab/` to packaged defaults and clear workflow state:
 
