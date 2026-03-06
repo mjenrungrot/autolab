@@ -31,5 +31,6 @@ Install always writes full content copies from packaged assets.
 
 - Codex bundle includes workflow, semantic-agent, and orchestration skills (`autolab`, `researcher`, `planner`, `plan-checker`, `reviewer`, `llm-council`, `swarm-planner`, `parallel-task`).
 - Claude bundle currently includes the `autolab` workflow operator skill.
+- Semantic-agent skills are optional. When a provider skill is missing, Autolab falls back to plain inline guidance instead of blocking execution.
 
 To add more provider-specific skills, create `src/autolab/skills/<provider>/<skill>/SKILL.md` and ensure installer/test coverage is updated.

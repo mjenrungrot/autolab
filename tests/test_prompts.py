@@ -10,6 +10,10 @@ import re
 import pytest
 import yaml
 
+from autolab.agent_surface import (
+    infer_agent_surface_provider,
+    resolve_agent_surface,
+)
 from autolab.constants import PROMPT_TOKEN_PATTERN
 from autolab.models import StageCheckError
 from autolab.prompts import (
@@ -1756,6 +1760,151 @@ def test_render_implementation_review_prompt_uses_reviewer_semantic_role(
     )
 
 
+def test_render_human_review_prompt_uses_reviewer_semantic_role(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_context_resolution_fixture(repo)
+    _install_codex_skill(repo, "reviewer")
+    state = _write_state(repo, stage="human_review")
+    _write_backlog(repo)
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "human_review", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="human_review",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str((repo / "experiments" / "plan" / "iter1").resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    surface = bundle.context_payload["agent_surface"]
+    assert surface["primary_role"]["id"] == "reviewer"
+    assert surface["invocation_hints"] == ["$reviewer"]
+    assert (
+        "semantic_agent_primary: reviewer ($reviewer)"
+        in bundle.context_payload["stage_context"]
+    )
+    assert (
+        "semantic role: reviewer via $reviewer"
+        in bundle.context_payload["brief_summary"]
+    )
+
+
+def test_resolve_agent_surface_omits_roles_for_runtime_and_task_packet_modes(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _install_codex_skill(repo, "planner")
+    _install_codex_skill(repo, "reviewer")
+
+    launch_surface = resolve_agent_surface(repo, provider="codex", stage="launch")
+    slurm_surface = resolve_agent_surface(
+        repo,
+        provider="codex",
+        stage="slurm_monitor",
+    )
+    task_packet_surface = resolve_agent_surface(
+        repo,
+        provider="codex",
+        stage="implementation",
+        task_packet_mode=True,
+    )
+
+    for surface in (launch_surface, slurm_surface, task_packet_surface):
+        assert surface["recommended_roles"] == []
+        assert surface["invocation_hints"] == []
+
+
+@pytest.mark.parametrize(
+    ("command_argv", "expected_provider"),
+    [
+        (["codex", "exec", "-"], "codex"),
+        (["/usr/local/bin/codex", "exec", "-"], "codex"),
+        (["env", "FOO=1", "codex", "exec", "-"], "codex"),
+        (["bash", "-lc", "codex exec --sandbox read-only -"], "codex"),
+        (
+            ["bash", "-lc", "FOO=1 codex exec --sandbox read-only -"],
+            "codex",
+        ),
+        (["claude", "-p", "-"], "claude"),
+        (["env", "FOO=1", "claude", "-p", "-"], "claude"),
+        (["bash", "-lc", "FOO=1 claude -p -"], "claude"),
+        (["python", "tool.py"], ""),
+    ],
+)
+def test_infer_agent_surface_provider_handles_wrapped_commands(
+    command_argv: list[str],
+    expected_provider: str,
+) -> None:
+    assert infer_agent_surface_provider(command_argv) == expected_provider
+
+
+def test_brief_summary_prioritizes_blockers_before_semantic_agent_hints(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _install_codex_skill(repo, "reviewer")
+    state = _write_state(repo, stage="implementation_review")
+    _write_backlog(repo)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "review_result.json").write_text(
+        json.dumps(
+            {
+                "status": "needs_retry",
+                "blocking_findings": [
+                    f"blocking finding {index}" for index in range(1, 8)
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation_review", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation_review",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str(iteration_dir.resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str(iteration_dir.resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    brief_lines = bundle.context_payload["brief_summary"].splitlines()
+    assert brief_lines[0].startswith("- review_result status is 'needs_retry'")
+    assert "blocking finding 6" in bundle.context_payload["brief_summary"]
+    assert "semantic role: reviewer via $reviewer" not in "\n".join(brief_lines[:7])
+
+
 def test_render_stage_prompt_written_context_omits_raw_effective_sidecars(
     tmp_path: Path,
 ) -> None:
@@ -1798,6 +1947,11 @@ def test_render_stage_prompt_written_context_omits_raw_effective_sidecars(
     assert "effective_discuss" not in runtime_context["artifacts"]["context_resolution"]
     assert (
         "effective_research" not in runtime_context["artifacts"]["context_resolution"]
+    )
+    assert all(
+        "skill_path" not in role
+        for role in runtime_context["agent_surface"].get("roles", [])
+        if isinstance(role, dict)
     )
     assert any(
         "research_findings: experiment research override; experiment research only"

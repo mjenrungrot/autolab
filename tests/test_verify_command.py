@@ -363,6 +363,8 @@ def test_loop_auto_continues_after_successful_non_terminal_implementation_wave(
         auto_mode: bool = False,
         auto_decision: bool = False,
         strict_implementation_progress: bool = True,
+        plan_only: bool = False,
+        execute_approved_plan: bool = False,
     ) -> commands_module.RunOutcome:
         nonlocal call_count
         del (
@@ -372,6 +374,8 @@ def test_loop_auto_continues_after_successful_non_terminal_implementation_wave(
             auto_mode,
             auto_decision,
             strict_implementation_progress,
+            plan_only,
+            execute_approved_plan,
         )
         call_count += 1
         if call_count == 1:
@@ -476,6 +480,8 @@ def test_run_heartbeats_lock_during_long_execution(tmp_path: Path, monkeypatch) 
         auto_mode: bool = False,
         auto_decision: bool = False,
         strict_implementation_progress: bool = True,
+        plan_only: bool = False,
+        execute_approved_plan: bool = False,
     ) -> commands_module.RunOutcome:
         del (
             run_agent_mode,
@@ -484,6 +490,8 @@ def test_run_heartbeats_lock_during_long_execution(tmp_path: Path, monkeypatch) 
             auto_mode,
             auto_decision,
             strict_implementation_progress,
+            plan_only,
+            execute_approved_plan,
         )
         time.sleep(0.05)
         return commands_module.RunOutcome(

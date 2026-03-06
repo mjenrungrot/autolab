@@ -423,7 +423,21 @@ def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
         iteration_id="iter1",
         run_agent_mode="policy",
         task_packet=task_packet,
-        task_context={"wave": 1, "attempt": 1, "max_attempts": 2},
+        task_context={
+            "wave": 1,
+            "attempt": 1,
+            "max_attempts": 2,
+            "agent_surface": {"primary_role": "planner"},
+            "stage_context": "should not be copied into task packets",
+            "sidecar_context": {
+                "context_inputs": ["project_wide:research:findings:pw-research"],
+                "resolved_inputs": [
+                    "project_wide:research:findings:pw-research: Project-wide research summary"
+                ],
+                "compact_summary": "Project-wide research summary",
+                "extra": "should be dropped",
+            },
+        },
     )
 
     assert result["status"] == "completed"
@@ -463,11 +477,22 @@ def test_task_packet_mode_uses_minimal_isolated_prompt_artifacts(
     task_context_payload = json.loads(context_path.read_text(encoding="utf-8"))
     assert task_context_payload["task"]["task_id"] == "T1"
     assert task_context_payload["task_context"]["wave"] == 1
+    assert task_context_payload["task_context"]["max_attempts"] == 2
+    assert task_context_payload["task_context"]["sidecar_context"] == {
+        "context_inputs": ["project_wide:research:findings:pw-research"],
+        "resolved_inputs": [
+            "project_wide:research:findings:pw-research: Project-wide research summary"
+        ],
+        "compact_summary": "Project-wide research summary",
+    }
     assert "allowed_edit_dirs" in task_context_payload["runner_scope"]
     assert task_context_payload["runner_scope"]["scope_kind"] == "experiment"
     assert task_context_payload["runner_scope"]["scope_root"] == str(
         repo_root / "experiments" / "plan" / "iter1"
     )
+    assert "agent_surface" not in task_context_payload
+    assert "agent_surface" not in task_context_payload["task_context"]
+    assert "stage_context" not in task_context_payload["task_context"]
 
     assert "Task packet mode is active." in audit_path.read_text(encoding="utf-8")
     assert "Task packet mode is active." in brief_path.read_text(encoding="utf-8")

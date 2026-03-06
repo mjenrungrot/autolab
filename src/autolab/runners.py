@@ -548,6 +548,31 @@ def _build_minimal_task_sidecar_prompt(
     )
 
 
+def _sanitize_task_context_payload(
+    task_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(task_context, dict):
+        return {}
+
+    sanitized: dict[str, Any] = {}
+    for key in ("wave", "attempt", "max_attempts"):
+        if key in task_context:
+            sanitized[key] = task_context[key]
+
+    sidecar_context = task_context.get("sidecar_context")
+    if isinstance(sidecar_context, dict):
+        sanitized["sidecar_context"] = {
+            "context_inputs": list(sidecar_context.get("context_inputs", []))
+            if isinstance(sidecar_context.get("context_inputs"), list)
+            else [],
+            "resolved_inputs": list(sidecar_context.get("resolved_inputs", []))
+            if isinstance(sidecar_context.get("resolved_inputs"), list)
+            else [],
+            "compact_summary": str(sidecar_context.get("compact_summary", "")).strip(),
+        }
+    return sanitized
+
+
 def _invoke_agent_runner(
     repo_root: Path,
     *,
@@ -664,8 +689,9 @@ def _invoke_agent_runner(
             "task": task_packet,
             "runner_scope": runner_scope,
         }
-        if isinstance(task_context, dict):
-            task_context_payload["task_context"] = task_context
+        sanitized_task_context = _sanitize_task_context_payload(task_context)
+        if sanitized_task_context:
+            task_context_payload["task_context"] = sanitized_task_context
         task_context_path.write_text(
             json.dumps(task_context_payload, indent=2) + "\n",
             encoding="utf-8",
