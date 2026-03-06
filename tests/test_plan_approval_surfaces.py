@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 from pathlib import Path
 
 import autolab.commands as commands_module
+import pytest
+from autolab.models import RunOutcome
 
 
 def _copy_scaffold(repo: Path) -> None:
@@ -187,3 +190,76 @@ def test_status_shows_refresh_commands_for_superseded_plan_approval(
     assert "status: superseded" in output
     assert "autolab run --plan-only" in output
     assert "autolab run --execute-approved-plan" not in output
+
+
+def test_loop_plan_only_stops_before_execution_and_preserves_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state_path = _write_state(repo)
+    seen: dict[str, object] = {}
+
+    def _run_once_stub(
+        _state_path: Path,
+        _decision: str | None,
+        *,
+        assistant: bool = False,
+        plan_only: bool = False,
+        execute_approved_plan: bool = False,
+        **_kwargs,
+    ) -> RunOutcome:
+        seen["assistant"] = assistant
+        seen["plan_only"] = plan_only
+        seen["execute_approved_plan"] = execute_approved_plan
+        return RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="implementation",
+            stage_after="implementation",
+            message="implementation plan prepared",
+            pause_reason="plan_only",
+        )
+
+    monkeypatch.setattr(commands_module, "_run_once", _run_once_stub)
+    monkeypatch.setattr(commands_module, "_acquire_lock", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(commands_module, "_release_lock", lambda *_a, **_k: None)
+    monkeypatch.setattr(commands_module, "_append_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(commands_module, "_collect_change_snapshot", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        commands_module,
+        "_try_auto_commit",
+        lambda *_a, **_k: "auto-commit: skipped",
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda *_a, **_k: ({}, ""),
+    )
+
+    exit_code = commands_module._cmd_loop(
+        argparse.Namespace(
+            state_file=str(state_path),
+            max_iterations=3,
+            max_hours=1.0,
+            auto=False,
+            run_agent_mode="policy",
+            assistant=True,
+            verify=False,
+            strict_implementation_progress=True,
+            plan_only=True,
+            execute_approved_plan=False,
+        )
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert seen == {
+        "assistant": True,
+        "plan_only": True,
+        "execute_approved_plan": False,
+    }
+    assert "autolab loop: stop (plan-only requested)" in output
