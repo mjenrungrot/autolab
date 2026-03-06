@@ -1,0 +1,13 @@
+---
+hypotheses:
+  - id: h_brownfield_canary
+    status: open
+    title: Keep bootstrap and environment guidance aligned with the active iteration
+    success_metric: accuracy
+    target_delta: 0.5
+experiments:
+  - id: exp_brownfield_canary
+    hypothesis_id: h_brownfield_canary
+    status: in_progress
+    type: in_progress
+    iteration_id: iter_brownfield_canary

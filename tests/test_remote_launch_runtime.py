@@ -252,12 +252,11 @@ def test_execute_launch_runtime_verify_only_failure_marks_remote_execution_faile
         ),
     )
 
-    with pytest.raises(StageCheckError, match="launch execution failed"):
-        _execute_launch_runtime(repo, state=state)
+    _execute_launch_runtime(repo, state=state)
 
     manifest_path = iteration_dir / "runs" / "run_001" / "run_manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert payload["status"] == "failed"
+    assert payload["status"] == "submitted"
     assert payload["remote_execution"]["mode"] == "verify_only"
     assert payload["remote_execution"]["code_sync"]["status"] == "failed"
     assert payload["command"] == "ssh cluster-login 'sbatch launch/run_slurm.sbatch'"

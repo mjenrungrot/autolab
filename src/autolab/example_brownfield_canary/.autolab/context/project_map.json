@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "scan_mode": "sanitized_fixture",
+  "repo_root": ".",
+  "stack": {
+    "languages": [
+      "markdown",
+      "python",
+      "shell"
+    ],
+    "manifests": [
+      ".autolab/backlog.yaml"
+    ],
+    "toolchains": [
+      "autolab",
+      "venv"
+    ]
+  },
+  "architecture": {
+    "top_level_dirs": [
+      ".autolab",
+      "docs",
+      "experiments",
+      "scripts"
+    ],
+    "ci_workflows": [],
+    "discovered_experiments": [
+      {
+        "iteration_id": "iter_brownfield_canary",
+        "experiment_id": "exp_brownfield_canary",
+        "experiment_type": "in_progress",
+        "iteration_path": "experiments/in_progress/iter_brownfield_canary",
+        "run_manifest_count": 1,
+        "latest_run_id": "20260305T120000Z_canary",
+        "latest_run_timestamp": "2026-03-05T12:30:00Z",
+        "latest_run_status": "completed"
+      }
+    ]
+  },
+  "conventions": {
+    "testing_frameworks": [
+      "pytest"
+    ],
+    "linters": [],
+    "formatters": [],
+    "package_managers": [
+      "pip"
+    ]
+  },
+  "concerns": [
+    {
+      "id": "fixture_sanitized",
+      "severity": "info",
+      "summary": "Fixture intentionally uses small sanitized artifacts.",
+      "evidence": "Packaged repo omits proprietary code and data."
+    }
+  ],
+  "evidence": {
+    "files_scanned": 18,
+    "extension_counts": {
+      ".json": 10,
+      ".md": 7,
+      ".sh": 1,
+      ".yaml": 2
+    },
+    "key_files": [
+      ".autolab/state.json",
+      "docs/environment.md",
+      "scripts/bootstrap_venv.sh",
+      "experiments/in_progress/iter_brownfield_canary/design.yaml"
+    ],
+    "project_data_roots": [],
+    "project_data_media_counts": {},
+    "project_data_media_count_summary": "none"
+  }
+}

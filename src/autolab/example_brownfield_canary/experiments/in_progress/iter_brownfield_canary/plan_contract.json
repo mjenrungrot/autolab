@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_brownfield_canary",
+  "stage": "implementation",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "tasks": [
+    {
+      "task_id": "T_exp_notes",
+      "objective": "Refresh iteration-local implementation notes for the in-progress experiment.",
+      "scope_kind": "experiment",
+      "depends_on": [],
+      "reads": [
+        "experiments/in_progress/iter_brownfield_canary/design.yaml",
+        "experiments/in_progress/iter_brownfield_canary/context/sidecars/research.json"
+      ],
+      "writes": [
+        "experiments/in_progress/iter_brownfield_canary/implementation_plan.md"
+      ],
+      "touches": [
+        "experiments/in_progress/iter_brownfield_canary/implementation_plan.md"
+      ],
+      "conflict_group": "iteration_notes",
+      "verification_commands": [
+        "python -m pytest -q"
+      ],
+      "expected_artifacts": [
+        "implementation_plan.md",
+        "plan_contract.json"
+      ],
+      "failure_policy": "fail_fast",
+      "can_run_in_parallel": true,
+      "covers_requirements": [
+        "R_exp_notes"
+      ]
+    },
+    {
+      "task_id": "T_repo_bootstrap",
+      "objective": "Keep repo-wide environment documentation and bootstrap script aligned with the experiment workflow.",
+      "scope_kind": "project_wide",
+      "depends_on": [],
+      "reads": [
+        "docs/environment.md",
+        "scripts/bootstrap_venv.sh"
+      ],
+      "writes": [
+        "docs/environment.md",
+        "scripts/bootstrap_venv.sh"
+      ],
+      "touches": [
+        "docs/environment.md",
+        "scripts/bootstrap_venv.sh"
+      ],
+      "conflict_group": "repo_bootstrap",
+      "verification_commands": [
+        "python -m pytest -q"
+      ],
+      "context_inputs": [
+        "promoted:R_repo_bootstrap:pc_bootstrap"
+      ],
+      "promotion_source": "experiment:discuss:constraints:c_bootstrap",
+      "promotion_scope_ok": true,
+      "expected_artifacts": [
+        "implementation_plan.md",
+        "plan_contract.json"
+      ],
+      "failure_policy": "fail_fast",
+      "can_run_in_parallel": true,
+      "covers_requirements": [
+        "R_repo_bootstrap"
+      ]
+    }
+  ]
+}

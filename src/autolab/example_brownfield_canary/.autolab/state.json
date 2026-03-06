@@ -1,0 +1,23 @@
+{
+  "iteration_id": "iter_brownfield_canary",
+  "experiment_id": "exp_brownfield_canary",
+  "stage": "design",
+  "stage_attempt": 0,
+  "last_run_id": "20260305T120000Z_canary",
+  "sync_status": "completed",
+  "max_stage_attempts": 3,
+  "max_total_iterations": 20,
+  "assistant_mode": "off",
+  "current_task_id": "",
+  "task_cycle_stage": "done",
+  "paper_targets": [],
+  "repeat_guard": {
+    "last_decision": "design",
+    "same_decision_streak": 0,
+    "last_open_task_count": 2,
+    "no_progress_decisions": 0,
+    "update_docs_cycle_count": 0,
+    "last_verification_passed": true
+  },
+  "task_change_baseline": {}
+}

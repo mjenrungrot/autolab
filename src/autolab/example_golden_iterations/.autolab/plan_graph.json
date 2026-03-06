@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-02-01T11:45:00Z",
+  "stage": "implementation",
+  "iteration_id": "iter_golden",
+  "nodes": [
+    {
+      "task_id": "T1",
+      "scope_kind": "project_wide",
+      "depth": 0,
+      "can_run_in_parallel": false,
+      "conflict_group": "augmentation"
+    },
+    {
+      "task_id": "T2",
+      "scope_kind": "project_wide",
+      "depth": 1,
+      "can_run_in_parallel": false,
+      "conflict_group": "training"
+    }
+  ],
+  "edges": [
+    {
+      "from": "T1",
+      "to": "T2"
+    }
+  ],
+  "waves": [
+    {
+      "wave": 1,
+      "tasks": ["T1"]
+    },
+    {
+      "wave": 2,
+      "tasks": ["T2"]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-03-05T00:12:00Z",
+  "iteration_id": "iter_brownfield_canary",
+  "experiment_id": "exp_brownfield_canary",
+  "state_stage": "design",
+  "stage_requested": "design",
+  "stage_effective": "design",
+  "passed": true,
+  "message": "verification passed",
+  "details": {
+    "stage": "design",
+    "requirements": {
+      "tests": false,
+      "dry_run": false,
+      "schema": true,
+      "prompt_lint": true,
+      "consistency": false,
+      "env_smoke": false,
+      "docs_target_update": false
+    },
+    "commands": []
+  }
+}

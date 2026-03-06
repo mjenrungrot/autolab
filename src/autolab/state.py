@@ -675,7 +675,7 @@ def _ensure_iteration_skeleton(
             f'iteration_id: "{iteration_id}"\n'
             'hypothesis_id: "h1"\n'
             "entrypoint:\n"
-            '  module: "tinydesk_v4.train"\n'
+            '  module: "example_project.train"\n'
             "  args:\n"
             '    config: "TODO: set config path"\n'
             "compute:\n"

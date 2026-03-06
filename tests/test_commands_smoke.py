@@ -1532,7 +1532,7 @@ def test_update_command_propagates_failure_exit_code(
     assert exit_code == 1
 
 
-def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
+def test_package_data_contract_includes_registry_and_packaged_fixtures() -> None:
     pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
     pyproject = _load_toml(pyproject_path)
 
@@ -1548,6 +1548,12 @@ def test_package_data_contract_includes_registry_and_golden_fixtures() -> None:
     assert "example_golden_iterations/README.md" in package_data
     assert (
         "example_golden_iterations/experiments/plan/iter_golden/runs/*/*.json"
+        in package_data
+    )
+    assert "example_brownfield_canary/README.md" in package_data
+    assert "example_brownfield_canary/.autolab/**/*.json" in package_data
+    assert (
+        "example_brownfield_canary/experiments/in_progress/iter_brownfield_canary/**/*.md"
         in package_data
     )
     assert "scaffold/.autolab/parser_fixtures/*/fixture.yaml" in package_data
@@ -2879,7 +2885,9 @@ def test_packaged_golden_iteration_fixture_contract() -> None:
     expected_files = sorted(
         [
             Path(".autolab/backlog.yaml"),
+            Path(".autolab/plan_check_result.json"),
             Path(".autolab/plan_contract.json"),
+            Path(".autolab/plan_graph.json"),
             Path(".autolab/state.json"),
             Path("README.md"),
             Path("experiments/plan/iter_golden/analysis/summary.md"),
@@ -2901,5 +2909,61 @@ def test_packaged_golden_iteration_fixture_contract() -> None:
             Path("paper/results.md"),
         ]
     )
+
+    assert packaged_files == expected_files
+
+
+def test_packaged_brownfield_canary_fixture_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    packaged_root = repo_root / "src" / "autolab" / "example_brownfield_canary"
+    assert packaged_root.is_dir()
+
+    packaged_files = {
+        path.relative_to(packaged_root)
+        for path in packaged_root.rglob("*")
+        if path.is_file()
+    }
+
+    expected_files = {
+        Path(".autolab/agent_result.json"),
+        Path(".autolab/backlog.yaml"),
+        Path(".autolab/context/bundle.json"),
+        Path(".autolab/context/project_map.json"),
+        Path(".autolab/context/sidecars/project_wide/discuss.json"),
+        Path(".autolab/context/sidecars/project_wide/research.json"),
+        Path(".autolab/plan_check_result.json"),
+        Path(".autolab/plan_contract.json"),
+        Path(".autolab/plan_graph.json"),
+        Path(".autolab/remote_profiles.yaml"),
+        Path(".autolab/state.json"),
+        Path(".autolab/verification_result.json"),
+        Path("README.md"),
+        Path("docs/environment.md"),
+        Path("experiments/in_progress/iter_brownfield_canary/analysis/summary.md"),
+        Path(
+            "experiments/in_progress/iter_brownfield_canary/context/sidecars/discuss.json"
+        ),
+        Path(
+            "experiments/in_progress/iter_brownfield_canary/context/sidecars/research.json"
+        ),
+        Path("experiments/in_progress/iter_brownfield_canary/context_delta.json"),
+        Path("experiments/in_progress/iter_brownfield_canary/decision_result.json"),
+        Path("experiments/in_progress/iter_brownfield_canary/design.yaml"),
+        Path("experiments/in_progress/iter_brownfield_canary/docs_update.md"),
+        Path("experiments/in_progress/iter_brownfield_canary/hypothesis.md"),
+        Path("experiments/in_progress/iter_brownfield_canary/implementation_plan.md"),
+        Path("experiments/in_progress/iter_brownfield_canary/implementation_review.md"),
+        Path("experiments/in_progress/iter_brownfield_canary/plan_approval.json"),
+        Path("experiments/in_progress/iter_brownfield_canary/plan_contract.json"),
+        Path("experiments/in_progress/iter_brownfield_canary/review_result.json"),
+        Path(
+            "experiments/in_progress/iter_brownfield_canary/runs/20260305T120000Z_canary/metrics.json"
+        ),
+        Path(
+            "experiments/in_progress/iter_brownfield_canary/runs/20260305T120000Z_canary/run_manifest.json"
+        ),
+        Path("experiments/in_progress/iter_brownfield_canary/uat.md"),
+        Path("scripts/bootstrap_venv.sh"),
+    }
 
     assert packaged_files == expected_files

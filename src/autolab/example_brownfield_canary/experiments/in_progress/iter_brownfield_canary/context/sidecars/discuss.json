@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "sidecar_kind": "discuss",
+  "scope_kind": "experiment",
+  "scope_root": "experiments/in_progress/iter_brownfield_canary",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "iteration_id": "iter_brownfield_canary",
+  "experiment_id": "exp_brownfield_canary",
+  "derived_from": [],
+  "stale_if": [],
+  "locked_decisions": [],
+  "preferences": [
+    {
+      "id": "pref_local_notes",
+      "summary": "Keep experiment notes close to the active iteration.",
+      "detail": "Iteration-local implementation notes are the source of truth for this canary.",
+      "status": "preferred"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "c_bootstrap",
+      "summary": "Do not let repo-wide bootstrap changes drift away from the active iteration instructions.",
+      "detail": "Promote this constraint before shared docs or scripts are edited.",
+      "status": "constraint"
+    }
+  ],
+  "open_questions": [],
+  "promotion_candidates": [
+    {
+      "id": "pc_bootstrap_candidate",
+      "summary": "Promote the bootstrap-alignment constraint for shared docs and scripts.",
+      "detail": "Project-wide work must explicitly consume this constraint.",
+      "status": "promote",
+      "target_scope_kind": "project_wide",
+      "requirement_hint": "R_repo_bootstrap",
+      "rationale": "This is the only cross-scope dependency in the canary."
+    }
+  ]
+}

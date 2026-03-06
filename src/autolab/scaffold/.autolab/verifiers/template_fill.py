@@ -128,7 +128,7 @@ BOOTSTRAP_TEMPLATE_TEXT_BY_PATH: dict[str, str] = {
         'iteration_id: "<ITERATION_ID>"\n'
         'hypothesis_id: "h1"\n'
         "entrypoint:\n"
-        '  module: "tinydesk_v4.train"\n'
+        '  module: "example_project.train"\n'
         "  args:\n"
         '    config: "TODO: set config path"\n'
         "compute:\n"

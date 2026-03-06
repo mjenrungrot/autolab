@@ -114,6 +114,14 @@ def _copy_golden_iteration(repo: Path) -> None:
         golden_root / ".autolab" / "plan_contract.json",
         repo / ".autolab" / "plan_contract.json",
     )
+    shutil.copy2(
+        golden_root / ".autolab" / "plan_check_result.json",
+        repo / ".autolab" / "plan_check_result.json",
+    )
+    shutil.copy2(
+        golden_root / ".autolab" / "plan_graph.json",
+        repo / ".autolab" / "plan_graph.json",
+    )
 
 
 def _write_agent_result(repo: Path) -> None:

@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "iteration_id": "iter_brownfield_canary",
+  "run_id": "20260305T120000Z_canary",
+  "status": "completed",
+  "primary_metric": {
+    "name": "accuracy",
+    "value": 88.4,
+    "delta_vs_baseline": 0.7
+  },
+  "aggregation_method": "mean"
+}

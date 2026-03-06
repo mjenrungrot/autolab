@@ -218,6 +218,20 @@
           "additionalProperties": false
         },
         "plan_hash": {"type": "string", "minLength": 1},
+        "risk_flags": {
+          "type": "object",
+          "required": [
+            "plan_approval_required",
+            "uat_required",
+            "remote_profile_required"
+          ],
+          "properties": {
+            "plan_approval_required": {"type": "boolean"},
+            "uat_required": {"type": "boolean"},
+            "remote_profile_required": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
         "risk_fingerprint": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false

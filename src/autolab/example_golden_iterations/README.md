@@ -6,7 +6,9 @@ This folder contains a complete example iteration with stage artifacts that matc
 
 - `.autolab/state.json`
 - `.autolab/backlog.yaml`
+- `.autolab/plan_check_result.json`
 - `.autolab/plan_contract.json`
+- `.autolab/plan_graph.json`
 - `experiments/plan/iter_golden/hypothesis.md`
 - `experiments/plan/iter_golden/design.yaml`
 - `experiments/plan/iter_golden/implementation_plan.md`

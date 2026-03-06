@@ -589,9 +589,9 @@ def _cmd_remote_show(args: argparse.Namespace) -> int:
     print(
         f"- artifact_pull: enabled={str(profile.artifact_pull.enabled).lower()} max_file_size_mb={profile.artifact_pull.max_file_size_mb}"
     )
-    for pattern in profile.artifact_pull.allow_patterns:
+    for pattern in getattr(profile.artifact_pull, "allow_patterns", ()):
         print(f"    allow: {pattern}")
-    for pattern in profile.data_policy.deny_patterns:
+    for pattern in getattr(profile.data_policy, "deny_patterns", ()):
         print(f"    deny: {pattern}")
     if profile.smoke_command:
         print(f"- smoke_command: {profile.smoke_command}")

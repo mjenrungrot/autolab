@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "iteration_id": "iter_brownfield_canary",
+  "experiment_id": "exp_brownfield_canary",
+  "inherits_project_map": ".autolab/context/project_map.json",
+  "iteration_path": "experiments/in_progress/iter_brownfield_canary",
+  "experiment_type": "in_progress",
+  "adds": {
+    "available_artifacts": [
+      "design.yaml",
+      "implementation_plan.md",
+      "implementation_review.md",
+      "review_result.json",
+      "docs_update.md",
+      "runs/20260305T120000Z_canary/run_manifest.json",
+      "runs/20260305T120000Z_canary/metrics.json"
+    ],
+    "assumptions": [
+      "The canary keeps one active iteration and one sanitized run."
+    ],
+    "concerns": [
+      "Project-wide docs and scripts must stay aligned with the experiment instructions."
+    ],
+    "latest_run": {
+      "run_id": "20260305T120000Z_canary",
+      "status": "completed",
+      "timestamp": "2026-03-05T12:30:00Z"
+    }
+  }
+}
