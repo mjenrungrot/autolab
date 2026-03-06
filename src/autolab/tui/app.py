@@ -2102,6 +2102,7 @@ class AutolabCockpitApp(App[None]):
     #home-artifacts-card,
     #home-verification-card,
     #home-todos-card,
+    #home-recovery-card,
     #home-handoff-card,
     #waves-summary-card,
     #waves-graph-card,
@@ -2390,6 +2391,7 @@ class AutolabCockpitApp(App[None]):
                 yield Static("", id="home-verification-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
+                yield Static("", id="home-recovery-card", markup=False)
                 yield Static("", id="home-handoff-card", markup=False)
                 yield Static("Recommended Actions", classes="section-title")
                 with Horizontal(id="home-action-filter-row"):
@@ -3390,6 +3392,10 @@ class AutolabCockpitApp(App[None]):
         todos_widget.update("Open Tasks\nUnavailable.")
         self._set_tone(todos_widget, "tone-muted")
 
+        recovery_widget = self.query_one("#home-recovery-card", Static)
+        recovery_widget.update("")
+        self._set_tone(recovery_widget, "tone-muted")
+
         handoff_widget = self.query_one("#home-handoff-card", Static)
         handoff_widget.update("Handoff & Resume\nUnavailable.")
         self._set_tone(handoff_widget, "tone-muted")
@@ -3624,6 +3630,40 @@ class AutolabCockpitApp(App[None]):
         else:
             todos_widget.update("Open Tasks\n- None detected.")
             self._set_tone(todos_widget, "tone-success")
+
+        recovery_widget = self.query_one("#home-recovery-card", Static)
+        recovery = snapshot.recovery
+        if recovery is None or (
+            not recovery.last_checkpoints and not recovery.stale_context_warnings
+        ):
+            recovery_widget.update("")
+            self._set_tone(recovery_widget, "tone-muted")
+        else:
+            recovery_lines: list[str] = []
+            if recovery.last_checkpoints:
+                recovery_lines.append("- checkpoints:")
+                for cp in recovery.last_checkpoints:
+                    parts = [
+                        cp.checkpoint_id,
+                        f"stage={cp.stage}",
+                        f"at={cp.created_at}",
+                    ]
+                    if cp.label:
+                        parts.append(f"label={cp.label}")
+                    recovery_lines.append(f"  - {' '.join(parts)}")
+            if recovery.stale_context_warnings:
+                recovery_lines.append("- stale_context_warnings:")
+                for w in recovery.stale_context_warnings:
+                    recovery_lines.append(f"  - {w}")
+            if recovery.suggested_rewind_targets:
+                recovery_lines.append(
+                    f"- suggested_rewind: {', '.join(recovery.suggested_rewind_targets)}"
+                )
+            recovery_widget.update("Recovery\n" + "\n".join(recovery_lines))
+            if recovery.stale_context_warnings:
+                self._set_tone(recovery_widget, "tone-warning")
+            else:
+                self._set_tone(recovery_widget, "tone-info")
 
         handoff_widget = self.query_one("#home-handoff-card", Static)
         handoff = snapshot.handoff

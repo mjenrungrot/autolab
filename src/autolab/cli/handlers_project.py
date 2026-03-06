@@ -690,6 +690,101 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_root(state_path)
     autolab_dir = _resolve_autolab_dir(state_path, repo_root)
 
+    target = str(getattr(args, "to", "")).strip()
+    archive_only = bool(getattr(args, "archive_only", False))
+
+    if target:
+        # Targeted reset (new behavior)
+        if target.startswith("checkpoint:"):
+            checkpoint_id = target[len("checkpoint:") :]
+            if not checkpoint_id:
+                print("autolab reset: ERROR empty checkpoint id", file=sys.stderr)
+                return 1
+            try:
+                from autolab.checkpoint import (
+                    _validate_checkpoint_id,
+                    restore_checkpoint,
+                )
+
+                if not _validate_checkpoint_id(checkpoint_id):
+                    print(
+                        "autolab reset: ERROR invalid checkpoint id format",
+                        file=sys.stderr,
+                    )
+                    return 1
+
+                if archive_only:
+                    from autolab.checkpoint import verify_checkpoint
+
+                    valid, issues = verify_checkpoint(repo_root, checkpoint_id)
+                    print("autolab reset --archive-only (preview)")
+                    print(f"target: checkpoint:{checkpoint_id}")
+                    print(f"valid: {valid}")
+                    if issues:
+                        for issue in issues:
+                            print(f"  issue: {issue}")
+                    print("(no changes made)")
+                    return 0
+
+                success, message, changed = restore_checkpoint(
+                    repo_root, state_path, checkpoint_id, archive_current=True
+                )
+                if not success:
+                    print(f"autolab reset: ERROR {message}", file=sys.stderr)
+                    return 1
+                print("autolab reset")
+                print(f"target: checkpoint:{checkpoint_id}")
+                print(f"message: {message}")
+                print(f"changed_files: {len(changed)}")
+                return 0
+            except Exception as exc:
+                print(f"autolab reset: ERROR {exc}", file=sys.stderr)
+                return 1
+
+        elif target.startswith("stage:"):
+            target_stage = target[len("stage:") :]
+            if not target_stage:
+                print("autolab reset: ERROR empty stage name", file=sys.stderr)
+                return 1
+            try:
+                from autolab.checkpoint import rewind_to_stage
+
+                if archive_only:
+                    from autolab.checkpoint import list_checkpoints
+
+                    cps = list_checkpoints(repo_root)
+                    found = [c for c in cps if c.get("stage") == target_stage]
+                    print("autolab reset --archive-only (preview)")
+                    print(f"target: stage:{target_stage}")
+                    print(f"matching_checkpoints: {len(found)}")
+                    if found:
+                        print(f"would_restore: {found[0].get('checkpoint_id', '')}")
+                    print("(no changes made)")
+                    return 0
+
+                success, message, changed = rewind_to_stage(
+                    repo_root, state_path, target_stage
+                )
+                if not success:
+                    print(f"autolab reset: ERROR {message}", file=sys.stderr)
+                    return 1
+                print("autolab reset")
+                print(f"target: stage:{target_stage}")
+                print(f"message: {message}")
+                print(f"changed_files: {len(changed)}")
+                return 0
+            except Exception as exc:
+                print(f"autolab reset: ERROR {exc}", file=sys.stderr)
+                return 1
+
+        else:
+            print(
+                f"autolab reset: ERROR --to must start with 'checkpoint:' or 'stage:', got '{target}'",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Existing hard-reset behavior (unchanged) below
     try:
         source_root = _resolve_scaffold_source()
     except RuntimeError as exc:

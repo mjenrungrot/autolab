@@ -781,6 +781,20 @@ def _cmd_approve_plan(args: argparse.Namespace) -> int:
         if completed:
             message = f"{message}; {completion_summary}"
 
+    if normalized_status == "approved":
+        try:
+            from autolab.checkpoint import create_checkpoint
+
+            create_checkpoint(
+                repo_root,
+                state_path=state_path,
+                stage="implementation",
+                trigger="auto",
+                label="plan_approved",
+            )
+        except Exception:
+            pass
+
     if normalized_status != "stop":
         _write_json(state_path, state)
         changed_files.append(state_path)

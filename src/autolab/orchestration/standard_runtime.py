@@ -1056,6 +1056,18 @@ def _run_once_standard(
             )
         except Exception:
             pass
+        try:
+            from autolab.checkpoint import create_checkpoint as _cp_create
+
+            _cp_create(
+                repo_root,
+                state_path=state_path,
+                stage="decide_repeat",
+                trigger="auto",
+                label="after_decide_repeat",
+            )
+        except Exception:
+            pass
         warnings: list[str] = []
         decision_result_path: Path | None = None
         try:
@@ -1641,6 +1653,22 @@ def _run_once_standard(
     _append_log(
         repo_root, f"run transition {stage_before} -> {stage_after} ({agent_status})"
     )
+
+    try:
+        from autolab.checkpoint import try_auto_checkpoint
+
+        _cp_id = try_auto_checkpoint(
+            repo_root,
+            state_path=state_path,
+            stage_before=stage_before,
+            stage_after=stage_after,
+            transitioned=outcome.transitioned,
+            agent_status=agent_status,
+        )
+        if _cp_id:
+            _append_log(repo_root, f"auto-checkpoint created: {_cp_id}")
+    except Exception as _cp_exc:
+        _append_log(repo_root, f"auto-checkpoint failed (non-blocking): {_cp_exc}")
 
     return RunOutcome(
         exit_code=outcome.exit_code,

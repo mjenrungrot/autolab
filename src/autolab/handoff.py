@@ -587,6 +587,36 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     else:
         lines.append("- safe_resume_preconditions: none")
 
+    # Recovery section
+    rot_flags = _safe_list(payload.get("context_rot_flags"))
+    last_cps = _safe_list(payload.get("last_good_checkpoints"))
+    rewind_targets = _safe_list(payload.get("recommended_rewind_targets"))
+    drift = payload.get("artifact_drift_summary", {})
+    if rot_flags or last_cps or rewind_targets:
+        lines.extend(["", "## Recovery"])
+        if rot_flags:
+            lines.append("- context_rot_flags:")
+            lines.extend(f"  - {f}" for f in rot_flags)
+        if isinstance(drift, dict) and any(drift.values()):
+            lines.append("- artifact_drift:")
+            for key in ("modified", "missing", "stale_sidecars"):
+                items = drift.get(key, [])
+                if items:
+                    lines.append(f"  - {key}: {', '.join(str(i) for i in items)}")
+        if isinstance(last_cps, list) and last_cps:
+            lines.append("- last_good_checkpoints:")
+            for cp in last_cps[:3]:
+                if isinstance(cp, dict):
+                    lines.append(
+                        f"  - {cp.get('checkpoint_id', '')} "
+                        f"stage={cp.get('stage', '')} "
+                        f"at={cp.get('created_at', '')}"
+                    )
+        if rewind_targets:
+            lines.append(
+                f"- recommended_rewind_targets: {', '.join(str(t) for t in rewind_targets)}"
+            )
+
     lines.extend(["", "## Observability Diagnostics"])
     if observability_diagnostics:
         lines.extend(f"- {entry}" for entry in observability_diagnostics)
@@ -703,6 +733,21 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
             "message": "",
         }
 
+    # Context-rot detection
+    try:
+        from autolab.checkpoint import detect_context_rot, list_checkpoints
+
+        context_rot = detect_context_rot(
+            repo_root,
+            state_path=resolved_state_path,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+        )
+        recent_checkpoints = list_checkpoints(repo_root, iteration_id=iteration_id)[:3]
+    except Exception:
+        context_rot = {"has_rot": False, "context_rot_flags": []}
+        recent_checkpoints = []
+
     payload: dict[str, Any] = {
         "schema_version": "1.0",
         "generated_at": _utc_now(),
@@ -725,6 +770,17 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "baseline_snapshot": current_snapshot,
         "handoff_json_path": str(handoff_json_path),
         "handoff_markdown_path": str(handoff_md_path),
+        "context_rot_flags": context_rot.get("context_rot_flags", []),
+        "last_good_checkpoints": [
+            {
+                "checkpoint_id": c.get("checkpoint_id", ""),
+                "stage": c.get("stage", ""),
+                "created_at": c.get("created_at", ""),
+            }
+            for c in recent_checkpoints
+        ],
+        "recommended_rewind_targets": context_rot.get("recommended_rewind_targets", []),
+        "artifact_drift_summary": context_rot.get("artifact_drift_summary", {}),
     }
     if plan_approval:
         payload["plan_approval"] = plan_approval

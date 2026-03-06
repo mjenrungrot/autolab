@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Autolab post-commit hook: auto-checkpoint + version tagging
+# Install with: autolab hooks install
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+
+# Detect Python
+if [ -n "$VIRTUAL_ENV" ]; then
+    PYTHON="$VIRTUAL_ENV/bin/python"
+elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PYTHON="$REPO_ROOT/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    exit 0
+fi
+
+# Auto-checkpoint (non-blocking)
+"$PYTHON" -m autolab.checkpoint_hook 2>/dev/null || true

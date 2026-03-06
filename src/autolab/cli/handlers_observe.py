@@ -545,6 +545,26 @@ def _cmd_progress(args: argparse.Namespace) -> int:
             text = str(entry).strip()
             if text:
                 print(f"  - {text}")
+    rot_flags = payload.get("context_rot_flags", [])
+    if isinstance(rot_flags, list) and rot_flags:
+        print("context_rot_flags:")
+        for flag in rot_flags:
+            print(f"  - {str(flag).strip()}")
+    last_cps = payload.get("last_good_checkpoints", [])
+    if isinstance(last_cps, list) and last_cps:
+        print("last_good_checkpoints:")
+        for cp in last_cps[:3]:
+            if isinstance(cp, dict):
+                print(
+                    f"  - {cp.get('checkpoint_id', '')} "
+                    f"stage={cp.get('stage', '')} "
+                    f"at={cp.get('created_at', '')}"
+                )
+    rewind_targets = payload.get("recommended_rewind_targets", [])
+    if isinstance(rewind_targets, list) and rewind_targets:
+        print(
+            f"recommended_rewind_targets: {', '.join(str(t) for t in rewind_targets)}"
+        )
     return 0
 
 
@@ -564,6 +584,19 @@ def _cmd_handoff(args: argparse.Namespace) -> int:
     recommended = payload.get("recommended_next_command", {})
     if not isinstance(recommended, dict):
         recommended = {}
+
+    try:
+        from autolab.checkpoint import create_checkpoint
+
+        state = _normalize_state(_load_state(state_path))
+        create_checkpoint(
+            _resolve_repo_root(state_path),
+            state_path=state_path,
+            stage=str(state.get("stage", "")).strip(),
+            trigger="handoff",
+        )
+    except Exception:
+        pass
 
     print("autolab handoff")
     print(f"state_file: {state_path}")
