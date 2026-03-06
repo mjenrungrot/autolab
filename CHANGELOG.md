@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.30] - 2026-03-05
+
+### Summary
+
+- Added formalized workflow checkpoints with `autolab checkpoint create` and `autolab checkpoint list` commands for saving and inspecting known-good continuation points.
+- Added targeted reset via `autolab reset --to checkpoint:<id>` and `autolab reset --to stage:<name>` with automatic archiving of current artifacts before restoration.
+- Added auto-checkpoint triggers on stage transitions, plan approval, handoff refresh, and decide-repeat decisions so recovery points are created without manual intervention.
+- Added context-rot detection that compares current artifact fingerprints against checkpoint snapshots, surfaced in `autolab progress` and the TUI recovery card.
+- Added `autolab hooks install` to set up a post-commit git hook for automatic version tagging and commit-triggered checkpoints.
+- Added checkpoint integrity verifier running at implementation_review and decide_repeat stages.
+
+<!-- autolab:range v1.2.29..v1.2.30 -->
+
 ## [1.2.29] - 2026-03-06
 
 ### Summary

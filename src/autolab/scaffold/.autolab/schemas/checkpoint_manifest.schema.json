@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Checkpoint Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "checkpoint_id",
+    "created_at",
+    "iteration_id",
+    "experiment_id",
+    "stage",
+    "trigger",
+    "scope_kind",
+    "revision_label",
+    "artifacts",
+    "state_snapshot"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "checkpoint_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "iteration_id": { "type": "string" },
+    "experiment_id": { "type": "string" },
+    "stage": { "type": "string" },
+    "trigger": {
+      "type": "string",
+      "enum": ["auto", "manual", "handoff", "commit"]
+    },
+    "scope_kind": {
+      "type": "string",
+      "enum": ["experiment", "project_wide"]
+    },
+    "revision_label": { "type": "string" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["relative_path", "fingerprint", "size_bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "relative_path": { "type": "string", "minLength": 1 },
+          "fingerprint": { "type": "string" },
+          "size_bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "state_snapshot": { "type": "object" },
+    "label": { "type": "string" },
+    "context_fingerprints": { "type": "object" },
+    "effective_policy_summary": { "type": "object" }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Checkpoint Index",
+  "type": "object",
+  "required": ["schema_version", "checkpoints"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "created_at",
+          "stage",
+          "trigger",
+          "iteration_id",
+          "artifact_count",
+          "revision_label"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint_id": { "type": "string", "minLength": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "stage": { "type": "string" },
+          "trigger": {
+            "type": "string",
+            "enum": ["auto", "manual", "handoff", "commit"]
+          },
+          "iteration_id": { "type": "string" },
+          "artifact_count": { "type": "integer", "minimum": 0 },
+          "revision_label": { "type": "string" },
+          "label": { "type": "string" },
+          "experiment_id": { "type": "string" }
+        }
+      }
+    }
+  }
+}

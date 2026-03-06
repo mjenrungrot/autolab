@@ -9,6 +9,7 @@ from autolab.cli.handlers_project import *
 from autolab.cli.handlers_run import *
 from autolab.cli.handlers_admin import *
 from autolab.cli.handlers_parser import *
+from autolab.cli.handlers_checkpoint import *
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -78,7 +79,55 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
+    reset.add_argument(
+        "--to",
+        default="",
+        help="Targeted reset: 'checkpoint:<id>' or 'stage:<stage>'",
+    )
+    reset.add_argument(
+        "--archive-only",
+        action="store_true",
+        default=False,
+        help="Preview what would be archived/restored without performing the reset",
+    )
     reset.set_defaults(handler=_cmd_reset)
+
+    checkpoint = subparsers.add_parser("checkpoint", help="Manage workflow checkpoints")
+    checkpoint_sub = checkpoint.add_subparsers(dest="checkpoint_command")
+
+    cp_create = checkpoint_sub.add_parser("create", help="Create a manual checkpoint")
+    cp_create.add_argument("--state-file", default=".autolab/state.json")
+    cp_create.add_argument("--label", default="")
+    cp_create.add_argument(
+        "--scope",
+        choices=("project_wide", "experiment"),
+        default="",
+    )
+    cp_create.add_argument("--iteration-id", dest="iteration_id", default="")
+    cp_create.set_defaults(handler=_cmd_checkpoint_create)
+
+    cp_list = checkpoint_sub.add_parser("list", help="List available checkpoints")
+    cp_list.add_argument("--state-file", default=".autolab/state.json")
+    cp_list.add_argument("--iteration-id", dest="iteration_id", default="")
+    cp_list.add_argument(
+        "--trigger",
+        choices=("auto", "manual", "handoff", "commit", ""),
+        default="",
+        help="Filter checkpoints by trigger type",
+    )
+    cp_list.add_argument("--json", action="store_true", default=False)
+    cp_list.set_defaults(handler=_cmd_checkpoint_list)
+
+    hooks = subparsers.add_parser(
+        "hooks", help="Manage git hooks for version-tagging and checkpoints"
+    )
+    hooks_sub = hooks.add_subparsers(dest="hooks_command")
+    hooks_install = hooks_sub.add_parser(
+        "install", help="Install git hooks in the current repo"
+    )
+    hooks_install.add_argument("--state-file", default=".autolab/state.json")
+    hooks_install.add_argument("--force", action="store_true", default=False)
+    hooks_install.set_defaults(handler=_cmd_hooks_install)
 
     verify = subparsers.add_parser(
         "verify", help="Run verification checks for a stage and write a summary report"

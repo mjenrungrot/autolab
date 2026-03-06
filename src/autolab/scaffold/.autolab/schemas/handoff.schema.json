@@ -848,6 +848,36 @@
     "handoff_markdown_path": {
       "type": "string",
       "minLength": 1
+    },
+    "context_rot_flags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "last_good_checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["checkpoint_id", "stage", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint_id": { "type": "string" },
+          "stage": { "type": "string" },
+          "created_at": { "type": "string" }
+        }
+      }
+    },
+    "recommended_rewind_targets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifact_drift_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "modified": { "type": "array", "items": { "type": "string" } },
+        "missing": { "type": "array", "items": { "type": "string" } },
+        "stale_sidecars": { "type": "array", "items": { "type": "string" } }
+      }
     }
   },
   "additionalProperties": false

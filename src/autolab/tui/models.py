@@ -157,6 +157,23 @@ class RecommendedAction:
 
 
 @dataclass(frozen=True)
+class CheckpointItem:
+    checkpoint_id: str
+    stage: str
+    created_at: str
+    trigger: str
+    label: str
+    artifact_count: int
+
+
+@dataclass(frozen=True)
+class RecoverySummary:
+    last_checkpoints: tuple[CheckpointItem, ...]
+    stale_context_warnings: tuple[str, ...]
+    suggested_rewind_targets: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class HandoffSummary:
     handoff_json_path: Path | None
     handoff_md_path: Path | None
@@ -209,3 +226,4 @@ class CockpitSnapshot:
     )
     common_artifacts: tuple[ArtifactItem, ...] = ()
     handoff: HandoffSummary | None = None
+    recovery: RecoverySummary | None = None

@@ -32,8 +32,10 @@ from autolab.tui.models import (
     ArtifactItem,
     BacklogExperimentItem,
     BacklogHypothesisItem,
+    CheckpointItem,
     CockpitSnapshot,
     HandoffSummary,
+    RecoverySummary,
     RenderPreview,
     RecommendedAction,
     RunItem,
@@ -866,6 +868,71 @@ def _build_recommended_actions(
     return tuple(deduped[:6])
 
 
+def _load_recovery_summary(
+    repo_root: Path,
+    autolab_dir: Path,
+    iteration_id: str,
+) -> RecoverySummary | None:
+    """Load checkpoint and context-rot data for TUI recovery card."""
+    index_path = autolab_dir / "checkpoints" / "index.json"
+    if not index_path.exists():
+        return None
+
+    try:
+        index_data = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(index_data, dict):
+        return None
+
+    all_cps = index_data.get("checkpoints", [])
+    if not isinstance(all_cps, list):
+        return None
+
+    filtered = all_cps
+    if iteration_id:
+        filtered = [c for c in filtered if c.get("iteration_id") == iteration_id]
+    filtered = sorted(filtered, key=lambda c: c.get("created_at", ""), reverse=True)
+    recent = filtered[:3]
+
+    if not recent:
+        return None
+
+    cp_items = tuple(
+        CheckpointItem(
+            checkpoint_id=c.get("checkpoint_id", ""),
+            stage=c.get("stage", ""),
+            created_at=c.get("created_at", ""),
+            trigger=c.get("trigger", ""),
+            label=c.get("label", ""),
+            artifact_count=_coerce_int(c.get("artifact_count"), default=0, minimum=0),
+        )
+        for c in recent
+    )
+
+    # Read context rot from handoff
+    handoff_path = autolab_dir / "handoff.json"
+    rot_flags: tuple[str, ...] = ()
+    rewind_targets: tuple[str, ...] = ()
+    try:
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        if isinstance(handoff, dict):
+            flags = handoff.get("context_rot_flags", [])
+            if isinstance(flags, list):
+                rot_flags = tuple(str(f) for f in flags if f)
+            targets = handoff.get("recommended_rewind_targets", [])
+            if isinstance(targets, list):
+                rewind_targets = tuple(str(t) for t in targets if t)
+    except Exception:
+        pass
+
+    return RecoverySummary(
+        last_checkpoints=cp_items,
+        stale_context_warnings=rot_flags,
+        suggested_rewind_targets=rewind_targets,
+    )
+
+
 def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     resolved_state_path = state_path.expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_state_path)
@@ -974,6 +1041,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     )
     primary_blocker = blockers[0] if blockers else "none"
     secondary_blockers = blockers[1:4] if blockers else ()
+    recovery_summary = _load_recovery_summary(repo_root, autolab_dir, iteration_id)
 
     return CockpitSnapshot(
         repo_root=repo_root,
@@ -1000,6 +1068,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         artifacts_by_stage=artifacts_by_stage,
         common_artifacts=common_artifacts,
         handoff=handoff_summary,
+        recovery=recovery_summary,
     )
 
 
