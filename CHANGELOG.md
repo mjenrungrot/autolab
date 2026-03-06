@@ -6,6 +6,7 @@
 
 - Updated `autolab research` so local agent surface detection no longer hard-fails when `claude`/`codex` are unavailable during test/mocked runs.
 - Kept runtime enforcement unchanged for real agent execution so research still returns a clear error when no local LLM CLI is configured or discoverable.
+- Synchronized release metadata for this patch, including the pinned `README.md` install tag.
 
 <!-- autolab:range v1.2.28..v1.2.29 -->
 
