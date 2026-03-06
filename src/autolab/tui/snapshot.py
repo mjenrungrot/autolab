@@ -603,10 +603,6 @@ def _load_handoff_summary(
         and payload_experiment_id != experiment_id
     ):
         return None
-    payload_stage = str(payload.get("current_stage", "")).strip()
-    if payload_stage and current_stage and payload_stage != current_stage:
-        return None
-
     wave = payload.get("wave")
     if not isinstance(wave, dict):
         wave = {}
