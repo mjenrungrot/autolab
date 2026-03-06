@@ -396,11 +396,13 @@ def test_execute_task_passes_compact_sidecar_context_to_runner(
     assert result["status"] == "completed"
     task_context = captured["task_context"]
     assert isinstance(task_context, dict)
+    assert "agent_surface" not in task_context
     sidecar_context = task_context["sidecar_context"]
     assert sidecar_context["context_inputs"] == [
         "project_wide:research:findings:pw-research",
         "experiment:discuss:preferences:exp-pref",
     ]
+    assert "agent_surface" not in sidecar_context
     assert (
         "project_wide:research:findings:pw-research: Project-wide research summary"
         in sidecar_context["resolved_inputs"]

@@ -915,6 +915,55 @@ class TestAssistantCycleStages:
         state = _read_state(repo)
         assert state["task_cycle_stage"] == "verify"
 
+    def test_implement_plan_pause_preserves_pause_reason_and_keeps_implement(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        task_id = "task_plan_pause"
+        state = _make_state(
+            stage="implementation",
+            task_cycle_stage="implement",
+            current_task_id=task_id,
+        )
+        state_path = _write_state(repo, state)
+        standard_outcome = RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="implementation",
+            stage_after="implementation",
+            message="approval required before execution",
+            pause_reason="plan_approval_required",
+        )
+
+        with (
+            mock.patch(
+                "autolab.run_assistant._run_once_standard",
+                return_value=standard_outcome,
+            ) as run_once_standard,
+            mock.patch(
+                "autolab.run_assistant._safe_todo_pre_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._safe_todo_post_sync", return_value=([], "")
+            ),
+            mock.patch(
+                "autolab.run_assistant._detect_priority_host_mode",
+                return_value="local",
+            ),
+            mock.patch(
+                "autolab.run_assistant._is_active_experiment_completed",
+                return_value=(False, ""),
+            ),
+        ):
+            outcome = _run_once_assistant(state_path, plan_only=True)
+
+        assert run_once_standard.call_args.kwargs["plan_only"] is True
+        assert run_once_standard.call_args.kwargs["execute_approved_plan"] is False
+        assert outcome.pause_reason == "plan_approval_required"
+        assert "assistant cycle -> implement" in outcome.message
+        state = _read_state(repo)
+        assert state["task_cycle_stage"] == "implement"
+
 
 # ===========================================================================
 # 4b. State persistence ordering (Fix B)

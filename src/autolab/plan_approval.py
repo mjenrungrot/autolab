@@ -29,6 +29,14 @@ def load_plan_approval(iteration_dir: Path) -> dict[str, Any]:
     return {}
 
 
+def _default_source_paths() -> dict[str, str]:
+    return {
+        "plan_contract": ".autolab/plan_contract.json",
+        "plan_graph": ".autolab/plan_graph.json",
+        "plan_check_result": ".autolab/plan_check_result.json",
+    }
+
+
 def build_plan_hash(
     *,
     contract_payload: dict[str, Any],
@@ -81,14 +89,158 @@ def approval_requires_action(payload: dict[str, Any]) -> bool:
 
 
 def approval_next_commands(payload: dict[str, Any]) -> list[str]:
+    status = str(payload.get("status", "")).strip().lower()
+    action_mode = "refresh" if status == "superseded" else "approve"
+    return approval_next_commands_for_mode(payload, action_mode=action_mode)
+
+
+def approval_next_commands_for_mode(
+    payload: dict[str, Any],
+    *,
+    action_mode: str,
+) -> list[str]:
     if not approval_requires_action(payload):
         return []
+    if action_mode == "refresh":
+        return [
+            "autolab run --plan-only",
+            "autolab run",
+        ]
     return [
         "autolab approve-plan --status approve",
         "autolab approve-plan --status retry",
         "autolab approve-plan --status stop",
-        "autolab run --execute-approved-plan",
     ]
+
+
+def resolve_plan_approval_state(
+    repo_root: Path,
+    iteration_dir: Path,
+) -> tuple[dict[str, Any], str, str]:
+    existing = load_plan_approval(iteration_dir)
+    base_payload = {
+        "schema_version": "1.0",
+        "generated_at": str(existing.get("generated_at", "")).strip() or _utc_now(),
+        "iteration_id": str(existing.get("iteration_id", "")).strip()
+        or iteration_dir.name,
+        "status": "superseded" if existing else "not_required",
+        "requires_approval": bool(existing.get("requires_approval", False)),
+        "plan_hash": str(existing.get("plan_hash", "")).strip(),
+        "risk_fingerprint": str(existing.get("risk_fingerprint", "")).strip(),
+        "trigger_reasons": [
+            str(item).strip()
+            for item in existing.get("trigger_reasons", [])
+            if str(item).strip()
+        ],
+        "counts": dict(existing.get("counts", {}))
+        if isinstance(existing.get("counts"), dict)
+        else {},
+        "reviewed_by": str(existing.get("reviewed_by", "")).strip(),
+        "reviewed_at": str(existing.get("reviewed_at", "")).strip(),
+        "notes": str(existing.get("notes", "")).strip(),
+        "source_paths": dict(existing.get("source_paths", {}))
+        if isinstance(existing.get("source_paths"), dict)
+        else _default_source_paths(),
+    }
+    if not base_payload["source_paths"]:
+        base_payload["source_paths"] = _default_source_paths()
+
+    contract_payload = _load_json_if_exists(
+        repo_root / ".autolab" / "plan_contract.json"
+    )
+    graph_payload = _load_json_if_exists(repo_root / ".autolab" / "plan_graph.json")
+    plan_check_payload = _load_json_if_exists(
+        repo_root / ".autolab" / "plan_check_result.json"
+    )
+    if not isinstance(contract_payload, dict) or not isinstance(graph_payload, dict):
+        if existing:
+            return (
+                base_payload,
+                "current planning artifacts are missing or invalid; rerun planning before approval",
+                "refresh",
+            )
+        return ({}, "", "none")
+    if not isinstance(plan_check_payload, dict):
+        if existing:
+            return (
+                base_payload,
+                "current plan_check_result.json is missing or invalid; rerun planning before approval",
+                "refresh",
+            )
+        return ({}, "", "none")
+
+    approval_risk = plan_check_payload.get("approval_risk")
+    if not isinstance(approval_risk, dict):
+        if existing:
+            return (
+                base_payload,
+                "current plan_check_result.json is missing approval_risk",
+                "refresh",
+            )
+        return ({}, "current plan_check_result.json is missing approval_risk", "none")
+
+    plan_hash = str(plan_check_payload.get("plan_hash", "")).strip() or build_plan_hash(
+        contract_payload=contract_payload,
+        graph_payload=graph_payload,
+    )
+    risk_fingerprint = build_risk_fingerprint(approval_risk)
+    requires_approval = bool(approval_risk.get("requires_approval", False))
+    current = approval_is_current(
+        existing,
+        plan_hash=plan_hash,
+        risk_fingerprint=risk_fingerprint,
+        require_approved=False,
+    )
+
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": str(existing.get("generated_at", "")).strip() or _utc_now(),
+        "iteration_id": str(existing.get("iteration_id", "")).strip()
+        or iteration_dir.name,
+        "status": "not_required",
+        "requires_approval": requires_approval,
+        "plan_hash": plan_hash,
+        "risk_fingerprint": risk_fingerprint,
+        "trigger_reasons": [
+            str(item).strip()
+            for item in approval_risk.get("trigger_reasons", [])
+            if str(item).strip()
+        ],
+        "counts": dict(approval_risk.get("counts", {})),
+        "reviewed_by": "",
+        "reviewed_at": "",
+        "notes": "",
+        "source_paths": dict(existing.get("source_paths", {}))
+        if isinstance(existing.get("source_paths"), dict)
+        else _default_source_paths(),
+    }
+    if not payload["source_paths"]:
+        payload["source_paths"] = _default_source_paths()
+
+    if not requires_approval:
+        return (payload, "", "none")
+
+    if current:
+        payload["status"] = str(existing.get("status", "")).strip().lower() or "pending"
+        payload["reviewed_by"] = str(existing.get("reviewed_by", "")).strip()
+        payload["reviewed_at"] = str(existing.get("reviewed_at", "")).strip()
+        payload["notes"] = str(existing.get("notes", "")).strip()
+        return (payload, "", "approve")
+
+    if existing:
+        payload["status"] = "superseded"
+        return (
+            payload,
+            "stale plan_approval.json: plan hash or risk fingerprint no longer match current planning artifacts",
+            "refresh",
+        )
+
+    payload["status"] = "superseded"
+    return (
+        payload,
+        "missing plan_approval.json for the current high-risk plan; rerun planning before approval",
+        "refresh",
+    )
 
 
 def _counts_text(counts: dict[str, Any]) -> str:

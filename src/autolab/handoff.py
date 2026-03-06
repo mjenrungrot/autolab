@@ -7,9 +7,9 @@ from typing import Any
 
 from autolab.constants import ACTIVE_STAGES, DECISION_STAGES
 from autolab.plan_approval import (
-    approval_next_commands,
+    approval_next_commands_for_mode,
     approval_requires_action,
-    load_plan_approval,
+    resolve_plan_approval_state,
 )
 from autolab.scope import _detect_scope_kind_from_plan_contract, _resolve_scope_context
 from autolab.state import (
@@ -251,6 +251,7 @@ def _pending_human_decisions(
     iteration_dir: Path | None,
     block_reason_payload: dict[str, Any],
     plan_approval: dict[str, Any],
+    plan_approval_action_mode: str,
 ) -> list[str]:
     stage = str(state.get("stage", "")).strip()
     decisions: list[str] = []
@@ -265,11 +266,21 @@ def _pending_human_decisions(
     action_required = str(block_reason_payload.get("action_required", "")).strip()
     if action_required:
         decisions.append(action_required)
-    if approval_requires_action(plan_approval):
-        decisions.append(
-            "Approve, retry, or stop the implementation plan before wave execution."
+    if stage == "implementation" and approval_requires_action(plan_approval):
+        if plan_approval_action_mode == "refresh":
+            decisions.append(
+                "Regenerate the implementation plan checkpoint before wave execution."
+            )
+        else:
+            decisions.append(
+                "Approve, retry, or stop the implementation plan before wave execution."
+            )
+        decisions.extend(
+            approval_next_commands_for_mode(
+                plan_approval,
+                action_mode=plan_approval_action_mode,
+            )
         )
-        decisions.extend(approval_next_commands(plan_approval))
     return _unique_list(decisions)
 
 
@@ -280,16 +291,25 @@ def _recommended_command(
     pending_decisions: list[str],
     latest_verification: dict[str, Any],
     plan_approval: dict[str, Any],
+    plan_approval_action_mode: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     stage = str(state.get("stage", "")).strip()
     if stage == "human_review":
         command = "autolab review --status=<pass|retry|stop>"
         reason = "Current stage is human_review and requires an explicit decision."
         executable = False
-    elif approval_requires_action(plan_approval):
-        command = "autolab approve-plan --status approve"
-        reason = "Implementation plan approval is required before wave execution can continue."
-        executable = False
+    elif stage == "implementation" and approval_requires_action(plan_approval):
+        if plan_approval_action_mode == "refresh":
+            command = "autolab run --plan-only"
+            reason = (
+                "Current implementation plan approval artifact is missing or stale; "
+                "refresh planning artifacts before approval."
+            )
+            executable = True
+        else:
+            command = "autolab approve-plan --status approve"
+            reason = "Implementation plan approval is required before wave execution can continue."
+            executable = False
     elif stage == "decide_repeat" and pending_decisions:
         command = "autolab run --decision=<hypothesis|design|stop|human_review>"
         reason = "decide_repeat requires a decision before stage transition."
@@ -416,7 +436,13 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         if trigger_reasons:
             lines.append("- trigger_reasons:")
             lines.extend(f"  - {item}" for item in trigger_reasons)
-        next_commands = approval_next_commands(plan_approval)
+        action_mode = (
+            "refresh" if plan_approval.get("status") == "superseded" else "approve"
+        )
+        next_commands = approval_next_commands_for_mode(
+            plan_approval,
+            action_mode=action_mode,
+        )
         if next_commands:
             lines.append("- next_commands:")
             lines.extend(f"  - {item}" for item in next_commands)
@@ -610,11 +636,21 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     guardrail_breach = _safe_dict(
         _load_json_if_exists(autolab_dir / "guardrail_breach.json")
     )
-    plan_approval = load_plan_approval(iteration_dir) if iteration_dir else {}
+    plan_approval: dict[str, Any] = {}
+    plan_approval_action_mode = "none"
+    plan_approval_error = ""
+    if iteration_dir and stage == "implementation":
+        (
+            plan_approval,
+            plan_approval_error,
+            plan_approval_action_mode,
+        ) = resolve_plan_approval_state(repo_root, iteration_dir)
 
     blocking_failures = []
     blocking_failures.extend(_verification_blockers(repo_root))
     blocking_failures.extend(_review_blockers(iteration_dir))
+    if plan_approval_error:
+        blocking_failures.append(plan_approval_error)
     if block_reason:
         reason = str(block_reason.get("reason", "")).strip()
         if reason:
@@ -630,6 +666,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         iteration_dir=iteration_dir,
         block_reason_payload=block_reason,
         plan_approval=plan_approval,
+        plan_approval_action_mode=plan_approval_action_mode,
     )
 
     wave_observability = _compute_wave_observability(
@@ -647,13 +684,24 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         pending_decisions=pending_decisions,
         latest_verification=latest_verification,
         plan_approval=plan_approval,
+        plan_approval_action_mode=plan_approval_action_mode,
     )
-    latest_verification_summary = {
-        "generated_at": str(latest_verification.get("generated_at", "")).strip(),
-        "stage_effective": str(latest_verification.get("stage_effective", "")).strip(),
-        "passed": bool(latest_verification.get("passed", False)),
-        "message": str(latest_verification.get("message", "")).strip(),
-    }
+    if latest_verification:
+        latest_verification_summary = {
+            "generated_at": str(latest_verification.get("generated_at", "")).strip(),
+            "stage_effective": str(
+                latest_verification.get("stage_effective", "")
+            ).strip(),
+            "passed": bool(latest_verification.get("passed", False)),
+            "message": str(latest_verification.get("message", "")).strip(),
+        }
+    else:
+        latest_verification_summary = {
+            "generated_at": "",
+            "stage_effective": "",
+            "passed": None,
+            "message": "",
+        }
 
     payload: dict[str, Any] = {
         "schema_version": "1.0",

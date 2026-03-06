@@ -10,6 +10,9 @@ from pathlib import Path
 import autolab.commands as commands_module
 import autolab.cli.handlers_admin as handlers_admin
 import pytest
+from autolab.agent_surface import infer_agent_surface_provider
+from autolab.models import RunOutcome
+from autolab.plan_approval import build_plan_hash, build_risk_fingerprint
 from autolab.update import UpdateResult
 
 
@@ -37,6 +40,15 @@ def _init_repo_state(tmp_path: Path) -> tuple[Path, Path]:
         == 0
     )
     return repo, state_path
+
+
+def _install_codex_skill(repo: Path, skill_name: str) -> None:
+    destination = repo / ".codex" / "skills" / skill_name / "SKILL.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        f"---\nname: {skill_name}\n---\n\n# {skill_name}\n",
+        encoding="utf-8",
+    )
 
 
 def _write_discuss_research_context(
@@ -792,6 +804,81 @@ def _write_plan_approval_fixture(
 
     iteration_dir = repo / "experiments" / "plan" / iteration_id
     iteration_dir.mkdir(parents=True, exist_ok=True)
+    plan_risk = {
+        "requires_approval": requires_approval,
+        "trigger_reasons": ["project_wide_tasks_present"] if requires_approval else [],
+        "counts": {
+            "tasks_total": 3,
+            "waves_total": 2,
+            "project_wide_tasks": 1,
+            "project_wide_unique_paths": 2,
+            "observed_retries": 0,
+            "stage_attempt": 0,
+        },
+        "policy": {
+            "enabled": True,
+            "require_for_project_wide_tasks": True,
+            "max_tasks_without_approval": 6,
+            "max_waves_without_approval": 2,
+            "max_project_wide_paths_without_approval": 3,
+            "require_after_retries": True,
+        },
+    }
+    contract_payload = {
+        "schema_version": "1.0",
+        "iteration_id": iteration_id,
+        "stage": "implementation",
+        "generated_at": "2026-03-05T00:00:00Z",
+        "tasks": [
+            {
+                "task_id": "T10",
+                "objective": "Implement shared and experiment updates.",
+                "scope_kind": "project_wide",
+                "depends_on": [],
+                "reads": [],
+                "writes": ["src/shared.py"],
+                "touches": ["src/shared.py"],
+                "verification_commands": [],
+                "expected_artifacts": ["src/shared.py"],
+                "failure_policy": "fail_fast",
+                "can_run_in_parallel": False,
+                "covers_requirements": ["R10"],
+            }
+        ],
+    }
+    graph_payload = {
+        "schema_version": "1.0",
+        "iteration_id": iteration_id,
+        "waves": [{"wave_id": 1, "task_ids": ["T10"]}],
+        "tasks": [{"task_id": "T10", "wave_id": 1, "depends_on": []}],
+    }
+    plan_hash = build_plan_hash(
+        contract_payload=contract_payload,
+        graph_payload=graph_payload,
+    )
+    plan_risk["plan_hash"] = plan_hash
+    risk_fingerprint = build_risk_fingerprint(plan_risk)
+    (repo / ".autolab" / "plan_contract.json").write_text(
+        json.dumps(contract_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_graph.json").write_text(
+        json.dumps(graph_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "plan_hash": plan_hash,
+                "approval_risk": plan_risk,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (iteration_dir / "plan_approval.json").write_text(
         json.dumps(
             {
@@ -800,19 +887,10 @@ def _write_plan_approval_fixture(
                 "iteration_id": iteration_id,
                 "status": status,
                 "requires_approval": requires_approval,
-                "plan_hash": "plan-hash-1",
-                "risk_fingerprint": "risk-fingerprint-1",
-                "trigger_reasons": ["project_wide_tasks_present"]
-                if requires_approval
-                else [],
-                "counts": {
-                    "tasks_total": 3,
-                    "waves_total": 2,
-                    "project_wide_tasks": 1,
-                    "project_wide_unique_paths": 2,
-                    "observed_retries": 0,
-                    "stage_attempt": 0,
-                },
+                "plan_hash": plan_hash,
+                "risk_fingerprint": risk_fingerprint,
+                "trigger_reasons": list(plan_risk["trigger_reasons"]),
+                "counts": dict(plan_risk["counts"]),
                 "reviewed_by": "",
                 "reviewed_at": "",
                 "notes": "",
@@ -1922,6 +2000,83 @@ def test_status_shows_pending_plan_approval_and_next_commands(
     assert "autolab approve-plan --status approve" in output
 
 
+def test_loop_assistant_plan_only_forwards_flags_and_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _run_once_stub(
+        _state_path: Path,
+        _decision: str | None,
+        *,
+        assistant: bool = False,
+        plan_only: bool = False,
+        execute_approved_plan: bool = False,
+        **_kwargs,
+    ) -> RunOutcome:
+        seen["assistant"] = assistant
+        seen["plan_only"] = plan_only
+        seen["execute_approved_plan"] = execute_approved_plan
+        return RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="implementation",
+            stage_after="implementation",
+            message="implementation plan prepared",
+            pause_reason="plan_only",
+        )
+
+    monkeypatch.setattr(commands_module, "_run_once", _run_once_stub)
+    monkeypatch.setattr(
+        commands_module, "_acquire_lock", lambda *_a, **_k: (True, "ok")
+    )
+    monkeypatch.setattr(commands_module, "_release_lock", lambda *_a, **_k: None)
+    monkeypatch.setattr(commands_module, "_append_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        commands_module, "_collect_change_snapshot", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_try_auto_commit",
+        lambda *_a, **_k: "auto-commit: skipped",
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda *_a, **_k: ({}, ""),
+    )
+
+    exit_code = commands_module._cmd_loop(
+        argparse.Namespace(
+            state_file=str(state_path),
+            max_iterations=3,
+            max_hours=1.0,
+            auto=False,
+            run_agent_mode="policy",
+            assistant=True,
+            verify=False,
+            strict_implementation_progress=True,
+            plan_only=True,
+            execute_approved_plan=False,
+        )
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert seen == {
+        "assistant": True,
+        "plan_only": True,
+        "execute_approved_plan": False,
+    }
+    assert "autolab loop: stop (plan-only requested)" in output
+
+
 def test_approve_plan_command_marks_plan_approved(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -2327,6 +2482,229 @@ def test_research_writes_sidecar_with_mocked_local_agent(
         "design",
         "implementation",
     ]
+
+
+@pytest.mark.parametrize("install_skill", [False, True])
+def test_research_prompt_semantic_agent_surface_falls_back_or_uses_skill_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    install_skill: bool,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    if install_skill:
+        _install_codex_skill(repo, "researcher")
+    monkeypatch.setenv(
+        "AUTOLAB_RESEARCH_AGENT_COMMAND",
+        "codex exec --sandbox read-only -C . -",
+    )
+
+    discuss_sidecar_path = iteration_dir / "context" / "sidecars" / "discuss.json"
+    discuss_sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    discuss_sidecar_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "discuss",
+                "scope_kind": "experiment",
+                "scope_root": str(iteration_dir.resolve()),
+                "iteration_id": "iter_ctx",
+                "experiment_id": "e_ctx",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "locked_decisions": [],
+                "preferences": [],
+                "constraints": [],
+                "open_questions": [
+                    {
+                        "id": "oq_parser",
+                        "summary": "Which parser outputs still need evidence?",
+                        "detail": "Determine the minimum supported parser outputs.",
+                        "status": "unresolved",
+                    }
+                ],
+                "promotion_candidates": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    captured_prompt: dict[str, str] = {}
+
+    def _fake_run_local_agent(*_args, **kwargs):
+        captured_prompt["text"] = str(kwargs.get("prompt_text", ""))
+        return (
+            0,
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "id": "finding_parser",
+                            "summary": "The parser should emit deterministic metric keys.",
+                            "detail": "This keeps extraction and design contracts aligned.",
+                            "question_ids": ["oq_parser"],
+                            "source_ids": ["project_map"],
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "id": "rec_parser",
+                            "summary": "Reference the parser compatibility finding in design.",
+                            "detail": "Keep the runner packet compact by referencing the sidecar item.",
+                            "question_ids": ["oq_parser"],
+                            "finding_ids": ["finding_parser"],
+                            "source_ids": ["project_map"],
+                            "applies_to_stages": ["design", "implementation"],
+                        }
+                    ],
+                }
+            ),
+            "",
+            "mock-agent",
+        )
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+    monkeypatch.setattr(commands_module, "_run_local_agent", _fake_run_local_agent)
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+        ]
+    )
+
+    assert exit_code == 0
+    prompt_text = captured_prompt["text"]
+    assert "Semantic agent surface:" in prompt_text
+    if install_skill:
+        assert "semantic_agent_primary: researcher ($researcher)" in prompt_text
+        assert "$researcher" in prompt_text
+    else:
+        assert "semantic_agent_primary: researcher -" in prompt_text
+        assert "$researcher" not in prompt_text
+
+
+def test_research_prompt_detects_codex_skill_hint_through_env_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_discuss_research_context(repo, state_path)
+    _ = capsys.readouterr()
+    _install_codex_skill(repo, "researcher")
+    monkeypatch.setenv(
+        "AUTOLAB_RESEARCH_AGENT_COMMAND",
+        "bash -lc 'FOO=1 codex exec --sandbox read-only -C . -'",
+    )
+
+    discuss_sidecar_path = iteration_dir / "context" / "sidecars" / "discuss.json"
+    discuss_sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    discuss_sidecar_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "sidecar_kind": "discuss",
+                "scope_kind": "experiment",
+                "scope_root": str(iteration_dir.resolve()),
+                "iteration_id": "iter_ctx",
+                "experiment_id": "e_ctx",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "derived_from": [],
+                "stale_if": [],
+                "locked_decisions": [],
+                "preferences": [],
+                "constraints": [],
+                "open_questions": [
+                    {
+                        "id": "oq_parser",
+                        "summary": "Which parser outputs still need evidence?",
+                        "detail": "Determine the minimum supported parser outputs.",
+                        "status": "unresolved",
+                    }
+                ],
+                "promotion_candidates": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    captured_prompt: dict[str, str] = {}
+
+    def _fake_run_local_agent(*_args, **kwargs):
+        captured_prompt["text"] = str(kwargs.get("prompt_text", ""))
+        return (
+            0,
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "id": "finding_parser",
+                            "summary": "The parser should emit deterministic metric keys.",
+                            "detail": "This keeps extraction and design contracts aligned.",
+                            "question_ids": ["oq_parser"],
+                            "source_ids": ["project_map"],
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "id": "rec_parser",
+                            "summary": "Reference the parser compatibility finding in design.",
+                            "detail": "Keep the runner packet compact by referencing the sidecar item.",
+                            "question_ids": ["oq_parser"],
+                            "finding_ids": ["finding_parser"],
+                            "source_ids": ["project_map"],
+                            "applies_to_stages": ["design", "implementation"],
+                        }
+                    ],
+                }
+            ),
+            "",
+            "mock-agent",
+        )
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+    monkeypatch.setattr(commands_module, "_run_local_agent", _fake_run_local_agent)
+
+    exit_code = commands_module.main(
+        [
+            "research",
+            "--state-file",
+            str(state_path),
+            "--scope",
+            "experiment",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "semantic_agent_primary: researcher ($researcher)" in captured_prompt["text"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["codex", "exec", "--sandbox", "read-only", "-"], "codex"),
+        (["env", "FOO=1", "codex", "exec", "--sandbox", "read-only", "-"], "codex"),
+        (["uvx", "codex", "exec", "--sandbox", "read-only", "-"], "codex"),
+        (["bash", "./scripts/run-codex.sh"], "codex"),
+        (["claude", "-p", "-"], "claude"),
+        (["env", "ANTHROPIC_API_KEY=x", "claude", "-p", "-"], "claude"),
+        (["python3", "-m", "claude_agent.cli"], "claude"),
+    ],
+)
+def test_infer_agent_surface_provider_handles_wrapped_commands(
+    argv: list[str],
+    expected: str,
+) -> None:
+    assert infer_agent_surface_provider(argv) == expected
 
 
 def test_discuss_rejects_invalid_question_pack_target(

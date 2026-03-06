@@ -582,9 +582,29 @@ def _resolve_optional_path(repo_root: Path, raw_path: str) -> Path | None:
     return repo_root / candidate
 
 
-def _load_handoff_summary(repo_root: Path, autolab_dir: Path) -> HandoffSummary | None:
+def _load_handoff_summary(
+    repo_root: Path,
+    autolab_dir: Path,
+    *,
+    iteration_id: str,
+    experiment_id: str,
+    current_stage: str,
+) -> HandoffSummary | None:
     payload = _safe_json_load(autolab_dir / "handoff.json")
     if payload is None:
+        return None
+    payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+    if payload_iteration_id and iteration_id and payload_iteration_id != iteration_id:
+        return None
+    payload_experiment_id = str(payload.get("experiment_id", "")).strip()
+    if (
+        payload_experiment_id
+        and experiment_id
+        and payload_experiment_id != experiment_id
+    ):
+        return None
+    payload_stage = str(payload.get("current_stage", "")).strip()
+    if payload_stage and current_stage and payload_stage != current_stage:
         return None
 
     wave = payload.get("wave")
@@ -931,7 +951,13 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         current_experiment_id=experiment_id,
     )
     common_artifacts = _build_common_artifacts(repo_root, iteration_dir)
-    handoff_summary = _load_handoff_summary(repo_root, autolab_dir)
+    handoff_summary = _load_handoff_summary(
+        repo_root,
+        autolab_dir,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        current_stage=current_stage,
+    )
     if handoff_summary is not None and handoff_summary.handoff_md_path is not None:
         common_artifacts = (
             *common_artifacts,

@@ -15,4 +15,6 @@ class AssistantModeAdapter:
             request.state_path,
             run_agent_mode=request.run_agent_mode,
             auto_mode=request.auto_mode,
+            plan_only=request.plan_only,
+            execute_approved_plan=request.execute_approved_plan,
         )

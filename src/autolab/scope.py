@@ -77,13 +77,17 @@ def _detect_scope_kind_from_plan_contract(
 ) -> str:
     if iteration_dir is None:
         return "experiment"
+    expected_iteration_id = str(iteration_dir.name).strip()
     plan_contract_paths = [
-        repo_root / ".autolab" / "plan_contract.json",
         iteration_dir / "plan_contract.json",
+        repo_root / ".autolab" / "plan_contract.json",
     ]
     for path in plan_contract_paths:
         payload = _load_json_if_exists(path)
         if not isinstance(payload, dict):
+            continue
+        payload_iteration_id = str(payload.get("iteration_id", "")).strip()
+        if payload_iteration_id and payload_iteration_id != expected_iteration_id:
             continue
         tasks = payload.get("tasks")
         if not isinstance(tasks, list):

@@ -146,6 +146,60 @@ def _effective_entries_for_sidecar_ref(
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
+def _raw_entries_for_sidecar_ref(
+    repo_root: Path,
+    context_resolution: dict[str, Any],
+    *,
+    sidecar_kind: str,
+    scope_kind: str,
+    collection_name: str,
+) -> list[dict[str, Any]]:
+    components = context_resolution.get("components")
+    if not isinstance(components, list):
+        return []
+
+    output: list[dict[str, Any]] = []
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if str(component.get("artifact_kind", "")).strip() != sidecar_kind:
+            continue
+        if str(component.get("scope_kind", "")).strip() != scope_kind:
+            continue
+        if not bool(component.get("selected")):
+            continue
+        if str(component.get("status", "")).strip() != "loaded":
+            continue
+        path_text = str(component.get("path", "")).strip()
+        if not path_text:
+            continue
+        payload = _safe_load_json(repo_root / path_text)
+        if not isinstance(payload, dict):
+            continue
+        entries = payload.get(collection_name)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            output.append(
+                {
+                    **entry,
+                    "source_component_id": str(
+                        component.get("component_id", "")
+                    ).strip(),
+                    "source_component_path": str(component.get("path", "")).strip(),
+                    "source_scope_kind": str(component.get("scope_kind", "")).strip(),
+                    "source_artifact_kind": str(
+                        component.get("artifact_kind", "")
+                    ).strip(),
+                    "source_precedence_index": component.get("precedence_index", 0),
+                    "overridden_component_paths": [],
+                }
+            )
+    return output
+
+
 def resolve_sidecar_output_paths(
     repo_root: Path,
     *,
@@ -401,20 +455,15 @@ def resolve_context_ref(
         }
 
     if kind == "sidecar":
-        entries = _effective_entries_for_sidecar_ref(
+        entries = _raw_entries_for_sidecar_ref(
+            repo_root,
             effective_context_resolution,
             sidecar_kind=parsed["sidecar_kind"],
+            scope_kind=parsed["scope_kind"],
             collection_name=parsed["collection"],
         )
         for entry in entries:
             if str(entry.get("id", "")).strip() != parsed["item_id"]:
-                continue
-            if str(entry.get("source_scope_kind", "")).strip() != parsed["scope_kind"]:
-                continue
-            if (
-                str(entry.get("source_artifact_kind", "")).strip()
-                != parsed["sidecar_kind"]
-            ):
                 continue
             return {
                 "ref": parsed["ref"],
@@ -431,21 +480,25 @@ def resolve_context_ref(
         return None
 
     effective_design = design_payload if isinstance(design_payload, dict) else {}
+    matches: list[tuple[str, dict[str, Any]]] = []
     for requirement_id, entry in _iter_promoted_constraints(effective_design):
         if (
             requirement_id == parsed["requirement_id"]
             and str(entry.get("id", "")).strip() == parsed["item_id"]
         ):
-            return {
-                "ref": parsed["ref"],
-                "kind": "promoted",
-                "requirement_id": requirement_id,
-                "item_id": parsed["item_id"],
-                "summary": str(entry.get("summary", "")).strip(),
-                "detail": str(entry.get("rationale", "")).strip(),
-                "entry": entry,
-            }
-    return None
+            matches.append((requirement_id, entry))
+    if len(matches) != 1:
+        return None
+    requirement_id, entry = matches[0]
+    return {
+        "ref": parsed["ref"],
+        "kind": "promoted",
+        "requirement_id": requirement_id,
+        "item_id": parsed["item_id"],
+        "summary": str(entry.get("summary", "")).strip(),
+        "detail": str(entry.get("rationale", "")).strip(),
+        "entry": entry,
+    }
 
 
 def collect_context_ref_summaries(

@@ -9,6 +9,7 @@ import pytest
 pytest.importorskip("autolab.sidecar_context")
 
 from autolab.sidecar_context import resolve_context_sidecars
+from autolab.sidecar_tools import resolve_context_ref
 from autolab.utils import _path_fingerprint
 
 
@@ -296,6 +297,40 @@ def test_experiment_resolution_overlays_later_items_by_id(tmp_path: Path) -> Non
     assert research_items["shared-research"]["overridden_component_paths"] == [
         ".autolab/context/sidecars/project_wide/research.json"
     ]
+
+
+def test_scope_qualified_sidecar_refs_resolve_against_raw_addressed_scope(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_context_fixture(repo)
+
+    resolution = _resolve_context(repo, scope_kind="experiment")
+
+    project_ref = resolve_context_ref(
+        repo,
+        iteration_id="iter1",
+        experiment_id="e1",
+        raw_ref="project_wide:discuss:preferences:shared-discuss",
+        scope_kind="experiment",
+        context_resolution=resolution,
+    )
+    experiment_ref = resolve_context_ref(
+        repo,
+        iteration_id="iter1",
+        experiment_id="e1",
+        raw_ref="experiment:discuss:preferences:shared-discuss",
+        scope_kind="experiment",
+        context_resolution=resolution,
+    )
+
+    assert project_ref is not None
+    assert experiment_ref is not None
+    assert project_ref["scope_kind"] == "project_wide"
+    assert experiment_ref["scope_kind"] == "experiment"
+    assert project_ref["summary"] == "project-wide discuss shared baseline"
+    assert experiment_ref["summary"] == "experiment discuss override"
 
 
 def test_resolution_marks_stale_sidecars_when_dependency_fingerprints_change(

@@ -363,6 +363,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
     print(f"run_agent_mode: {run_agent_mode}")
     print(f"assistant: {assistant_mode}")
     print(f"verify_before_evaluate: {bool(getattr(args, 'verify', False))}")
+    print(f"plan_only: {bool(getattr(args, 'plan_only', False))}")
+    print(
+        f"execute_approved_plan: {bool(getattr(args, 'execute_approved_plan', False))}"
+    )
     if args.auto:
         print("auto: true")
         print(f"max_hours: {max_hours}")
@@ -413,6 +417,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 auto_decision=auto_decision_enabled,
                 strict_implementation_progress=bool(
                     getattr(args, "strict_implementation_progress", True)
+                ),
+                plan_only=bool(getattr(args, "plan_only", False)),
+                execute_approved_plan=bool(
+                    getattr(args, "execute_approved_plan", False)
                 ),
             )
             commit_outcome = _prepare_standard_commit_outcome(
@@ -503,6 +511,10 @@ def _cmd_loop(args: argparse.Namespace) -> int:
             if outcome.pause_reason == "plan_approval_required":
                 terminal_reason = "plan_approval_required"
                 print("autolab loop: stop (plan approval required)")
+                break
+            if outcome.pause_reason == "plan_only":
+                terminal_reason = "plan_only"
+                print("autolab loop: stop (plan-only requested)")
                 break
             if not outcome.transitioned:
                 continue_auto_after_implementation_wave = bool(

@@ -471,12 +471,25 @@ def _validate_design_context_artifacts(
                 raise StageCheckError(
                     f"design.yaml implementation_requirements[{index}] promoted_constraints are only valid for project_wide requirements"
                 )
+            seen_promoted_ids: set[str] = set()
             for promoted_index, promoted in enumerate(promoted_constraints):
                 if not isinstance(promoted, dict):
                     raise StageCheckError(
                         "design.yaml implementation_requirements"
                         f"[{index}] promoted_constraints[{promoted_index}] must be a mapping"
                     )
+                promoted_id = str(promoted.get("id", "")).strip()
+                if not promoted_id:
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] promoted_constraints[{promoted_index}] missing id"
+                    )
+                if promoted_id in seen_promoted_ids:
+                    raise StageCheckError(
+                        "design.yaml implementation_requirements"
+                        f"[{index}] duplicate promoted_constraints id '{promoted_id}'"
+                    )
+                seen_promoted_ids.add(promoted_id)
                 source_ref = str(promoted.get("source_ref", "")).strip()
                 if not source_ref:
                     raise StageCheckError(

@@ -340,6 +340,8 @@ def _run_once_assistant(
     *,
     run_agent_mode: str = "policy",
     auto_mode: bool = False,
+    plan_only: bool = False,
+    execute_approved_plan: bool = False,
 ) -> RunOutcome:
     repo_root = _resolve_repo_root(state_path)
     pre_sync_changed: list[Path] = []
@@ -355,6 +357,8 @@ def _run_once_assistant(
             auto_decision=False,
             auto_mode=auto_mode,
             strict_implementation_progress=False,
+            plan_only=plan_only,
+            execute_approved_plan=execute_approved_plan,
         )
 
     state["assistant_mode"] = "on"
@@ -896,6 +900,8 @@ def _run_once_assistant(
         commit_task_id=current_task_id,
         commit_cycle_stage="implement",
         strict_implementation_progress=False,
+        plan_only=plan_only,
+        execute_approved_plan=execute_approved_plan,
     )
 
     try:
@@ -911,6 +917,9 @@ def _run_once_assistant(
         if outcome.transitioned:
             refreshed["task_cycle_stage"] = "implement"
             cycle_label = "implement"
+        elif outcome.pause_reason in {"plan_only", "plan_approval_required"}:
+            refreshed["task_cycle_stage"] = "implement"
+            cycle_label = "implement"
         else:
             refreshed["task_cycle_stage"] = "verify"
             cycle_label = "verify"
@@ -921,6 +930,7 @@ def _run_once_assistant(
             stage_before=outcome.stage_before,
             stage_after=outcome.stage_after,
             message=f"{outcome.message}; assistant cycle -> {cycle_label}",
+            pause_reason=outcome.pause_reason,
             commit_allowed=False,
             commit_task_id=current_task_id,
             commit_cycle_stage="implement",
@@ -938,6 +948,7 @@ def _run_once_assistant(
             stage_before=outcome.stage_before,
             stage_after=outcome.stage_after,
             message=outcome.message,
+            pause_reason=outcome.pause_reason,
             commit_allowed=False,
             commit_task_id=current_task_id,
             commit_cycle_stage="implement",
