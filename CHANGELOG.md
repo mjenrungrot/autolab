@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.32] - 2026-03-05
+
+### Summary
+
+- Added first-class remote execution profiles with `autolab remote show`, `autolab remote doctor`, and `autolab remote smoke`.
+- Added revision-label-based remote SLURM launch and allowlisted artifact pullback without local dataset sync.
+- Hardened remote launch/sync handling, manifest provenance, and CLI profile compatibility checks.
+
+<!-- autolab:range v1.2.31..v1.2.32 -->
+
 ## [1.2.31] - 2026-03-05
 
 ### Summary

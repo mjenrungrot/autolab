@@ -781,6 +781,20 @@ def _manifest_payload(
     return payload
 
 
+def _decorate_manifest_payload(
+    payload: dict[str, Any],
+    *,
+    repo_root: Path,
+    remote_execution: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from autolab.remote_profiles import workspace_revision_payload
+
+    payload["workspace_revision"] = workspace_revision_payload(repo_root)
+    if isinstance(remote_execution, dict):
+        payload["remote_execution"] = remote_execution
+    return payload
+
+
 def _local_skip_due_to_existing(
     *,
     manifest_payload: dict[str, Any] | None,
@@ -851,6 +865,7 @@ def _append_slurm_ledger_if_needed(
 
 def _normalize_local_existing_manifest(
     *,
+    repo_root: Path,
     existing: dict[str, Any] | None,
     run_id: str,
     iteration_id: str,
@@ -880,22 +895,31 @@ def _normalize_local_existing_manifest(
             status = "completed"
             completed_at = _timestamp_now()
 
-    payload = _manifest_payload(
-        run_id=run_id,
-        iteration_id=iteration_id,
-        launch_mode="local",
-        command="bash launch/run_local.sh",
-        resource_request=_build_resource_request(design_payload, launch_mode="local"),
-        status=status,
-        sync_status="ok" if status == "completed" else "failed",
-        started_at=started_at,
-        completed_at=completed_at,
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="local",
+            command="bash launch/run_local.sh",
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="local"
+            ),
+            status=status,
+            sync_status="ok" if status == "completed" else "failed",
+            started_at=started_at,
+            completed_at=completed_at,
+        ),
+        repo_root=repo_root,
+        remote_execution=(
+            existing.get("remote_execution") if isinstance(existing, dict) else None
+        ),
     )
     return payload, status != "failed"
 
 
 def _normalize_slurm_existing_manifest(
     *,
+    repo_root: Path,
     existing: dict[str, Any],
     run_id: str,
     iteration_id: str,
@@ -927,19 +951,26 @@ def _normalize_slurm_existing_manifest(
     if not raw_sync_status:
         raw_sync_status = "pending" if status in IN_PROGRESS_STATUSES else "failed"
 
-    payload = _manifest_payload(
-        run_id=run_id,
-        iteration_id=iteration_id,
-        launch_mode="slurm",
-        command="sbatch launch/run_slurm.sbatch",
-        resource_request=_build_resource_request(
-            design_payload, launch_mode="slurm", job_id=job_id
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="slurm",
+            command=(
+                str(existing.get("command", "")).strip()
+                or "sbatch launch/run_slurm.sbatch"
+            ),
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="slurm", job_id=job_id
+            ),
+            status=status,
+            sync_status=raw_sync_status,
+            started_at=started_at,
+            completed_at=completed_at,
+            job_id=job_id,
         ),
-        status=status,
-        sync_status=raw_sync_status,
-        started_at=started_at,
-        completed_at=completed_at,
-        job_id=job_id,
+        repo_root=repo_root,
+        remote_execution=existing.get("remote_execution"),
     )
     return payload, status != "failed"
 
@@ -965,6 +996,7 @@ def _execute_local_run(
         manifest_payload=existing_manifest, logs_dir=logs_dir
     ):
         payload, success = _normalize_local_existing_manifest(
+            repo_root=repo_root,
             existing=existing_manifest,
             run_id=run_id,
             iteration_id=iteration_id,
@@ -1020,18 +1052,21 @@ def _execute_local_run(
     command_text = "bash launch/run_local.sh"
     if timed_out or returncode is None or returncode != 0:
         completed_at = _timestamp_now()
-        payload = _manifest_payload(
-            run_id=run_id,
-            iteration_id=iteration_id,
-            launch_mode="local",
-            command=command_text,
-            resource_request=_build_resource_request(
-                design_payload, launch_mode="local"
+        payload = _decorate_manifest_payload(
+            _manifest_payload(
+                run_id=run_id,
+                iteration_id=iteration_id,
+                launch_mode="local",
+                command=command_text,
+                resource_request=_build_resource_request(
+                    design_payload, launch_mode="local"
+                ),
+                status="failed",
+                sync_status="failed",
+                started_at=started_at,
+                completed_at=completed_at,
             ),
-            status="failed",
-            sync_status="failed",
-            started_at=started_at,
-            completed_at=completed_at,
+            repo_root=repo_root,
         )
         if _write_json_if_changed(manifest_path, payload):
             changed_files.append(manifest_path)
@@ -1077,21 +1112,216 @@ def _execute_local_run(
             repo_root,
             f"launch local subprocess exited 0 but expected artifacts missing run_id={run_id}",
         )
-    payload = _manifest_payload(
-        run_id=run_id,
-        iteration_id=iteration_id,
-        launch_mode="local",
-        command=command_text,
-        resource_request=_build_resource_request(design_payload, launch_mode="local"),
-        status=status,
-        sync_status=sync_status,
-        started_at=started_at,
-        completed_at=completed_at,
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="local",
+            command=command_text,
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="local"
+            ),
+            status=status,
+            sync_status=sync_status,
+            started_at=started_at,
+            completed_at=completed_at,
+        ),
+        repo_root=repo_root,
     )
     if _write_json_if_changed(manifest_path, payload):
         changed_files.append(manifest_path)
     _append_log(repo_root, f"launch local execution {status} run_id={run_id}")
     return payload, status == "completed"
+
+
+def _execute_remote_slurm_submit(
+    *,
+    repo_root: Path,
+    iteration_dir: Path,
+    run_id: str,
+    iteration_id: str,
+    design_payload: dict[str, Any],
+    timeout_seconds: float,
+    changed_files: list[Path],
+    remote_profile: Any,
+    workspace_revision: Any,
+) -> tuple[dict[str, Any], bool]:
+    from autolab.remote_profiles import (
+        _parse_command_template,
+        _remote_env_map,
+        _remote_provenance_text,
+        build_remote_execution_payload,
+        remote_path_for,
+        submit_remote_slurm_job,
+        verify_remote_checkout,
+    )
+
+    run_id = _validate_run_id(run_id)
+    run_dir = _resolve_run_dir(iteration_dir, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = _ensure_logs_dir(run_dir, changed_files)
+    manifest_path = run_dir / "run_manifest.json"
+    existing_manifest = _load_json_object(manifest_path)
+    if _slurm_skip_due_to_existing(existing_manifest):
+        assert isinstance(existing_manifest, dict)
+        payload, success = _normalize_slurm_existing_manifest(
+            repo_root=repo_root,
+            existing=existing_manifest,
+            run_id=run_id,
+            iteration_id=iteration_id,
+            design_payload=design_payload,
+        )
+        if _write_json_if_changed(manifest_path, payload):
+            changed_files.append(manifest_path)
+        _append_slurm_ledger_if_needed(
+            repo_root, manifest_payload=payload, changed_files=changed_files
+        )
+        _append_log(
+            repo_root,
+            f"launch remote slurm submit skipped run_id={run_id} profile={remote_profile.name}",
+        )
+        return payload, success
+
+    started_at = _timestamp_now()
+    stdout_text = ""
+    stderr_text = ""
+    remote_iteration_dir = remote_path_for(remote_profile, repo_root, iteration_dir)
+    export_value = f"ALL,RUN_ID={run_id},AUTOLAB_RUN_ID={run_id},AUTOLAB_ITERATION_ID={iteration_id}"
+    cache_keys = sorted(remote_profile.env.cache_vars)
+    if cache_keys:
+        export_value = f"{export_value},{','.join(cache_keys)}"
+    try:
+        fallback_submit_argv = _parse_command_template(
+            remote_profile.submit_command,
+            context="submit_command",
+        ) + [f"--export={export_value}", "launch/run_slurm.sbatch"]
+    except StageCheckError:
+        fallback_submit_argv = [
+            remote_profile.submit_command,
+            f"--export={export_value}",
+            "launch/run_slurm.sbatch",
+        ]
+    command_text = _remote_provenance_text(
+        profile=remote_profile,
+        cwd=remote_iteration_dir,
+        argv=fallback_submit_argv,
+        env=_remote_env_map(remote_profile),
+    )
+    remote_execution = build_remote_execution_payload(
+        remote_profile,
+        requested_revision_label=workspace_revision.label,
+        status="ok",
+        resolved_remote_revision_label=workspace_revision.label,
+    )
+    try:
+        (
+            stdout_text,
+            stderr_text,
+            remote_iteration_dir,
+            command_text,
+        ) = submit_remote_slurm_job(
+            remote_profile,
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
+            run_id=run_id,
+            iteration_id=iteration_id,
+            revision_label=workspace_revision.label,
+            timeout_seconds=timeout_seconds,
+        )
+        if remote_profile.mode == "verify_only":
+            try:
+                resolved_remote_label = verify_remote_checkout(
+                    remote_profile,
+                    workspace_revision.label,
+                    timeout_seconds=timeout_seconds,
+                )
+                remote_execution = build_remote_execution_payload(
+                    remote_profile,
+                    requested_revision_label=workspace_revision.label,
+                    status="ok",
+                    resolved_remote_revision_label=resolved_remote_label,
+                )
+            except StageCheckError:
+                remote_execution = build_remote_execution_payload(
+                    remote_profile,
+                    requested_revision_label=workspace_revision.label,
+                    status="failed",
+                    resolved_remote_revision_label="",
+                )
+                raise
+    except StageCheckError as exc:
+        stderr_text = str(exc)
+        remote_execution = build_remote_execution_payload(
+            remote_profile,
+            requested_revision_label=workspace_revision.label,
+            status="failed",
+            resolved_remote_revision_label="",
+        )
+
+    stdout_path = logs_dir / "launch.stdout.log"
+    stderr_path = logs_dir / "launch.stderr.log"
+    if _write_text_if_changed(stdout_path, stdout_text):
+        changed_files.append(stdout_path)
+    if _write_text_if_changed(stderr_path, stderr_text):
+        changed_files.append(stderr_path)
+
+    combined_output = f"{stdout_text}\n{stderr_text}"
+    job_id = _parse_job_id(combined_output)
+    if not job_id:
+        payload = _decorate_manifest_payload(
+            _manifest_payload(
+                run_id=run_id,
+                iteration_id=iteration_id,
+                launch_mode="slurm",
+                command=command_text,
+                resource_request=_build_resource_request(
+                    design_payload, launch_mode="slurm"
+                ),
+                status="failed",
+                sync_status="failed",
+                started_at=started_at,
+                completed_at=_timestamp_now(),
+            ),
+            repo_root=repo_root,
+            remote_execution=remote_execution,
+        )
+        if _write_json_if_changed(manifest_path, payload):
+            changed_files.append(manifest_path)
+        _append_log(
+            repo_root,
+            f"launch remote slurm submit failed run_id={run_id} detail={_compact_text(combined_output)}",
+        )
+        return payload, False
+
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="slurm",
+            command=command_text,
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="slurm", job_id=job_id
+            ),
+            status="submitted",
+            sync_status="pending",
+            started_at=started_at,
+            job_id=job_id,
+        ),
+        repo_root=repo_root,
+        remote_execution=remote_execution,
+    )
+    if remote_iteration_dir:
+        payload["remote_execution"]["remote_iteration_dir"] = remote_iteration_dir
+    if _write_json_if_changed(manifest_path, payload):
+        changed_files.append(manifest_path)
+    _append_slurm_ledger_if_needed(
+        repo_root, manifest_payload=payload, changed_files=changed_files
+    )
+    _append_log(
+        repo_root,
+        f"launch remote slurm submit completed run_id={run_id} job_id={job_id} profile={remote_profile.name}",
+    )
+    return payload, True
 
 
 def _execute_slurm_submit(
@@ -1113,6 +1343,7 @@ def _execute_slurm_submit(
     if _slurm_skip_due_to_existing(existing_manifest):
         assert isinstance(existing_manifest, dict)
         payload, success = _normalize_slurm_existing_manifest(
+            repo_root=repo_root,
             existing=existing_manifest,
             run_id=run_id,
             iteration_id=iteration_id,
@@ -1169,18 +1400,21 @@ def _execute_slurm_submit(
     job_id = _parse_job_id(combined_output)
     if timed_out or returncode is None or returncode != 0 or not job_id:
         completed_at = _timestamp_now()
-        payload = _manifest_payload(
-            run_id=run_id,
-            iteration_id=iteration_id,
-            launch_mode="slurm",
-            command=command_text,
-            resource_request=_build_resource_request(
-                design_payload, launch_mode="slurm"
+        payload = _decorate_manifest_payload(
+            _manifest_payload(
+                run_id=run_id,
+                iteration_id=iteration_id,
+                launch_mode="slurm",
+                command=command_text,
+                resource_request=_build_resource_request(
+                    design_payload, launch_mode="slurm"
+                ),
+                status="failed",
+                sync_status="failed",
+                started_at=started_at,
+                completed_at=completed_at,
             ),
-            status="failed",
-            sync_status="failed",
-            started_at=started_at,
-            completed_at=completed_at,
+            repo_root=repo_root,
         )
         if _write_json_if_changed(manifest_path, payload):
             changed_files.append(manifest_path)
@@ -1199,18 +1433,21 @@ def _execute_slurm_submit(
         )
         return payload, False
 
-    payload = _manifest_payload(
-        run_id=run_id,
-        iteration_id=iteration_id,
-        launch_mode="slurm",
-        command=command_text,
-        resource_request=_build_resource_request(
-            design_payload, launch_mode="slurm", job_id=job_id
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="slurm",
+            command=command_text,
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="slurm", job_id=job_id
+            ),
+            status="submitted",
+            sync_status="pending",
+            started_at=started_at,
+            job_id=job_id,
         ),
-        status="submitted",
-        sync_status="pending",
-        started_at=started_at,
-        job_id=job_id,
+        repo_root=repo_root,
     )
     if _write_json_if_changed(manifest_path, payload):
         changed_files.append(manifest_path)
@@ -1245,6 +1482,7 @@ def _execute_slurm_interactive_run(
         manifest_payload=existing_manifest, logs_dir=logs_dir
     ):
         payload, success = _normalize_local_existing_manifest(
+            repo_root=repo_root,
             existing=existing_manifest if isinstance(existing_manifest, dict) else None,
             run_id=run_id,
             iteration_id=iteration_id,
@@ -1305,19 +1543,22 @@ def _execute_slurm_interactive_run(
 
     if timed_out or returncode is None or returncode != 0:
         completed_at = _timestamp_now()
-        payload = _manifest_payload(
-            run_id=run_id,
-            iteration_id=iteration_id,
-            launch_mode="slurm",
-            command=command_text,
-            resource_request=_build_resource_request(
-                design_payload, launch_mode="slurm", job_id=slurm_job_id
+        payload = _decorate_manifest_payload(
+            _manifest_payload(
+                run_id=run_id,
+                iteration_id=iteration_id,
+                launch_mode="slurm",
+                command=command_text,
+                resource_request=_build_resource_request(
+                    design_payload, launch_mode="slurm", job_id=slurm_job_id
+                ),
+                status="failed",
+                sync_status="failed",
+                started_at=started_at,
+                completed_at=completed_at,
+                job_id=slurm_job_id,
             ),
-            status="failed",
-            sync_status="failed",
-            started_at=started_at,
-            completed_at=completed_at,
-            job_id=slurm_job_id,
+            repo_root=repo_root,
         )
         payload["slurm_environment"] = slurm_env_metadata
         if _write_json_if_changed(manifest_path, payload):
@@ -1364,19 +1605,22 @@ def _execute_slurm_interactive_run(
             repo_root,
             f"launch slurm-interactive subprocess exited 0 but expected artifacts missing run_id={run_id}",
         )
-    payload = _manifest_payload(
-        run_id=run_id,
-        iteration_id=iteration_id,
-        launch_mode="slurm",
-        command=command_text,
-        resource_request=_build_resource_request(
-            design_payload, launch_mode="slurm", job_id=slurm_job_id
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=run_id,
+            iteration_id=iteration_id,
+            launch_mode="slurm",
+            command=command_text,
+            resource_request=_build_resource_request(
+                design_payload, launch_mode="slurm", job_id=slurm_job_id
+            ),
+            status=status,
+            sync_status=sync_status,
+            started_at=started_at,
+            completed_at=completed_at,
+            job_id=slurm_job_id,
         ),
-        status=status,
-        sync_status=sync_status,
-        started_at=started_at,
-        completed_at=completed_at,
-        job_id=slurm_job_id,
+        repo_root=repo_root,
     )
     payload["slurm_environment"] = slurm_env_metadata
     if _write_json_if_changed(manifest_path, payload):
@@ -1434,23 +1678,30 @@ def _write_group_manifest(
         completed_at = ""
         job_id = _extract_job_id(first_payload)
 
-    payload = _manifest_payload(
-        run_id=base_run_id,
-        iteration_id=iteration_id,
-        launch_mode=launch_mode,
-        command=(
-            "bash launch/run_local.sh"
-            if launch_mode == "local"
-            else "sbatch launch/run_slurm.sbatch"
+    payload = _decorate_manifest_payload(
+        _manifest_payload(
+            run_id=base_run_id,
+            iteration_id=iteration_id,
+            launch_mode=launch_mode,
+            command=(
+                str(first_payload.get("command", "")).strip()
+                or (
+                    "bash launch/run_local.sh"
+                    if launch_mode == "local"
+                    else "sbatch launch/run_slurm.sbatch"
+                )
+            ),
+            resource_request=_build_resource_request(
+                design_payload, launch_mode=launch_mode, job_id=job_id
+            ),
+            status=status,
+            sync_status=sync_status,
+            started_at=started_at,
+            completed_at=completed_at,
+            job_id=job_id,
         ),
-        resource_request=_build_resource_request(
-            design_payload, launch_mode=launch_mode, job_id=job_id
-        ),
-        status=status,
-        sync_status=sync_status,
-        started_at=started_at,
-        completed_at=completed_at,
-        job_id=job_id,
+        repo_root=repo_root,
+        remote_execution=first_payload.get("remote_execution"),
     )
     manifest_path = run_dir / "run_manifest.json"
     if _write_json_if_changed(manifest_path, payload):
@@ -1754,7 +2005,21 @@ def _execute_slurm_monitor_runtime(
 
         next_status = current_status
         next_sync_status = current_sync_status
-        if monitor_cfg.poll_command_template:
+        remote_profile = None
+        remote_execution = manifest.get("remote_execution")
+        if isinstance(remote_execution, dict):
+            remote_profile_name = str(remote_execution.get("profile", "")).strip()
+            remote_profile_mode = str(remote_execution.get("mode", "")).strip().lower()
+            if remote_profile_name and remote_profile_mode not in {"", "shared_fs"}:
+                from autolab.remote_profiles import resolve_remote_profile
+
+                remote_profile = resolve_remote_profile(
+                    repo_root,
+                    host_mode="slurm",
+                    profile_name=remote_profile_name,
+                )
+
+        if remote_profile is None and monitor_cfg.poll_command_template:
             if not job_id:
                 raise StageCheckError(
                     "slurm_monitor poll_command_template is configured but "
@@ -1811,8 +2076,67 @@ def _execute_slurm_monitor_runtime(
                     current_status=next_status,
                     current_sync_status=next_sync_status,
                 )
+        elif remote_profile is not None:
+            if not job_id:
+                raise StageCheckError(
+                    f"slurm_monitor remote polling requires job_id for run_id={run_id}"
+                )
+            from autolab.remote_profiles import poll_remote_job
 
-        if (
+            poll_stdout, poll_stderr = poll_remote_job(
+                remote_profile,
+                job_id=job_id,
+                timeout_seconds=float(monitor_cfg.poll_timeout_seconds),
+            )
+            poll_stdout_path = logs_dir / "slurm_monitor.poll.stdout.log"
+            poll_stderr_path = logs_dir / "slurm_monitor.poll.stderr.log"
+            if _write_text_if_changed(poll_stdout_path, poll_stdout):
+                changed_files.append(poll_stdout_path)
+            if _write_text_if_changed(poll_stderr_path, poll_stderr):
+                changed_files.append(poll_stderr_path)
+            scheduler_state = _normalize_scheduler_state(
+                poll_stdout
+            ) or _normalize_scheduler_state(poll_stderr)
+            if scheduler_state:
+                next_status, next_sync_status = _monitor_status_from_scheduler(
+                    scheduler_state,
+                    current_status=next_status,
+                    current_sync_status=next_sync_status,
+                )
+
+        if remote_profile is not None and next_status in {
+            "completed",
+            "synced",
+            "failed",
+        }:
+            from autolab.remote_profiles import pull_remote_artifacts
+
+            if next_sync_status not in SYNC_SUCCESS_STATUSES:
+                sync_result = pull_remote_artifacts(
+                    remote_profile,
+                    repo_root=repo_root,
+                    iteration_id=iteration_id,
+                    run_id=run_id,
+                    timeout_seconds=float(monitor_cfg.sync_timeout_seconds),
+                )
+                artifact_sync["pulled_paths"] = list(
+                    sync_result.get("pulled_paths", [])
+                )
+                failures = sync_result.get("failures", [])
+                if failures:
+                    artifact_sync["failures"] = failures
+                next_sync_status = (
+                    str(sync_result.get("status", "failed")).strip().lower() or "failed"
+                )
+                if next_sync_status in SYNC_SUCCESS_STATUSES:
+                    artifact_sync.pop("failures", None)
+                if (
+                    next_sync_status in SYNC_SUCCESS_STATUSES
+                    and next_status != "failed"
+                ):
+                    next_status = "synced"
+            manifest["artifact_sync_to_local"] = artifact_sync
+        elif (
             monitor_cfg.sync_command_template
             and next_status in {"completed", "synced"}
             and next_sync_status not in SYNC_SUCCESS_STATUSES
@@ -2033,8 +2357,41 @@ def _execute_launch_runtime(
         assert design_error is not None
         raise design_error
 
+    normalized_detected_host_mode = "local"
+    remote_profile = None
+    workspace_revision = None
+    remote_launch_via_profile = False
+    if launch_mode == "slurm":
+        from autolab.remote_profiles import (
+            ensure_remote_launch_revision,
+            ensure_remote_profile_launch_ready,
+            normalize_host_mode,
+            resolve_remote_profile,
+        )
+
+        normalized_detected_host_mode = normalize_host_mode(
+            _detect_priority_host_mode()
+        )
+        if normalized_detected_host_mode == "slurm":
+            try:
+                remote_profile = resolve_remote_profile(
+                    repo_root,
+                    host_mode=normalized_detected_host_mode,
+                )
+                ensure_remote_profile_launch_ready(remote_profile)
+            except StageCheckError as exc:
+                raise StageCheckError(
+                    "slurm launch requires a compatible remote profile in .autolab/remote_profiles.yaml: "
+                    f"{exc}"
+                ) from exc
+            if remote_profile.mode in {"git_checkout", "verify_only"}:
+                workspace_revision = ensure_remote_launch_revision(
+                    repo_root, remote_profile
+                )
+                remote_launch_via_profile = True
+
     changed_files: list[Path] = []
-    if design_error is None:
+    if design_error is None and not remote_launch_via_profile:
         _ensure_launch_scripts(
             repo_root=repo_root,
             iteration_dir=iteration_dir,
@@ -2048,12 +2405,16 @@ def _execute_launch_runtime(
     slurm_script = iteration_dir / "launch" / "run_slurm.sbatch"
     if launch_mode == "local" and not local_script.exists():
         raise StageCheckError(f"local launch script missing at {local_script}")
-    if launch_mode == "slurm" and not slurm_script.exists():
+    if (
+        launch_mode == "slurm"
+        and not remote_launch_via_profile
+        and not slurm_script.exists()
+    ):
         raise StageCheckError(f"slurm launch script missing at {slurm_script}")
 
     # Determine if we should run directly on an interactive SLURM allocation
     use_slurm_interactive = False
-    if launch_mode == "slurm":
+    if launch_mode == "slurm" and not remote_launch_via_profile:
         allocation = _get_slurm_allocation_resources()
         if (
             _is_slurm_interactive_session()
@@ -2087,6 +2448,18 @@ def _execute_launch_runtime(
                 design_payload=design_payload,
                 timeout_seconds=float(config.local_timeout_seconds),
                 changed_files=changed_files,
+            )
+        elif remote_launch_via_profile:
+            payload, success = _execute_remote_slurm_submit(
+                repo_root=repo_root,
+                iteration_dir=iteration_dir,
+                run_id=run_id,
+                iteration_id=iteration_id,
+                design_payload=design_payload,
+                timeout_seconds=float(config.slurm_submit_timeout_seconds),
+                changed_files=changed_files,
+                remote_profile=remote_profile,
+                workspace_revision=workspace_revision,
             )
         else:
             payload, success = _execute_slurm_submit(

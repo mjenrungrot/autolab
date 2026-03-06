@@ -536,6 +536,193 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
     return 1 if issues else 0
 
 
+def _cmd_remote_show(args: argparse.Namespace) -> int:
+    from autolab.remote_profiles import (
+        ensure_remote_launch_revision,
+        load_remote_profiles,
+        normalize_host_mode,
+        resolve_remote_profile,
+        resolve_workspace_revision,
+    )
+    from autolab.utils import _detect_host_mode_with_probe
+
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        host_mode, _probe = _detect_host_mode_with_probe()
+        normalized_host_mode = normalize_host_mode(host_mode)
+        config = load_remote_profiles(repo_root)
+        profile = resolve_remote_profile(
+            repo_root,
+            host_mode=normalized_host_mode,
+            profile_name=str(getattr(args, "profile", "")).strip(),
+        )
+    except Exception as exc:
+        print(f"autolab remote show: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    revision = resolve_workspace_revision(repo_root)
+    print("autolab remote show")
+    print(f"- config: {config.path}")
+    print(f"- host_mode: {normalized_host_mode or '(unknown)'}")
+    print(f"- profile: {profile.name}")
+    print(f"- mode: {profile.mode}")
+    print(
+        f"- host_modes: {', '.join(profile.enabled_for_host_modes) if profile.enabled_for_host_modes else '(any)'}"
+    )
+    print(f"- login_host: {profile.login_host or '(none)'}")
+    print(f"- remote_repo_root: {profile.remote_repo_root or '(none)'}")
+    print(f"- python_path: {profile.python_path}")
+    print(f"- bootstrap_command: {profile.bootstrap_command or '(none)'}")
+    print(f"- submit_command: {profile.submit_command}")
+    print(
+        f"- revision: label={revision.label or '(missing)'} source={revision.source} dirty={str(revision.dirty).lower()}"
+    )
+    if profile.mode != "shared_fs":
+        try:
+            ensure_remote_launch_revision(repo_root, profile)
+            print("- revision_ready: yes")
+        except Exception as exc:
+            print(f"- revision_ready: no ({exc})")
+    else:
+        print("- revision_ready: n/a (shared_fs)")
+    print(
+        f"- artifact_pull: enabled={str(profile.artifact_pull.enabled).lower()} max_file_size_mb={profile.artifact_pull.max_file_size_mb}"
+    )
+    for pattern in profile.artifact_pull.allow_patterns:
+        print(f"    allow: {pattern}")
+    for pattern in profile.data_policy.deny_patterns:
+        print(f"    deny: {pattern}")
+    if profile.smoke_command:
+        print(f"- smoke_command: {profile.smoke_command}")
+    return 0
+
+
+def _cmd_remote_doctor(args: argparse.Namespace) -> int:
+    from autolab.remote_profiles import (
+        ensure_remote_launch_revision,
+        lint_remote_profile,
+        normalize_host_mode,
+        resolve_remote_profile,
+    )
+    from autolab.utils import _detect_host_mode_with_probe, _is_command_available
+
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    issues: list[str] = []
+    try:
+        host_mode, probe = _detect_host_mode_with_probe()
+        profile = resolve_remote_profile(
+            repo_root,
+            host_mode=normalize_host_mode(host_mode),
+            profile_name=str(getattr(args, "profile", "")).strip(),
+        )
+    except Exception as exc:
+        print(f"autolab remote doctor: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    for command in profile.host_detection.require_commands:
+        if not _is_command_available(command):
+            issues.append(f"required host command missing: {command}")
+    if not _is_command_available("ssh"):
+        issues.append("required command missing: ssh")
+    if profile.mode != "shared_fs":
+        try:
+            ensure_remote_launch_revision(repo_root, profile)
+        except Exception as exc:
+            issues.append(str(exc))
+    issues.extend(lint_remote_profile(profile))
+
+    print("autolab remote doctor")
+    print(f"- host_mode: {normalize_host_mode(host_mode)}")
+    for key, value in sorted(probe.items()):
+        print(f"  probe.{key}: {value}")
+    print(f"- profile: {profile.name}")
+    print(f"- mode: {profile.mode}")
+    if issues:
+        print("issues:")
+        for issue in issues:
+            print(f"  - {issue}")
+        print("status: fail")
+        return 1
+    print("status: ok")
+    return 0
+
+
+def _cmd_remote_smoke(args: argparse.Namespace) -> int:
+    from autolab.remote_profiles import (
+        ensure_remote_python,
+        normalize_host_mode,
+        resolve_remote_profile,
+        run_remote_command,
+    )
+    from autolab.utils import _detect_host_mode_with_probe
+
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        host_mode, _probe = _detect_host_mode_with_probe()
+        profile = resolve_remote_profile(
+            repo_root,
+            host_mode=normalize_host_mode(host_mode),
+            profile_name=str(getattr(args, "profile", "")).strip(),
+        )
+    except Exception as exc:
+        print(f"autolab remote smoke: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab remote smoke")
+    print(f"- profile: {profile.name}")
+    try:
+        reachable = run_remote_command(
+            profile, "printf remote-ok", timeout_seconds=15.0
+        )
+        if reachable.returncode != 0:
+            raise RuntimeError(str(reachable.stderr or "").strip() or "ssh failed")
+        print("- reachable: ok")
+
+        repo_check = run_remote_command(
+            profile,
+            "git rev-parse --is-inside-work-tree",
+            cwd=profile.remote_repo_root,
+            timeout_seconds=15.0,
+        )
+        if repo_check.returncode != 0:
+            raise RuntimeError("remote repo root is not a git checkout")
+        print("- remote_repo: ok")
+
+        for command in profile.host_detection.require_commands:
+            command_check = run_remote_command(
+                profile, f"command -v {command}", timeout_seconds=15.0
+            )
+            if command_check.returncode != 0:
+                raise RuntimeError(f"remote command missing: {command}")
+        if profile.host_detection.require_commands:
+            print("- required_commands: ok")
+
+        ensure_remote_python(profile, timeout_seconds=120.0)
+        print("- python: ok")
+
+        if profile.smoke_command:
+            smoke = run_remote_command(
+                profile,
+                profile.smoke_command,
+                cwd=profile.remote_repo_root,
+                timeout_seconds=120.0,
+            )
+            if smoke.returncode != 0:
+                raise RuntimeError(str(smoke.stderr or "").strip() or "smoke failed")
+            print("- smoke_command: ok")
+        else:
+            print("- smoke_command: skipped (not configured)")
+    except Exception as exc:
+        print(f"status: fail ({exc})", file=sys.stderr)
+        return 1
+
+    print("status: ok")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Docs generate command
 # ---------------------------------------------------------------------------

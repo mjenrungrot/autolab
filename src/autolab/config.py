@@ -72,6 +72,7 @@ from autolab.policy_resolution import (
     extract_overlay,
     resolve_effective_policy,
 )
+from autolab.remote_profiles import normalize_profile_mode
 
 
 def _load_verifier_policy(repo_root: Path) -> dict[str, Any]:
@@ -140,7 +141,9 @@ def _load_effective_policy(
         repo_local.pop(meta_key, None)
 
     # Read profile_mode and UAT patterns
-    profile_mode = str(raw_policy.get("profile_mode", DEFAULT_PROFILE_MODE)).strip()
+    profile_mode = normalize_profile_mode(
+        str(raw_policy.get("profile_mode", DEFAULT_PROFILE_MODE)).strip()
+    )
     if not profile_mode:
         profile_mode = DEFAULT_PROFILE_MODE
 

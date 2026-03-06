@@ -951,7 +951,7 @@ def _load_policy_summary(
         if result.risk_flags.get("uat_required"):
             gate_reasons.append("UAT required for project-wide surfaces")
         if result.risk_flags.get("remote_profile_required"):
-            gate_reasons.append("Remote profile required (SLURM + standalone)")
+            gate_reasons.append("Remote profile required (SLURM + remote checkout)")
         return PolicySummary(
             active_preset=result.preset,
             host_mode=result.host_mode,

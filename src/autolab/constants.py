@@ -274,7 +274,7 @@ VERIFIER_COMMAND_TIMEOUT_SECONDS = 120
 # ---------------------------------------------------------------------------
 # Effective policy resolution constants
 # ---------------------------------------------------------------------------
-PROFILE_MODES = ("shared_fs", "standalone")
-DEFAULT_PROFILE_MODE = "standalone"
+PROFILE_MODES = ("shared_fs", "git_checkout", "verify_only", "standalone")
+DEFAULT_PROFILE_MODE = "git_checkout"
 DEFAULT_UAT_SURFACE_PATTERNS = ("scripts/**", "docs/**")
 EFFECTIVE_POLICY_SCHEMA_VERSION = "1.0"

@@ -109,7 +109,7 @@ def _derive_approval_risk_fallback(
     impl_cfg: Any,
     host_mode: str = "local",
     scope_kind: str = "experiment",
-    profile_mode: str = "standalone",
+    profile_mode: str = "git_checkout",
     uat_surface_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
     approval_cfg = getattr(impl_cfg, "approval", None)
