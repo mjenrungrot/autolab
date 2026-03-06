@@ -228,6 +228,7 @@ autolab install-skill codex
 ```
 
 Installs bundled Codex skills under `<project-root>/.codex/skills/`, including `autolab`, `researcher`, `planner`, `plan-checker`, `reviewer`, `llm-council`, `swarm-planner`, and `parallel-task`.
+These semantic-role skills are optional quality adapters. If they are not installed, Autolab falls back to inline guidance and still runs end to end.
 
 Target a different project:
 

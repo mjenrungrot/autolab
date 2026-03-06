@@ -1013,6 +1013,7 @@ def _collect_stage_brief_items(
 ) -> list[str]:
     items: list[str] = []
     seen: set[str] = set()
+    deferred_agent_items: list[str] = []
 
     agent_surface_guidance = context_payload.get("agent_surface_guidance")
     if isinstance(agent_surface_guidance, dict):
@@ -1021,7 +1022,7 @@ def _collect_stage_brief_items(
             for item in agent_items:
                 candidate = _sanitize_retry_blocker(str(item))
                 if candidate:
-                    items.append(candidate)
+                    deferred_agent_items.append(candidate)
 
     sidecar_guidance = context_payload.get("sidecar_guidance")
     if isinstance(sidecar_guidance, dict):
@@ -1110,6 +1111,8 @@ def _collect_stage_brief_items(
                 break
         if len(items) >= 12:
             break
+
+    items.extend(deferred_agent_items)
 
     deduped: list[str] = []
     for item in items:

@@ -26,6 +26,15 @@ def _copy_scaffold(repo: Path) -> None:
     shutil.copytree(source, target, dirs_exist_ok=True)
 
 
+def _install_codex_skill(repo: Path, skill_name: str) -> None:
+    destination = repo / ".codex" / "skills" / skill_name / "SKILL.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        f"---\nname: {skill_name}\n---\n\n# {skill_name}\n",
+        encoding="utf-8",
+    )
+
+
 def _write_state(repo: Path, *, stage: str = "design") -> Path:
     state = {
         "iteration_id": "iter1",
@@ -731,6 +740,8 @@ def test_render_context_project_wide_sidecar_resolution_excludes_experiment_laye
     repo = tmp_path / "repo"
     repo.mkdir()
     _copy_scaffold(repo)
+    _install_codex_skill(repo, "planner")
+    _install_codex_skill(repo, "plan-checker")
     (repo / "src").mkdir(exist_ok=True)
     _write_context_resolution_fixture(
         repo,
@@ -763,10 +774,26 @@ def test_render_context_project_wide_sidecar_resolution_excludes_experiment_laye
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    resolution = json.loads(captured.out)["context_resolution"]
+    context = json.loads(captured.out)
+    resolution = context["context_resolution"]
     assert resolution["scope_kind"] == "project_wide"
     assert resolution["scope_root"] == str((repo / "src").resolve())
     assert resolution["diagnostics"] == []
+    assert context["agent_surface"]["provider"] == "codex"
+    assert context["agent_surface"]["primary_role"]["id"] == "planner"
+    assert context["agent_surface"]["primary_role"]["installed"] is True
+    assert [role["id"] for role in context["agent_surface"]["secondary_roles"]] == [
+        "plan_checker"
+    ]
+    assert context["agent_surface"]["invocation_hints"] == [
+        "$planner",
+        "$plan-checker",
+    ]
+    assert all(
+        "skill_path" not in role
+        for role in context["agent_surface"]["roles"]
+        if isinstance(role, dict)
+    )
     _assert_component_order_tokens(
         resolution["component_order"],
         [("project_map",), ("project", "discuss"), ("project", "research")],

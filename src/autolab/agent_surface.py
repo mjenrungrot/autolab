@@ -9,6 +9,8 @@ _SKILL_INSTALL_ROOT_BY_PROVIDER = {
 }
 
 _DETERMINISTIC_RUNTIME_STAGES = {"launch", "slurm_monitor", "extract_results"}
+_SHELL_WRAPPERS = {"bash", "sh", "zsh", "fish"}
+_COMMAND_WRAPPERS = {"env", "uv", "uvx", "python", "python3", "node"}
 
 ROLE_REGISTRY: dict[str, dict[str, Any]] = {
     "researcher": {
@@ -42,12 +44,69 @@ def infer_agent_surface_provider(
 ) -> str:
     if not isinstance(command_argv, (list, tuple)) or not command_argv:
         return ""
-    head = Path(str(command_argv[0]).strip()).name.lower()
-    if "codex" in head:
-        return "codex"
-    if "claude" in head:
-        return "claude"
+    tokens = [
+        str(raw_token).strip() for raw_token in command_argv if str(raw_token).strip()
+    ]
+    if not tokens:
+        return ""
+
+    direct = _infer_provider_from_token(tokens[0])
+    if direct:
+        return direct
+
+    head = Path(tokens[0]).name.lower()
+    if head in _SHELL_WRAPPERS and len(tokens) > 1:
+        for token in tokens[1:]:
+            if token.startswith("-"):
+                continue
+            return _infer_provider_from_token(token)
+        return ""
+
+    if head == "env":
+        remainder = _strip_env_wrapper_prefix(tokens[1:])
+        if remainder:
+            return infer_agent_surface_provider(remainder)
+
+    if head in _COMMAND_WRAPPERS and len(tokens) > 1:
+        if len(tokens) > 2 and tokens[1] == "-m":
+            return _infer_provider_from_token(tokens[2])
+        return _infer_provider_from_token(tokens[1])
+
+    for token in tokens[1:3]:
+        provider = _infer_provider_from_token(token)
+        if provider:
+            return provider
     return ""
+
+
+def _infer_provider_from_token(token: str) -> str:
+    text = str(token or "").strip()
+    if not text:
+        return ""
+    basename = Path(text).name.lower()
+    stem = Path(text).stem.lower()
+    for candidate in (basename, stem, text.lower()):
+        if candidate == "codex" or "codex" in candidate:
+            return "codex"
+        if candidate == "claude" or "claude" in candidate:
+            return "claude"
+    return ""
+
+
+def _strip_env_wrapper_prefix(tokens: list[str]) -> list[str]:
+    remainder: list[str] = []
+    skipping_prefix = True
+    for token in tokens:
+        if not skipping_prefix:
+            remainder.append(token)
+            continue
+        if token.startswith("-"):
+            continue
+        if "=" in token and not token.startswith(("/", ".", "~")):
+            continue
+        skipping_prefix = False
+        remainder.append(token)
+    return remainder
 
 
 def _resolve_recommended_role_ids(
@@ -107,7 +166,6 @@ def resolve_agent_surface(
     for role_id, metadata in ROLE_REGISTRY.items():
         provider_skill_name = ""
         installed = False
-        skill_path = ""
         if normalized_provider:
             provider_skill_name = str(
                 metadata.get("skill_names", {}).get(normalized_provider, "")
@@ -116,7 +174,6 @@ def resolve_agent_surface(
                 path = _skill_install_path(
                     repo_root, normalized_provider, provider_skill_name
                 )
-                skill_path = str(path)
                 installed = path.exists() and path.is_file()
         if installed:
             available_roles.append(role_id)
@@ -126,7 +183,6 @@ def resolve_agent_surface(
                 "provider": normalized_provider,
                 "skill_name": provider_skill_name,
                 "installed": installed,
-                "skill_path": skill_path,
                 "summary": str(metadata.get("summary", "")).strip(),
                 "recommended": role_id in recommended_role_ids,
             }
