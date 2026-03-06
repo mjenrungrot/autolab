@@ -140,13 +140,13 @@
       "required": ["generated_at", "stage_effective", "passed", "message"],
       "properties": {
         "generated_at": {
-          "$ref": "#/$defs/timestamp"
+          "$ref": "#/$defs/optionalTimestamp"
         },
         "stage_effective": {
           "type": "string"
         },
         "passed": {
-          "type": "boolean"
+          "type": ["boolean", "null"]
         },
         "message": {
           "type": "string"

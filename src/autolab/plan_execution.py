@@ -1159,21 +1159,53 @@ def execute_implementation_plan_step(
         contract_payload=contract,
         graph_payload=graph,
     )
-    if not isinstance(approval_risk, dict):
-        approval_risk = _derive_approval_risk_fallback(
-            task_map=task_map,
-            wave_rows=wave_rows,
-            state=state,
-            raw_execution_state=raw_state,
-            impl_cfg=impl_cfg,
-        )
     if execute_approved_plan:
+        if not isinstance(approval_risk, dict):
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "`autolab run --execute-approved-plan` requires a current "
+                    "approval risk in `.autolab/plan_check_result.json`; rerun "
+                    "`autolab run --plan-only`"
+                ),
+                changed_files=tuple(changed_files),
+            )
         current_approval_risk = contract_details.get("approval_risk")
         current_plan_hash = str(contract_details.get("plan_hash", "")).strip()
         if not isinstance(current_approval_risk, dict):
-            current_approval_risk = approval_risk
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "`autolab run --execute-approved-plan` could not validate the "
+                    "current approval risk; rerun `autolab run --plan-only`"
+                ),
+                changed_files=tuple(changed_files),
+            )
         if not current_plan_hash:
-            current_plan_hash = plan_hash
+            current_graph = contract_details.get("plan_graph")
+            if isinstance(current_graph, dict):
+                current_plan_hash = build_plan_hash(
+                    contract_payload=contract,
+                    graph_payload=current_graph,
+                )
+        if not current_plan_hash:
+            return ImplementationExecutionStepResult(
+                handled=True,
+                proceed_to_evaluate=False,
+                agent_status="failed",
+                exit_code=1,
+                summary=(
+                    "`autolab run --execute-approved-plan` could not validate the "
+                    "current plan hash; rerun `autolab run --plan-only`"
+                ),
+                changed_files=tuple(changed_files),
+            )
         current_risk_fingerprint = build_risk_fingerprint(current_approval_risk)
         stored_risk_fingerprint = build_risk_fingerprint(approval_risk)
         if (
@@ -1222,6 +1254,14 @@ def execute_implementation_plan_step(
                 changed_files=tuple(changed_files),
             )
     else:
+        if not isinstance(approval_risk, dict):
+            approval_risk = _derive_approval_risk_fallback(
+                task_map=task_map,
+                wave_rows=wave_rows,
+                state=state,
+                raw_execution_state=raw_state,
+                impl_cfg=impl_cfg,
+            )
         approval_payload = write_plan_approval(
             iteration_dir,
             iteration_id=iteration_id,

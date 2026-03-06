@@ -533,3 +533,155 @@ def test_plan_contract_rejects_promotion_source_mismatch_for_consumed_constraint
         or "must match a consumed promoted constraint source_ref" in error
         for error in details["errors"]
     )
+
+
+def test_plan_contract_rejects_project_wide_access_to_other_iteration_paths(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = _write_state(repo)
+    _write_design(repo)
+    _write_contract(
+        repo,
+        {
+            "schema_version": "1.0",
+            "iteration_id": "iter1",
+            "stage": "implementation",
+            "generated_at": "2026-03-05T00:00:00Z",
+            "tasks": [
+                {
+                    "task_id": "T_shared",
+                    "objective": "Incorrectly reaches into another experiment iteration.",
+                    "scope_kind": "project_wide",
+                    "depends_on": [],
+                    "reads": ["experiments/plan/iter_other/design.yaml"],
+                    "writes": ["experiments/plan/iter_other/implementation_plan.md"],
+                    "touches": ["experiments/plan/iter_other/implementation_plan.md"],
+                    "conflict_group": "",
+                    "verification_commands": ["python -m pytest -q"],
+                    "expected_artifacts": [
+                        "implementation_plan.md",
+                        "plan_contract.json",
+                    ],
+                    "failure_policy": "fail_fast",
+                    "can_run_in_parallel": False,
+                    "covers_requirements": ["R_shared"],
+                }
+            ],
+        },
+    )
+
+    passed, _message, details = check_implementation_plan_contract(
+        repo, state, write_outputs=False
+    )
+
+    assert passed is False
+    assert any(
+        "project_wide task may not read experiment-scoped paths" in error
+        and "experiments/plan/iter_other/design.yaml" in error
+        for error in details["errors"]
+    )
+    assert any(
+        "project_wide task writes experiment-scoped paths" in error
+        and "experiments/plan/iter_other/implementation_plan.md" in error
+        for error in details["errors"]
+    )
+
+
+def test_plan_contract_rejects_duplicate_promoted_constraint_ids(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = _write_state(repo)
+    _write_experiment_discuss_sidecar(repo, experiment_id="e1")
+    design_path = repo / "experiments" / "plan" / "iter1" / "design.yaml"
+    design_path.parent.mkdir(parents=True, exist_ok=True)
+    design_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.0",
+                "id": "e1",
+                "iteration_id": "iter1",
+                "hypothesis_id": "h1",
+                "entrypoint": {"module": "pkg.train", "args": {}},
+                "compute": {"location": "local", "gpu_count": 0},
+                "metrics": {
+                    "primary": {"name": "accuracy", "unit": "%", "mode": "maximize"},
+                    "secondary": [],
+                    "success_delta": "+0.1",
+                    "aggregation": "mean",
+                    "baseline_comparison": "vs baseline",
+                },
+                "baselines": [{"name": "baseline", "description": "existing"}],
+                "implementation_requirements": [
+                    {
+                        "requirement_id": "R_shared",
+                        "description": "Shared requirement promoted from experiment context.",
+                        "scope_kind": "project_wide",
+                        "promoted_constraints": [
+                            {
+                                "id": "pc1",
+                                "source_ref": "experiment:discuss:preferences:pref1",
+                                "summary": "first",
+                                "rationale": "first",
+                            },
+                            {
+                                "id": "pc1",
+                                "source_ref": "experiment:discuss:preferences:pref1",
+                                "summary": "second",
+                                "rationale": "second",
+                            },
+                        ],
+                        "expected_artifacts": ["implementation_plan.md"],
+                    }
+                ],
+                "extract_parser": {
+                    "kind": "command",
+                    "command": "python -m tools.extract_results --run-id {run_id}",
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_contract(
+        repo,
+        {
+            "schema_version": "1.0",
+            "iteration_id": "iter1",
+            "stage": "implementation",
+            "generated_at": "2026-03-05T00:00:00Z",
+            "tasks": [
+                {
+                    "task_id": "T_shared",
+                    "objective": "Shared task with ambiguous promoted ids.",
+                    "scope_kind": "project_wide",
+                    "depends_on": [],
+                    "reads": ["src/shared.py"],
+                    "writes": ["src/shared.py"],
+                    "touches": ["src/shared.py"],
+                    "conflict_group": "",
+                    "verification_commands": ["python -m pytest -q"],
+                    "expected_artifacts": ["implementation_plan.md"],
+                    "failure_policy": "fail_fast",
+                    "can_run_in_parallel": False,
+                    "covers_requirements": ["R_shared"],
+                    "context_inputs": ["promoted:R_shared:pc1"],
+                    "promotion_source": "experiment:discuss:preferences:pref1",
+                    "promotion_scope_ok": True,
+                }
+            ],
+        },
+    )
+
+    passed, _message, details = check_implementation_plan_contract(
+        repo, state, write_outputs=False
+    )
+
+    assert passed is False
+    assert any(
+        "duplicate promoted_constraints id 'pc1'" in error
+        for error in details["errors"]
+    )

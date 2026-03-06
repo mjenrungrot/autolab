@@ -83,6 +83,14 @@ def _is_iteration_local(path: str, *, iteration_prefix: str) -> bool:
     return normalized == prefix or normalized.startswith(prefix + "/")
 
 
+def _is_experiment_scoped_path(path: str) -> bool:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return False
+    parts = normalized.split("/")
+    return len(parts) >= 3 and parts[0] == "experiments"
+
+
 def _load_json_dict(path: Path, label: str) -> dict[str, Any]:
     if not path.exists():
         raise PlanContractError(f"{label} is missing at {path}")
@@ -154,6 +162,7 @@ def _extract_design_requirements(
                 f"design.yaml implementation_requirements[{idx}] scope_kind must be one of {sorted(_SCOPE_KINDS)}"
             )
         promoted_constraints: list[dict[str, str]] = []
+        seen_promoted_ids: set[str] = set()
         raw_promoted_constraints = entry.get("promoted_constraints", [])
         if raw_promoted_constraints is None:
             raw_promoted_constraints = []
@@ -177,12 +186,19 @@ def _extract_design_requirements(
                     f"[{idx}] promoted_constraints[{promoted_index}] missing id"
                 )
                 continue
+            if promoted_id in seen_promoted_ids:
+                errors.append(
+                    "design.yaml implementation_requirements"
+                    f"[{idx}] duplicate promoted_constraints id '{promoted_id}'"
+                )
+                continue
             if not source_ref:
                 errors.append(
                     "design.yaml implementation_requirements"
                     f"[{idx}] promoted_constraints[{promoted_index}] missing source_ref"
                 )
                 continue
+            seen_promoted_ids.add(promoted_id)
             promoted_constraints.append(
                 {
                     "id": promoted_id,
@@ -541,23 +557,17 @@ def check_implementation_plan_contract(
             )
 
         if scope_kind == "project_wide":
-            illegal_reads = [
-                path
-                for path in reads
-                if _is_iteration_local(path, iteration_prefix=iteration_prefix)
-            ]
+            illegal_reads = [path for path in reads if _is_experiment_scoped_path(path)]
             if illegal_reads:
                 errors.append(
-                    f"{task_id}: project_wide task may not read iteration-local outputs ({', '.join(sorted(set(illegal_reads)))})"
+                    f"{task_id}: project_wide task may not read experiment-scoped paths ({', '.join(sorted(set(illegal_reads)))})"
                 )
             illegal_writes = [
-                path
-                for path in [*writes, *touches]
-                if _is_iteration_local(path, iteration_prefix=iteration_prefix)
+                path for path in [*writes, *touches] if _is_experiment_scoped_path(path)
             ]
             if illegal_writes:
                 errors.append(
-                    f"{task_id}: project_wide task writes iteration-local paths ({', '.join(sorted(set(illegal_writes)))})"
+                    f"{task_id}: project_wide task writes experiment-scoped paths ({', '.join(sorted(set(illegal_writes)))})"
                 )
             for context_ref in context_inputs:
                 parsed = parse_context_ref(context_ref)

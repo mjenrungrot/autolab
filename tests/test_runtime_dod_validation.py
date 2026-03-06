@@ -732,6 +732,89 @@ def test_refresh_handoff_omits_missing_plan_approval_and_keeps_design_verify_ord
     ]
 
 
+def test_refresh_handoff_ignores_pending_plan_approval_outside_implementation(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = _base_state(stage="design")
+    state_path = repo / ".autolab" / "state.json"
+    _write_json(state_path, state)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        iteration_dir / "plan_approval.json",
+        {
+            "schema_version": "1.0",
+            "generated_at": "2026-03-05T00:02:00Z",
+            "iteration_id": "iter1",
+            "status": "pending",
+            "requires_approval": True,
+            "plan_hash": "stale",
+            "risk_fingerprint": "stale",
+            "trigger_reasons": ["project_wide_tasks_present"],
+            "counts": {
+                "tasks_total": 7,
+                "waves_total": 3,
+                "project_wide_tasks": 1,
+                "project_wide_unique_paths": 4,
+                "observed_retries": 0,
+                "stage_attempt": 0,
+            },
+            "reviewed_by": "",
+            "reviewed_at": "",
+            "notes": "",
+            "source_paths": {
+                "plan_contract": ".autolab/plan_contract.json",
+                "plan_graph": ".autolab/plan_graph.json",
+                "plan_check_result": ".autolab/plan_check_result.json",
+            },
+        },
+    )
+    _write_json(
+        repo / ".autolab" / "verification_result.json",
+        {
+            "generated_at": "2026-03-05T00:01:00Z",
+            "iteration_id": "iter1",
+            "experiment_id": "e1",
+            "state_stage": "design",
+            "stage_requested": "design",
+            "stage_effective": "design",
+            "passed": False,
+            "message": "design verification failed",
+            "details": {"commands": []},
+        },
+    )
+
+    artifacts = handoff.refresh_handoff(state_path)
+
+    assert "plan_approval" not in artifacts.payload
+    assert (
+        artifacts.payload["recommended_next_command"]["command"]
+        == "autolab verify --stage design"
+    )
+    assert "Approve, retry, or stop the implementation plan" not in " ".join(
+        artifacts.payload["pending_human_decisions"]
+    )
+
+
+def test_refresh_handoff_reports_verifier_unavailable_when_no_history_exists(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state = _base_state(stage="hypothesis")
+    state_path = repo / ".autolab" / "state.json"
+    _write_json(state_path, state)
+
+    artifacts = handoff.refresh_handoff(state_path)
+
+    assert artifacts.payload["latest_verifier_summary"]["generated_at"] == ""
+    assert artifacts.payload["latest_verifier_summary"]["stage_effective"] == ""
+    assert artifacts.payload["latest_verifier_summary"]["passed"] is None
+    assert artifacts.payload["latest_verifier_summary"]["message"] == ""
+
+
 @pytest.mark.parametrize(
     ("stage", "expected_next"),
     (

@@ -10,6 +10,7 @@ from autolab.agent_surface import (
     infer_agent_surface_provider,
     resolve_agent_surface,
 )
+from autolab.plan_approval import resolve_plan_approval_state
 from autolab.sidecar_context import resolve_context_sidecars
 from autolab.sidecar_tools import (
     DISCUSS_COLLECTIONS,
@@ -951,6 +952,7 @@ def _docs_collect_context(
     if isinstance(handoff_payload, dict):
         handoff_iteration_id = str(handoff_payload.get("iteration_id", "")).strip()
         handoff_experiment_id = str(handoff_payload.get("experiment_id", "")).strip()
+        handoff_stage = str(handoff_payload.get("current_stage", "")).strip()
         if (
             handoff_iteration_id
             and iteration_id
@@ -969,6 +971,17 @@ def _docs_collect_context(
                 "handoff experiment_id differs from requested experiment_id "
                 f"({handoff_experiment_id} != {experiment_id})"
             )
+        if handoff_stage and handoff_stage != str(state.get("stage", "")).strip():
+            handoff_context_errors.append(
+                "handoff current_stage differs from state stage "
+                f"({handoff_stage} != {str(state.get('stage', '')).strip()})"
+            )
+    if handoff_context_errors:
+        handoff_error = _docs_append_error(
+            handoff_error,
+            "; ".join(handoff_context_errors),
+        )
+        handoff_payload = {}
 
     trace_latest_path = repo_root / ".autolab" / "traceability_latest.json"
     trace_latest_payload, trace_latest_error = _docs_load_json_mapping(
@@ -1155,6 +1168,16 @@ def _docs_collect_context(
             repo_root,
             plan_approval_path,
         )
+        if str(state.get("stage", "")).strip() == "implementation":
+            (
+                effective_plan_approval,
+                effective_plan_approval_error,
+                _effective_plan_approval_action_mode,
+            ) = resolve_plan_approval_state(repo_root, iteration_dir)
+            if effective_plan_approval:
+                plan_approval_payload = effective_plan_approval
+            if effective_plan_approval_error:
+                plan_approval_error = effective_plan_approval_error
 
     plan_graph_path = repo_root / ".autolab" / "plan_graph.json"
     plan_graph_payload, plan_graph_error = _docs_load_json_mapping(

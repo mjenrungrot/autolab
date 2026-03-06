@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from autolab.cli.support import *
-from autolab.plan_approval import approval_next_commands, load_plan_approval
+from autolab.plan_approval import (
+    approval_next_commands_for_mode,
+    load_plan_approval,
+    resolve_plan_approval_state,
+)
 from autolab.traceability import build_traceability_coverage
 
 
@@ -65,6 +69,16 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 require_exists=False,
             )
             approval = load_plan_approval(iteration_dir)
+            approval_action_mode = "none"
+            approval_error = ""
+            resolved_approval, approval_error, approval_action_mode = (
+                resolve_plan_approval_state(
+                    repo_root,
+                    iteration_dir,
+                )
+            )
+            if resolved_approval:
+                approval = resolved_approval
             if approval:
                 counts = approval.get("counts")
                 if not isinstance(counts, dict):
@@ -93,7 +107,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
                     print("  trigger_reasons:")
                     for reason in trigger_reasons:
                         print(f"    - {reason}")
-                next_commands = approval_next_commands(approval)
+                if approval_error:
+                    print(f"  diagnostic: {approval_error}")
+                next_commands = approval_next_commands_for_mode(
+                    approval,
+                    action_mode=approval_action_mode,
+                )
                 if next_commands:
                     print("  next_commands:")
                     for command in next_commands:
@@ -358,7 +377,12 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     print(f"experiment_id: {payload.get('experiment_id', '')}")
     print(f"scope: {payload.get('current_scope', 'experiment')}")
     print(f"stage: {payload.get('current_stage', '')}")
-    print(f"verifier_passed: {bool(verifier.get('passed', False))}")
+    verifier_passed = verifier.get("passed")
+    if isinstance(verifier_passed, bool):
+        verifier_passed_text = "true" if verifier_passed else "false"
+    else:
+        verifier_passed_text = "unavailable"
+    print(f"verifier_passed: {verifier_passed_text}")
     print(f"verifier_message: {verifier.get('message', '')}")
     print(f"blocking_failures: {len(blocking)}")
     print(f"pending_human_decisions: {len(pending)}")
