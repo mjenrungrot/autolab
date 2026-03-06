@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autolab"
-version = "1.2.33"
+version = "1.2.34"
 description = "Shared autolab CLI package for workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -63,4 +63,12 @@ autolab = [
   "example_golden_iterations/experiments/plan/iter_golden/launch/*.sbatch",
   "example_golden_iterations/experiments/plan/iter_golden/runs/*/*.json",
   "example_golden_iterations/paper/*.md",
+  "example_brownfield_canary/README.md",
+  "example_brownfield_canary/.autolab/**/*.yaml",
+  "example_brownfield_canary/.autolab/**/*.json",
+  "example_brownfield_canary/docs/*.md",
+  "example_brownfield_canary/scripts/*.sh",
+  "example_brownfield_canary/experiments/in_progress/iter_brownfield_canary/**/*.md",
+  "example_brownfield_canary/experiments/in_progress/iter_brownfield_canary/**/*.json",
+  "example_brownfield_canary/experiments/in_progress/iter_brownfield_canary/**/*.yaml",
 ]

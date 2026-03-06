@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "sidecar_kind": "research",
+  "scope_kind": "experiment",
+  "scope_root": "experiments/in_progress/iter_brownfield_canary",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "iteration_id": "iter_brownfield_canary",
+  "experiment_id": "exp_brownfield_canary",
+  "derived_from": [],
+  "stale_if": [],
+  "questions": [
+    {
+      "id": "exp_q_bootstrap",
+      "summary": "What project-wide surfaces must stay aligned with the in-progress iteration?",
+      "status": "answered"
+    }
+  ],
+  "findings": [
+    {
+      "id": "exp_f_bootstrap",
+      "summary": "The bootstrap script and environment doc are the only shared surfaces touched by this fixture.",
+      "status": "answered",
+      "question_ids": [
+        "exp_q_bootstrap"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "exp_r_promote",
+      "summary": "Promote the bootstrap constraint before shared docs or scripts are updated.",
+      "status": "answered",
+      "finding_ids": [
+        "exp_f_bootstrap"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "exp_s_delta",
+      "summary": "Iteration delta artifact",
+      "kind": "context_delta",
+      "path": "experiments/in_progress/iter_brownfield_canary/context_delta.json",
+      "fingerprint": "70e55909cfd6f570e033c299186376571c073254"
+    }
+  ]
+}

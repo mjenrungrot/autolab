@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "stage": "implementation",
+  "iteration_id": "iter_brownfield_canary",
+  "passed": true,
+  "error_count": 0,
+  "warning_count": 0,
+  "errors": [],
+  "warnings": [],
+  "rule_results": [
+    {
+      "rule": "mixed_scope_contract",
+      "status": "pass",
+      "detail": "Experiment and project-wide tasks are separated and the promoted constraint is declared."
+    }
+  ],
+  "plan_hash": "plan-hash-iter-td-canary",
+  "promotion_checks": {
+    "status": "pass",
+    "requirements": [
+      {
+        "requirement_id": "R_repo_bootstrap",
+        "scope_kind": "project_wide",
+        "status": "pass",
+        "promoted_constraint_ids": [
+          "pc_bootstrap"
+        ],
+        "covering_task_ids": [
+          "T_repo_bootstrap"
+        ],
+        "consumed_promoted_refs": [
+          "promoted:R_repo_bootstrap:pc_bootstrap"
+        ],
+        "missing_promoted_refs": [],
+        "illegal_task_refs": []
+      }
+    ]
+  },
+  "approval_risk": {
+    "requires_approval": true,
+    "trigger_reasons": [
+      "project_wide_tasks_present"
+    ],
+    "counts": {
+      "tasks_total": 2,
+      "waves_total": 1,
+      "project_wide_tasks": 1,
+      "project_wide_unique_paths": 2,
+      "observed_retries": 0,
+      "stage_attempt": 0
+    },
+    "project_wide_task_ids": [
+      "T_repo_bootstrap"
+    ],
+    "project_wide_unique_paths": [
+      "docs/environment.md",
+      "scripts/bootstrap_venv.sh"
+    ],
+    "policy": {
+      "enabled": true,
+      "require_for_project_wide_tasks": true,
+      "max_tasks_without_approval": 6,
+      "max_waves_without_approval": 2,
+      "max_project_wide_paths_without_approval": 3,
+      "require_after_retries": true
+    },
+    "plan_hash": "plan-hash-iter-td-canary",
+    "risk_fingerprint": "risk-iter-td-canary"
+  },
+  "artifacts": {
+    "contract_path": ".autolab/plan_contract.json",
+    "snapshot_path": "experiments/in_progress/iter_brownfield_canary/plan_contract.json",
+    "plan_check_result_path": ".autolab/plan_check_result.json",
+    "plan_graph_path": ".autolab/plan_graph.json"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "decision": "design",
+  "rationale": "Continue iterating on the sanitized canary surfaces before stopping.",
+  "evidence": [
+    {
+      "source": "metrics",
+      "pointer": "experiments/in_progress/iter_brownfield_canary/runs/20260305T120000Z_canary/metrics.json",
+      "summary": "Accuracy improved over the baseline in the sanitized run."
+    }
+  ],
+  "risks": [
+    "Project-wide bootstrap drift remains the primary regression target."
+  ]
+}

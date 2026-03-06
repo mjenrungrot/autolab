@@ -1,0 +1,19 @@
+schema_version: "1.0"
+default_profile: "local_shared"
+profiles:
+  local_shared:
+    mode: shared_fs
+    enabled_for_host_modes: ["local"]
+    remote_repo_root: "."
+    python_path: "python3"
+    submit_command: "sbatch"
+    host_detection:
+      require_commands: []
+    artifact_pull:
+      enabled: false
+      allow_patterns: []
+      max_file_size_mb: 50
+    data_policy:
+      local_sync: allowed
+      deny_patterns: []
+    smoke_command: "python3 -V"

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20260305T120000Z_canary",
+  "iteration_id": "iter_brownfield_canary",
+  "host_mode": "local",
+  "command": "python -m brownfield_canary.train --config fixture",
+  "resource_request": {
+    "cpus": 1,
+    "memory": "2GB",
+    "gpu_count": 0
+  },
+  "status": "completed",
+  "artifact_sync_to_local": {
+    "status": "completed"
+  },
+  "timestamps": {
+    "started_at": "2026-03-05T12:00:00Z",
+    "completed_at": "2026-03-05T12:30:00Z"
+  }
+}

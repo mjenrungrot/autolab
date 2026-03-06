@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "sidecar_kind": "research",
+  "scope_kind": "project_wide",
+  "scope_root": ".",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "questions": [
+    {
+      "id": "pw_q_env",
+      "summary": "Which repo-wide files shape the operator bootstrap flow?",
+      "status": "answered"
+    }
+  ],
+  "findings": [
+    {
+      "id": "pw_f_env",
+      "summary": "The fixture treats docs/environment.md and scripts/bootstrap_venv.sh as the shared UAT surface.",
+      "status": "answered",
+      "question_ids": [
+        "pw_q_env"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "pw_r_keep_small",
+      "summary": "Prefer shared docs and scripts over broader source changes in the canary.",
+      "status": "answered",
+      "finding_ids": [
+        "pw_f_env"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "pw_s_fixture",
+      "summary": "Fixture-authored project map and bundle artifacts",
+      "kind": "project_map",
+      "path": ".autolab/context/project_map.json",
+      "fingerprint": "1cb73c42b3750870eba02b37a8fdf6fbad04319a"
+    }
+  ]
+}

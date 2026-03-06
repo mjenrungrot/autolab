@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.34] - 2026-03-06
+
+### Summary
+
+- Added a packaged brownfield workflow canary fixture and integration coverage so installs exercise a realistic repo-shaped Autolab workflow.
+- Removed product-specific `tinydesk` naming from the bundled canary fixture and refreshed related verifier, parser, remote, and compatibility test coverage.
+
+<!-- autolab:range v1.2.33..v1.2.34 -->
+
 ## [1.2.33] - 2026-03-06
 
 ### Summary

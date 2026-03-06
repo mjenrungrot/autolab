@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "sidecar_kind": "discuss",
+  "scope_kind": "project_wide",
+  "scope_root": ".",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "locked_decisions": [],
+  "preferences": [
+    {
+      "id": "pw_bootstrap_small",
+      "summary": "Keep bootstrap instructions concise and repo-local.",
+      "detail": "Sanitized fixtures should avoid assumptions about external secrets or datasets.",
+      "status": "preferred"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "pw_docs_match_script",
+      "summary": "Environment docs must match the bootstrap script entrypoint.",
+      "detail": "Docs and scripts are treated as one operator-facing surface for this canary.",
+      "status": "constraint"
+    }
+  ],
+  "open_questions": [],
+  "promotion_candidates": []
+}

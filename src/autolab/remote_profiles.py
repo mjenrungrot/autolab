@@ -43,6 +43,7 @@ def normalize_profile_mode(raw_mode: str) -> str:
     if candidate in _VALID_PROFILE_MODES:
         return candidate
     raise StageCheckError(
+        f"Unknown remote profile mode '{candidate}'; "
         "profile_mode must be one of shared_fs, git_checkout, verify_only, or legacy standalone"
     )
 
@@ -475,7 +476,10 @@ def pull_remote_artifacts(
             "failures": [
                 {
                     "path": "",
-                    "reason": "local_sync is forbidden without an explicit artifact allowlist",
+                    "reason": (
+                        "artifact pull allow_patterns must be configured "
+                        "when data_policy.local_sync is forbidden"
+                    ),
                 }
             ],
         }

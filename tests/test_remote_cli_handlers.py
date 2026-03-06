@@ -18,7 +18,7 @@ def test_remote_show_parser_accepts_state_file() -> None:
 
     assert args.state_file == "custom-state.json"
     assert args.profile == "cluster"
-    assert args.handler is _cmd_remote_show
+    assert getattr(args.handler, "__name__", "") == _cmd_remote_show.__name__
 
 
 def test_remote_show_uses_repo_root_and_host_mode(

@@ -528,6 +528,16 @@ def _execute_command_parser_hook(
         variables,
         context=f"extract command parser for run_id={run_id}",
     )
+    # Some environments only expose the active interpreter as `python3` or a
+    # versioned executable. Preserve explicit `python`/`python3` hooks when
+    # available, but fall back to the current interpreter if the requested shim
+    # does not exist.
+    if (
+        command
+        and command[0] in {"python", "python3"}
+        and shutil.which(command[0]) is None
+    ):
+        command[0] = sys.executable
     cwd = repo_root
     if working_dir:
         raw_dir = Path(working_dir)

@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:05:00Z",
+  "iteration_id": "iter_brownfield_canary",
+  "status": "approved",
+  "requires_approval": true,
+  "plan_hash": "plan-hash-iter-td-canary",
+  "risk_fingerprint": "risk-iter-td-canary",
+  "trigger_reasons": [
+    "project_wide_tasks_present"
+  ],
+  "counts": {
+    "tasks_total": 2,
+    "waves_total": 1,
+    "project_wide_tasks": 1,
+    "project_wide_unique_paths": 2,
+    "observed_retries": 0,
+    "stage_attempt": 0
+  },
+  "reviewed_by": "fixture-reviewer",
+  "reviewed_at": "2026-03-05T00:06:00Z",
+  "notes": "Approved because the only shared edits stay on docs and bootstrap surfaces with explicit UAT.",
+  "source_paths": {
+    "plan_contract": ".autolab/plan_contract.json",
+    "plan_graph": ".autolab/plan_graph.json",
+    "plan_check_result": ".autolab/plan_check_result.json"
+  },
+  "uat": {
+    "policy_required": true,
+    "effective_required": true,
+    "required_by": "policy"
+  }
+}

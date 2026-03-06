@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "scan_mode": "sanitized_fixture",
+  "project_map_path": ".autolab/context/project_map.json",
+  "project_map_summary": "Repo root hosts one in-progress experiment plus project-wide onboarding assets.",
+  "focus_iteration_id": "iter_brownfield_canary",
+  "focus_experiment_id": "exp_brownfield_canary",
+  "selected_experiment_delta_path": "experiments/in_progress/iter_brownfield_canary/context_delta.json",
+  "selected_experiment_delta_summary": "The active iteration touches docs and scripts through a promoted experiment constraint.",
+  "experiment_delta_maps": [
+    {
+      "iteration_id": "iter_brownfield_canary",
+      "experiment_id": "exp_brownfield_canary",
+      "path": "experiments/in_progress/iter_brownfield_canary/context_delta.json",
+      "summary": "Current experiment is active and has one completed run."
+    }
+  ]
+}

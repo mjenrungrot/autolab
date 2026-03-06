@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-02-01T11:46:00Z",
+  "stage": "implementation",
+  "iteration_id": "iter_golden",
+  "passed": true,
+  "error_count": 0,
+  "warning_count": 0,
+  "errors": [],
+  "warnings": [],
+  "rule_results": [
+    {
+      "rule": "dependency_order",
+      "status": "pass",
+      "detail": "Golden implementation tasks form a valid two-wave dependency chain."
+    }
+  ],
+  "plan_hash": "plan-hash-iter-golden",
+  "promotion_checks": {
+    "status": "pass",
+    "requirements": []
+  },
+  "approval_risk": {
+    "requires_approval": true,
+    "trigger_reasons": [
+      "project_wide_tasks_present"
+    ],
+    "counts": {
+      "tasks_total": 2,
+      "waves_total": 2,
+      "project_wide_tasks": 2,
+      "project_wide_unique_paths": 3,
+      "observed_retries": 0,
+      "stage_attempt": 0
+    },
+    "project_wide_task_ids": [
+      "T1",
+      "T2"
+    ],
+    "project_wide_unique_paths": [
+      "src/pkg/augment.py",
+      "src/pkg/train.py",
+      "configs/train_golden.yaml"
+    ],
+    "policy": {
+      "enabled": true,
+      "require_for_project_wide_tasks": true,
+      "max_tasks_without_approval": 6,
+      "max_waves_without_approval": 2,
+      "max_project_wide_paths_without_approval": 3,
+      "require_after_retries": true
+    },
+    "plan_hash": "plan-hash-iter-golden",
+    "risk_fingerprint": "risk-iter-golden"
+  },
+  "artifacts": {
+    "contract_path": ".autolab/plan_contract.json",
+    "snapshot_path": "experiments/plan/iter_golden/implementation_plan.md",
+    "plan_check_result_path": ".autolab/plan_check_result.json",
+    "plan_graph_path": ".autolab/plan_graph.json"
+  }
+}

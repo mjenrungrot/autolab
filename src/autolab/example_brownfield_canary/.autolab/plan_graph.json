@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-05T00:00:00Z",
+  "stage": "implementation",
+  "iteration_id": "iter_brownfield_canary",
+  "nodes": [
+    {
+      "task_id": "T_exp_notes",
+      "scope_kind": "experiment",
+      "depth": 0,
+      "can_run_in_parallel": true,
+      "conflict_group": "iteration_notes"
+    },
+    {
+      "task_id": "T_repo_bootstrap",
+      "scope_kind": "project_wide",
+      "depth": 0,
+      "can_run_in_parallel": true,
+      "conflict_group": "repo_bootstrap"
+    }
+  ],
+  "edges": [],
+  "waves": [
+    {
+      "wave": 1,
+      "tasks": [
+        "T_exp_notes",
+        "T_repo_bootstrap"
+      ]
+    }
+  ]
+}

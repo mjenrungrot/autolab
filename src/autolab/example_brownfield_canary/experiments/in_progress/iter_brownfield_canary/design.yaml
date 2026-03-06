@@ -1,0 +1,41 @@
+schema_version: "1.0"
+id: exp_brownfield_canary
+iteration_id: iter_brownfield_canary
+hypothesis_id: h_brownfield_canary
+entrypoint:
+  module: brownfield_canary.train
+  args: {}
+compute:
+  location: local
+  walltime_estimate: 00:15:00
+  memory_estimate: 2GB
+  gpu_count: 0
+metrics:
+  primary:
+    name: accuracy
+    unit: "%"
+    mode: maximize
+  secondary: []
+  success_delta: "+0.5"
+  aggregation: mean
+  baseline_comparison: vs bootstrap baseline
+baselines:
+  - name: bootstrap_baseline
+    description: Current sanitized bootstrap flow
+implementation_requirements:
+  - requirement_id: R_exp_notes
+    description: Keep iteration-local notes current with the in-progress experiment.
+    scope_kind: experiment
+    expected_artifacts: [implementation_plan.md, plan_contract.json]
+  - requirement_id: R_repo_bootstrap
+    description: Keep repo-wide bootstrap docs and script behavior aligned with the active iteration.
+    scope_kind: project_wide
+    promoted_constraints:
+      - id: pc_bootstrap
+        source_ref: "experiment:discuss:constraints:c_bootstrap"
+        summary: Promote the iteration bootstrap constraint before editing shared surfaces.
+        rationale: Shared docs and scripts must consume experiment context only through declared promotions.
+    expected_artifacts: [implementation_plan.md, plan_contract.json]
+extract_parser:
+  kind: command
+  command: "python -m brownfield_canary.extract_results --run-id {run_id} --iteration-path {iteration_path}"
