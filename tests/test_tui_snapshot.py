@@ -220,6 +220,81 @@ def test_snapshot_ignores_stale_handoff_iteration_mismatch(tmp_path: Path) -> No
     assert snapshot.handoff is None
 
 
+def test_snapshot_keeps_handoff_when_stage_differs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="implementation")
+    handoff_json_path = repo / ".autolab" / "handoff.json"
+    handoff_json_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_json_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-02-01T00:00:00Z",
+                "state_file": str(state_path),
+                "iteration_id": "iter1",
+                "experiment_id": "e1",
+                "current_scope": "experiment",
+                "scope_root": str(repo / "experiments" / "plan" / "iter1"),
+                "current_stage": "design",
+                "wave": {
+                    "status": "available",
+                    "current": 1,
+                    "executed": 0,
+                    "total": 2,
+                },
+                "task_status": {
+                    "status": "available",
+                    "total": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                    "pending": 1,
+                    "task_details": [],
+                },
+                "latest_verifier_summary": {
+                    "generated_at": "2026-02-01T00:00:00Z",
+                    "stage_effective": "design",
+                    "passed": True,
+                    "message": "",
+                },
+                "blocking_failures": [],
+                "pending_human_decisions": [],
+                "files_changed_since_last_green_point": [],
+                "recommended_next_command": {
+                    "command": "autolab run",
+                    "reason": "resume",
+                    "executable": True,
+                },
+                "safe_resume_point": {
+                    "command": "autolab run",
+                    "status": "ready",
+                    "preconditions": [],
+                },
+                "wave_observability": {
+                    "status": "available",
+                    "summary": {"waves_total": 2, "waves_executed": 0},
+                },
+                "last_green_at": "",
+                "baseline_snapshot": {},
+                "handoff_json_path": str(handoff_json_path),
+                "handoff_markdown_path": str(
+                    repo / "experiments" / "plan" / "iter1" / "handoff.md"
+                ),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    assert snapshot.handoff is not None
+    assert snapshot.handoff.current_stage == "design"
+    assert snapshot.handoff.wave_observability["status"] == "available"
+
+
 def test_snapshot_recommends_open_verification_result_when_available(
     tmp_path: Path,
 ) -> None:

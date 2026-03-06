@@ -225,10 +225,14 @@ def test_loop_plan_only_stops_before_execution_and_preserves_flag(
         )
 
     monkeypatch.setattr(commands_module, "_run_once", _run_once_stub)
-    monkeypatch.setattr(commands_module, "_acquire_lock", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(
+        commands_module, "_acquire_lock", lambda *_a, **_k: (True, "ok")
+    )
     monkeypatch.setattr(commands_module, "_release_lock", lambda *_a, **_k: None)
     monkeypatch.setattr(commands_module, "_append_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(commands_module, "_collect_change_snapshot", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        commands_module, "_collect_change_snapshot", lambda *_a, **_k: {}
+    )
     monkeypatch.setattr(
         commands_module,
         "_try_auto_commit",

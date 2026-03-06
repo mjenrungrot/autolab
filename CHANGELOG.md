@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.28] - 2026-03-05
+
+### Summary
+
+- Restored TUI wave observability when `handoff.json` stage metadata lags behind `state.json`.
+- Added a repo-local `AGENTS.md` rule forbidding `git commit --no-verify` except for explicit version-bump or release-only commits.
+- Applied formatter-required cleanup in `tests/test_plan_approval_surfaces.py` so normal commit hooks pass.
+
+<!-- autolab:range v1.2.27..v1.2.28 -->
+
 ## [1.2.27] - 2026-03-05
 
 ### Summary
