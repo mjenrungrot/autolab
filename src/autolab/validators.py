@@ -35,6 +35,7 @@ from autolab.slurm_job_list import (
     is_slurm_manifest,
     ledger_contains_run_id,
 )
+from autolab.uat import ensure_uat_pass
 
 
 # ---------------------------------------------------------------------------
@@ -655,7 +656,13 @@ def _validate_design(
 
 
 def _validate_review_result(
-    path: Path, *, policy_requirements: dict[str, bool] | None = None
+    path: Path,
+    *,
+    policy_requirements: dict[str, bool] | None = None,
+    repo_root: Path | None = None,
+    iteration_dir: Path | None = None,
+    stage_label: str | None = None,
+    plan_approval_payload: dict[str, Any] | None = None,
 ) -> str:
     payload = _load_dict_json(path, "review_result.json")
     required = {"status", "blocking_findings", "required_checks", "reviewed_at"}
@@ -702,6 +709,17 @@ def _validate_review_result(
                 raise StageCheckError(
                     f"review_result.json status=pass requires required_checks['{check_name}']='pass', got '{check_status}'"
                 )
+    if (
+        status == "pass"
+        and isinstance(repo_root, Path)
+        and isinstance(iteration_dir, Path)
+    ):
+        ensure_uat_pass(
+            repo_root,
+            iteration_dir,
+            stage_label=stage_label or "implementation_review",
+            plan_approval_payload=plan_approval_payload,
+        )
     return status
 
 

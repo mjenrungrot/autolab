@@ -54,6 +54,7 @@ Examples: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/im
 
 ## MISSING-INPUT FALLBACKS
 - If `design.yaml` or `implementation_plan.md` is missing, set `review_result.status` to `needs_retry` and document blocking findings.
+- If UAT is required and `uat.md` is missing or invalid, set `review_result.status` to `needs_retry` and document the missing UAT evidence.
 - If verifier output context is missing, continue review but mark missing evidence explicitly in findings.
 - If policy is missing, stop and request policy restoration.
 
@@ -66,6 +67,8 @@ Examples: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/im
 - `docs_target_update`
 
 When `review_result.status` is `pass`, any policy-required checks from this 5-key set must be `pass`.
+
+When UAT is required, `{{iteration_path}}/uat.md` must exist, satisfy the Markdown structure rules, and set `UATStatus: pass` before this stage can pass.
 
 Policy categories outside this 5-key contract (for example `prompt_lint` and `consistency`) are
 auto-enforced by `autolab verify` and should be evidenced via `.autolab/verification_result.json`
@@ -86,8 +89,9 @@ rather than added to `review_result.required_checks`.
 ## STEPS
 1. Validate implementation against design and launch constraints.
 2. Read policy-required checks and map each to `pass|skip|fail` with evidence.
-3. Write `implementation_review.md` with summary, blocking findings, remediation actions, and rationale.
-4. Write `review_result.json` matching schema and policy-required checks.
+3. If UAT is required, inspect `{{iteration_path}}/uat.md` and fail review unless it records at least one check and `UATStatus: pass`.
+4. Write `implementation_review.md` with summary, blocking findings, remediation actions, and rationale.
+5. Write `review_result.json` matching schema and policy-required checks.
 
 {{shared:verification_ritual.md}}
 
@@ -127,6 +131,7 @@ If any input is empty, note it as "not available" in your review -- do not fabri
 - [ ] `review_result.json` contains all required keys and required check entries.
 - [ ] `required_checks` values are only `pass|skip|fail`.
 - [ ] `status=pass` is only used when policy-required checks are `pass`.
+- [ ] If UAT is required, `{{iteration_path}}/uat.md` exists and sets `UATStatus: pass`.
 
 ## EVIDENCE POINTERS
 {{shared:evidence_format.md}}

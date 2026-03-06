@@ -100,6 +100,13 @@ except Exception:  # pragma: no cover
     _shared_validate_design = None  # type: ignore[assignment]
 
 try:
+    from autolab.uat import ensure_uat_pass as _shared_ensure_uat_pass
+    from autolab.uat import resolve_uat_requirement as _shared_resolve_uat_requirement
+except Exception:  # pragma: no cover
+    _shared_ensure_uat_pass = None  # type: ignore[assignment]
+    _shared_resolve_uat_requirement = None  # type: ignore[assignment]
+
+try:
     from autolab.utils import _path_fingerprint as _shared_path_fingerprint
 except Exception:  # pragma: no cover
     _shared_path_fingerprint = None  # type: ignore[assignment]
@@ -1695,6 +1702,58 @@ def _validate_plan_approval(state: dict[str, Any], *, stage: str) -> list[str]:
     return failures
 
 
+def _validate_uat(state: dict[str, Any], *, stage: str) -> list[str]:
+    if stage not in {"implementation_review", "launch"}:
+        return []
+    if _shared_resolve_uat_requirement is None:
+        return []
+    iteration_dir = _iteration_dir(state)
+    repo_root = REPO_ROOT
+    plan_approval_payload: dict[str, Any] | None = None
+    plan_approval_path = iteration_dir / "plan_approval.json"
+    if plan_approval_path.exists():
+        try:
+            loaded = load_json(plan_approval_path)
+        except Exception as exc:
+            return [f"{plan_approval_path} {exc}"]
+        if isinstance(loaded, dict):
+            plan_approval_payload = loaded
+
+    summary = _shared_resolve_uat_requirement(
+        repo_root,
+        iteration_dir,
+        plan_approval_payload=plan_approval_payload,
+    )
+    if not bool(summary.get("effective_required", False)):
+        return []
+
+    failures: list[str] = []
+    path = Path(str(summary.get("artifact_path", iteration_dir / "uat.md")))
+    status = str(summary.get("status", "")).strip().lower()
+    if status == "missing":
+        return [f"{path} is required but missing"]
+    if status == "invalid":
+        for error in summary.get("errors", []):
+            detail = str(error).strip()
+            if detail:
+                failures.append(f"{path} invalid: {detail}")
+        return failures or [f"{path} is invalid"]
+
+    if stage in {"implementation_review", "launch"}:
+        if _shared_ensure_uat_pass is None:
+            return []
+        try:
+            _shared_ensure_uat_pass(
+                repo_root,
+                iteration_dir,
+                stage_label=stage,
+                plan_approval_payload=plan_approval_payload,
+            )
+        except Exception as exc:
+            failures.append(str(exc))
+    return failures
+
+
 def _validate_design_context_quality(state: dict[str, Any], *, stage: str) -> list[str]:
     if stage != "design":
         return []
@@ -1799,6 +1858,7 @@ def main() -> int:
     failures.extend(_validate_plan_contract(state, stage=stage))
     failures.extend(_validate_plan_checker_outputs(state, stage=stage))
     failures.extend(_validate_plan_approval(state, stage=stage))
+    failures.extend(_validate_uat(state, stage=stage))
     failures.extend(_validate_design_context_quality(state, stage=stage))
 
     warnings: list[str] = []

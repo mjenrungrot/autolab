@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from autolab.uat import normalize_uat_required_by
 from autolab.utils import _load_json_if_exists, _utc_now, _write_json
 
 
@@ -35,6 +36,35 @@ def _default_source_paths() -> dict[str, str]:
         "plan_graph": ".autolab/plan_graph.json",
         "plan_check_result": ".autolab/plan_check_result.json",
     }
+
+
+def _policy_uat_required(approval_risk: dict[str, Any]) -> bool:
+    risk_flags = approval_risk.get("risk_flags")
+    if isinstance(risk_flags, dict):
+        return bool(risk_flags.get("uat_required", False))
+    return False
+
+
+def _normalize_uat_block(raw_uat: Any, *, policy_required: bool) -> dict[str, Any]:
+    required_by = "none"
+    if isinstance(raw_uat, dict):
+        required_by = normalize_uat_required_by(raw_uat.get("required_by", ""))
+    if policy_required:
+        required_by = "policy"
+    elif required_by not in {"plan_approval", "manual"}:
+        required_by = "none"
+    return {
+        "policy_required": policy_required,
+        "effective_required": required_by != "none",
+        "required_by": required_by,
+    }
+
+
+def _existing_policy_uat_required(payload: dict[str, Any]) -> bool:
+    raw_uat = payload.get("uat")
+    if isinstance(raw_uat, dict):
+        return bool(raw_uat.get("policy_required", False))
+    return False
 
 
 def build_plan_hash(
@@ -118,6 +148,10 @@ def resolve_plan_approval_state(
     iteration_dir: Path,
 ) -> tuple[dict[str, Any], str, str]:
     existing = load_plan_approval(iteration_dir)
+    base_uat = _normalize_uat_block(
+        existing.get("uat"),
+        policy_required=_existing_policy_uat_required(existing),
+    )
     base_payload = {
         "schema_version": "1.0",
         "generated_at": str(existing.get("generated_at", "")).strip() or _utc_now(),
@@ -141,6 +175,7 @@ def resolve_plan_approval_state(
         "source_paths": dict(existing.get("source_paths", {}))
         if isinstance(existing.get("source_paths"), dict)
         else _default_source_paths(),
+        "uat": base_uat,
     }
     if not base_payload["source_paths"]:
         base_payload["source_paths"] = _default_source_paths()
@@ -191,6 +226,7 @@ def resolve_plan_approval_state(
         risk_fingerprint=risk_fingerprint,
         require_approved=False,
     )
+    policy_uat_required = _policy_uat_required(approval_risk)
 
     payload = {
         "schema_version": "1.0",
@@ -213,6 +249,10 @@ def resolve_plan_approval_state(
         "source_paths": dict(existing.get("source_paths", {}))
         if isinstance(existing.get("source_paths"), dict)
         else _default_source_paths(),
+        "uat": _normalize_uat_block(
+            existing.get("uat"),
+            policy_required=policy_uat_required,
+        ),
     }
     if not payload["source_paths"]:
         payload["source_paths"] = _default_source_paths()
@@ -259,6 +299,9 @@ def render_plan_approval_markdown(payload: dict[str, Any]) -> str:
         for item in payload.get("trigger_reasons", [])
         if str(item).strip()
     ]
+    uat = payload.get("uat")
+    if not isinstance(uat, dict):
+        uat = _normalize_uat_block({}, policy_required=False)
     lines = [
         "# Plan Approval",
         "",
@@ -278,6 +321,12 @@ def render_plan_approval_markdown(payload: dict[str, Any]) -> str:
         lines.append("- none")
     lines.extend(
         [
+            "",
+            "## UAT",
+            "",
+            f"- policy_required: `{bool(uat.get('policy_required', False))}`",
+            f"- effective_required: `{bool(uat.get('effective_required', False))}`",
+            f"- required_by: `{uat.get('required_by', 'none')}`",
             "",
             "## Review",
             "",
@@ -301,6 +350,7 @@ def write_plan_approval(
     risk_fingerprint = build_risk_fingerprint(approval_risk)
     requires_approval = bool(approval_risk.get("requires_approval", False))
     counts = dict(approval_risk.get("counts", {}))
+    policy_uat_required = _policy_uat_required(approval_risk)
     trigger_reasons = [
         str(item).strip()
         for item in approval_risk.get("trigger_reasons", [])
@@ -350,6 +400,10 @@ def write_plan_approval(
             "plan_graph": ".autolab/plan_graph.json",
             "plan_check_result": ".autolab/plan_check_result.json",
         },
+        "uat": _normalize_uat_block(
+            existing.get("uat"),
+            policy_required=policy_uat_required,
+        ),
     }
     json_path = plan_approval_json_path(iteration_dir)
     md_path = plan_approval_markdown_path(iteration_dir)
@@ -364,6 +418,7 @@ def record_plan_approval_decision(
     status: str,
     notes: str = "",
     reviewed_by: str = "",
+    require_uat: bool = False,
 ) -> dict[str, Any]:
     payload = load_plan_approval(iteration_dir)
     if not payload:
@@ -373,10 +428,32 @@ def record_plan_approval_decision(
     normalized_status = str(status).strip().lower()
     if normalized_status not in {"approved", "retry", "stop"}:
         raise RuntimeError(f"invalid approval status '{status}'")
+    if require_uat and normalized_status == "stop":
+        raise RuntimeError("cannot mark UAT required when approval status is stop")
     payload["status"] = normalized_status
     payload["reviewed_at"] = _utc_now()
     payload["reviewed_by"] = reviewed_by or os.environ.get("USER", "")
     payload["notes"] = str(notes).strip()
+    if require_uat:
+        payload["uat"] = _normalize_uat_block(
+            {"required_by": "plan_approval"},
+            policy_required=_existing_policy_uat_required(payload),
+        )
+    json_path = plan_approval_json_path(iteration_dir)
+    md_path = plan_approval_markdown_path(iteration_dir)
+    _write_json(json_path, payload)
+    md_path.write_text(render_plan_approval_markdown(payload), encoding="utf-8")
+    return payload
+
+
+def record_manual_uat_request(iteration_dir: Path) -> dict[str, Any]:
+    payload = load_plan_approval(iteration_dir)
+    if not payload:
+        return {}
+    payload["uat"] = _normalize_uat_block(
+        {"required_by": "manual"},
+        policy_required=_existing_policy_uat_required(payload),
+    )
     json_path = plan_approval_json_path(iteration_dir)
     md_path = plan_approval_markdown_path(iteration_dir)
     _write_json(json_path, payload)

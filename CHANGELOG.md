@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.33] - 2026-03-06
+
+### Summary
+
+- Added iteration-scoped Markdown UAT artifacts with `autolab uat init` and plan-approval UAT overrides.
+- Enforced required UAT pass status in implementation review, launch, handoff/progress reporting, prompts, and scaffold verifiers.
+
+<!-- autolab:range v1.2.32..v1.2.33 -->
+
 ## [1.2.32] - 2026-03-05
 
 ### Summary

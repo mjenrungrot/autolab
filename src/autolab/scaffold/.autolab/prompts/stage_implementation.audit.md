@@ -32,6 +32,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/imp
 - `{{iteration_path}}/plan_contract.json`
 - `.autolab/plan_check_result.json`
 - `.autolab/plan_graph.json`
+- `{{iteration_path}}/uat.md` when UAT is required for shared operator-facing changes
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
@@ -103,9 +104,10 @@ Canonical minimal task block:
 1. Implement only design-relevant changes; avoid unrelated edits.
 2. Keep experiment-local artifacts under `{{iteration_path}}/implementation/` unless code is reusable across iterations.
 3. Build the machine contract and run: `{{python_bin}} .autolab/verifiers/implementation_plan_contract.py --stage implementation --json`; if it fails, revise contract before execution.
-4. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
-5. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
-6. Include short bounded excerpts for failing commands and explain remediation.
+4. When UAT is required, scaffold or update `{{iteration_path}}/uat.md`; use `autolab uat init` to create the template and leave `UATStatus` at `needs_retry` or `blocked` until checks are actually observed.
+5. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
+6. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
+7. Include short bounded excerpts for failing commands and explain remediation.
 
 {{shared:verification_ritual.md}}
 
@@ -185,6 +187,7 @@ Canonical minimal task block:
 - [ ] `implementation_plan.md` records exact commands and evidence locations.
 - [ ] `.autolab/plan_contract.json` and `{{iteration_path}}/plan_contract.json` both exist and align.
 - [ ] `implementation_plan_contract.py` passes and emits `.autolab/plan_check_result.json` and `.autolab/plan_graph.json`.
+- [ ] If UAT is required, `{{iteration_path}}/uat.md` exists and records the current manual-check status.
 - [ ] `implementation_plan.md` includes `## Dry Run` when policy requires `dry_run` for implementation.
 - [ ] Output paths avoid unresolved placeholders and literal double-slash style paths.
 - [ ] If task blocks exist, each has depends_on, location, description, touches, scope_ok, validation, status fields.

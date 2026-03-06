@@ -29,6 +29,7 @@ from autolab.runners import _invoke_agent_runner
 from autolab.sidecar_tools import build_task_context_guidance
 from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
+from autolab.uat import derive_uat_required
 from autolab.utils import (
     _append_log,
     _collect_change_snapshot,
@@ -89,15 +90,11 @@ def _derive_uat_required(
     uat_surface_patterns: list[str],
 ) -> bool:
     """Return True when UAT is required based on scope and touched surfaces."""
-    if scope_kind != "project_wide" or not project_wide_unique_paths:
-        return False
-    import fnmatch
-
-    for path in project_wide_unique_paths:
-        for pattern in uat_surface_patterns:
-            if fnmatch.fnmatch(path, pattern):
-                return True
-    return False
+    return derive_uat_required(
+        scope_kind,
+        project_wide_unique_paths,
+        uat_surface_patterns,
+    )
 
 
 def _derive_approval_risk_fallback(

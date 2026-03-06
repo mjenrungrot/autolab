@@ -15,6 +15,7 @@ from autolab.plan_approval import build_plan_hash, build_risk_fingerprint
 from autolab.registry import load_registry
 from autolab.sidecar_tools import parse_context_ref, resolve_context_ref
 from autolab.state import _resolve_iteration_directory
+from autolab.uat import derive_uat_required, load_uat_surface_patterns
 
 _ROOT_SCOPED_PREFIXES = (
     ".autolab/",
@@ -1150,6 +1151,15 @@ def check_implementation_plan_contract(
             "require_after_retries": approval_cfg.require_after_retries,
         },
         "plan_hash": plan_hash,
+    }
+    approval_risk["risk_flags"] = {
+        "plan_approval_required": bool(trigger_reasons),
+        "uat_required": derive_uat_required(
+            "project_wide" if project_wide_task_ids else "experiment",
+            project_wide_unique_paths,
+            load_uat_surface_patterns(repo_root),
+        ),
+        "remote_profile_required": False,
     }
     approval_risk["risk_fingerprint"] = build_risk_fingerprint(approval_risk)
     promotion_checks = {

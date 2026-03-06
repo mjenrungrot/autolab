@@ -899,6 +899,11 @@ def _write_plan_approval_fixture(
                     "plan_graph": ".autolab/plan_graph.json",
                     "plan_check_result": ".autolab/plan_check_result.json",
                 },
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": False,
+                    "required_by": "none",
+                },
             },
             indent=2,
         )
@@ -2109,6 +2114,59 @@ def test_approve_plan_command_marks_plan_approved(
     assert payload["notes"] == "safe to proceed"
     assert state["stage"] == "implementation"
     assert "approved" in output
+
+
+def test_approve_plan_command_can_require_uat(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    iteration_dir = _write_plan_approval_fixture(repo, state_path, status="pending")
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            [
+                "approve-plan",
+                "--state-file",
+                str(state_path),
+                "--status",
+                "approve",
+                "--require-uat",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(
+        (iteration_dir / "plan_approval.json").read_text(encoding="utf-8")
+    )
+
+    assert payload["status"] == "approved"
+    assert payload["uat"]["effective_required"] is True
+    assert payload["uat"]["required_by"] == "plan_approval"
+
+
+def test_uat_init_scaffolds_template_for_manual_request(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = "iter_uat"
+    state["experiment_id"] = "e1"
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    _ = capsys.readouterr()
+
+    assert commands_module.main(["uat", "init", "--state-file", str(state_path)]) == 0
+    uat_path = repo / "experiments" / "plan" / "iter_uat" / "uat.md"
+    output = capsys.readouterr().out
+
+    assert uat_path.exists()
+    text = uat_path.read_text(encoding="utf-8")
+    assert "UATStatus: needs_retry" in text
+    assert "- required_by: manual" in text
+    assert "autolab uat init:" in output
 
 
 def test_discuss_answers_file_writes_experiment_sidecar(
