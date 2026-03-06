@@ -636,6 +636,60 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     slurm_job_list.set_defaults(handler=_cmd_slurm_job_list)
 
+    remote = subparsers.add_parser(
+        "remote",
+        help="Inspect and validate remote execution profiles.",
+    )
+    remote_subparsers = remote.add_subparsers(dest="remote_command")
+
+    remote_show = remote_subparsers.add_parser(
+        "show",
+        help="Show the resolved remote execution profile.",
+    )
+    remote_show.add_argument(
+        "--profile",
+        default="",
+        help="Profile name to inspect (default: use default_profile).",
+    )
+    remote_show.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    remote_show.set_defaults(handler=_cmd_remote_show)
+
+    remote_doctor = remote_subparsers.add_parser(
+        "doctor",
+        help="Diagnose remote profile and revision readiness.",
+    )
+    remote_doctor.add_argument(
+        "--profile",
+        default="",
+        help="Profile name to inspect (default: use default_profile).",
+    )
+    remote_doctor.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    remote_doctor.set_defaults(handler=_cmd_remote_doctor)
+
+    remote_smoke = remote_subparsers.add_parser(
+        "smoke",
+        help="Verify remote reachability, repo, Python, and optional smoke command.",
+    )
+    remote_smoke.add_argument(
+        "--profile",
+        default="",
+        help="Profile name to inspect (default: use default_profile).",
+    )
+    remote_smoke.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    remote_smoke.set_defaults(handler=_cmd_remote_smoke)
+
     report = subparsers.add_parser(
         "report",
         help="Generate a developer issue report from local autolab logs",

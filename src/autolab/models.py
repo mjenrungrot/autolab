@@ -214,5 +214,69 @@ class EffectivePolicyResult:
 
 
 @dataclass(frozen=True)
+class RemoteHostDetectionConfig:
+    require_commands: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RemoteGitSyncConfig:
+    revision_source: str
+    require_clean_worktree: bool
+    fetch_command: str
+    checkout_command: str
+
+
+@dataclass(frozen=True)
+class RemoteArtifactPullConfig:
+    enabled: bool
+    allow_patterns: tuple[str, ...]
+    max_file_size_mb: float
+
+
+@dataclass(frozen=True)
+class RemoteDataPolicyConfig:
+    local_sync: str
+    deny_patterns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RemoteEnvConfig:
+    cache_vars: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RemoteProfileConfig:
+    name: str
+    mode: str
+    enabled_for_host_modes: tuple[str, ...]
+    login_host: str
+    remote_repo_root: str
+    bootstrap_command: str
+    python_path: str
+    submit_command: str
+    host_detection: RemoteHostDetectionConfig
+    git_sync: RemoteGitSyncConfig
+    artifact_pull: RemoteArtifactPullConfig
+    data_policy: RemoteDataPolicyConfig
+    env: RemoteEnvConfig
+    smoke_command: str = ""
+
+
+@dataclass(frozen=True)
+class RemoteProfilesConfig:
+    schema_version: str
+    path: Path
+    default_profile: str
+    profiles: dict[str, RemoteProfileConfig]
+
+
+@dataclass(frozen=True)
+class RevisionLabelInfo:
+    label: str
+    source: str
+    dirty: bool
+
+
+@dataclass(frozen=True)
 class PlanExecutionConfig:
     implementation: PlanExecutionImplementationConfig

@@ -106,21 +106,13 @@ def _safe_rel_path(base: Path, rel: str) -> Path | None:
 
 
 def _resolve_revision_label(repo_root: Path) -> str:
-    import subprocess
+    from autolab.remote_profiles import resolve_workspace_revision
 
     try:
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--exact-match"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+        revision = resolve_workspace_revision(repo_root)
     except Exception:
-        pass
-    return "unversioned-worktree"
+        return "unversioned-worktree"
+    return revision.label or "unversioned-worktree"
 
 
 def _collect_canonical_artifacts(
