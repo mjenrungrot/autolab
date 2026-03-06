@@ -14,6 +14,7 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 - `.autolab/prompts/rendered/implementation_review.context.json`
 - `iteration_id={{iteration_id}}`
 - `iteration_path={{iteration_path}}`
+- `{{iteration_path}}/uat.md` when UAT is required
 
 ## STOP CONDITIONS
 - Stop when required input files are missing.
@@ -24,4 +25,5 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 
 ## FAILURE / RETRY BEHAVIOR
 - On verifier failure, fix artifacts and rerun verification.
+- Do not mark implementation review as passing while required UAT is missing or not `UATStatus: pass`.
 - Do not force stage transitions manually.

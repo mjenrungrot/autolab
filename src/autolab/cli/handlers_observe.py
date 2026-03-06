@@ -9,6 +9,7 @@ from autolab.plan_approval import (
     resolve_plan_approval_state,
 )
 from autolab.traceability import build_traceability_coverage
+from autolab.uat import resolve_uat_requirement
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,19 +59,19 @@ def _cmd_status(args: argparse.Namespace) -> int:
             "Run `autolab review --status=pass|retry|stop` to record the human review decision."
         )
 
-    if str(state.get("stage", "")).strip() == "implementation":
-        iteration_id = str(state.get("iteration_id", "")).strip()
-        experiment_id = str(state.get("experiment_id", "")).strip()
-        if iteration_id:
-            iteration_dir, _ = _resolve_iteration_directory(
-                repo_root,
-                iteration_id=iteration_id,
-                experiment_id=experiment_id,
-                require_exists=False,
-            )
-            approval = load_plan_approval(iteration_dir)
-            approval_action_mode = "none"
-            approval_error = ""
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    if iteration_id:
+        iteration_dir, _ = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        approval = load_plan_approval(iteration_dir)
+        approval_action_mode = "none"
+        approval_error = ""
+        if str(state.get("stage", "")).strip() == "implementation":
             resolved_approval, approval_error, approval_action_mode = (
                 resolve_plan_approval_state(
                     repo_root,
@@ -79,44 +80,59 @@ def _cmd_status(args: argparse.Namespace) -> int:
             )
             if resolved_approval:
                 approval = resolved_approval
-            if approval:
-                counts = approval.get("counts")
-                if not isinstance(counts, dict):
-                    counts = {}
-                trigger_reasons = [
-                    str(item).strip()
-                    for item in approval.get("trigger_reasons", [])
-                    if str(item).strip()
-                ]
-                print("plan_approval:")
-                print(f"  status: {approval.get('status', '')}")
-                print(
-                    f"  requires_approval: {bool(approval.get('requires_approval', False))}"
-                )
-                print(f"  plan_hash: {approval.get('plan_hash', '')}")
-                print(f"  risk_fingerprint: {approval.get('risk_fingerprint', '')}")
-                print(
-                    "  counts: "
-                    f"tasks={int(counts.get('tasks_total', 0) or 0)} "
-                    f"waves={int(counts.get('waves_total', 0) or 0)} "
-                    f"project_wide_tasks={int(counts.get('project_wide_tasks', 0) or 0)} "
-                    f"project_wide_paths={int(counts.get('project_wide_unique_paths', 0) or 0)} "
-                    f"retries={int(counts.get('observed_retries', 0) or 0)}"
-                )
-                if trigger_reasons:
-                    print("  trigger_reasons:")
-                    for reason in trigger_reasons:
-                        print(f"    - {reason}")
-                if approval_error:
-                    print(f"  diagnostic: {approval_error}")
-                next_commands = approval_next_commands_for_mode(
-                    approval,
-                    action_mode=approval_action_mode,
-                )
-                if next_commands:
-                    print("  next_commands:")
-                    for command in next_commands:
-                        print(f"    - {command}")
+        if approval and str(state.get("stage", "")).strip() == "implementation":
+            counts = approval.get("counts")
+            if not isinstance(counts, dict):
+                counts = {}
+            trigger_reasons = [
+                str(item).strip()
+                for item in approval.get("trigger_reasons", [])
+                if str(item).strip()
+            ]
+            print("plan_approval:")
+            print(f"  status: {approval.get('status', '')}")
+            print(
+                f"  requires_approval: {bool(approval.get('requires_approval', False))}"
+            )
+            print(f"  plan_hash: {approval.get('plan_hash', '')}")
+            print(f"  risk_fingerprint: {approval.get('risk_fingerprint', '')}")
+            print(
+                "  counts: "
+                f"tasks={int(counts.get('tasks_total', 0) or 0)} "
+                f"waves={int(counts.get('waves_total', 0) or 0)} "
+                f"project_wide_tasks={int(counts.get('project_wide_tasks', 0) or 0)} "
+                f"project_wide_paths={int(counts.get('project_wide_unique_paths', 0) or 0)} "
+                f"retries={int(counts.get('observed_retries', 0) or 0)}"
+            )
+            if trigger_reasons:
+                print("  trigger_reasons:")
+                for reason in trigger_reasons:
+                    print(f"    - {reason}")
+            if approval_error:
+                print(f"  diagnostic: {approval_error}")
+            next_commands = approval_next_commands_for_mode(
+                approval,
+                action_mode=approval_action_mode,
+            )
+            if next_commands:
+                print("  next_commands:")
+                for command in next_commands:
+                    print(f"    - {command}")
+
+        uat_summary = resolve_uat_requirement(
+            repo_root,
+            iteration_dir,
+            plan_approval_payload=approval if approval else None,
+        )
+        if (
+            bool(uat_summary.get("effective_required", False))
+            or Path(str(uat_summary.get("artifact_path", ""))).exists()
+        ):
+            print("uat:")
+            print(f"  required: {bool(uat_summary.get('effective_required', False))}")
+            print(f"  required_by: {uat_summary.get('required_by', 'none')}")
+            print(f"  status: {uat_summary.get('status', 'not_required')}")
+            print(f"  artifact_path: {uat_summary.get('artifact_path', '')}")
 
     # --- Lock status ---
     lock_path = autolab_dir / "lock"
@@ -369,6 +385,9 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     observability_diagnostics = wave_observability.get("diagnostics", [])
     if not isinstance(observability_diagnostics, list):
         observability_diagnostics = []
+    uat = payload.get("uat", {})
+    if not isinstance(uat, dict):
+        uat = {}
 
     print("autolab progress")
     print(f"state_file: {state_path}")
@@ -386,8 +405,13 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     print(f"verifier_message: {verifier.get('message', '')}")
     print(f"blocking_failures: {len(blocking)}")
     print(f"pending_human_decisions: {len(pending)}")
+    print(f"uat_required: {bool(uat.get('required', False))}")
+    print(f"uat_status: {uat.get('status', 'not_required')}")
     print(f"recommended_next_command: {recommended.get('command', '')}")
     print(f"safe_resume_status: {safe_resume.get('status', 'blocked')}")
+    if uat:
+        print(f"uat_required_by: {uat.get('required_by', 'none')}")
+        print(f"uat_artifact: {uat.get('artifact_path', '')}")
     critical_wave_ids = _observe_non_empty_strings(critical_path.get("wave_ids", []))
     critical_task_ids = _observe_non_empty_strings(critical_path.get("task_ids", []))
     print("critical_path:")

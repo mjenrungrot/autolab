@@ -276,5 +276,14 @@ VERIFIER_COMMAND_TIMEOUT_SECONDS = 120
 # ---------------------------------------------------------------------------
 PROFILE_MODES = ("shared_fs", "git_checkout", "verify_only", "standalone")
 DEFAULT_PROFILE_MODE = "git_checkout"
-DEFAULT_UAT_SURFACE_PATTERNS = ("scripts/**", "docs/**")
+DEFAULT_UAT_SURFACE_PATTERNS = (
+    "scripts/**",
+    "src/eval/**",
+    "docs/**",
+    "paper/**",
+    "src/autolab/cli/**",
+    "src/autolab/tui/**",
+    "src/autolab/__main__.py",
+    "src/autolab/commands.py",
+)
 EFFECTIVE_POLICY_SCHEMA_VERSION = "1.0"

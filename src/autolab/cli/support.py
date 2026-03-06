@@ -148,6 +148,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "verify-golden",
             "lint",
             "approve-plan",
+            "uat",
             "review",
             "skip",
             "handoff",

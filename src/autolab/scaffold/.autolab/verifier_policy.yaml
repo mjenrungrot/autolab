@@ -389,7 +389,13 @@ profile_mode: standalone
 # ---------------------------------------------------------------------------
 uat_surface_patterns:
   - "scripts/**"
+  - "src/eval/**"
   - "docs/**"
+  - "paper/**"
+  - "src/autolab/cli/**"
+  - "src/autolab/tui/**"
+  - "src/autolab/__main__.py"
+  - "src/autolab/commands.py"
 
 # ---------------------------------------------------------------------------
 # Policy overlays (keyed by dimension)

@@ -16,7 +16,8 @@
     "reviewed_by",
     "reviewed_at",
     "notes",
-    "source_paths"
+    "source_paths",
+    "uat"
   ],
   "properties": {
     "schema_version": {
@@ -89,6 +90,19 @@
         "plan_contract": {"type": "string", "minLength": 1},
         "plan_graph": {"type": "string", "minLength": 1},
         "plan_check_result": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "uat": {
+      "type": "object",
+      "required": ["policy_required", "effective_required", "required_by"],
+      "properties": {
+        "policy_required": {"type": "boolean"},
+        "effective_required": {"type": "boolean"},
+        "required_by": {
+          "type": "string",
+          "enum": ["none", "policy", "plan_approval", "manual"]
+        }
       },
       "additionalProperties": false
     }

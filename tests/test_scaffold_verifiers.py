@@ -376,6 +376,12 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
         "handoff_markdown_path": str(
             repo / "experiments" / "plan" / "iter1" / "handoff.md"
         ),
+        "uat": {
+            "required": False,
+            "required_by": "none",
+            "artifact_path": str(repo / "experiments" / "plan" / "iter1" / "uat.md"),
+            "status": "not_required",
+        },
     }
     if not valid:
         payload.pop("safe_resume_point", None)
@@ -808,6 +814,11 @@ def test_schema_checks_validates_optional_plan_approval_schema(tmp_path: Path) -
                     "plan_graph": ".autolab/plan_graph.json",
                     "plan_check_result": ".autolab/plan_check_result.json",
                 },
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": False,
+                    "required_by": "none",
+                },
             },
             indent=2,
         )
@@ -855,6 +866,11 @@ def test_schema_checks_fails_for_invalid_plan_approval_schema(
                     "plan_graph": ".autolab/plan_graph.json",
                     "plan_check_result": ".autolab/plan_check_result.json",
                 },
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": False,
+                    "required_by": "none",
+                },
             },
             indent=2,
         )
@@ -866,6 +882,56 @@ def test_schema_checks_fails_for_invalid_plan_approval_schema(
 
     assert result.returncode == 1
     assert "plan_approval.json schema violation" in result.stdout
+
+
+def test_schema_checks_fail_when_required_uat_is_missing(tmp_path: Path) -> None:
+    repo = _setup_review_repo(tmp_path)
+    _write_review_result(repo, include_docs_check=True)
+    plan_approval_path = repo / "experiments" / "plan" / "iter1" / "plan_approval.json"
+    plan_approval_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_approval_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "status": "approved",
+                "requires_approval": True,
+                "plan_hash": "plan-hash-1",
+                "risk_fingerprint": "risk-fingerprint-1",
+                "trigger_reasons": ["project_wide_tasks_present"],
+                "counts": {
+                    "tasks_total": 3,
+                    "waves_total": 2,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 2,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "reviewer",
+                "reviewed_at": "2026-03-05T00:01:00Z",
+                "notes": "",
+                "source_paths": {
+                    "plan_contract": ".autolab/plan_contract.json",
+                    "plan_graph": ".autolab/plan_graph.json",
+                    "plan_check_result": ".autolab/plan_check_result.json",
+                },
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": True,
+                    "required_by": "manual",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_schema_checks(repo)
+
+    assert result.returncode == 1
+    assert "uat.md is required but missing" in result.stdout
 
 
 def test_schema_checks_validates_optional_sidecar_schemas(tmp_path: Path) -> None:
@@ -1770,7 +1836,7 @@ def test_prompt_lint_requires_all_runner_required_tokens(
     _write_review_result(repo, include_docs_check=True)
     prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
     text = prompt_path.read_text(encoding="utf-8")
-    text = text.replace("- `iteration_path={{iteration_path}}`\n", "")
+    text = text.replace("{{iteration_path}}", "missing_iteration_path")
     prompt_path.write_text(text, encoding="utf-8")
 
     result = _run_prompt_lint(repo, stage="implementation")

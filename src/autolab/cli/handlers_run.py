@@ -7,10 +7,16 @@ from autolab.cli.handlers_observe import _safe_refresh_handoff
 from autolab.config import _load_agent_runner_config
 from autolab.plan_approval import (
     load_plan_approval,
+    record_manual_uat_request,
     record_plan_approval_decision,
 )
 from autolab.render_debug import ALL_RENDER_VIEWS, build_render_stats_report
 from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
+from autolab.uat import (
+    render_uat_template,
+    resolve_uat_requirement,
+    resolve_uat_template_context,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -742,6 +748,7 @@ def _cmd_approve_plan(args: argparse.Namespace) -> int:
             iteration_dir,
             status=normalized_status,
             notes=str(getattr(args, "notes", "") or "").strip(),
+            require_uat=bool(getattr(args, "require_uat", False)),
         )
     except RuntimeError as exc:
         print(f"autolab approve-plan: ERROR {exc}", file=sys.stderr)
@@ -756,6 +763,8 @@ def _cmd_approve_plan(args: argparse.Namespace) -> int:
             "implementation plan approval recorded: approved — "
             "run `autolab run --execute-approved-plan` or `autolab run` to continue"
         )
+        if bool(getattr(args, "require_uat", False)):
+            message = f"{message}; UAT required"
     elif normalized_status == "retry":
         message = (
             "implementation plan approval recorded: retry — "
@@ -814,6 +823,125 @@ def _cmd_approve_plan(args: argparse.Namespace) -> int:
     approval_status = str(approval_payload.get("status", "")).strip()
     _append_log(repo_root, f"approve-plan command: {approval_status} {message}")
     print(f"autolab approve-plan: {message}")
+    return 0
+
+
+def _cmd_uat_init(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab uat init: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    if not iteration_id:
+        print(
+            "autolab uat init: ERROR current state is missing iteration_id",
+            file=sys.stderr,
+        )
+        return 1
+
+    iteration_dir, _ = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        require_exists=False,
+    )
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+
+    changed_files: list[Path] = []
+    plan_approval_payload = load_plan_approval(iteration_dir)
+    summary = resolve_uat_requirement(
+        repo_root,
+        iteration_dir,
+        plan_approval_payload=plan_approval_payload if plan_approval_payload else None,
+    )
+
+    requested_manually = False
+    if not bool(summary.get("effective_required", False)):
+        before = load_plan_approval(iteration_dir)
+        updated_payload = record_manual_uat_request(iteration_dir)
+        requested_manually = True
+        if updated_payload:
+            plan_approval_payload = updated_payload
+            changed_files.extend(
+                [
+                    iteration_dir / "plan_approval.json",
+                    iteration_dir / "plan_approval.md",
+                ]
+            )
+        elif before:
+            plan_approval_payload = before
+        summary = resolve_uat_requirement(
+            repo_root,
+            iteration_dir,
+            plan_approval_payload=plan_approval_payload
+            if plan_approval_payload
+            else None,
+        )
+
+    artifact_path = Path(str(summary.get("artifact_path", iteration_dir / "uat.md")))
+    if artifact_path.exists():
+        if changed_files:
+            message = f"preserved existing UAT artifact at {artifact_path}"
+            _persist_agent_result(
+                repo_root,
+                status="complete",
+                summary=message,
+                changed_files=changed_files,
+            )
+            _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+            if _handoff_payload is None:
+                print(
+                    f"autolab uat init: WARN failed to refresh handoff snapshot: {_handoff_error}",
+                    file=sys.stderr,
+                )
+            _append_log(repo_root, f"uat init command: {message}")
+        print(f"autolab uat init: existing artifact preserved at {artifact_path}")
+        return 0
+
+    required_by = str(summary.get("required_by", "")).strip() or "manual"
+    if requested_manually and required_by == "none":
+        required_by = "manual"
+    context = resolve_uat_template_context(repo_root)
+    artifact_path.write_text(
+        render_uat_template(
+            iteration_id=iteration_id,
+            scope_kind=str(summary.get("scope_kind", "experiment")).strip()
+            or "experiment",
+            required_by=required_by,
+            revision_label=str(
+                context.get("revision_label", "unversioned-worktree")
+            ).strip()
+            or "unversioned-worktree",
+            host_mode=str(context.get("host_mode", "local")).strip() or "local",
+            remote_profile=str(context.get("remote_profile", "none")).strip() or "none",
+        ),
+        encoding="utf-8",
+    )
+    changed_files.append(artifact_path)
+
+    reason = str(summary.get("required_by", "")).strip() or required_by
+    if requested_manually and reason == "none":
+        reason = "manual"
+    message = f"initialized UAT template at {artifact_path} (required_by={reason})"
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=message,
+        changed_files=changed_files,
+    )
+    _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+    if _handoff_payload is None:
+        print(
+            f"autolab uat init: WARN failed to refresh handoff snapshot: {_handoff_error}",
+            file=sys.stderr,
+        )
+    _append_log(repo_root, f"uat init command: {message}")
+    print(f"autolab uat init: {message}")
     return 0
 
 

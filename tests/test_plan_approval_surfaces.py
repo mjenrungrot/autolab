@@ -163,6 +163,11 @@ def _write_stale_plan_approval(repo: Path) -> None:
                     "plan_graph": ".autolab/plan_graph.json",
                     "plan_check_result": ".autolab/plan_check_result.json",
                 },
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": False,
+                    "required_by": "none",
+                },
             },
             indent=2,
         )

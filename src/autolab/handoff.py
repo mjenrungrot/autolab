@@ -9,6 +9,7 @@ from autolab.constants import ACTIVE_STAGES, DECISION_STAGES
 from autolab.plan_approval import (
     approval_next_commands_for_mode,
     approval_requires_action,
+    load_plan_approval,
     resolve_plan_approval_state,
 )
 from autolab.scope import _detect_scope_kind_from_plan_contract, _resolve_scope_context
@@ -16,6 +17,7 @@ from autolab.state import (
     _normalize_state,
     _resolve_repo_root,
 )
+from autolab.uat import resolve_uat_requirement
 from autolab.utils import (
     _collect_change_snapshot,
     _compact_json,
@@ -252,6 +254,7 @@ def _pending_human_decisions(
     block_reason_payload: dict[str, Any],
     plan_approval: dict[str, Any],
     plan_approval_action_mode: str,
+    uat: dict[str, Any],
 ) -> list[str]:
     stage = str(state.get("stage", "")).strip()
     decisions: list[str] = []
@@ -281,6 +284,20 @@ def _pending_human_decisions(
                 action_mode=plan_approval_action_mode,
             )
         )
+    if stage in {"implementation_review", "launch"} and bool(
+        uat.get("required", False)
+    ):
+        uat_status = str(uat.get("status", "")).strip().lower()
+        artifact_path = str(uat.get("artifact_path", "")).strip()
+        if uat_status != "pass":
+            if uat_status == "missing":
+                decisions.append(
+                    f"Create the required UAT artifact via `autolab uat init` and complete {artifact_path}."
+                )
+            else:
+                decisions.append(
+                    f"Update {artifact_path} and set `UATStatus: pass` before continuing."
+                )
     return _unique_list(decisions)
 
 
@@ -292,12 +309,29 @@ def _recommended_command(
     latest_verification: dict[str, Any],
     plan_approval: dict[str, Any],
     plan_approval_action_mode: str,
+    uat: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     stage = str(state.get("stage", "")).strip()
     if stage == "human_review":
         command = "autolab review --status=<pass|retry|stop>"
         reason = "Current stage is human_review and requires an explicit decision."
         executable = False
+    elif (
+        stage in {"implementation_review", "launch"}
+        and bool(uat.get("required", False))
+        and str(uat.get("status", "")).strip().lower() == "missing"
+    ):
+        command = "autolab uat init"
+        reason = "Required UAT artifact is missing."
+        executable = True
+    elif (
+        stage in {"implementation_review", "launch"}
+        and bool(uat.get("required", False))
+        and str(uat.get("status", "")).strip().lower() != "pass"
+    ):
+        command = f"autolab verify --stage {stage}"
+        reason = "Required UAT is incomplete or not yet marked pass."
+        executable = True
     elif stage == "implementation" and approval_requires_action(plan_approval):
         if plan_approval_action_mode == "refresh":
             command = "autolab run --plan-only"
@@ -372,6 +406,7 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     safe_resume = _safe_dict(payload.get("safe_resume_point"))
     plan_approval = _safe_dict(payload.get("plan_approval"))
     wave_observability = _safe_dict(payload.get("wave_observability"))
+    uat = _safe_dict(payload.get("uat"))
     critical_path = _safe_dict(wave_observability.get("critical_path"))
     observability_waves = _safe_list(wave_observability.get("waves"))
     observability_conflicts = _safe_list(wave_observability.get("file_conflicts"))
@@ -446,6 +481,19 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         if next_commands:
             lines.append("- next_commands:")
             lines.extend(f"  - {item}" for item in next_commands)
+
+    if uat:
+        lines.extend(
+            [
+                "",
+                "## UAT",
+                "",
+                f"- required: `{bool(uat.get('required', False))}`",
+                f"- required_by: `{uat.get('required_by', 'none')}`",
+                f"- status: `{uat.get('status', 'not_required')}`",
+                f"- artifact_path: `{uat.get('artifact_path', '')}`",
+            ]
+        )
 
     if critical_path:
         lines.extend(
@@ -675,6 +723,32 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
             plan_approval_error,
             plan_approval_action_mode,
         ) = resolve_plan_approval_state(repo_root, iteration_dir)
+    base_plan_approval = plan_approval
+    if iteration_dir and not base_plan_approval:
+        loaded_plan_approval = load_plan_approval(iteration_dir)
+        if loaded_plan_approval:
+            base_plan_approval = loaded_plan_approval
+
+    uat_summary: dict[str, Any] = {
+        "required": False,
+        "required_by": "none",
+        "artifact_path": "",
+        "status": "not_required",
+    }
+    if iteration_dir:
+        resolved_uat = resolve_uat_requirement(
+            repo_root,
+            iteration_dir,
+            plan_approval_payload=base_plan_approval if base_plan_approval else None,
+        )
+        uat_summary = {
+            "required": bool(resolved_uat.get("effective_required", False)),
+            "required_by": str(resolved_uat.get("required_by", "none")).strip()
+            or "none",
+            "artifact_path": str(resolved_uat.get("artifact_path", "")).strip(),
+            "status": str(resolved_uat.get("status", "not_required")).strip()
+            or "not_required",
+        }
 
     blocking_failures = []
     blocking_failures.extend(_verification_blockers(repo_root))
@@ -689,6 +763,19 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         rule = str(guardrail_breach.get("rule", "")).strip()
         if rule:
             blocking_failures.append(f"guardrail_breach: {rule}")
+    if (
+        stage in {"implementation_review", "launch"}
+        and bool(uat_summary.get("required", False))
+        and str(uat_summary.get("status", "")).strip().lower() != "pass"
+    ):
+        artifact_path = str(uat_summary.get("artifact_path", "")).strip()
+        required_by = str(uat_summary.get("required_by", "none")).strip() or "none"
+        status_value = (
+            str(uat_summary.get("status", "not_required")).strip() or "not_required"
+        )
+        blocking_failures.append(
+            f"UAT required ({required_by}) at {artifact_path}; current status={status_value}"
+        )
     blocking_failures = _unique_list(blocking_failures)
 
     pending_decisions = _pending_human_decisions(
@@ -697,6 +784,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         block_reason_payload=block_reason,
         plan_approval=plan_approval,
         plan_approval_action_mode=plan_approval_action_mode,
+        uat=uat_summary,
     )
 
     wave_observability = _compute_wave_observability(
@@ -715,6 +803,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         latest_verification=latest_verification,
         plan_approval=plan_approval,
         plan_approval_action_mode=plan_approval_action_mode,
+        uat=uat_summary,
     )
     if latest_verification:
         latest_verification_summary = {
@@ -770,6 +859,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "baseline_snapshot": current_snapshot,
         "handoff_json_path": str(handoff_json_path),
         "handoff_markdown_path": str(handoff_md_path),
+        "uat": uat_summary,
         "context_rot_flags": context_rot.get("context_rot_flags", []),
         "last_good_checkpoints": [
             {

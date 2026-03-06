@@ -8,6 +8,7 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 
 ## OUTPUTS (STRICT)
 - Produce required outputs defined by workflow for stage `implementation`.
+- When UAT is required, draft `{{iteration_path}}/uat.md` during implementation (use `autolab uat init` to scaffold it).
 
 ## REQUIRED INPUTS
 - `.autolab/state.json`
@@ -26,4 +27,5 @@ Execute the stage mission and produce required outputs with minimal in-scope cha
 
 ## FAILURE / RETRY BEHAVIOR
 - On verifier failure, fix artifacts and rerun verification.
+- If UAT is required, do not leave `{{iteration_path}}/uat.md` missing by the end of implementation work.
 - Do not force stage transitions manually.

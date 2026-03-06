@@ -47,6 +47,7 @@ from autolab.registry import (
 from autolab.sidecar_context import resolve_context_sidecars
 from autolab.sidecar_tools import build_context_guidance
 from autolab.state import _resolve_iteration_directory
+from autolab.uat import resolve_uat_requirement
 from autolab.utils import (
     _append_log,
     _compact_json,
@@ -595,6 +596,11 @@ def _build_prompt_context(
             experiment_id=experiment_id,
             require_exists=False,
         )
+        plan_approval_payload = _load_json_if_exists(
+            iteration_dir / "plan_approval.json"
+        )
+        if not isinstance(plan_approval_payload, dict):
+            plan_approval_payload = None
         try:
             iteration_path = iteration_dir.relative_to(repo_root).as_posix()
         except ValueError:

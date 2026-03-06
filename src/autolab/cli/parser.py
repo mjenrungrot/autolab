@@ -786,7 +786,26 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional review notes to persist alongside the approval decision.",
     )
+    approve_plan.add_argument(
+        "--require-uat",
+        action="store_true",
+        help="Mark UAT as required via plan approval for this iteration.",
+    )
     approve_plan.set_defaults(handler=_cmd_approve_plan)
+
+    uat = subparsers.add_parser("uat", help="UAT artifact helpers")
+    uat_subparsers = uat.add_subparsers(dest="uat_command")
+
+    uat_init = uat_subparsers.add_parser(
+        "init",
+        help="Create experiments/<iteration_id>/uat.md when UAT is required or requested",
+    )
+    uat_init.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    uat_init.set_defaults(handler=_cmd_uat_init)
 
     experiment = subparsers.add_parser(
         "experiment", help="Experiment lifecycle management commands"

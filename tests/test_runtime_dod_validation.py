@@ -769,6 +769,11 @@ def test_refresh_handoff_ignores_pending_plan_approval_outside_implementation(
                 "plan_graph": ".autolab/plan_graph.json",
                 "plan_check_result": ".autolab/plan_check_result.json",
             },
+            "uat": {
+                "policy_required": False,
+                "effective_required": False,
+                "required_by": "none",
+            },
         },
     )
     _write_json(

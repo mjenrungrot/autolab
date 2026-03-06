@@ -35,6 +35,7 @@ from autolab.validators import (
     _resolve_latest_run_state,
     _load_dict_json,
 )
+from autolab.uat import ensure_uat_pass
 from autolab.utils import _detect_priority_host_mode
 
 
@@ -219,6 +220,9 @@ def _eval_implementation_review(
     review_status = _validate_review_result(
         iteration_dir / "review_result.json",
         policy_requirements=policy_requirements,
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
+        stage_label="implementation_review",
     )
     if review_status == "pass":
         return EvalResult("launch", "complete", "'implementation_review' checks passed")
@@ -246,9 +250,17 @@ def _eval_launch(
             policy_requirements=_resolve_stage_requirements(
                 _load_verifier_policy(repo_root), "implementation_review"
             ),
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
+            stage_label="implementation_review",
         )
         if review_status != "pass":
             raise StageCheckError("launch requires review_result.json status=pass")
+    ensure_uat_pass(
+        repo_root,
+        iteration_dir,
+        stage_label="launch",
+    )
 
     # -- design location check -----------------------------------------------
     design_location = ""

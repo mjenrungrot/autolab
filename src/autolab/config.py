@@ -153,6 +153,74 @@ def _load_effective_policy(
     else:
         uat_patterns = list(DEFAULT_UAT_SURFACE_PATTERNS)
 
+    resolved_scope_kind = scope_kind or "experiment"
+    project_wide_unique_paths: list[str] = []
+    if not scope_kind or not stage:
+        try:
+            from autolab.state import (
+                _load_state,
+                _normalize_state,
+                _resolve_iteration_directory,
+            )
+            from autolab.uat import resolve_project_wide_paths
+
+            state_path = repo_root / ".autolab" / "state.json"
+            if state_path.exists():
+                state_payload = _normalize_state(_load_state(state_path))
+                if not scope_kind:
+                    resolved_scope_kind = (
+                        str(state_payload.get("scope_kind", "")).strip()
+                        or resolved_scope_kind
+                    )
+                iteration_id = str(state_payload.get("iteration_id", "")).strip()
+                experiment_id = str(state_payload.get("experiment_id", "")).strip()
+                if iteration_id:
+                    iteration_dir, _ = _resolve_iteration_directory(
+                        repo_root,
+                        iteration_id=iteration_id,
+                        experiment_id=experiment_id,
+                        require_exists=False,
+                    )
+                    resolved_scope_kind, project_wide_unique_paths = (
+                        resolve_project_wide_paths(
+                            repo_root,
+                            iteration_dir,
+                        )
+                    )
+        except Exception:
+            project_wide_unique_paths = []
+    else:
+        try:
+            from autolab.state import (
+                _load_state,
+                _normalize_state,
+                _resolve_iteration_directory,
+            )
+            from autolab.uat import resolve_project_wide_paths
+
+            state_path = repo_root / ".autolab" / "state.json"
+            if state_path.exists():
+                state_payload = _normalize_state(_load_state(state_path))
+                iteration_id = str(state_payload.get("iteration_id", "")).strip()
+                experiment_id = str(state_payload.get("experiment_id", "")).strip()
+                if iteration_id:
+                    iteration_dir, _ = _resolve_iteration_directory(
+                        repo_root,
+                        iteration_id=iteration_id,
+                        experiment_id=experiment_id,
+                        require_exists=False,
+                    )
+                    _resolved_scope_kind, project_wide_unique_paths = (
+                        resolve_project_wide_paths(
+                            repo_root,
+                            iteration_dir,
+                        )
+                    )
+                    if not scope_kind:
+                        resolved_scope_kind = _resolved_scope_kind
+        except Exception:
+            project_wide_unique_paths = []
+
     # Merge
     merged, raw_sources = resolve_effective_policy(
         scaffold_defaults=scaffold_defaults,
@@ -167,9 +235,9 @@ def _load_effective_policy(
     # Derive risk flags
     risk_flags = derive_risk_flags(
         host_mode=host_mode or "local",
-        scope_kind=scope_kind or "experiment",
+        scope_kind=resolved_scope_kind,
         profile_mode=profile_mode,
-        project_wide_unique_paths=[],
+        project_wide_unique_paths=project_wide_unique_paths,
         uat_surface_patterns=uat_patterns,
         plan_approval_required=False,
     )
@@ -189,7 +257,7 @@ def _load_effective_policy(
         sources=overlay_sources,
         preset=preset_name,
         host_mode=host_mode or "local",
-        scope_kind=scope_kind or "experiment",
+        scope_kind=resolved_scope_kind,
         stage=stage,
         profile_mode=profile_mode,
         risk_flags=risk_flags,
