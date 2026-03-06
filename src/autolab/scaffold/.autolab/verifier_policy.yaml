@@ -373,3 +373,33 @@ protected_file_profiles:
     - .autolab/schemas/**
     - .autolab/verifiers/**
 protected_files: [.autolab/state.json, .autolab/workflow.yaml, .autolab/verifier_policy.yaml]
+# ---------------------------------------------------------------------------
+# Policy resolution
+# ---------------------------------------------------------------------------
+policy_resolution:
+  default_preset: ""  # e.g., local_dev, ci_strict, slurm
+
+# ---------------------------------------------------------------------------
+# Profile mode (shared_fs | standalone)
+# ---------------------------------------------------------------------------
+profile_mode: standalone
+
+# ---------------------------------------------------------------------------
+# UAT surface patterns
+# ---------------------------------------------------------------------------
+uat_surface_patterns:
+  - "scripts/**"
+  - "docs/**"
+
+# ---------------------------------------------------------------------------
+# Policy overlays (keyed by dimension)
+# ---------------------------------------------------------------------------
+policy_overlays:
+  host:
+    slurm: {}
+    local: {}
+  scope:
+    project_wide: {}
+    experiment: {}
+  stage: {}
+  risk: {}

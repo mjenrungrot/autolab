@@ -253,6 +253,25 @@ def create_checkpoint(
             }
         )
 
+    # Compute effective policy summary for checkpoint metadata
+    effective_policy_summary: dict[str, Any] = {}
+    try:
+        from autolab.config import _load_effective_policy
+
+        ep_result = _load_effective_policy(
+            repo_root, stage=stage, scope_kind=scope_kind
+        )
+        effective_policy_summary = {
+            "preset": ep_result.preset,
+            "host_mode": ep_result.host_mode,
+            "scope_kind": ep_result.scope_kind,
+            "profile_mode": ep_result.profile_mode,
+            "stage": ep_result.stage,
+            "risk_flags": ep_result.risk_flags,
+        }
+    except Exception:
+        pass
+
     revision_label = _resolve_revision_label(repo_root)
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
@@ -266,6 +285,7 @@ def create_checkpoint(
         "revision_label": revision_label,
         "artifacts": artifact_entries,
         "state_snapshot": dict(state),
+        "effective_policy_summary": effective_policy_summary,
     }
     if label:
         manifest["label"] = label

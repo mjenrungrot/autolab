@@ -2102,6 +2102,7 @@ class AutolabCockpitApp(App[None]):
     #home-artifacts-card,
     #home-verification-card,
     #home-todos-card,
+    #home-policy-card,
     #home-recovery-card,
     #home-handoff-card,
     #waves-summary-card,
@@ -2388,6 +2389,7 @@ class AutolabCockpitApp(App[None]):
                             variant="default",
                         )
                 yield Static("", id="home-blocker-card", markup=False)
+                yield Static("", id="home-policy-card", markup=False)
                 yield Static("", id="home-verification-card", markup=False)
                 yield Static("", id="home-artifacts-card", markup=False)
                 yield Static("", id="home-todos-card", markup=False)
@@ -3380,6 +3382,10 @@ class AutolabCockpitApp(App[None]):
         blocker_widget.update("Blockers\nSnapshot refresh failed.")
         self._set_tone(blocker_widget, "tone-danger")
 
+        policy_widget = self.query_one("#home-policy-card", Static)
+        policy_widget.update("Policy\nUnavailable.")
+        self._set_tone(policy_widget, "tone-muted")
+
         verification_widget = self.query_one("#home-verification-card", Static)
         verification_widget.update("Verification\nUnavailable.")
         self._set_tone(verification_widget, "tone-muted")
@@ -3565,6 +3571,30 @@ class AutolabCockpitApp(App[None]):
             blocker_widget,
             "tone-success" if snapshot.primary_blocker == "none" else "tone-danger",
         )
+
+        # Policy summary card
+        policy_widget = self.query_one("#home-policy-card", Static)
+        ps = snapshot.policy_summary
+        if ps is not None:
+            policy_lines = [
+                "Policy",
+                f"- Preset: {ps.active_preset or '(none)'}",
+                f"- Host: {ps.host_mode} | Scope: {ps.scope_kind} | Profile: {ps.profile_mode}",
+            ]
+            risk_active = [k for k, v in ps.risk_flags.items() if v]
+            policy_lines.append(
+                f"- Risk: {', '.join(risk_active) if risk_active else '(none active)'}"
+            )
+            for reason in ps.active_gate_reasons:
+                policy_lines.append(f'- Gate: "{reason}"')
+            policy_widget.update("\n".join(policy_lines))
+            self._set_tone(
+                policy_widget,
+                "tone-warning" if risk_active else "tone-success",
+            )
+        else:
+            policy_widget.update("Policy\n- Effective policy unavailable")
+            self._set_tone(policy_widget, "tone-muted")
 
         verification = snapshot.verification
         verification_widget = self.query_one("#home-verification-card", Static)

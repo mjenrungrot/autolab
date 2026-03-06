@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.31] - 2026-03-05
+
+### Summary
+
+- Added effective policy inheritance: runtime merge of scaffold, preset, host, scope, stage, risk, and repo-local policy layers with per-key provenance tracking.
+- Added `autolab policy show --effective` to inspect the merged policy and `--json` to output the `effective_policy.json` artifact.
+- Added `autolab policy doctor --explain` to display the full resolution chain and risk flag derivation.
+- Added `policy_resolution`, `profile_mode`, `uat_surface_patterns`, and `policy_overlays` sections to scaffold `verifier_policy.yaml`.
+- Added policy summary card to the TUI home view showing active preset, host/scope/profile, and risk flags.
+- Added `effective_policy_summary` to checkpoint manifests for policy-aware recovery.
+
+<!-- autolab:range v1.2.30..v1.2.31 -->
+
 ## [1.2.30] - 2026-03-05
 
 ### Summary

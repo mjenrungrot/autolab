@@ -195,5 +195,24 @@ class PlanExecutionImplementationConfig:
 
 
 @dataclass(frozen=True)
+class OverlaySource:
+    layer: str  # "scaffold_default", "preset", "host", "scope", "stage", "risk", "repo_local"
+    name: str  # e.g., "local_dev", "slurm", "project_wide", ""
+    keys_contributed: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EffectivePolicyResult:
+    merged: dict[str, Any]
+    sources: tuple[OverlaySource, ...]
+    preset: str
+    host_mode: str
+    scope_kind: str
+    stage: str
+    profile_mode: str
+    risk_flags: dict[str, bool]
+
+
+@dataclass(frozen=True)
 class PlanExecutionConfig:
     implementation: PlanExecutionImplementationConfig

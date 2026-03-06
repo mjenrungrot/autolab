@@ -270,3 +270,11 @@ REVIEW_RESULT_REQUIRED_CHECKS = (
 REVIEW_RESULT_CHECK_STATUSES = {"pass", "skip", "fail"}
 HOST_MODE_COMMAND_TIMEOUT_SECONDS = 2
 VERIFIER_COMMAND_TIMEOUT_SECONDS = 120
+
+# ---------------------------------------------------------------------------
+# Effective policy resolution constants
+# ---------------------------------------------------------------------------
+PROFILE_MODES = ("shared_fs", "standalone")
+DEFAULT_PROFILE_MODE = "standalone"
+DEFAULT_UAT_SURFACE_PATTERNS = ("scripts/**", "docs/**")
+EFFECTIVE_POLICY_SCHEMA_VERSION = "1.0"

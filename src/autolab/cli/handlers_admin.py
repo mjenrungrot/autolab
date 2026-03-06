@@ -286,26 +286,108 @@ def _cmd_policy_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_policy_show(args: argparse.Namespace) -> int:
-    preset_name = str(args.preset).strip()
-    try:
-        scaffold_source = _resolve_scaffold_source()
-    except RuntimeError as exc:
-        print(f"autolab policy show: ERROR {exc}", file=sys.stderr)
-        return 1
+    effective_flag = getattr(args, "effective", False)
+    preset_name = getattr(args, "preset", None)
+    json_flag = getattr(args, "json", False)
 
-    preset_path = scaffold_source / "policy" / f"{preset_name}.yaml"
-    if not preset_path.exists():
-        print(
-            f"autolab policy show: ERROR preset '{preset_name}' not found",
-            file=sys.stderr,
+    if effective_flag:
+        # Show computed effective policy
+        state_path = Path(".autolab/state.json").expanduser().resolve()
+        try:
+            repo_root = _resolve_repo_root(state_path)
+        except Exception:
+            repo_root = Path.cwd()
+        from autolab.config import _load_effective_policy
+        from autolab.policy_resolution import build_effective_artifact
+
+        result = _load_effective_policy(
+            repo_root,
+            host_mode=getattr(args, "host", "") or "",
+            scope_kind=getattr(args, "scope", "") or "",
+            stage=getattr(args, "stage", "") or "",
         )
-        return 1
+        if json_flag:
+            artifact = build_effective_artifact(
+                merged=result.merged,
+                sources=[
+                    (s.layer, s.name, list(s.keys_contributed)) for s in result.sources
+                ],
+                preset=result.preset,
+                host_mode=result.host_mode,
+                scope_kind=result.scope_kind,
+                stage=result.stage,
+                risk_flags=result.risk_flags,
+                generated_at=_utc_now(),
+            )
+            _write_effective_policy_artifact(repo_root, artifact)
+            print(json.dumps(artifact, indent=2))
+        else:
+            print("autolab policy show --effective")
+            print(f"- Preset: {result.preset or '(none)'}")
+            print(
+                f"- Host: {result.host_mode} | Scope: {result.scope_kind} | Profile: {result.profile_mode}"
+            )
+            risk_active = [k for k, v in result.risk_flags.items() if v]
+            print(
+                f"- Risk: {', '.join(risk_active) if risk_active else '(none active)'}"
+            )
+            print(f"- Sources: {len(result.sources)} layer(s) contributed")
+            for source in result.sources:
+                print(
+                    f"    [{source.layer}] keys: {', '.join(source.keys_contributed)}"
+                )
+            print("---")
+            if _yaml_mod is not None:
+                print(_yaml_mod.dump(result.merged, default_flow_style=False).rstrip())
+            else:
+                print(json.dumps(result.merged, indent=2))
+        return 0
 
-    print(f"autolab policy show {preset_name}")
-    print(f"file: {preset_path}")
+    if preset_name:
+        # Existing behavior: show raw preset YAML
+        preset_name = str(preset_name).strip()
+        try:
+            scaffold_source = _resolve_scaffold_source()
+        except RuntimeError as exc:
+            print(f"autolab policy show: ERROR {exc}", file=sys.stderr)
+            return 1
+
+        preset_path = scaffold_source / "policy" / f"{preset_name}.yaml"
+        if not preset_path.exists():
+            print(
+                f"autolab policy show: ERROR preset '{preset_name}' not found",
+                file=sys.stderr,
+            )
+            return 1
+
+        print(f"autolab policy show {preset_name}")
+        print(f"file: {preset_path}")
+        print("---")
+        print(preset_path.read_text(encoding="utf-8").rstrip())
+        return 0
+
+    # No preset, no --effective: show current verifier_policy.yaml
+    state_path = Path(".autolab/state.json").expanduser().resolve()
+    try:
+        repo_root = _resolve_repo_root(state_path)
+    except Exception:
+        repo_root = Path.cwd()
+    policy_path = repo_root / ".autolab" / "verifier_policy.yaml"
+    if not policy_path.exists():
+        print("autolab policy show: no verifier_policy.yaml found", file=sys.stderr)
+        return 1
+    print("autolab policy show")
+    print(f"file: {policy_path}")
     print("---")
-    print(preset_path.read_text(encoding="utf-8").rstrip())
+    print(policy_path.read_text(encoding="utf-8").rstrip())
     return 0
+
+
+def _write_effective_policy_artifact(repo_root: Path, artifact: dict[str, Any]) -> Path:
+    """Write effective_policy.json artifact and return its path."""
+    out_path = repo_root / ".autolab" / "effective_policy.json"
+    _write_json(out_path, artifact)
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +487,52 @@ def _cmd_policy_doctor(args: argparse.Namespace) -> int:
     if not issues and not warnings:
         print("no issues found")
     print("")
+
+    # --explain: show effective policy resolution chain
+    if getattr(args, "explain", False):
+        from autolab.config import _load_effective_policy
+
+        try:
+            result = _load_effective_policy(repo_root)
+        except Exception as exc:
+            print(
+                f"autolab policy doctor: ERROR effective policy resolution failed: {exc}",
+                file=sys.stderr,
+            )
+        else:
+            print("effective policy resolution:")
+            print(f"  preset: {result.preset or '(none)'}")
+            print(f"  host_mode: {result.host_mode}")
+            print(f"  scope_kind: {result.scope_kind}")
+            print(f"  profile_mode: {result.profile_mode}")
+            print(f"  stage: {result.stage or '(none)'}")
+            print("")
+            print("  resolution chain:")
+            layer_names = [
+                "scaffold_default",
+                "preset",
+                "host",
+                "scope",
+                "stage",
+                "risk",
+                "repo_local",
+            ]
+            source_by_layer = {s.layer: s for s in result.sources}
+            for layer in layer_names:
+                source = source_by_layer.get(layer)
+                if source:
+                    print(
+                        f"    {layer}: contributed {', '.join(source.keys_contributed)}"
+                    )
+                else:
+                    print(f"    {layer}: (no changes)")
+            print("")
+            print("  risk flags:")
+            for flag, active in result.risk_flags.items():
+                status = "ACTIVE" if active else "inactive"
+                print(f"    {flag}: {status}")
+            print("")
+
     return 1 if issues else 0
 
 

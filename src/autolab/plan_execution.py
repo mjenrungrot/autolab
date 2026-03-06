@@ -83,6 +83,23 @@ def _json_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
+def _derive_uat_required(
+    scope_kind: str,
+    project_wide_unique_paths: list[str],
+    uat_surface_patterns: list[str],
+) -> bool:
+    """Return True when UAT is required based on scope and touched surfaces."""
+    if scope_kind != "project_wide" or not project_wide_unique_paths:
+        return False
+    import fnmatch
+
+    for path in project_wide_unique_paths:
+        for pattern in uat_surface_patterns:
+            if fnmatch.fnmatch(path, pattern):
+                return True
+    return False
+
+
 def _derive_approval_risk_fallback(
     *,
     task_map: dict[str, dict[str, Any]],
@@ -90,6 +107,10 @@ def _derive_approval_risk_fallback(
     state: dict[str, Any],
     raw_execution_state: dict[str, Any] | None,
     impl_cfg: Any,
+    host_mode: str = "local",
+    scope_kind: str = "experiment",
+    profile_mode: str = "standalone",
+    uat_surface_patterns: list[str] | None = None,
 ) -> dict[str, Any]:
     approval_cfg = getattr(impl_cfg, "approval", None)
     project_wide_task_ids = sorted(
@@ -174,6 +195,17 @@ def _derive_approval_risk_fallback(
                 getattr(approval_cfg, "require_after_retries", True)
             ),
         },
+    }
+    # Derive extended risk flags
+    _uat_patterns = uat_surface_patterns if uat_surface_patterns is not None else []
+    approval_risk["risk_flags"] = {
+        "plan_approval_required": bool(trigger_reasons),
+        "uat_required": _derive_uat_required(
+            scope_kind, project_wide_unique_paths, _uat_patterns
+        ),
+        "remote_profile_required": (
+            host_mode == "slurm" and profile_mode != "shared_fs"
+        ),
     }
     approval_risk["risk_fingerprint"] = build_risk_fingerprint(approval_risk)
     return approval_risk
