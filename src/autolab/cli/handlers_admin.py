@@ -3064,6 +3064,7 @@ def _resolve_local_agent_invocation(
     repo_root: Path,
     *,
     override_env_var: str,
+    require_executable: bool = True,
 ) -> tuple[list[str], dict[str, str], str]:
     override = str(os.environ.get(override_env_var, "")).strip()
     if override:
@@ -3103,8 +3104,15 @@ def _resolve_local_agent_invocation(
         ]
         return (argv, dict(os.environ), " ".join(shlex.quote(token) for token in argv))
 
-    raise RuntimeError(
-        f"no supported local LLM CLI found; install 'claude' or 'codex', or set {override_env_var}"
+    if require_executable:
+        raise RuntimeError(
+            f"no supported local LLM CLI found; install 'claude' or 'codex', or set {override_env_var}"
+        )
+
+    return (
+        [""],
+        dict(os.environ),
+        "no supported local LLM CLI found",
     )
 
 
@@ -3673,6 +3681,7 @@ def _cmd_research(args: argparse.Namespace) -> int:
         preview_argv, _preview_env, _preview_display = _resolve_local_agent_invocation(
             repo_root,
             override_env_var="AUTOLAB_RESEARCH_AGENT_COMMAND",
+            require_executable=False,
         )
     except RuntimeError as exc:
         print(f"autolab research: ERROR {exc}", file=sys.stderr)
