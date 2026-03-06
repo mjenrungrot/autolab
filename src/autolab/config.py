@@ -40,6 +40,9 @@ from autolab.constants import (
     DEFAULT_PLAN_APPROVAL_MAX_WAVES_WITHOUT_APPROVAL,
     DEFAULT_PLAN_APPROVAL_MAX_PROJECT_WIDE_PATHS_WITHOUT_APPROVAL,
     DEFAULT_PLAN_APPROVAL_REQUIRE_AFTER_RETRIES,
+    DEFAULT_PROFILE_MODE,
+    DEFAULT_UAT_SURFACE_PATTERNS,
+    PACKAGE_SCAFFOLD_DIR,
     PLAN_EXECUTION_FAILURE_MODES,
     PLAN_EXECUTION_RUN_UNITS,
     RUNNER_ELIGIBLE_STAGES,
@@ -49,10 +52,12 @@ from autolab.models import (
     AgentRunnerConfig,
     AgentRunnerEditScopeConfig,
     AutoCommitConfig,
+    EffectivePolicyResult,
     ExtractRuntimeConfig,
     GuardrailConfig,
     LaunchRuntimeConfig,
     MeaningfulChangeConfig,
+    OverlaySource,
     PlanApprovalPolicyConfig,
     PlanExecutionConfig,
     PlanExecutionImplementationConfig,
@@ -61,6 +66,11 @@ from autolab.models import (
     StrictModeConfig,
     _coerce_bool,
     _coerce_float,
+)
+from autolab.policy_resolution import (
+    derive_risk_flags,
+    extract_overlay,
+    resolve_effective_policy,
 )
 
 
@@ -75,6 +85,112 @@ def _load_verifier_policy(repo_root: Path) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         return {}
     return loaded
+
+
+def _load_effective_policy(
+    repo_root: Path,
+    *,
+    host_mode: str = "",
+    scope_kind: str = "",
+    stage: str = "",
+) -> EffectivePolicyResult:
+    """Compute the effective policy by merging all overlay layers."""
+    raw_policy = _load_verifier_policy(repo_root)
+
+    # Read policy_resolution config
+    resolution_cfg = raw_policy.get("policy_resolution")
+    if not isinstance(resolution_cfg, dict):
+        resolution_cfg = {}
+    preset_name = str(resolution_cfg.get("default_preset", "")).strip()
+
+    # Load scaffold defaults
+    scaffold_policy_path = PACKAGE_SCAFFOLD_DIR / "verifier_policy.yaml"
+    scaffold_defaults: dict[str, Any] = {}
+    if yaml is not None and scaffold_policy_path.exists():
+        try:
+            loaded = yaml.safe_load(scaffold_policy_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                scaffold_defaults = loaded
+        except Exception:
+            pass
+
+    # Load preset from scaffold bundle
+    preset_policy: dict[str, Any] = {}
+    if preset_name:
+        preset_path = PACKAGE_SCAFFOLD_DIR / "policy" / f"{preset_name}.yaml"
+        if yaml is not None and preset_path.exists():
+            try:
+                loaded = yaml.safe_load(preset_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    preset_policy = loaded
+            except Exception:
+                pass
+
+    # Extract dimensional overlays
+    host_overlay = extract_overlay(raw_policy, "host", host_mode) if host_mode else {}
+    scope_overlay = (
+        extract_overlay(raw_policy, "scope", scope_kind) if scope_kind else {}
+    )
+    stage_overlay = extract_overlay(raw_policy, "stage", stage) if stage else {}
+    risk_overlay = extract_overlay(raw_policy, "risk", "")
+
+    # Prepare repo-local overrides (strip meta sections)
+    repo_local = dict(raw_policy)
+    for meta_key in ("policy_resolution", "policy_overlays"):
+        repo_local.pop(meta_key, None)
+
+    # Read profile_mode and UAT patterns
+    profile_mode = str(raw_policy.get("profile_mode", DEFAULT_PROFILE_MODE)).strip()
+    if not profile_mode:
+        profile_mode = DEFAULT_PROFILE_MODE
+
+    raw_uat = raw_policy.get("uat_surface_patterns")
+    if isinstance(raw_uat, list):
+        uat_patterns = [str(p).strip() for p in raw_uat if str(p).strip()]
+    else:
+        uat_patterns = list(DEFAULT_UAT_SURFACE_PATTERNS)
+
+    # Merge
+    merged, raw_sources = resolve_effective_policy(
+        scaffold_defaults=scaffold_defaults,
+        preset_policy=preset_policy,
+        host_overlay=host_overlay,
+        scope_overlay=scope_overlay,
+        stage_overlay=stage_overlay,
+        risk_overlay=risk_overlay,
+        repo_local_overrides=repo_local,
+    )
+
+    # Derive risk flags
+    risk_flags = derive_risk_flags(
+        host_mode=host_mode or "local",
+        scope_kind=scope_kind or "experiment",
+        profile_mode=profile_mode,
+        project_wide_unique_paths=[],
+        uat_surface_patterns=uat_patterns,
+        plan_approval_required=False,
+    )
+
+    # Build OverlaySource tuples
+    overlay_sources = tuple(
+        OverlaySource(
+            layer=layer,
+            name=name,
+            keys_contributed=tuple(keys),
+        )
+        for layer, name, keys in raw_sources
+    )
+
+    return EffectivePolicyResult(
+        merged=merged,
+        sources=overlay_sources,
+        preset=preset_name,
+        host_mode=host_mode or "local",
+        scope_kind=scope_kind or "experiment",
+        stage=stage,
+        profile_mode=profile_mode,
+        risk_flags=risk_flags,
+    )
 
 
 def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:

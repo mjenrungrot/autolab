@@ -898,9 +898,30 @@ def _build_parser() -> argparse.ArgumentParser:
     policy_list.set_defaults(handler=_cmd_policy_list)
 
     policy_show = policy_subparsers.add_parser(
-        "show", help="Show contents of a policy preset"
+        "show", help="Show contents of a policy preset or effective merged policy"
     )
-    policy_show.add_argument("preset", help="Preset name to show")
+    policy_show.add_argument(
+        "preset", nargs="?", default=None, help="Preset name to show"
+    )
+    policy_show.add_argument(
+        "--effective",
+        action="store_true",
+        default=False,
+        help="Show the computed effective policy (merged from all layers)",
+    )
+    policy_show.add_argument(
+        "--stage", default="", help="Stage context for effective policy"
+    )
+    policy_show.add_argument(
+        "--scope", default="", help="Scope context (experiment|project_wide)"
+    )
+    policy_show.add_argument("--host", default="", help="Host mode (local|slurm)")
+    policy_show.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output machine-readable JSON artifact",
+    )
     policy_show.set_defaults(handler=_cmd_policy_show)
 
     policy_doctor = policy_subparsers.add_parser(
@@ -910,6 +931,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--state-file",
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    policy_doctor.add_argument(
+        "--explain",
+        action="store_true",
+        default=False,
+        help="Show effective policy resolution chain and risk flag derivation",
     )
     policy_doctor.set_defaults(handler=_cmd_policy_doctor)
 

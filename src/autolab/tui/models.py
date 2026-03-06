@@ -199,6 +199,17 @@ class HandoffSummary:
 
 
 @dataclass(frozen=True)
+class PolicySummary:
+    active_preset: str
+    host_mode: str
+    scope_kind: str
+    profile_mode: str
+    current_stage: str
+    risk_flags: dict[str, bool]
+    active_gate_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CockpitSnapshot:
     repo_root: Path
     state_path: Path
@@ -227,3 +238,4 @@ class CockpitSnapshot:
     common_artifacts: tuple[ArtifactItem, ...] = ()
     handoff: HandoffSummary | None = None
     recovery: RecoverySummary | None = None
+    policy_summary: PolicySummary | None = None

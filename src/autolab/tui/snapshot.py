@@ -35,6 +35,7 @@ from autolab.tui.models import (
     CheckpointItem,
     CockpitSnapshot,
     HandoffSummary,
+    PolicySummary,
     RecoverySummary,
     RenderPreview,
     RecommendedAction,
@@ -933,6 +934,37 @@ def _load_recovery_summary(
     )
 
 
+def _load_policy_summary(
+    repo_root: Path,
+    *,
+    current_stage: str,
+) -> PolicySummary | None:
+    """Load effective policy summary for the TUI policy card."""
+    try:
+        from autolab.config import _load_effective_policy
+
+        result = _load_effective_policy(repo_root, stage=current_stage)
+        risk_active = [k for k, v in result.risk_flags.items() if v]
+        gate_reasons: list[str] = []
+        if result.risk_flags.get("plan_approval_required"):
+            gate_reasons.append("Plan approval required")
+        if result.risk_flags.get("uat_required"):
+            gate_reasons.append("UAT required for project-wide surfaces")
+        if result.risk_flags.get("remote_profile_required"):
+            gate_reasons.append("Remote profile required (SLURM + standalone)")
+        return PolicySummary(
+            active_preset=result.preset,
+            host_mode=result.host_mode,
+            scope_kind=result.scope_kind,
+            profile_mode=result.profile_mode,
+            current_stage=result.stage,
+            risk_flags=result.risk_flags,
+            active_gate_reasons=tuple(gate_reasons),
+        )
+    except Exception:
+        return None
+
+
 def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     resolved_state_path = state_path.expanduser().resolve()
     repo_root = _resolve_repo_root(resolved_state_path)
@@ -1042,6 +1074,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     primary_blocker = blockers[0] if blockers else "none"
     secondary_blockers = blockers[1:4] if blockers else ()
     recovery_summary = _load_recovery_summary(repo_root, autolab_dir, iteration_id)
+    policy_summary = _load_policy_summary(repo_root, current_stage=current_stage)
 
     return CockpitSnapshot(
         repo_root=repo_root,
@@ -1069,6 +1102,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         common_artifacts=common_artifacts,
         handoff=handoff_summary,
         recovery=recovery_summary,
+        policy_summary=policy_summary,
     )
 
 
