@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.36] - 2026-03-08
+
+### Summary
+
+- Added `autolab uat init --suggest` to scaffold Markdown UAT artifacts from touched project-wide surfaces, including bootstrap, docs, remote-profile, and evaluator defaults.
+- Surfaced required UAT blockers more clearly across progress, handoff, prompts, and the TUI, with recommended `autolab uat init --suggest` follow-up guidance when UAT is still pending.
+
+<!-- autolab:range v1.2.35..v1.2.36 -->
+
 ## [1.2.35] - 2026-03-07
 
 ### Summary

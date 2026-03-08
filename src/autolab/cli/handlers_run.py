@@ -907,6 +907,15 @@ def _cmd_uat_init(args: argparse.Namespace) -> int:
     if requested_manually and required_by == "none":
         required_by = "manual"
     context = resolve_uat_template_context(repo_root)
+    suggested_checks = None
+    if bool(getattr(args, "suggest", False)):
+        raw_suggestions = summary.get("suggested_checks")
+        if isinstance(raw_suggestions, list):
+            suggested_checks = [
+                suggestion
+                for suggestion in raw_suggestions
+                if isinstance(suggestion, dict)
+            ]
     artifact_path.write_text(
         render_uat_template(
             iteration_id=iteration_id,
@@ -919,6 +928,7 @@ def _cmd_uat_init(args: argparse.Namespace) -> int:
             or "unversioned-worktree",
             host_mode=str(context.get("host_mode", "local")).strip() or "local",
             remote_profile=str(context.get("remote_profile", "none")).strip() or "none",
+            suggested_checks=suggested_checks,
         ),
         encoding="utf-8",
     )

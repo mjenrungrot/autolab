@@ -59,6 +59,16 @@ _TODO_SYNC_EXPECTED_WRITES = (
     "docs/todo.md",
     ".autolab/logs/orchestrator.log",
 )
+_UAT_INIT_EXPECTED_WRITES = (
+    ".autolab/agent_result.json",
+    ".autolab/handoff.json",
+    "handoff.md",
+    "experiments/*/*/handoff.md",
+    "experiments/*/*/uat.md",
+    "experiments/*/*/plan_approval.json",
+    "experiments/*/*/plan_approval.md",
+    ".autolab/logs/orchestrator.log",
+)
 _LOCK_BREAK_EXPECTED_WRITES = (
     ".autolab/lock",
     ".autolab/logs/orchestrator.log",
@@ -271,6 +281,18 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         requires_arm=True,
     ),
     ActionSpec(
+        action_id="uat_init",
+        label="UAT: initialize artifact",
+        description="Create the current iteration UAT artifact with suggested checks.",
+        kind="mutating",
+        risk_level="medium",
+        group="home",
+        user_label="UAT: initialize artifact",
+        help_text="Run autolab uat init --suggest for the current iteration.",
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
         action_id="lock_break",
         label="Break lock",
         description="Force-remove the active autolab lock.",
@@ -452,6 +474,17 @@ def build_todo_sync_intent(*, state_path: Path) -> CommandIntent:
         argv=tuple(_base_state_argv("todo", "sync", state_path=state_path)),
         cwd=repo_root,
         expected_writes=_TODO_SYNC_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_uat_init_intent(*, state_path: Path) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    return CommandIntent(
+        action_id="uat_init",
+        argv=tuple(_base_state_argv("uat", "init", "--suggest", state_path=state_path)),
+        cwd=repo_root,
+        expected_writes=_UAT_INIT_EXPECTED_WRITES,
         mutating=True,
     )
 

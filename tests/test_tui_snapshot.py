@@ -475,6 +475,63 @@ def test_snapshot_merges_verification_and_review_blockers(tmp_path: Path) -> Non
     )
 
 
+def test_snapshot_surfaces_uat_pending_action_and_blocker(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    state_path = repo / ".autolab" / "state.json"
+    _write_state(state_path, stage="implementation_review")
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "plan_approval.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-02-01T00:00:00Z",
+                "iteration_id": "iter1",
+                "status": "approved",
+                "requires_approval": False,
+                "plan_hash": "plan-hash",
+                "risk_fingerprint": "risk-fingerprint",
+                "trigger_reasons": [],
+                "counts": {
+                    "tasks_total": 1,
+                    "waves_total": 1,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 1,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "reviewer",
+                "reviewed_at": "2026-02-01T00:00:00Z",
+                "notes": "",
+                "source_paths": {},
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": True,
+                    "required_by": "manual",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {"approval_risk": {"project_wide_unique_paths": ["docs/quickstart.md"]}},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_cockpit_snapshot(state_path)
+
+    blocker_blob = "\n".join(snapshot.top_blockers)
+    assert "UAT pending:" in blocker_blob
+    assert "autolab uat init --suggest" in blocker_blob
+    assert any(item.action_id == "uat_init" for item in snapshot.recommended_actions)
+
+
 def test_snapshot_human_review_prioritizes_resolve_action(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     state_path = repo / ".autolab" / "state.json"

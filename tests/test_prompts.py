@@ -1905,6 +1905,90 @@ def test_brief_summary_prioritizes_blockers_before_semantic_agent_hints(
     assert "semantic role: reviewer via $reviewer" not in "\n".join(brief_lines[:7])
 
 
+def test_render_implementation_review_prompt_surfaces_uat_pending_summary(
+    tmp_path: Path,
+) -> None:
+    _require_sidecar_context_support()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    state = _write_state(repo, stage="implementation_review")
+    _write_backlog(repo)
+    iteration_dir = repo / "experiments" / "plan" / "iter1"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "plan_approval.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter1",
+                "status": "approved",
+                "requires_approval": False,
+                "plan_hash": "plan-hash",
+                "risk_fingerprint": "risk-fingerprint",
+                "trigger_reasons": [],
+                "counts": {
+                    "tasks_total": 1,
+                    "waves_total": 1,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 1,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "reviewer",
+                "reviewed_at": "2026-03-05T00:00:30Z",
+                "notes": "",
+                "source_paths": {},
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": True,
+                    "required_by": "manual",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {"approval_risk": {"project_wide_unique_paths": ["docs/quickstart.md"]}},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation_review", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation_review",
+        state=state,
+        template_path=template_path,
+        runner_scope={
+            "mode": "scope_root_plus_core",
+            "scope_kind": "experiment",
+            "scope_root": str(iteration_dir.resolve()),
+            "project_wide_root": str(repo.resolve()),
+            "workspace_dir": str(iteration_dir.resolve()),
+            "allowed_edit_dirs": [],
+        },
+        write_outputs=False,
+    )
+
+    assert "uat_pending: True" in bundle.context_payload["stage_context"]
+    assert (
+        "uat_suggested_init_command: autolab uat init --suggest"
+        in bundle.context_payload["stage_context"]
+    )
+    assert "UAT pending:" in bundle.context_payload["brief_summary"]
+    assert (
+        "suggested UAT checks: docs generate" in bundle.context_payload["brief_summary"]
+    )
+
+
 def test_render_stage_prompt_written_context_omits_raw_effective_sidecars(
     tmp_path: Path,
 ) -> None:

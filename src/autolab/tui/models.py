@@ -195,6 +195,10 @@ class HandoffSummary:
     recommended_command: str
     safe_resume_status: str
     safe_resume_command: str
+    uat_pending: bool = False
+    uat_pending_message: str = ""
+    uat_suggested_init_command: str = ""
+    uat_suggested_check_titles: tuple[str, ...] = ()
     wave_observability: dict[str, Any] = field(default_factory=dict)
 
 

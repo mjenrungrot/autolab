@@ -407,11 +407,21 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     print(f"pending_human_decisions: {len(pending)}")
     print(f"uat_required: {bool(uat.get('required', False))}")
     print(f"uat_status: {uat.get('status', 'not_required')}")
+    print(f"uat_pending: {bool(uat.get('pending', False))}")
     print(f"recommended_next_command: {recommended.get('command', '')}")
     print(f"safe_resume_status: {safe_resume.get('status', 'blocked')}")
     if uat:
         print(f"uat_required_by: {uat.get('required_by', 'none')}")
         print(f"uat_artifact: {uat.get('artifact_path', '')}")
+        print(f"uat_pending_message: {uat.get('pending_message', '')}")
+        print(f"uat_init_command: {uat.get('suggested_init_command', '')}")
+        suggested_titles = uat.get("suggested_check_titles", [])
+        if isinstance(suggested_titles, list) and suggested_titles:
+            print("uat_suggested_checks:")
+            for title in suggested_titles:
+                text = str(title).strip()
+                if text:
+                    print(f"  - {text}")
     critical_wave_ids = _observe_non_empty_strings(critical_path.get("wave_ids", []))
     critical_task_ids = _observe_non_empty_strings(critical_path.get("task_ids", []))
     print("critical_path:")
