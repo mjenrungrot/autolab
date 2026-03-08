@@ -7,11 +7,16 @@ import re
 
 from autolab.campaign import (
     _append_campaign_oracle_feedback,
+    _campaign_build_morning_report_payload,
+    _campaign_morning_report_path,
+    _campaign_render_morning_report,
     _campaign_summary,
     _load_campaign,
     _mark_campaign_oracle_exported,
+    _refresh_campaign_results,
 )
 from autolab.cli.support import *
+from autolab.cli.handlers_observe import _safe_refresh_handoff
 from autolab.agent_surface import (
     build_agent_surface_guidance,
     infer_agent_surface_provider,
@@ -291,8 +296,16 @@ def _cmd_policy_list(args: argparse.Namespace) -> int:
 
     print("autolab policy list")
     print("available presets:")
-    for path in sorted(policy_dir.glob("*.yaml")):
-        print(f"  {path.stem}")
+    for preset_name in POLICY_PRESET_NAMES:
+        path = policy_dir / f"{preset_name}.yaml"
+        if not path.exists():
+            continue
+        details = policy_preset_details(preset_name)
+        summary = str(details.get("summary", "")).strip()
+        if summary:
+            print(f"  {preset_name} - {summary}")
+        else:
+            print(f"  {preset_name}")
     return 0
 
 
@@ -335,6 +348,9 @@ def _cmd_policy_show(args: argparse.Namespace) -> int:
         else:
             print("autolab policy show --effective")
             print(f"- Preset: {result.preset or '(none)'}")
+            preset_details = policy_preset_details(result.preset)
+            if preset_details:
+                print(f"- Preset Summary: {preset_details.get('summary', '')}")
             print(
                 f"- Host: {result.host_mode} | Scope: {result.scope_kind} | Profile: {result.profile_mode}"
             )
@@ -373,6 +389,14 @@ def _cmd_policy_show(args: argparse.Namespace) -> int:
 
         print(f"autolab policy show {preset_name}")
         print(f"file: {preset_path}")
+        preset_details = policy_preset_details(preset_name)
+        if preset_details:
+            print(f"summary: {preset_details.get('summary', '')}")
+            print(f"recommended_mode: {preset_details.get('recommended_mode', '')}")
+            print(
+                "recommended_campaign_lock: "
+                f"{preset_details.get('recommended_campaign_lock', 'none')}"
+            )
         print("---")
         print(preset_path.read_text(encoding="utf-8").rstrip())
         return 0
@@ -4351,6 +4375,76 @@ def _cmd_report(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if bool(getattr(args, "campaign", False)):
+        if str(args.comment or "").strip():
+            print(
+                "autolab report: ERROR --comment is only supported for issue reports",
+                file=sys.stderr,
+            )
+            return 1
+        if int(getattr(args, "log_tail", 500)) != 500:
+            print(
+                "autolab report: ERROR --log-tail is only supported for issue reports",
+                file=sys.stderr,
+            )
+            return 1
+        if float(getattr(args, "timeout_seconds", 240.0)) != 240.0:
+            print(
+                "autolab report: ERROR --timeout-seconds is only supported for issue reports",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            campaign = _load_campaign(repo_root)
+        except Exception as exc:
+            print(f"autolab report: ERROR {exc}", file=sys.stderr)
+            return 1
+        if campaign is None:
+            print(
+                "autolab report: ERROR no active campaign is available",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            results_payload = _refresh_campaign_results(repo_root, campaign)
+        except Exception as exc:
+            print(
+                f"autolab report: ERROR failed to refresh campaign results: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
+        if handoff_payload is None:
+            handoff_payload = {
+                "blocking_failures": [f"handoff refresh failed: {handoff_error}"]
+            }
+        try:
+            report_payload = _campaign_build_morning_report_payload(
+                repo_root,
+                campaign,
+                results_payload=results_payload,
+                handoff_payload=handoff_payload,
+            )
+            report_text = _campaign_render_morning_report(
+                repo_root,
+                campaign,
+                report_payload,
+            )
+        except Exception as exc:
+            print(
+                f"autolab report: ERROR failed to build campaign report: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        if args.output:
+            output_path = Path(args.output).expanduser().resolve()
+        else:
+            output_path = _campaign_morning_report_path(repo_root, campaign)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report_text, encoding="utf-8")
+        print(f"autolab report: wrote {output_path}")
+        return 0
 
     try:
         log_tail_lines = int(args.log_tail)

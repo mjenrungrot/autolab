@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,7 @@ _CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT = 5
 _CAMPAIGN_IDEA_SURFACE_LIMIT = 12
 _CAMPAIGN_RESULTS_TSV_FILENAME = "results.tsv"
 _CAMPAIGN_RESULTS_MD_FILENAME = "results.md"
+_CAMPAIGN_MORNING_REPORT_FILENAME = "morning_report.md"
 _CAMPAIGN_ORACLE_FEEDBACK_SIGNALS = {"none", "stop", "rethink"}
 _CAMPAIGN_COMPARE_LOG_PATTERN = re.compile(
     r"^campaign (?P<action>promote|discard): champion=(?P<champion>\S+) "
@@ -1873,6 +1875,408 @@ def _campaign_results_overview(
     }
 
 
+def _campaign_morning_report_path(repo_root: Path, campaign: dict[str, Any]) -> Path:
+    return _campaign_scope_root(repo_root, campaign) / _CAMPAIGN_MORNING_REPORT_FILENAME
+
+
+def _campaign_timestamp_as_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return _parse_utc(text)
+
+
+def _campaign_timestamp_text(value: Any) -> str:
+    timestamp = _campaign_timestamp_as_datetime(value)
+    if timestamp is None:
+        return ""
+    return timestamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _campaign_row_primary_metric_value(row: dict[str, Any]) -> float | None:
+    text = str(row.get("primary_metric", "")).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def _campaign_metric_delta(
+    candidate_value: float | None,
+    baseline_value: float | None,
+    objective_mode: str,
+) -> float | None:
+    if candidate_value is None or baseline_value is None:
+        return None
+    mode = str(objective_mode or "").strip().lower()
+    if mode == "minimize":
+        return baseline_value - candidate_value
+    return candidate_value - baseline_value
+
+
+def _campaign_candidate_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {status: 0 for status in _CAMPAIGN_RESULT_STATUSES}
+    for row in rows:
+        if bool(row.get("is_baseline", False)):
+            continue
+        status = str(row.get("status", "")).strip().lower()
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _campaign_recent_rows(
+    campaign: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    started_at = _campaign_timestamp_as_datetime(campaign.get("started_at"))
+    now = _campaign_timestamp_as_datetime(_utc_now())
+    if started_at is None or now is None:
+        return (list(rows), "")
+    cutoff = max(started_at, now - timedelta(hours=24))
+    filtered = [
+        row
+        for row in rows
+        if (
+            (timestamp := _campaign_timestamp_as_datetime(row.get("timestamp")))
+            is not None
+            and timestamp >= cutoff
+        )
+    ]
+    if filtered:
+        return (filtered, _campaign_timestamp_text(cutoff))
+    return (list(rows), _campaign_timestamp_text(cutoff))
+
+
+def _campaign_failure_themes(
+    campaign: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> list[str]:
+    themes: list[str] = []
+    novelty_summary = _campaign_novelty_summary(campaign)
+    recent_failed_families = novelty_summary.get("recent_failed_families")
+    if isinstance(recent_failed_families, list):
+        for family in recent_failed_families:
+            text = str(family).strip()
+            if text:
+                themes.append(f"failed family: {text}")
+    recent_near_miss_families = novelty_summary.get("recent_near_miss_families")
+    if isinstance(recent_near_miss_families, list):
+        for family in recent_near_miss_families:
+            text = str(family).strip()
+            if text:
+                themes.append(f"near miss: {text}")
+    for row in rows:
+        if bool(row.get("is_baseline", False)):
+            continue
+        status = str(row.get("status", "")).strip().lower()
+        if status not in {"discard", "crash", "partial"}:
+            continue
+        summary = _campaign_compact_text(row.get("summary", ""))
+        if not summary:
+            continue
+        themes.append(f"{status}: {summary}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for theme in themes:
+        normalized = _campaign_compact_text(theme)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+        if len(deduped) >= 5:
+            break
+    return deduped
+
+
+def _campaign_report_next_action(
+    handoff_payload: dict[str, Any],
+    *,
+    oracle_required: bool,
+    oracle_reason: str,
+) -> tuple[str, str, str, list[str]]:
+    continuation_packet = handoff_payload.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        continuation_packet = {}
+    next_action = continuation_packet.get("next_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
+    safe_resume = handoff_payload.get("safe_resume_point")
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+    preconditions = [
+        str(item).strip()
+        for item in safe_resume.get("preconditions", [])
+        if str(item).strip()
+    ]
+    if oracle_required:
+        return ("autolab oracle", oracle_reason, "blocked", preconditions)
+    command = (
+        str(next_action.get("recommended_command", "")).strip()
+        or str(safe_resume.get("command", "")).strip()
+    )
+    reason = (
+        str(next_action.get("reason", "")).strip() or "No recommendation available."
+    )
+    status = (
+        str(next_action.get("safe_status", "")).strip()
+        or str(safe_resume.get("status", "blocked")).strip()
+        or "blocked"
+    )
+    return (command, reason, status, preconditions)
+
+
+def _campaign_build_morning_report_payload(
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    results_payload: dict[str, Any] | None = None,
+    handoff_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    if results_payload is None:
+        results_payload = _refresh_campaign_results(repo_root, normalized)
+    if handoff_payload is None:
+        handoff_payload = {}
+    rows_raw = results_payload.get("rows")
+    rows = [dict(item) for item in rows_raw] if isinstance(rows_raw, list) else []
+    baseline_run_id = str(results_payload.get("baseline_run_id", "")).strip()
+    if not baseline_run_id:
+        baseline_run_id = str(normalized.get("champion_run_id", "")).strip()
+    baseline_row = next(
+        (
+            row
+            for row in rows
+            if bool(row.get("is_baseline", False))
+            or str(row.get("run_id", "")).strip() == baseline_run_id
+        ),
+        {},
+    )
+    champion_run_id = str(normalized.get("champion_run_id", "")).strip()
+    champion_row = next(
+        (row for row in rows if str(row.get("run_id", "")).strip() == champion_run_id),
+        baseline_row,
+    )
+    candidate_rows = [row for row in rows if not bool(row.get("is_baseline", False))]
+    recent_rows, window_started_at = _campaign_recent_rows(normalized, candidate_rows)
+    baseline_metric = _campaign_row_primary_metric_value(baseline_row)
+    objective_mode = str(normalized.get("objective_mode", "")).strip().lower()
+    best_delta: float | None = None
+    best_delta_row: dict[str, Any] = {}
+    for row in recent_rows:
+        delta = _campaign_metric_delta(
+            _campaign_row_primary_metric_value(row),
+            baseline_metric,
+            objective_mode,
+        )
+        if delta is None:
+            continue
+        if best_delta is None or delta > best_delta:
+            best_delta = delta
+            best_delta_row = row
+    if best_delta is not None and best_delta <= 0:
+        best_delta = None
+        best_delta_row = {}
+    last_event = _normalize_campaign_last_governance_event(
+        normalized.get("last_governance_event")
+    )
+    last_oracle_at = _campaign_timestamp_as_datetime(normalized.get("last_oracle_at"))
+    last_event_at = _campaign_timestamp_as_datetime(last_event.get("at"))
+    oracle_required = str(normalized.get("status", "")).strip() == "needs_rethink"
+    oracle_reason = "campaign marked needs_rethink"
+    category = str(last_event.get("category", "")).strip()
+    if category in {"crash_rethink", "stagnation_rethink"} and (
+        last_event_at is not None
+        and (last_oracle_at is None or last_oracle_at < last_event_at)
+    ):
+        oracle_required = True
+        oracle_reason = str(last_event.get("reason", "")).strip() or category
+    pending_human_decisions = [
+        str(item).strip()
+        for item in handoff_payload.get("pending_human_decisions", [])
+        if str(item).strip()
+    ]
+    blocking_failures = [
+        str(item).strip()
+        for item in handoff_payload.get("blocking_failures", [])
+        if str(item).strip()
+    ]
+    current_stage = str(
+        handoff_payload.get("current_stage", handoff_payload.get("stage", ""))
+    ).strip()
+    pending_review = bool(pending_human_decisions) or current_stage == "human_review"
+    next_command, next_reason, safe_status, preconditions = (
+        _campaign_report_next_action(
+            handoff_payload,
+            oracle_required=oracle_required,
+            oracle_reason=oracle_reason,
+        )
+    )
+    return {
+        "campaign": _campaign_summary(normalized),
+        "results_tsv_path": _campaign_iteration_relpath(
+            repo_root, Path(results_payload.get("results_tsv_path", ""))
+        )
+        if results_payload.get("results_tsv_path")
+        else "",
+        "results_md_path": _campaign_iteration_relpath(
+            repo_root, Path(results_payload.get("results_md_path", ""))
+        )
+        if results_payload.get("results_md_path")
+        else "",
+        "morning_report_path": _campaign_iteration_relpath(
+            repo_root, _campaign_morning_report_path(repo_root, normalized)
+        ),
+        "oracle_path": _campaign_iteration_relpath(
+            repo_root, _campaign_scope_root(repo_root, normalized) / "oracle.md"
+        ),
+        "baseline_run_id": baseline_run_id,
+        "baseline_row": baseline_row,
+        "champion_row": champion_row,
+        "candidate_counts": _campaign_candidate_counts(candidate_rows),
+        "recent_candidate_counts": _campaign_candidate_counts(recent_rows),
+        "recent_window_started_at": window_started_at,
+        "candidate_total": len(candidate_rows),
+        "recent_candidate_total": len(recent_rows),
+        "best_delta": best_delta,
+        "best_delta_row": best_delta_row,
+        "failure_themes": _campaign_failure_themes(normalized, recent_rows),
+        "oracle_required": oracle_required,
+        "oracle_reason": oracle_reason,
+        "pending_review": pending_review,
+        "pending_human_decisions": pending_human_decisions,
+        "blocking_failures": blocking_failures,
+        "recommended_command": next_command,
+        "recommended_reason": next_reason,
+        "safe_status": safe_status,
+        "preconditions": preconditions,
+    }
+
+
+def _campaign_render_morning_report(
+    repo_root: Path,
+    campaign: dict[str, Any],
+    payload: dict[str, Any],
+) -> str:
+    normalized = _normalize_campaign(campaign)
+    summary = payload.get("campaign")
+    if not isinstance(summary, dict):
+        summary = _campaign_summary(normalized)
+    champion_row = payload.get("champion_row")
+    if not isinstance(champion_row, dict):
+        champion_row = {}
+    baseline_row = payload.get("baseline_row")
+    if not isinstance(baseline_row, dict):
+        baseline_row = {}
+    counts = payload.get("candidate_counts")
+    if not isinstance(counts, dict):
+        counts = {status: 0 for status in _CAMPAIGN_RESULT_STATUSES}
+    recent_counts = payload.get("recent_candidate_counts")
+    if not isinstance(recent_counts, dict):
+        recent_counts = counts
+    best_delta = payload.get("best_delta")
+    best_delta_text = "none"
+    if isinstance(best_delta, (int, float)):
+        best_delta_row = payload.get("best_delta_row")
+        if not isinstance(best_delta_row, dict):
+            best_delta_row = {}
+        best_delta_text = (
+            f"{best_delta:+.6g} via "
+            f"{str(best_delta_row.get('run_id', '')).strip() or 'unknown'} "
+            f"({str(best_delta_row.get('status', '')).strip() or 'unknown'})"
+        )
+    failure_themes = payload.get("failure_themes")
+    if not isinstance(failure_themes, list):
+        failure_themes = []
+    pending_decisions = payload.get("pending_human_decisions")
+    if not isinstance(pending_decisions, list):
+        pending_decisions = []
+    blocking_failures = payload.get("blocking_failures")
+    if not isinstance(blocking_failures, list):
+        blocking_failures = []
+    preconditions = payload.get("preconditions")
+    if not isinstance(preconditions, list):
+        preconditions = []
+    lines = [
+        "# Campaign Morning Report",
+        "",
+        f"- generated_at: `{_utc_now()}`",
+        f"- campaign_id: `{summary.get('campaign_id', '')}`",
+        f"- label: `{summary.get('label', '')}`",
+        f"- scope_kind: `{summary.get('scope_kind', '')}`",
+        f"- status: `{summary.get('status', '')}`",
+        f"- objective_metric: `{summary.get('objective_metric', '')}`",
+        f"- objective_mode: `{summary.get('objective_mode', '')}`",
+        f"- report_window_started_at: `{str(payload.get('recent_window_started_at', '')).strip() or summary.get('started_at', '')}`",
+        "",
+        "## Current Champion",
+        "",
+        f"- run_id: `{summary.get('champion_run_id', '')}`",
+        f"- revision_label: `{str(champion_row.get('revision_label', '')).strip() or summary.get('champion_revision_label', '')}`",
+        f"- primary_metric: `{str(champion_row.get('primary_metric', '')).strip() or 'unknown'}`",
+        f"- baseline_metric: `{str(baseline_row.get('primary_metric', '')).strip() or 'unknown'}`",
+        "",
+        "## Overnight Summary",
+        "",
+        f"- total_candidates: `{int(payload.get('candidate_total', 0) or 0)}`",
+        f"- recent_candidates: `{int(payload.get('recent_candidate_total', 0) or 0)}`",
+        f"- keeps: `{int(counts.get('keep', 0) or 0)}`",
+        f"- discards: `{int(counts.get('discard', 0) or 0)}`",
+        f"- crashes: `{int(counts.get('crash', 0) or 0)}`",
+        f"- partials: `{int(counts.get('partial', 0) or 0)}`",
+        f"- recent_keeps: `{int(recent_counts.get('keep', 0) or 0)}`",
+        f"- recent_discards: `{int(recent_counts.get('discard', 0) or 0)}`",
+        f"- recent_crashes: `{int(recent_counts.get('crash', 0) or 0)}`",
+        f"- recent_partials: `{int(recent_counts.get('partial', 0) or 0)}`",
+        f"- best_primary_delta: `{best_delta_text}`",
+        "",
+        "## Failure Themes",
+        "",
+    ]
+    if failure_themes:
+        lines.extend(
+            f"- {str(item).strip()}" for item in failure_themes if str(item).strip()
+        )
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## Steering",
+            "",
+            f"- oracle_required: `{bool(payload.get('oracle_required', False))}`",
+            f"- oracle_reason: {str(payload.get('oracle_reason', '')).strip() or 'none'}",
+            f"- pending_review: `{bool(payload.get('pending_review', False))}`",
+            f"- recommended_command: `{str(payload.get('recommended_command', '')).strip() or 'none'}`",
+            f"- safe_status: `{str(payload.get('safe_status', '')).strip() or 'blocked'}`",
+            f"- recommendation_reason: {str(payload.get('recommended_reason', '')).strip() or 'none'}",
+            "",
+            "## Pointers",
+            "",
+            f"- results_md: `{str(payload.get('results_md_path', '')).strip() or 'missing'}`",
+            f"- results_tsv: `{str(payload.get('results_tsv_path', '')).strip() or 'missing'}`",
+            f"- oracle_md: `{str(payload.get('oracle_path', '')).strip() or 'missing'}`",
+            f"- morning_report: `{str(payload.get('morning_report_path', '')).strip() or 'missing'}`",
+        ]
+    )
+    if pending_decisions:
+        lines.extend(["", "## Pending Human Decisions", ""])
+        lines.extend(f"- {item}" for item in pending_decisions)
+    if blocking_failures:
+        lines.extend(["", "## Blocking Failures", ""])
+        lines.extend(f"- {item}" for item in blocking_failures[:5])
+    if preconditions:
+        lines.extend(["", "## Preconditions", ""])
+        lines.extend(f"- {item}" for item in preconditions)
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _campaign_compact_text(value: Any) -> str:
     return " ".join(
         str(value or "").replace("\t", " ").replace("\n", " ").split()
@@ -2470,6 +2874,8 @@ def _refresh_campaign_results(
                 "memory_gb": _campaign_memory_gb_text(manifest_payload),
                 "status": status,
                 "summary": _campaign_compact_text(summary),
+                "timestamp": _campaign_timestamp_text(entry.get("timestamp")),
+                "is_baseline": run_id == baseline_run_id,
             }
         )
         if (
@@ -2534,6 +2940,8 @@ def _refresh_campaign_results(
         "diagnostics": diagnostics,
         "iteration_dir": iteration_dir,
         "scope_root": scope_root,
+        "baseline_run_id": baseline_run_id,
+        "rows": rows,
     }
 
 

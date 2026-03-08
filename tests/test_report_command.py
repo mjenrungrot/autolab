@@ -184,3 +184,149 @@ def test_report_supports_output_override(tmp_path: Path, monkeypatch) -> None:
     assert output_path.exists()
     created_files = sorted(after_files - before_files)
     assert created_files == ["issue_submission.md"]
+
+
+def test_report_campaign_writes_scope_root_morning_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    output_path = repo / "experiments" / "plan" / "iter_demo" / "morning_report.md"
+
+    monkeypatch.setattr(
+        commands_module,
+        "_load_campaign",
+        lambda _repo_root: {"campaign_id": "campaign_demo"},
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_refresh_campaign_results",
+        lambda _repo_root, _campaign: {
+            "results_tsv_path": repo
+            / "experiments"
+            / "plan"
+            / "iter_demo"
+            / "results.tsv",
+            "results_md_path": repo
+            / "experiments"
+            / "plan"
+            / "iter_demo"
+            / "results.md",
+            "rows": [],
+            "baseline_run_id": "run_baseline",
+        },
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda _state_path: (
+            {
+                "continuation_packet": {
+                    "next_action": {
+                        "recommended_command": "autolab campaign continue",
+                        "reason": "campaign is resumable",
+                        "safe_status": "ready",
+                    }
+                },
+                "safe_resume_point": {
+                    "command": "autolab campaign continue",
+                    "status": "ready",
+                    "preconditions": [],
+                },
+            },
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_campaign_build_morning_report_payload",
+        lambda *_args, **_kwargs: {"recommended_command": "autolab campaign continue"},
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_campaign_render_morning_report",
+        lambda *_args, **_kwargs: "# Campaign Morning Report\n",
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_campaign_morning_report_path",
+        lambda _repo_root, _campaign: output_path,
+    )
+
+    before_files = _repo_files(repo)
+    exit_code = commands_module.main(
+        [
+            "report",
+            "--campaign",
+            "--state-file",
+            str(state_path),
+        ]
+    )
+    after_files = _repo_files(repo)
+
+    assert exit_code == 0
+    assert output_path.exists()
+    created_files = sorted(after_files - before_files)
+    assert created_files == ["experiments/plan/iter_demo/morning_report.md"]
+    assert output_path.read_text(encoding="utf-8") == "# Campaign Morning Report\n"
+
+
+def test_report_campaign_requires_active_campaign(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    monkeypatch.setattr(commands_module, "_load_campaign", lambda _repo_root: None)
+
+    exit_code = commands_module.main(
+        [
+            "report",
+            "--campaign",
+            "--state-file",
+            str(state_path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_report_campaign_rejects_issue_only_options(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    exit_code = commands_module.main(
+        [
+            "report",
+            "--campaign",
+            "--state-file",
+            str(state_path),
+            "--comment",
+            "not supported here",
+        ]
+    )
+
+    assert exit_code == 1

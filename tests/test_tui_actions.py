@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from autolab.tui.actions import (
+    build_policy_apply_preset_intent,
     build_checkpoint_create_intent,
     build_experiment_create_intent,
     build_experiment_move_intent,
@@ -42,6 +43,7 @@ def test_action_catalog_contains_required_entries() -> None:
     assert "remote_doctor" in action_ids
     assert "uat_init" in action_ids
     assert "hooks_install" in action_ids
+    assert "apply_policy_preset" in action_ids
     assert "focus_experiment" in action_ids
     assert "experiment_create" in action_ids
     assert "experiment_move" in action_ids
@@ -98,6 +100,14 @@ def test_action_catalog_contains_required_entries() -> None:
     assert hooks_action.kind == "mutating"
     assert hooks_action.requires_arm is True
     assert hooks_action.requires_confirmation is True
+
+    policy_action = next(
+        action for action in actions if action.action_id == "apply_policy_preset"
+    )
+    assert policy_action.kind == "mutating"
+    assert policy_action.advanced is True
+    assert policy_action.requires_arm is True
+    assert policy_action.requires_confirmation is True
 
     human_review_action = next(
         action for action in actions if action.action_id == "resolve_human_review"
@@ -227,6 +237,21 @@ def test_build_checkpoint_remote_uat_and_hooks_intents(tmp_path: Path) -> None:
     hooks_intent = build_hooks_install_intent(state_path=state_path)
     assert hooks_intent.argv[:3] == ("autolab", "hooks", "install")
     assert hooks_intent.mutating is True
+
+    policy_intent = build_policy_apply_preset_intent(
+        state_path=state_path,
+        preset="experiment_search",
+    )
+    assert policy_intent.argv[:5] == (
+        "autolab",
+        "policy",
+        "apply",
+        "preset",
+        "experiment_search",
+    )
+    assert "--state-file" in policy_intent.argv
+    assert ".autolab/verifier_policy.yaml" in policy_intent.expected_writes
+    assert policy_intent.mutating is True
     assert hooks_intent.expected_writes == (".git/hooks/post-commit",)
 
 

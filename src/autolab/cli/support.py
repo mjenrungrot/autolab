@@ -120,7 +120,40 @@ from autolab.slurm_job_list import (
     required_slurm_job_id,
 )
 
-POLICY_PRESET_NAMES = ("local_dev", "ci_strict", "slurm")
+POLICY_PRESET_CATALOG: dict[str, dict[str, str]] = {
+    "local_dev": {
+        "summary": "Lightweight local iteration with minimal blocking gates.",
+        "recommended_mode": "Use for fast local manual or short-loop work.",
+        "recommended_campaign_lock": "none",
+    },
+    "ci_strict": {
+        "summary": "Strict verification-first preset for CI-like execution.",
+        "recommended_mode": "Use when you want maximum verification coverage.",
+        "recommended_campaign_lock": "none",
+    },
+    "slurm": {
+        "summary": "Strict remote/SLURM-oriented preset for synced execution.",
+        "recommended_mode": "Use for remote checkout and SLURM-backed workflows.",
+        "recommended_campaign_lock": "none",
+    },
+    "experiment_search": {
+        "summary": "Unattended experiment-search gear with lighter gates and looser campaign thresholds.",
+        "recommended_mode": "Use for autonomous campaign search loops.",
+        "recommended_campaign_lock": "design",
+    },
+    "integration_change": {
+        "summary": "Cautious integration gear with stricter verification and default UAT behavior.",
+        "recommended_mode": "Use for safer repo-wide integration work.",
+        "recommended_campaign_lock": "none",
+    },
+}
+POLICY_PRESET_NAMES = tuple(POLICY_PRESET_CATALOG.keys())
+
+
+def policy_preset_details(name: str) -> dict[str, str]:
+    return dict(POLICY_PRESET_CATALOG.get(str(name).strip(), {}))
+
+
 SUPPORTED_SKILL_PROVIDERS = ("codex", "claude")
 SKILL_INSTALL_ROOT_BY_PROVIDER = {
     "codex": ".codex",

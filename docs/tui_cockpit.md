@@ -92,6 +92,7 @@ Confirmation dialogs show:
 High-risk actions are intentionally de-emphasized and hidden by default.
 
 - `Start loop (advanced)`
+- `Apply policy preset (advanced)`
 - `Break lock (advanced)`
 - `Focus experiment (advanced)`
 - `Create experiment (advanced)`
@@ -105,6 +106,7 @@ Reveal them with `x` (Toggle Advanced).
 - View actions never mutate repo-tracked workflow files.
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
 - Human review decisions (`pass|retry|stop`) can be applied from Home; TUI executes `autolab review --status=<...>` behind the same confirmation flow.
+- Policy preset application can also be driven from Home advanced actions; TUI executes `autolab policy apply preset <name>` behind the same confirmation flow.
 - Handoff panel reads `.autolab/handoff.json` and surfaces scope, wave/task counters, blocker/decision counts, recommended next command, and safe resume status.
 - Home and Waves read the top-level handoff snapshot; the richer scope-root `oracle.md` export is generated separately via `autolab oracle` when you need the inlined continuation view.
 - Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.

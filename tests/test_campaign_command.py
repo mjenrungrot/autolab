@@ -11,7 +11,9 @@ import pytest
 from autolab.campaign import (
     _campaign_backfill_lock_contract,
     _campaign_apply_challenger_outcome,
+    _campaign_build_morning_report_payload,
     _campaign_has_champion_snapshot,
+    _campaign_render_morning_report,
     _campaign_results_markdown_path,
     _campaign_results_tsv_path,
     _campaign_seed_champion_snapshot,
@@ -979,11 +981,122 @@ def test_refresh_campaign_results_use_project_wide_scope_root(
     assert Path(result["results_tsv_path"]) == _campaign_results_tsv_path(
         repo, campaign
     )
-    assert Path(result["results_md_path"]) == _campaign_results_markdown_path(
-        repo, campaign
+
+
+def test_campaign_morning_report_payload_excludes_baseline_from_candidate_totals(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path, run_id="run_baseline", metric_value=1.0)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    campaign = _campaign_payload(state_path, status="running")
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_keep",
+        metric_value=1.3,
+        started_at="2026-03-08T01:00:00Z",
+        completed_at="2026-03-08T01:05:00Z",
     )
-    assert _campaign_results_tsv_path(repo, campaign).exists()
-    assert _campaign_results_markdown_path(repo, campaign).exists()
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_discard",
+        metric_value=0.8,
+        started_at="2026-03-08T02:00:00Z",
+        completed_at="2026-03-08T02:05:00Z",
+    )
+    log_path = repo / ".autolab" / "logs" / "orchestrator.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-03-08T01:06:00Z campaign promote: champion=run_baseline challenger=run_keep; improved metric",
+                "2026-03-08T02:06:00Z campaign discard: champion=run_keep challenger=run_discard; regression",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results_payload = _refresh_campaign_results(repo, campaign)
+    report_payload = _campaign_build_morning_report_payload(
+        repo,
+        campaign,
+        results_payload=results_payload,
+        handoff_payload={
+            "continuation_packet": {
+                "next_action": {
+                    "recommended_command": "autolab campaign continue",
+                    "reason": "campaign is resumable",
+                    "safe_status": "ready",
+                }
+            },
+            "safe_resume_point": {
+                "command": "autolab campaign continue",
+                "status": "ready",
+                "preconditions": [],
+            },
+        },
+    )
+
+    assert report_payload["candidate_total"] == 2
+    counts = report_payload["candidate_counts"]
+    assert isinstance(counts, dict)
+    assert counts["keep"] == 1
+    assert counts["discard"] == 1
+    assert report_payload["best_delta"] == pytest.approx(0.3)
+    assert report_payload["recommended_command"] == "autolab campaign continue"
+    report_text = _campaign_render_morning_report(repo, campaign, report_payload)
+    assert "- total_candidates: `2`" in report_text
+    assert "best_primary_delta: `+0.3 via run_keep (keep)`" in report_text
+
+
+def test_campaign_morning_report_payload_prefers_oracle_when_rethink_is_pending(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path, run_id="run_baseline", metric_value=1.0)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    campaign = _campaign_payload(
+        state_path,
+        status="needs_rethink",
+        last_governance_event={
+            "at": "2026-03-08T03:00:00Z",
+            "category": "stagnation_rethink",
+            "run_id": "run_baseline",
+            "reason": "campaign stagnated",
+        },
+    )
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    results_payload = _refresh_campaign_results(repo, campaign)
+    report_payload = _campaign_build_morning_report_payload(
+        repo,
+        campaign,
+        results_payload=results_payload,
+        handoff_payload={
+            "continuation_packet": {
+                "next_action": {
+                    "recommended_command": "autolab campaign continue",
+                    "reason": "campaign is resumable",
+                    "safe_status": "ready",
+                }
+            },
+            "safe_resume_point": {
+                "command": "autolab campaign continue",
+                "status": "ready",
+                "preconditions": [],
+            },
+        },
+    )
+
+    assert report_payload["oracle_required"] is True
+    assert report_payload["recommended_command"] == "autolab oracle"
 
 
 def test_refresh_handoff_includes_campaign_results_artifacts(

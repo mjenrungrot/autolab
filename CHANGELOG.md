@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.46] - 2026-03-08
+
+### Summary
+
+- Added `autolab report --campaign` to generate a scope-root `morning_report.md` wake-up view with champion status, candidate totals, best recent delta, failure themes, and oracle/review follow-up guidance.
+- Added bundled `experiment_search` and `integration_change` policy presets, active preset tracking in effective policy state, and a Home-screen TUI action for applying presets directly from the cockpit.
+
+<!-- autolab:range v1.2.45..v1.2.46 -->
+
 ## [1.2.45] - 2026-03-08
 
 ### Summary
