@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.37] - 2026-03-08
+
+### Summary
+
+- Promoted `checkpoint`, `remote`, and `hooks` into the top-level command map, help groups, and quickstart/README guidance so those surfaces are easier to discover.
+- Added home-view TUI actions for manual checkpoint creation, remote profile diagnostics, and the Autolab post-commit hook installer, with matching action and help coverage.
+
+<!-- autolab:range v1.2.36..v1.2.37 -->
+
 ## [1.2.36] - 2026-03-08
 
 ### Summary

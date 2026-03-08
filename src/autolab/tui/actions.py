@@ -59,6 +59,10 @@ _TODO_SYNC_EXPECTED_WRITES = (
     "docs/todo.md",
     ".autolab/logs/orchestrator.log",
 )
+_CHECKPOINT_EXPECTED_WRITES = (
+    ".autolab/checkpoints/index.json",
+    ".autolab/checkpoints/<checkpoint_id>",
+)
 _UAT_INIT_EXPECTED_WRITES = (
     ".autolab/agent_result.json",
     ".autolab/handoff.json",
@@ -69,6 +73,7 @@ _UAT_INIT_EXPECTED_WRITES = (
     "experiments/*/*/plan_approval.md",
     ".autolab/logs/orchestrator.log",
 )
+_HOOKS_INSTALL_EXPECTED_WRITES = (".git/hooks/post-commit",)
 _LOCK_BREAK_EXPECTED_WRITES = (
     ".autolab/lock",
     ".autolab/logs/orchestrator.log",
@@ -281,6 +286,29 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         requires_arm=True,
     ),
     ActionSpec(
+        action_id="checkpoint_create",
+        label="Checkpoint: create manual checkpoint",
+        description="Create a manual checkpoint for the current workflow state.",
+        kind="mutating",
+        risk_level="medium",
+        group="home",
+        user_label="Checkpoint: create manual checkpoint",
+        help_text="Run autolab checkpoint create for the current state and iteration.",
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
+        action_id="remote_doctor",
+        label="Remote: diagnose active profile",
+        description="Inspect the resolved remote profile and readiness checks.",
+        kind="view",
+        risk_level="low",
+        group="home",
+        user_label="Remote: diagnose active profile",
+        help_text="Run autolab remote doctor for the current repository state.",
+        requires_confirmation=True,
+    ),
+    ActionSpec(
         action_id="uat_init",
         label="UAT: initialize artifact",
         description="Create the current iteration UAT artifact with suggested checks.",
@@ -289,6 +317,18 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         group="home",
         user_label="UAT: initialize artifact",
         help_text="Run autolab uat init --suggest for the current iteration.",
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
+        action_id="hooks_install",
+        label="Hooks: install Autolab post-commit hook",
+        description="Install the Autolab post-commit hook helper in the repository.",
+        kind="mutating",
+        risk_level="medium",
+        group="home",
+        user_label="Hooks: install Autolab post-commit hook",
+        help_text="Run autolab hooks install for the Autolab post-commit helper only.",
         requires_confirmation=True,
         requires_arm=True,
     ),
@@ -478,6 +518,28 @@ def build_todo_sync_intent(*, state_path: Path) -> CommandIntent:
     )
 
 
+def build_checkpoint_create_intent(*, state_path: Path) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    return CommandIntent(
+        action_id="checkpoint_create",
+        argv=tuple(_base_state_argv("checkpoint", "create", state_path=state_path)),
+        cwd=repo_root,
+        expected_writes=_CHECKPOINT_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_remote_doctor_intent(*, state_path: Path) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    return CommandIntent(
+        action_id="remote_doctor",
+        argv=tuple(_base_state_argv("remote", "doctor", state_path=state_path)),
+        cwd=repo_root,
+        expected_writes=(),
+        mutating=False,
+    )
+
+
 def build_uat_init_intent(*, state_path: Path) -> CommandIntent:
     repo_root = _resolve_repo_root(state_path)
     return CommandIntent(
@@ -485,6 +547,17 @@ def build_uat_init_intent(*, state_path: Path) -> CommandIntent:
         argv=tuple(_base_state_argv("uat", "init", "--suggest", state_path=state_path)),
         cwd=repo_root,
         expected_writes=_UAT_INIT_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_hooks_install_intent(*, state_path: Path) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    return CommandIntent(
+        action_id="hooks_install",
+        argv=tuple(_base_state_argv("hooks", "install", state_path=state_path)),
+        cwd=repo_root,
+        expected_writes=_HOOKS_INSTALL_EXPECTED_WRITES,
         mutating=True,
     )
 

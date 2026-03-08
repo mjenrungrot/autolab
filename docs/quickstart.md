@@ -21,10 +21,13 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 ## Command map (grouped)
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
-- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
-- **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
+- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
+- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
+
+`autolab hooks install` installs the Autolab `post-commit` helper only; any
+repo-managed `pre-commit` or `core.hooksPath` setup remains separate.
 
 Recommended onboarding flow:
 

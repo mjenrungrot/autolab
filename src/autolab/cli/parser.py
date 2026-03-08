@@ -198,11 +198,12 @@ def _build_parser() -> argparse.ArgumentParser:
     gc.set_defaults(handler=_cmd_gc)
 
     hooks = subparsers.add_parser(
-        "hooks", help="Manage git hooks for version-tagging and checkpoints"
+        "hooks", help="Manage the Autolab post-commit hook helper"
     )
     hooks_sub = hooks.add_subparsers(dest="hooks_command")
     hooks_install = hooks_sub.add_parser(
-        "install", help="Install git hooks in the current repo"
+        "install",
+        help="Install the Autolab post-commit hook helper in the current repo",
     )
     hooks_install.add_argument("--state-file", default=".autolab/state.json")
     hooks_install.add_argument("--force", action="store_true", default=False)

@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.36
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.37
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -33,11 +33,15 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@vX.Y.Z
 autolab sync-scaffold --force
 ```
 
-Enable commit hooks (staged-file formatting + repo style check + default-branch version bump):
+Enable full repo hook setup (staged-file formatting + repo style check + default-branch version bump):
 
 ```bash
 ./scripts/install-hooks.sh
 ```
+
+`autolab hooks install` is narrower: it installs the Autolab `post-commit`
+helper only and does not configure the repo-managed `.githooks` `pre-commit`
+setup.
 
 Run formatter/style checks locally:
 
@@ -91,10 +95,10 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 **Command categories (onboarding-first).**
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab approve-plan`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
-- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
-- **Maintenance**: `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
+- **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
+- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
 
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 

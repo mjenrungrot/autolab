@@ -219,6 +219,10 @@ def _cmd_hooks_install(args: argparse.Namespace) -> int:
     print(
         f"installed: {', '.join(installed) if installed else '(none — already present)'}"
     )
+    print(
+        "note: installs the Autolab post-commit hook helper only; "
+        "repo-managed pre-commit/hooksPath setup remains separate"
+    )
     return 0
 
 
