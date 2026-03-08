@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.43] - 2026-03-08
+
+### Summary
+
+- Added `autolab oracle apply` so expert notes can be ingested from a file or stdin, classified through the local agent stack, and written back into discuss/research sidecars, TODOs, campaign feedback, and optional plan-approval notes.
+- Added campaign oracle-feedback persistence plus campaign-status steering for `stop` and `rethink` signals, and refreshed handoff/continuation updates after oracle feedback is applied.
+
+<!-- autolab:range v1.2.42..v1.2.43 -->
+
 ## [1.2.42] - 2026-03-08
 
 ### Summary

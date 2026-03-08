@@ -320,7 +320,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `last_green_at`, `baseline_snapshot`
   - `handoff_json_path`, `handoff_markdown_path`
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
-- **Consumed by**: `autolab resume`, `autolab oracle`, `autolab tui` Home and Waves panels, takeover automation, and generated docs state/sidecar views
+- **Consumed by**: `autolab resume`, `autolab oracle`, `autolab oracle apply`, `autolab tui` Home and Waves panels, takeover automation, and generated docs state/sidecar views
 - **Presentation note**: top-level handoff fields remain the concise summary surface; CLI/docs consumers render wave retry/block/deferred/skipped detail, critical-path timing context, and observability diagnostics from `wave_observability`, while richer continuation exports read `continuation_packet`.
 
 ## continuation_packet
@@ -332,8 +332,8 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
-- **Consumed by**: `autolab oracle` and continuation-oriented takeover tooling
-- **Export note**: `autolab oracle` resolves `continuation_packet` into `<scope-root>/oracle.md`, inlining current artifact content at export time.
+- **Consumed by**: `autolab oracle`, `autolab oracle apply`, and continuation-oriented takeover tooling
+- **Export note**: `autolab oracle` resolves `continuation_packet` into `<scope-root>/oracle.md`, inlining current artifact content at export time. `autolab oracle apply` consumes expert notes separately and does not mutate the export artifact.
 
 ## handoff.md
 
@@ -384,6 +384,19 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Consumed by**: handoff/oracle expert review and wake-up scan workflows
 - **Relationship to `results.tsv`**: `results.md` is the readable companion to the canonical generated table in `results.tsv`
 
+## campaign.json
+
+- **Path**: `.autolab/campaign.json`
+- **Format**: JSON
+- **Content**: Canonical campaign control-plane state for unattended experiment search, including objective binding, champion metadata, lock contract, crash/improvement streaks, oracle export timestamp, and optional oracle feedback history.
+- **Produced by**: campaign start/continue/stop flows, challenger promotion-discard decisions, `autolab oracle`, and `autolab oracle apply`
+- **Consumed by**: campaign runtime, status/handoff surfaces, and oracle round-trip tooling
+- **Oracle feedback extension**:
+  - `oracle_feedback[]` is optional and append-only
+  - each entry records `applied_at`, `source`, `summary`, `detail`, and `signal`
+  - `signal` vocabulary: `none`, `stop`, `rethink`
+  - `autolab oracle apply` may also update campaign `status` to `stop_requested` or `needs_rethink` when feedback carries those signals
+
 ## context sidecars (`discuss.json` / `research.json`)
 
 - **Paths**:
@@ -405,6 +418,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Required collection arrays**:
   - discuss: `locked_decisions[]`, `preferences[]`, `constraints[]`, `open_questions[]`, `promotion_candidates[]`
   - research: `questions[]`, `findings[]`, `recommendations[]`, `sources[]`
+- **Oracle apply note**: `autolab oracle apply` writes only to existing discuss collections plus mirrored `research.questions[]`; it does not synthesize findings or recommendations.
 - **Collection item contract**:
   - every entry is an object with `id`, `summary`, and optional `detail`
   - discuss `promotion_candidates[]` may also carry `target_scope_kind`, `requirement_hint`, and `rationale`
