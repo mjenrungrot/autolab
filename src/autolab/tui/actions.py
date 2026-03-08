@@ -74,6 +74,7 @@ _UAT_INIT_EXPECTED_WRITES = (
     ".autolab/logs/orchestrator.log",
 )
 _HOOKS_INSTALL_EXPECTED_WRITES = (".git/hooks/post-commit",)
+_POLICY_APPLY_EXPECTED_WRITES = (".autolab/verifier_policy.yaml",)
 _LOCK_BREAK_EXPECTED_WRITES = (
     ".autolab/lock",
     ".autolab/logs/orchestrator.log",
@@ -333,6 +334,19 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         requires_arm=True,
     ),
     ActionSpec(
+        action_id="apply_policy_preset",
+        label="Apply policy preset",
+        description="Apply a bundled policy preset to the repository policy file.",
+        kind="mutating",
+        risk_level="medium",
+        group="advanced",
+        user_label="Apply policy preset (advanced)",
+        help_text="Run autolab policy apply preset for the current repository.",
+        advanced=True,
+        requires_confirmation=True,
+        requires_arm=True,
+    ),
+    ActionSpec(
         action_id="lock_break",
         label="Break lock",
         description="Force-remove the active autolab lock.",
@@ -558,6 +572,23 @@ def build_hooks_install_intent(*, state_path: Path) -> CommandIntent:
         argv=tuple(_base_state_argv("hooks", "install", state_path=state_path)),
         cwd=repo_root,
         expected_writes=_HOOKS_INSTALL_EXPECTED_WRITES,
+        mutating=True,
+    )
+
+
+def build_policy_apply_preset_intent(
+    *,
+    state_path: Path,
+    preset: str,
+) -> CommandIntent:
+    repo_root = _resolve_repo_root(state_path)
+    argv = _base_state_argv("policy", "apply", "preset", state_path=state_path)
+    argv.insert(4, str(preset).strip())
+    return CommandIntent(
+        action_id="apply_policy_preset",
+        argv=tuple(argv),
+        cwd=repo_root,
+        expected_writes=_POLICY_APPLY_EXPECTED_WRITES,
         mutating=True,
     )
 

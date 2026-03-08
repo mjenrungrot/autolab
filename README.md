@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.45
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.46
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -103,7 +103,7 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 
-**Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. `autolab campaign start --label <tag> --scope <experiment|project_wide>` creates a first-class unattended campaign bound to the active design objective and accepted baseline, and `autolab campaign continue` resumes a stopped or errored campaign when the binding still matches. Campaign mode also regenerates scope-root `results.tsv` and `results.md` ledgers from campaign/run artifacts so keep-discard-crash outcomes stay visible without manual bookkeeping. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. For high-risk implementation plans, use `autolab run --plan-only` to stop after planning, `autolab approve-plan --status approve|retry|stop` to record the checkpoint decision, and `autolab run --execute-approved-plan` to execute the approved plan without replanning. See `docs/workflow_modes.md`.
+**Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. `autolab campaign start --label <tag> --scope <experiment|project_wide>` creates a first-class unattended campaign bound to the active design objective and accepted baseline, and `autolab campaign continue` resumes a stopped or errored campaign when the binding still matches. Campaign mode also regenerates scope-root `results.tsv` and `results.md` ledgers from campaign/run artifacts so keep-discard-crash outcomes stay visible without manual bookkeeping, and `autolab report --campaign` writes a scope-root `morning_report.md` wake-up summary for the active campaign. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. For high-risk implementation plans, use `autolab run --plan-only` to stop after planning, `autolab approve-plan --status approve|retry|stop` to record the checkpoint decision, and `autolab run --execute-approved-plan` to execute the approved plan without replanning. See `docs/workflow_modes.md`.
 
 **Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state, including critical-path duration/basis, per-wave timing windows, retry reasons, blocked/deferred/skipped tasks, file conflicts, per-task evidence summaries, pending implementation plan approvals, and active campaign context when present. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). The machine snapshot now also carries a nested `continuation_packet`, which is the richer scope-root continuation envelope used for downstream takeover/export flows. When a campaign is active, those pointers also surface generated `results.md` and `results.tsv` ledgers under the same scope root. `autolab oracle` materializes that packet into an on-demand scope-root `oracle.md` export by combining the handoff snapshot with inlined artifact content from the current scope root and stamps `last_oracle_at` in `.autolab/campaign.json` when a campaign is active. `autolab oracle apply --notes <file>` or `autolab oracle apply --stdin` classifies expert notes back into existing steering surfaces: discuss/research sidecars, TODO hints, `campaign.json` oracle feedback, and append-only plan-approval notes when present. Override the local apply classifier with `AUTOLAB_ORACLE_APPLY_AGENT_COMMAND`. `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, campaign-status changes, and manual stage-steering exits (for example `review`, `approve-plan`, `skip`, `focus`, and `experiment move`); `oracle.md` is emitted only when requested.
 
@@ -137,6 +137,7 @@ autolab render --stage design --view runner --stats
 - Home can resolve `human_review` directly (`pass|retry|stop`) using the same unlock + confirm flow as other mutating actions.
 - Files supports quick-open for rendered prompt, render context, rendered audit contract, rendered brief, rendered human packet, prompt template, state, and stage artifacts.
 - Files advanced actions include backlog steering for `focus`, `experiment create`, and `experiment move` through picker modals.
+- Home advanced actions include applying a bundled policy preset without leaving the cockpit.
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
 
 Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk and backlog-steering actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
@@ -152,7 +153,9 @@ Deterministic stage behavior: `run_agent_mode=policy|force_off` bypasses runner 
 **Guardrails.** `autorun.guardrails` caps same-decision streaks, no-progress cycles, update-docs churn, and generated todo count. Breach action defaults to `human_review`. Fallback tasks are configurable per host mode (`local` / `slurm`). See `docs/workflow_modes.md`.
 
 **Policy presets.** Apply bundled policy overlays with:
-`autolab policy apply preset <local_dev|ci_strict|slurm>`.
+`autolab policy apply preset <local_dev|ci_strict|slurm|experiment_search|integration_change>`.
+`experiment_search` is the unattended campaign-search gear and recommends `autolab campaign start ... --lock design`.
+`integration_change` is the cautious integration gear for stricter verification and default UAT behavior.
 
 ## Source layout
 

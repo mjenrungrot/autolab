@@ -31,7 +31,9 @@ from textual.widgets import (
 )
 
 from autolab.constants import BACKLOG_COMPLETED_STATUSES, EXPERIMENT_TYPES
+from autolab.cli.support import POLICY_PRESET_NAMES, policy_preset_details
 from autolab.tui.actions import (
+    build_policy_apply_preset_intent,
     build_checkpoint_create_intent,
     build_experiment_create_intent,
     build_experiment_move_intent,
@@ -918,6 +920,83 @@ class LoopPresetScreen(ModalScreen[LoopActionOptions | None]):
                 run_agent_mode=run_agent_mode,
             )
         )
+
+
+class PolicyPresetScreen(ModalScreen[str | None]):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    CSS = """
+    PolicyPresetScreen {
+      align: center middle;
+    }
+
+    #policy-preset-dialog {
+      width: 100%;
+      height: 100%;
+      border: round $accent;
+      background: $panel;
+      padding: 1 2;
+    }
+
+    #policy-preset-list {
+      height: 12;
+      border: round $surface;
+      margin-bottom: 1;
+    }
+
+    #policy-preset-buttons {
+      margin-top: 1;
+      align-horizontal: right;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="policy-preset-dialog"):
+            yield Label("Apply policy preset", id="policy-preset-title")
+            yield Static(
+                "Choose the operating gear to apply to verifier_policy.yaml.",
+                markup=False,
+            )
+            items: list[ListItem] = []
+            for preset_name in POLICY_PRESET_NAMES:
+                details = policy_preset_details(preset_name)
+                label = preset_name
+                summary = str(details.get("summary", "")).strip()
+                if summary:
+                    label = f"{preset_name} - {summary}"
+                items.append(ListItem(Label(label)))
+            yield ListView(*items, id="policy-preset-list")
+            with Horizontal(id="policy-preset-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Apply", id="continue", variant="primary")
+
+    def on_mount(self) -> None:
+        preset_list = self.query_one("#policy-preset-list", ListView)
+        preset_list.index = 0
+        preset_list.focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _selected_preset(self) -> str:
+        index = self.query_one("#policy-preset-list", ListView).index or 0
+        preset_names = list(POLICY_PRESET_NAMES)
+        if not preset_names:
+            return ""
+        index = max(0, min(index, len(preset_names) - 1))
+        return preset_names[index]
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "policy-preset-list":
+            return
+        self.dismiss(self._selected_preset())
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.action_cancel()
+            return
+        if event.button.id == "continue":
+            self.dismiss(self._selected_preset())
 
 
 class HumanReviewDecisionScreen(ModalScreen[str | None]):
@@ -3580,11 +3659,23 @@ class AutolabCockpitApp(App[None]):
         policy_widget = self.query_one("#home-policy-card", Static)
         ps = snapshot.policy_summary
         if ps is not None:
+            preset_details = policy_preset_details(ps.active_preset)
             policy_lines = [
                 "Policy",
                 f"- Preset: {ps.active_preset or '(none)'}",
                 f"- Host: {ps.host_mode} | Scope: {ps.scope_kind} | Profile: {ps.profile_mode}",
             ]
+            preset_summary = str(preset_details.get("summary", "")).strip()
+            if preset_summary:
+                policy_lines.append(f"- Preset Summary: {preset_summary}")
+            recommended_mode = str(preset_details.get("recommended_mode", "")).strip()
+            if recommended_mode:
+                policy_lines.append(f"- Recommended Mode: {recommended_mode}")
+            recommended_lock = str(
+                preset_details.get("recommended_campaign_lock", "")
+            ).strip()
+            if recommended_lock and recommended_lock != "none":
+                policy_lines.append(f"- Recommended Campaign Lock: {recommended_lock}")
             risk_active = [k for k, v in ps.risk_flags.items() if v]
             policy_lines.append(
                 f"- Risk: {', '.join(risk_active) if risk_active else '(none active)'}"
@@ -6209,6 +6300,14 @@ class AutolabCockpitApp(App[None]):
             intent = build_uat_init_intent(state_path=snapshot.state_path)
         elif action_id == "hooks_install":
             intent = build_hooks_install_intent(state_path=snapshot.state_path)
+        elif action_id == "apply_policy_preset":
+            preset_name = await self.push_screen_wait(PolicyPresetScreen())
+            if preset_name is None:
+                return
+            intent = build_policy_apply_preset_intent(
+                state_path=snapshot.state_path,
+                preset=preset_name,
+            )
         elif action_id == "lock_break":
             intent = build_lock_break_intent(
                 state_path=snapshot.state_path,

@@ -1960,6 +1960,44 @@ def test_loop_preset_enter_submits_default_preset(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_policy_preset_enter_submits_default_preset(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        screen = app_module.PolicyPresetScreen()
+        results: list[object] = []
+        async with app.run_test(size=(220, 70)) as pilot:
+            app.push_screen(screen, callback=lambda result: results.append(result))
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert results == ["local_dev"]
+
+    asyncio.run(_run())
+
+
+def test_policy_preset_screen_composes_without_mount_error(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root)
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            app.push_screen(app_module.PolicyPresetScreen())
+            await pilot.pause()
+
+            assert isinstance(app.screen, app_module.PolicyPresetScreen)
+            _assert_fullscreen_modal_dialog(app, "#policy-preset-dialog")
+            preset_list = app.screen.query_one(
+                "#policy-preset-list", app_module.ListView
+            )
+            assert len(preset_list.children) == len(app_module.POLICY_PRESET_NAMES)
+            assert preset_list.index == 0
+
+    asyncio.run(_run())
+
+
 def test_human_review_enter_submits_selected_decision(tmp_path: Path) -> None:
     async def _run() -> None:
         repo_root = tmp_path / "repo"

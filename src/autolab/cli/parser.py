@@ -816,7 +816,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser(
         "report",
-        help="Generate a developer issue report from local autolab logs",
+        help="Generate a developer issue report or campaign wake-up report",
+    )
+    report.add_argument(
+        "--campaign",
+        action="store_true",
+        default=False,
+        help="Generate a campaign wake-up report for the active campaign instead of an issue report.",
     )
     report.add_argument(
         "--comment",

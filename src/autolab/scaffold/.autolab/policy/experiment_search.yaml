@@ -1,0 +1,90 @@
+---
+requirements_by_stage:
+  hypothesis:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: false
+    env_smoke: false
+    docs_target_update: false
+  design:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: false
+    env_smoke: false
+    docs_target_update: false
+  implementation:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: false
+    env_smoke: false
+    docs_target_update: false
+  implementation_review:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: true
+  launch:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  slurm_monitor:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  extract_results:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: true
+    docs_target_update: false
+  update_docs:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: false
+    docs_target_update: true
+  decide_repeat:
+    tests: false
+    dry_run: false
+    schema: true
+    prompt_lint: true
+    consistency: true
+    env_smoke: false
+    docs_target_update: false
+prompt_lint:
+  mode: warn
+safe_automation_protected_files: false
+uat_surface_patterns: []
+autorun:
+  guardrails:
+    max_same_decision_streak: 8
+    max_no_progress_decisions: 5
+    max_update_docs_cycles: 8
+  campaign:
+    complexity_proxy: changed_surface
+    change_size_metric: files
+    max_fix_attempts_per_idea: 2
+    max_timeout_factor: 3.0
+    max_no_improvement_streak: 6
+    max_crash_streak_before_rethink: 3

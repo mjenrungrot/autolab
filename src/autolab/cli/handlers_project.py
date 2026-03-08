@@ -503,6 +503,11 @@ def _cmd_policy_apply_preset(args: argparse.Namespace) -> int:
         return 1
 
     merged = _deep_merge_dict(current_policy, preset_policy)
+    policy_resolution = merged.get("policy_resolution")
+    if not isinstance(policy_resolution, dict):
+        policy_resolution = {}
+    policy_resolution["default_preset"] = preset_name
+    merged["policy_resolution"] = policy_resolution
     policy_path.write_text(
         _yaml_mod.safe_dump(merged, sort_keys=False), encoding="utf-8"
     )
