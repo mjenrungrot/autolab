@@ -41,6 +41,7 @@ from autolab.tui.actions import (
     build_open_in_editor_intent,
     build_run_intent,
     build_todo_sync_intent,
+    build_uat_init_intent,
     build_verify_intent,
     list_actions,
 )
@@ -3721,6 +3722,16 @@ class AutolabCockpitApp(App[None]):
                 f"- safe_resume: {handoff.safe_resume_status}",
                 f"- next_command: {handoff.recommended_command or '-'}",
             ]
+            if handoff.uat_pending_message:
+                handoff_lines.append(f"- uat_pending: {handoff.uat_pending_message}")
+            if handoff.uat_suggested_init_command:
+                handoff_lines.append(
+                    f"- uat_init: {handoff.uat_suggested_init_command}"
+                )
+            if handoff.uat_suggested_check_titles:
+                handoff_lines.append(
+                    "- uat_checks: " + ", ".join(handoff.uat_suggested_check_titles)
+                )
             handoff_widget.update("Handoff & Resume\n" + "\n".join(handoff_lines))
             if handoff.safe_resume_status == "ready":
                 self._set_tone(handoff_widget, "tone-success")
@@ -4440,6 +4451,14 @@ class AutolabCockpitApp(App[None]):
                     "Toggle safety lock",
                     "Lock or unlock mutating actions.",
                     self.action_toggle_safety_lock,
+                ),
+                SystemCommand(
+                    "UAT: initialize artifact",
+                    "Create the current iteration UAT artifact with suggested checks.",
+                    lambda: self._start_ui_flow(
+                        label="uat-init",
+                        flow_factory=lambda: self._execute_action("uat_init"),
+                    ),
                 ),
                 SystemCommand(
                     "Toggle auto-refresh",
@@ -6155,6 +6174,8 @@ class AutolabCockpitApp(App[None]):
             intent = build_loop_intent(state_path=snapshot.state_path, options=options)
         elif action_id == "todo_sync":
             intent = build_todo_sync_intent(state_path=snapshot.state_path)
+        elif action_id == "uat_init":
+            intent = build_uat_init_intent(state_path=snapshot.state_path)
         elif action_id == "lock_break":
             intent = build_lock_break_intent(
                 state_path=snapshot.state_path,

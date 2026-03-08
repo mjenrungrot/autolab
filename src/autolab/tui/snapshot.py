@@ -12,6 +12,7 @@ from autolab.constants import (
     STAGE_PROMPT_FILES,
     TERMINAL_STAGES,
 )
+from autolab.plan_approval import load_plan_approval
 from autolab.prompts import (
     _render_stage_prompt,
     _resolve_stage_prompt_path as _resolve_render_template_path,
@@ -26,6 +27,7 @@ from autolab.state import (
     _resolve_repo_root,
 )
 from autolab.todo_sync import list_open_tasks
+from autolab.uat import resolve_uat_requirement
 from autolab.utils import _is_backlog_status_completed
 from autolab.wave_observability import build_wave_observability
 from autolab.tui.models import (
@@ -345,6 +347,44 @@ def _load_review_blockers(iteration_dir: Path | None) -> tuple[str, ...]:
     return tuple(blockers)
 
 
+def _load_uat_summary(
+    repo_root: Path,
+    *,
+    iteration_dir: Path | None,
+) -> dict[str, Any]:
+    if iteration_dir is None:
+        return {
+            "required": False,
+            "required_by": "none",
+            "status": "not_required",
+            "artifact_path": "",
+            "pending": False,
+            "pending_message": "",
+            "suggested_init_command": "",
+            "suggested_check_titles": [],
+        }
+    approval_payload = load_plan_approval(iteration_dir)
+    resolved = resolve_uat_requirement(
+        repo_root,
+        iteration_dir,
+        plan_approval_payload=approval_payload if approval_payload else None,
+    )
+    return {
+        "required": bool(resolved.get("effective_required", False)),
+        "required_by": str(resolved.get("required_by", "none")).strip() or "none",
+        "status": str(resolved.get("status", "not_required")).strip() or "not_required",
+        "artifact_path": str(resolved.get("artifact_path", "")).strip(),
+        "pending": bool(resolved.get("pending", False)),
+        "pending_message": str(resolved.get("pending_message", "")).strip(),
+        "suggested_init_command": str(
+            resolved.get("suggested_init_command", "")
+        ).strip(),
+        "suggested_check_titles": list(resolved.get("suggested_check_titles", []))
+        if isinstance(resolved.get("suggested_check_titles"), list)
+        else [],
+    }
+
+
 def _load_backlog_items(
     *,
     repo_root: Path,
@@ -621,6 +661,9 @@ def _load_handoff_summary(
     safe_resume = payload.get("safe_resume_point")
     if not isinstance(safe_resume, dict):
         safe_resume = {}
+    uat = payload.get("uat")
+    if not isinstance(uat, dict):
+        uat = {}
 
     handoff_json_path = _resolve_optional_path(
         repo_root, str(payload.get("handoff_json_path", "")).strip()
@@ -685,6 +728,16 @@ def _load_handoff_summary(
         safe_resume_status=str(safe_resume.get("status", "blocked")).strip()
         or "blocked",
         safe_resume_command=str(safe_resume.get("command", "")).strip(),
+        uat_pending=bool(uat.get("pending", False)),
+        uat_pending_message=str(uat.get("pending_message", "")).strip(),
+        uat_suggested_init_command=str(uat.get("suggested_init_command", "")).strip(),
+        uat_suggested_check_titles=tuple(
+            str(item).strip()
+            for item in uat.get("suggested_check_titles", [])
+            if str(item).strip()
+        )
+        if isinstance(uat.get("suggested_check_titles"), list)
+        else (),
         wave_observability=wave_observability,
     )
 
@@ -697,6 +750,7 @@ def _build_recommended_actions(
     stage_artifacts: tuple[ArtifactItem, ...],
     blockers: tuple[str, ...],
     todos: tuple[TodoItem, ...],
+    uat_summary: dict[str, Any],
 ) -> tuple[RecommendedAction, ...]:
     recommended: list[RecommendedAction] = []
 
@@ -792,6 +846,28 @@ def _build_recommended_actions(
                 RecommendedAction(
                     action_id="open_stage_prompt",
                     reason="Start here: open stage guidance and resolve prompt issues.",
+                )
+            )
+
+        if (
+            bool(uat_summary.get("pending", False))
+            and str(uat_summary.get("status", "")).strip().lower() == "missing"
+        ):
+            suggested_titles = [
+                str(item).strip()
+                for item in uat_summary.get("suggested_check_titles", [])
+                if str(item).strip()
+            ]
+            reason = (
+                str(uat_summary.get("pending_message", "")).strip()
+                or "Required UAT artifact is missing."
+            )
+            if suggested_titles:
+                reason += " Suggested checks: " + ", ".join(suggested_titles) + "."
+            recommended.append(
+                RecommendedAction(
+                    action_id="uat_init",
+                    reason=reason,
                 )
             )
 
@@ -1033,8 +1109,16 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
     )
     runs = _load_runs(iteration_dir)
     todos = _load_todos(repo_root)
+    uat_summary = _load_uat_summary(repo_root, iteration_dir=iteration_dir)
     review_blockers = _load_review_blockers(iteration_dir)
-    blockers = _merge_blockers(verification, review_blockers)
+    blockers_list = list(_merge_blockers(verification, review_blockers))
+    if current_stage in {"implementation_review", "launch"} and bool(
+        uat_summary.get("pending", False)
+    ):
+        pending_message = str(uat_summary.get("pending_message", "")).strip()
+        if pending_message and pending_message not in blockers_list:
+            blockers_list.append(pending_message)
+    blockers = tuple(blockers_list)
     artifacts_by_stage = _resolve_stage_artifacts(
         repo_root=repo_root,
         iteration_dir=iteration_dir,
@@ -1070,6 +1154,7 @@ def load_cockpit_snapshot(state_path: Path) -> CockpitSnapshot:
         stage_artifacts=current_stage_artifacts,
         blockers=blockers,
         todos=todos,
+        uat_summary=uat_summary,
     )
     primary_blocker = blockers[0] if blockers else "none"
     secondary_blockers = blockers[1:4] if blockers else ()

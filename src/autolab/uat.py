@@ -13,12 +13,39 @@ from autolab.utils import _detect_priority_host_mode, _load_json_if_exists
 UAT_ALLOWED_STATUSES = {"pass", "needs_retry", "blocked"}
 UAT_ALLOWED_CHECK_RESULTS = {"pass", "fail", "blocked"}
 UAT_REQUIRED_BY_VALUES = {"none", "policy", "plan_approval", "manual"}
+UAT_SUGGESTED_INIT_COMMAND = "autolab uat init --suggest"
 
 _UAT_STATUS_PATTERN = re.compile(r"^\s*UATStatus\s*:\s*(\S.*?)\s*$", re.IGNORECASE)
 _UAT_CHECK_HEADING_PATTERN = re.compile(r"^\s*###\s+Check\b", re.IGNORECASE)
 _UAT_FIELD_PATTERN = re.compile(
     r"^\s*-\s*(command|expected|observed|result)\s*:\s*(.*?)\s*$",
     re.IGNORECASE,
+)
+_UAT_SUGGESTION_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "patterns": ("scripts/bootstrap_venv.sh",),
+        "title": "bootstrap smoke",
+        "command": "./scripts/bootstrap_venv.sh",
+        "expected": "bootstrap completes successfully and leaves the local environment ready",
+    },
+    {
+        "patterns": ("docs/**",),
+        "title": "docs generate",
+        "command": "autolab docs generate",
+        "expected": "documentation views generate successfully for the current workspace",
+    },
+    {
+        "patterns": (".autolab/remote_profiles.yaml", "src/autolab/remote_profiles.py"),
+        "title": "remote smoke",
+        "command": "autolab remote smoke",
+        "expected": "the active remote profile resolves cleanly and the remote smoke check completes without errors",
+    },
+    {
+        "patterns": ("src/eval/**",),
+        "title": "evaluator dry run",
+        "command": "replace with the repo-specific evaluator dry-run command",
+        "expected": "the evaluator dry run completes without mutating tracked artifacts or reporting blocking errors",
+    },
 )
 
 
@@ -115,6 +142,100 @@ def resolve_project_wide_paths(
     if isinstance(contract_payload, dict):
         return (scope_kind, _project_wide_paths_from_contract(contract_payload))
     return (scope_kind, [])
+
+
+def build_uat_suggested_checks(project_wide_paths: list[str]) -> list[dict[str, str]]:
+    normalized_paths = [
+        str(path or "").strip().replace("\\", "/")
+        for path in project_wide_paths
+        if str(path or "").strip()
+    ]
+    suggestions: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for rule in _UAT_SUGGESTION_RULES:
+        patterns = tuple(
+            str(pattern or "").strip()
+            for pattern in rule.get("patterns", ())
+            if pattern
+        )
+        if not patterns:
+            continue
+        if not any(
+            fnmatch.fnmatch(path, pattern)
+            for path in normalized_paths
+            for pattern in patterns
+        ):
+            continue
+        title = str(rule.get("title", "")).strip()
+        command = str(rule.get("command", "")).strip()
+        expected = str(rule.get("expected", "")).strip()
+        if not (title and command and expected):
+            continue
+        dedupe_key = (title.lower(), command.lower())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        suggestions.append(
+            {
+                "title": title,
+                "command": command,
+                "expected": expected,
+                "observed": "not run yet",
+                "result": "blocked",
+            }
+        )
+    return suggestions
+
+
+def _build_uat_pending_fields(
+    *,
+    effective_required: bool,
+    artifact_path: Path,
+    required_by: str,
+    status: str,
+    errors: list[str],
+    suggested_checks: list[dict[str, str]],
+) -> dict[str, Any]:
+    suggested_titles = [
+        str(item.get("title", "")).strip()
+        for item in suggested_checks
+        if isinstance(item, dict) and str(item.get("title", "")).strip()
+    ]
+    if not effective_required or status == "pass":
+        return {
+            "pending": False,
+            "pending_message": "",
+            "suggested_init_command": "",
+            "suggested_check_titles": suggested_titles,
+        }
+
+    artifact_text = str(artifact_path).strip()
+    required_text = required_by or "policy"
+    if status == "missing":
+        message = (
+            f"UAT pending: run `{UAT_SUGGESTED_INIT_COMMAND}` to scaffold {artifact_text} "
+            f"for required UAT ({required_text})."
+        )
+        if suggested_titles:
+            message += " Suggested checks: " + ", ".join(suggested_titles) + "."
+        return {
+            "pending": True,
+            "pending_message": message,
+            "suggested_init_command": UAT_SUGGESTED_INIT_COMMAND,
+            "suggested_check_titles": suggested_titles,
+        }
+
+    message = f"UAT pending: update {artifact_text} and set `UATStatus: pass`."
+    if status == "invalid" and errors:
+        message += f" First issue: {errors[0]}."
+    elif status and status != "not_required":
+        message += f" Current status is `{status}`."
+    return {
+        "pending": True,
+        "pending_message": message,
+        "suggested_init_command": "",
+        "suggested_check_titles": suggested_titles,
+    }
 
 
 def parse_uat_markdown(path: Path) -> dict[str, Any]:
@@ -240,6 +361,17 @@ def resolve_uat_requirement(
     effective_required = effective_required_by != "none"
     artifact_path = uat_markdown_path(iteration_dir)
     summary = summarize_uat_file(artifact_path, required=effective_required)
+    suggested_checks = build_uat_suggested_checks(project_wide_paths)
+    pending_fields = _build_uat_pending_fields(
+        effective_required=effective_required,
+        artifact_path=artifact_path,
+        required_by=effective_required_by,
+        status=str(summary.get("status", "not_required")).strip().lower(),
+        errors=list(summary.get("errors", []))
+        if isinstance(summary.get("errors"), list)
+        else [],
+        suggested_checks=suggested_checks,
+    )
     return {
         "policy_required": policy_required,
         "effective_required": effective_required,
@@ -247,7 +379,10 @@ def resolve_uat_requirement(
         "artifact_path": str(artifact_path),
         "scope_kind": scope_kind,
         "project_wide_paths": project_wide_paths,
+        "artifact_exists": artifact_path.exists(),
+        "suggested_checks": suggested_checks,
         **summary,
+        **pending_fields,
     }
 
 
@@ -294,7 +429,36 @@ def render_uat_template(
     revision_label: str,
     host_mode: str,
     remote_profile: str,
+    suggested_checks: list[dict[str, str]] | None = None,
 ) -> str:
+    rendered_checks = suggested_checks or []
+    if rendered_checks:
+        check_lines: list[str] = []
+        for index, check in enumerate(rendered_checks, start=1):
+            title = str(check.get("title", "")).strip() or f"check_{index}"
+            command = str(check.get("command", "")).strip()
+            expected = str(check.get("expected", "")).strip()
+            observed = str(check.get("observed", "")).strip() or "not run yet"
+            result = str(check.get("result", "")).strip() or "blocked"
+            check_lines.extend(
+                [
+                    f"### Check {index} - {title}",
+                    f"- command: {command}",
+                    f"- expected: {expected}",
+                    f"- observed: {observed}",
+                    f"- result: {result}",
+                    "",
+                ]
+            )
+        checks_block = "\n".join(check_lines)
+    else:
+        checks_block = (
+            "### Check 1 - replace_me\n"
+            "- command: replace with the manual command or UI action\n"
+            "- expected: describe the expected operator-visible outcome\n"
+            "- observed: record what actually happened\n"
+            "- result: blocked\n\n"
+        )
     return (
         "# User Acceptance Test\n\n"
         "UATStatus: needs_retry\n\n"
@@ -307,11 +471,7 @@ def render_uat_template(
         f"- host_mode: {host_mode}\n"
         f"- remote_profile: {remote_profile}\n\n"
         "## Checks\n\n"
-        "### Check 1 - replace_me\n"
-        "- command: replace with the manual command or UI action\n"
-        "- expected: describe the expected operator-visible outcome\n"
-        "- observed: record what actually happened\n"
-        "- result: blocked\n\n"
+        f"{checks_block}"
         "## Follow-ups\n"
         "- none\n"
     )

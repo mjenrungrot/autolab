@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from autolab.models import StageCheckError
-from autolab.uat import parse_uat_markdown
+from autolab.uat import (
+    build_uat_suggested_checks,
+    parse_uat_markdown,
+    render_uat_template,
+)
 from autolab.validators import _validate_review_result
 
 
@@ -81,6 +85,57 @@ def test_parse_uat_markdown_rejects_missing_required_fields(tmp_path: Path) -> N
 
     assert parsed["status"] == "invalid"
     assert any("missing field(s): observed" in error for error in parsed["errors"])
+
+
+def test_build_uat_suggested_checks_maps_known_surfaces_and_dedupes() -> None:
+    suggestions = build_uat_suggested_checks(
+        [
+            "docs/quickstart.md",
+            "docs/quickstart.md",
+            "scripts/bootstrap_venv.sh",
+            ".autolab/remote_profiles.yaml",
+            "src/eval/runner.py",
+        ]
+    )
+
+    assert [item["title"] for item in suggestions] == [
+        "bootstrap smoke",
+        "docs generate",
+        "remote smoke",
+        "evaluator dry run",
+    ]
+    assert suggestions[0]["command"] == "./scripts/bootstrap_venv.sh"
+    assert suggestions[1]["command"] == "autolab docs generate"
+    assert suggestions[2]["command"] == "autolab remote smoke"
+    assert (
+        suggestions[3]["command"]
+        == "replace with the repo-specific evaluator dry-run command"
+    )
+
+
+def test_render_uat_template_renders_suggested_checks() -> None:
+    text = render_uat_template(
+        iteration_id="iter1",
+        scope_kind="project_wide",
+        required_by="manual",
+        revision_label="v1",
+        host_mode="local",
+        remote_profile="none",
+        suggested_checks=[
+            {
+                "title": "docs generate",
+                "command": "autolab docs generate",
+                "expected": "docs render succeeds",
+                "observed": "not run yet",
+                "result": "blocked",
+            }
+        ],
+    )
+
+    assert "### Check 1 - docs generate" in text
+    assert "- command: autolab docs generate" in text
+    assert "- observed: not run yet" in text
+    assert "- result: blocked" in text
 
 
 def test_validate_review_result_requires_passing_uat_when_required(

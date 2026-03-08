@@ -14,6 +14,7 @@ from autolab.tui.actions import (
     build_open_in_editor_intent,
     build_run_intent,
     build_todo_sync_intent,
+    build_uat_init_intent,
     build_verify_intent,
     list_actions,
 )
@@ -34,6 +35,7 @@ def test_action_catalog_contains_required_entries() -> None:
     assert "resolve_human_review" in action_ids
     assert "run_loop" in action_ids
     assert "todo_sync" in action_ids
+    assert "uat_init" in action_ids
     assert "focus_experiment" in action_ids
     assert "experiment_create" in action_ids
     assert "experiment_move" in action_ids
@@ -63,6 +65,12 @@ def test_action_catalog_contains_required_entries() -> None:
     run_loop = next(action for action in actions if action.action_id == "run_loop")
     assert run_loop.advanced is True
     assert run_loop.risk_level == "high"
+
+    uat_action = next(action for action in actions if action.action_id == "uat_init")
+    assert uat_action.kind == "mutating"
+    assert uat_action.requires_arm is True
+    assert uat_action.requires_confirmation is True
+    assert "--suggest" in uat_action.help_text
 
     human_review_action = next(
         action for action in actions if action.action_id == "resolve_human_review"
@@ -168,6 +176,15 @@ def test_build_verify_and_todo_sync_intents(tmp_path: Path) -> None:
     todo_sync_intent = build_todo_sync_intent(state_path=state_path)
     assert todo_sync_intent.argv[:3] == ("autolab", "todo", "sync")
     assert todo_sync_intent.mutating is True
+
+
+def test_build_uat_init_intent(tmp_path: Path) -> None:
+    state_path = tmp_path / ".autolab" / "state.json"
+    uat_intent = build_uat_init_intent(state_path=state_path)
+    assert uat_intent.argv[:3] == ("autolab", "uat", "init")
+    assert "--suggest" in uat_intent.argv
+    assert uat_intent.mutating is True
+    assert "experiments/*/*/uat.md" in uat_intent.expected_writes
 
 
 def test_build_verify_intent_omits_blank_stage(tmp_path: Path) -> None:

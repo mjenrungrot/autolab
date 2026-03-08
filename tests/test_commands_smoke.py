@@ -1782,6 +1782,79 @@ def test_progress_reports_wave_observability_sections(
     assert "blocked_by: T2" in output
 
 
+def test_progress_surfaces_uat_pending_with_suggested_init_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = "iter_uat_progress"
+    state["experiment_id"] = "e1"
+    state["stage"] = "implementation_review"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    iteration_dir = repo / "experiments" / "plan" / "iter_uat_progress"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "plan_approval.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "generated_at": "2026-03-05T00:00:00Z",
+                "iteration_id": "iter_uat_progress",
+                "status": "approved",
+                "requires_approval": False,
+                "plan_hash": "plan-hash",
+                "risk_fingerprint": "risk-fingerprint",
+                "trigger_reasons": [],
+                "counts": {
+                    "tasks_total": 1,
+                    "waves_total": 1,
+                    "project_wide_tasks": 1,
+                    "project_wide_unique_paths": 1,
+                    "observed_retries": 0,
+                    "stage_attempt": 0,
+                },
+                "reviewed_by": "reviewer",
+                "reviewed_at": "2026-03-05T00:00:30Z",
+                "notes": "",
+                "source_paths": {},
+                "uat": {
+                    "policy_required": False,
+                    "effective_required": True,
+                    "required_by": "manual",
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {"approval_risk": {"project_wide_unique_paths": ["docs/quickstart.md"]}},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _ = capsys.readouterr()
+
+    assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
+    output = capsys.readouterr().out
+    payload = json.loads(
+        (repo / ".autolab" / "handoff.json").read_text(encoding="utf-8")
+    )
+
+    assert "uat_pending: True" in output
+    assert "uat_init_command: autolab uat init --suggest" in output
+    assert "uat_suggested_checks:" in output
+    assert "recommended_next_command: autolab uat init --suggest" in output
+    assert payload["uat"]["pending"] is True
+    assert payload["uat"]["suggested_init_command"] == "autolab uat init --suggest"
+    assert (
+        payload["recommended_next_command"]["command"] == "autolab uat init --suggest"
+    )
+
+
 def test_handoff_uses_configured_project_wide_root(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -2173,6 +2246,89 @@ def test_uat_init_scaffolds_template_for_manual_request(
     assert "UATStatus: needs_retry" in text
     assert "- required_by: manual" in text
     assert "autolab uat init:" in output
+
+
+def test_uat_init_help_includes_suggest_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = commands_module._build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["uat", "init", "--help"])
+
+    assert int(exc_info.value.code) == 0
+    captured = capsys.readouterr()
+    assert "--suggest" in captured.out
+
+
+def test_uat_init_suggest_scaffolds_known_checks(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = "iter_uat_suggest"
+    state["experiment_id"] = "e1"
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (repo / ".autolab" / "plan_check_result.json").write_text(
+        json.dumps(
+            {
+                "approval_risk": {
+                    "project_wide_unique_paths": [
+                        "scripts/bootstrap_venv.sh",
+                        "docs/quickstart.md",
+                    ]
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["uat", "init", "--suggest", "--state-file", str(state_path)]
+        )
+        == 0
+    )
+    uat_path = repo / "experiments" / "plan" / "iter_uat_suggest" / "uat.md"
+    text = uat_path.read_text(encoding="utf-8")
+
+    assert "### Check 1 - bootstrap smoke" in text
+    assert "- command: ./scripts/bootstrap_venv.sh" in text
+    assert "### Check 2 - docs generate" in text
+    assert "- command: autolab docs generate" in text
+
+
+def test_uat_init_suggest_preserves_existing_artifact(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["iteration_id"] = "iter_uat_existing"
+    state["experiment_id"] = "e1"
+    state["stage"] = "implementation"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    iteration_dir = repo / "experiments" / "plan" / "iter_uat_existing"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    uat_path = iteration_dir / "uat.md"
+    uat_path.write_text("existing uat\n", encoding="utf-8")
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(
+            ["uat", "init", "--suggest", "--state-file", str(state_path)]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert uat_path.read_text(encoding="utf-8") == "existing uat\n"
+    assert "existing artifact preserved" in output
 
 
 def test_discuss_answers_file_writes_experiment_sidecar(

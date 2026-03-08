@@ -884,6 +884,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json)",
     )
+    uat_init.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Infer suggested UAT checks from touched project-wide surfaces when scaffolding a new artifact.",
+    )
     uat_init.set_defaults(handler=_cmd_uat_init)
 
     experiment = subparsers.add_parser(

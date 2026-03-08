@@ -289,10 +289,22 @@ def _pending_human_decisions(
     ):
         uat_status = str(uat.get("status", "")).strip().lower()
         artifact_path = str(uat.get("artifact_path", "")).strip()
+        suggested_init = str(uat.get("suggested_init_command", "")).strip()
+        suggested_titles = [
+            str(item).strip()
+            for item in _safe_list(uat.get("suggested_check_titles"))
+            if str(item).strip()
+        ]
         if uat_status != "pass":
             if uat_status == "missing":
+                command = suggested_init or "autolab uat init --suggest"
+                detail = (
+                    " Suggested checks: " + ", ".join(suggested_titles) + "."
+                    if suggested_titles
+                    else ""
+                )
                 decisions.append(
-                    f"Create the required UAT artifact via `autolab uat init` and complete {artifact_path}."
+                    f"Create the required UAT artifact via `{command}` and complete {artifact_path}.{detail}"
                 )
             else:
                 decisions.append(
@@ -321,8 +333,14 @@ def _recommended_command(
         and bool(uat.get("required", False))
         and str(uat.get("status", "")).strip().lower() == "missing"
     ):
-        command = "autolab uat init"
-        reason = "Required UAT artifact is missing."
+        command = (
+            str(uat.get("suggested_init_command", "")).strip()
+            or "autolab uat init --suggest"
+        )
+        reason = (
+            str(uat.get("pending_message", "")).strip()
+            or "Required UAT artifact is missing."
+        )
         executable = True
     elif (
         stage in {"implementation_review", "launch"}
@@ -330,7 +348,10 @@ def _recommended_command(
         and str(uat.get("status", "")).strip().lower() != "pass"
     ):
         command = f"autolab verify --stage {stage}"
-        reason = "Required UAT is incomplete or not yet marked pass."
+        reason = (
+            str(uat.get("pending_message", "")).strip()
+            or "Required UAT is incomplete or not yet marked pass."
+        )
         executable = True
     elif stage == "implementation" and approval_requires_action(plan_approval):
         if plan_approval_action_mode == "refresh":
@@ -492,8 +513,23 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
                 f"- required_by: `{uat.get('required_by', 'none')}`",
                 f"- status: `{uat.get('status', 'not_required')}`",
                 f"- artifact_path: `{uat.get('artifact_path', '')}`",
+                f"- pending: `{bool(uat.get('pending', False))}`",
             ]
         )
+        pending_message = str(uat.get("pending_message", "")).strip()
+        if pending_message:
+            lines.append(f"- pending_message: {pending_message}")
+        suggested_init = str(uat.get("suggested_init_command", "")).strip()
+        if suggested_init:
+            lines.append(f"- suggested_init_command: `{suggested_init}`")
+        suggested_titles = [
+            str(item).strip()
+            for item in _safe_list(uat.get("suggested_check_titles"))
+            if str(item).strip()
+        ]
+        if suggested_titles:
+            lines.append("- suggested_check_titles:")
+            lines.extend(f"  - {item}" for item in suggested_titles)
 
     if critical_path:
         lines.extend(
@@ -734,6 +770,10 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "required_by": "none",
         "artifact_path": "",
         "status": "not_required",
+        "pending": False,
+        "pending_message": "",
+        "suggested_init_command": "",
+        "suggested_check_titles": [],
     }
     if iteration_dir:
         resolved_uat = resolve_uat_requirement(
@@ -748,6 +788,16 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
             "artifact_path": str(resolved_uat.get("artifact_path", "")).strip(),
             "status": str(resolved_uat.get("status", "not_required")).strip()
             or "not_required",
+            "pending": bool(resolved_uat.get("pending", False)),
+            "pending_message": str(resolved_uat.get("pending_message", "")).strip(),
+            "suggested_init_command": str(
+                resolved_uat.get("suggested_init_command", "")
+            ).strip(),
+            "suggested_check_titles": list(
+                resolved_uat.get("suggested_check_titles", [])
+            )
+            if isinstance(resolved_uat.get("suggested_check_titles"), list)
+            else [],
         }
 
     blocking_failures = []
@@ -768,14 +818,18 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         and bool(uat_summary.get("required", False))
         and str(uat_summary.get("status", "")).strip().lower() != "pass"
     ):
-        artifact_path = str(uat_summary.get("artifact_path", "")).strip()
-        required_by = str(uat_summary.get("required_by", "none")).strip() or "none"
-        status_value = (
-            str(uat_summary.get("status", "not_required")).strip() or "not_required"
-        )
-        blocking_failures.append(
-            f"UAT required ({required_by}) at {artifact_path}; current status={status_value}"
-        )
+        pending_message = str(uat_summary.get("pending_message", "")).strip()
+        if pending_message:
+            blocking_failures.append(pending_message)
+        else:
+            artifact_path = str(uat_summary.get("artifact_path", "")).strip()
+            required_by = str(uat_summary.get("required_by", "none")).strip() or "none"
+            status_value = (
+                str(uat_summary.get("status", "not_required")).strip() or "not_required"
+            )
+            blocking_failures.append(
+                f"UAT required ({required_by}) at {artifact_path}; current status={status_value}"
+            )
     blocking_failures = _unique_list(blocking_failures)
 
     pending_decisions = _pending_human_decisions(

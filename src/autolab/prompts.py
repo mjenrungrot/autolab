@@ -589,6 +589,7 @@ def _build_prompt_context(
 
     iteration_dir = Path()
     iteration_path = ""
+    plan_approval_payload: dict[str, Any] | None = None
     if iteration_id:
         iteration_dir, _iteration_type = _resolve_iteration_directory(
             repo_root,
@@ -596,11 +597,11 @@ def _build_prompt_context(
             experiment_id=experiment_id,
             require_exists=False,
         )
-        plan_approval_payload = _load_json_if_exists(
+        loaded_plan_approval = _load_json_if_exists(
             iteration_dir / "plan_approval.json"
         )
-        if not isinstance(plan_approval_payload, dict):
-            plan_approval_payload = None
+        if isinstance(loaded_plan_approval, dict):
+            plan_approval_payload = loaded_plan_approval
         try:
             iteration_path = iteration_dir.relative_to(repo_root).as_posix()
         except ValueError:
@@ -669,6 +670,32 @@ def _build_prompt_context(
         review_feedback = (
             "unavailable: no implementation review feedback recorded for this iteration"
         )
+
+    uat_payload: dict[str, Any] = {}
+    if iteration_id:
+        resolved_uat = resolve_uat_requirement(
+            repo_root,
+            iteration_dir,
+            plan_approval_payload=plan_approval_payload,
+        )
+        uat_payload = {
+            "required": bool(resolved_uat.get("effective_required", False)),
+            "required_by": str(resolved_uat.get("required_by", "none")).strip()
+            or "none",
+            "status": str(resolved_uat.get("status", "not_required")).strip()
+            or "not_required",
+            "artifact_path": str(resolved_uat.get("artifact_path", "")).strip(),
+            "pending": bool(resolved_uat.get("pending", False)),
+            "pending_message": str(resolved_uat.get("pending_message", "")).strip(),
+            "suggested_init_command": str(
+                resolved_uat.get("suggested_init_command", "")
+            ).strip(),
+            "suggested_check_titles": list(
+                resolved_uat.get("suggested_check_titles", [])
+            )
+            if isinstance(resolved_uat.get("suggested_check_titles"), list)
+            else [],
+        }
 
     dry_run_output = (
         _extract_matching_lines(
@@ -869,6 +896,7 @@ def _build_prompt_context(
         "todo_focus": todo_focus_payload,
         "agent_result": agent_result_payload,
         "review_feedback": review_feedback,
+        "uat": uat_payload,
         "verifier_errors": verifier_errors,
         "verifier_outputs": verifier_outputs,
         "dry_run_output": dry_run_output,
@@ -1038,6 +1066,21 @@ def _collect_stage_brief_items(
                 candidate = _sanitize_retry_blocker(str(item))
                 if candidate:
                     items.append(candidate)
+
+    uat_payload = context_payload.get("uat")
+    if isinstance(uat_payload, dict) and bool(uat_payload.get("pending", False)):
+        pending_message = _sanitize_retry_blocker(
+            str(uat_payload.get("pending_message", ""))
+        )
+        if pending_message:
+            items.append(pending_message)
+        suggested_titles = [
+            str(item).strip()
+            for item in uat_payload.get("suggested_check_titles", [])
+            if str(item).strip()
+        ]
+        if suggested_titles:
+            items.append("suggested UAT checks: " + ", ".join(suggested_titles))
 
     iteration_id = str(context_payload.get("iteration_id", "")).strip()
     experiment_id = str(context_payload.get("experiment_id", "")).strip()
@@ -1309,6 +1352,26 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         else []
     )
     protected_files_text = ", ".join(protected_files) if protected_files else "none"
+    uat_payload = context_payload.get("uat")
+    if not isinstance(uat_payload, dict):
+        uat_payload = {}
+    uat_required = bool(uat_payload.get("required", False))
+    uat_status = (
+        str(uat_payload.get("status", "not_required")).strip() or "not_required"
+    )
+    uat_required_by = str(uat_payload.get("required_by", "none")).strip() or "none"
+    uat_artifact = str(uat_payload.get("artifact_path", "")).strip() or "none"
+    uat_pending = bool(uat_payload.get("pending", False))
+    uat_pending_message = str(uat_payload.get("pending_message", "")).strip()
+    uat_init_command = str(uat_payload.get("suggested_init_command", "")).strip()
+    uat_suggested_titles = [
+        str(item).strip()
+        for item in uat_payload.get("suggested_check_titles", [])
+        if str(item).strip()
+    ]
+    uat_suggested_text = (
+        ", ".join(uat_suggested_titles) if uat_suggested_titles else "none"
+    )
     codebase_project_map_path = (
         str(context_payload.get("codebase_project_map_path", "")).strip() or "none"
     )
@@ -1364,6 +1427,14 @@ def _build_runtime_stage_context_block(context_payload: dict[str, Any]) -> str:
         f"- disallowed_edit_dirs: {disallowed_text}\n"
         f"- project_data_roots: {project_data_roots_text}\n"
         f"- project_data_media_counts: {project_data_counts_text}\n"
+        f"- uat_required: {uat_required}\n"
+        f"- uat_required_by: {uat_required_by}\n"
+        f"- uat_status: {uat_status}\n"
+        f"- uat_artifact: {uat_artifact}\n"
+        f"- uat_pending: {uat_pending}\n"
+        f"- uat_pending_message: {uat_pending_message or 'none'}\n"
+        f"- uat_suggested_init_command: {uat_init_command or 'none'}\n"
+        f"- uat_suggested_checks: {uat_suggested_text}\n"
         f"- codebase_project_map_path: {codebase_project_map_path}\n"
         f"- codebase_project_map_summary: {codebase_project_map_summary}\n"
         f"- codebase_experiment_delta_map_path: {codebase_experiment_delta_map_path}\n"
