@@ -229,6 +229,7 @@ def _campaign_payload(
     crash_streak: int = 0,
     active_candidate: dict[str, object] | None = None,
     last_governance_event: dict[str, object] | None = None,
+    idea_journal: dict[str, object] | None = None,
 ) -> dict[str, object]:
     state = _load_state(state_path)
     normalized_lock_mode = str(lock_mode).strip().lower() or "none"
@@ -260,6 +261,9 @@ def _campaign_payload(
                 "run_id": "",
                 "fix_attempts": 0,
                 "timeout_reference_seconds": 0.0,
+                "journal_entry_id": "",
+                "family_hint": "",
+                "thesis_hint": "",
             }
         ),
         "last_governance_event": dict(
@@ -269,6 +273,16 @@ def _campaign_payload(
                 "category": "",
                 "run_id": "",
                 "reason": "",
+            }
+        ),
+        "idea_journal": dict(
+            idea_journal
+            or {
+                "active_entry_id": "",
+                "next_entry_seq": 1,
+                "retained_entry_limit": 100,
+                "entries": [],
+                "family_stats": {},
             }
         ),
     }
@@ -660,6 +674,67 @@ def test_campaign_status_prints_campaign_summary(
                 "run_id": "run_trial",
                 "reason": "recoverable challenger failure; retrying same idea (1/2)",
             },
+            idea_journal={
+                "active_entry_id": "idea_0002",
+                "next_entry_seq": 3,
+                "retained_entry_limit": 100,
+                "entries": [
+                    {
+                        "entry_id": "idea_0001",
+                        "decision": "implementation",
+                        "started_at": "2026-03-08T00:00:00Z",
+                        "updated_at": "2026-03-08T00:05:00Z",
+                        "completed_at": "2026-03-08T00:05:00Z",
+                        "status": "discard",
+                        "attempt_count": 1,
+                        "run_ids": ["run_prev"],
+                        "thesis": "implementation search touching src/baseline.py",
+                        "thesis_source": "heuristic",
+                        "family_key": "implementation:prev",
+                        "family_label": "src/baseline.py",
+                        "family_source": "heuristic",
+                        "touched_surfaces": ["src/baseline.py"],
+                        "family_surfaces": ["src/baseline.py"],
+                        "near_miss": False,
+                        "outcome_reason": "primary metric did not improve",
+                        "champion_before_run_id": "run_baseline",
+                        "champion_after_run_id": "run_baseline",
+                    },
+                    {
+                        "entry_id": "idea_0002",
+                        "decision": "implementation",
+                        "started_at": "2026-03-08T00:10:00Z",
+                        "updated_at": "2026-03-08T00:11:00Z",
+                        "completed_at": "",
+                        "status": "active",
+                        "attempt_count": 2,
+                        "run_ids": ["run_trial"],
+                        "thesis": "implementation search touching src/model.py",
+                        "thesis_source": "heuristic",
+                        "family_key": "implementation:model",
+                        "family_label": "src/model.py",
+                        "family_source": "heuristic",
+                        "touched_surfaces": ["src/model.py"],
+                        "family_surfaces": ["src/model.py"],
+                        "near_miss": False,
+                        "outcome_reason": "",
+                        "champion_before_run_id": "run_baseline",
+                        "champion_after_run_id": "",
+                    },
+                ],
+                "family_stats": {
+                    "implementation:prev": {
+                        "family_label": "src/baseline.py",
+                        "first_seen_at": "2026-03-08T00:00:00Z",
+                        "last_seen_at": "2026-03-08T00:05:00Z",
+                        "counts": {"keep": 0, "discard": 1, "crash": 0},
+                        "near_miss_count": 0,
+                        "last_outcome": "discard",
+                        "last_thesis": "implementation search touching src/baseline.py",
+                        "sample_surfaces": ["src/baseline.py"],
+                    }
+                },
+            },
         ),
     )
 
@@ -677,6 +752,9 @@ def test_campaign_status_prints_campaign_summary(
     assert "max_no_improvement_streak: 3" in output
     assert "active_candidate_run_id: run_trial" in output
     assert "last_governance_event_category: retry_candidate" in output
+    assert "idea_journal_entry_count: 2" in output
+    assert "idea_journal_active_family: src/model.py" in output
+    assert "idea_journal_same_family_streak: 1" in output
     assert "resumable: True" in output
     assert "results_tsv:" in output
     assert "results_md:" in output
@@ -692,6 +770,7 @@ def test_refresh_handoff_prefers_campaign_continue_for_resumable_campaign(
     artifacts = refresh_handoff(state_path)
 
     assert artifacts.payload["campaign"]["status"] == "stopped"
+    assert "idea_journal_entry_count" in artifacts.payload["campaign"]
     assert (
         artifacts.payload["recommended_next_command"]["command"]
         == "autolab campaign continue"
@@ -700,6 +779,10 @@ def test_refresh_handoff_prefers_campaign_continue_for_resumable_campaign(
         artifacts.payload["safe_resume_point"]["command"] == "autolab campaign continue"
     )
     assert artifacts.payload["continuation_packet"]["campaign"]["status"] == "stopped"
+    assert (
+        "idea_journal_entry_count"
+        in artifacts.payload["continuation_packet"]["campaign"]
+    )
     assert any(
         entry.get("role") == "campaign"
         and entry.get("path") == ".autolab/campaign.json"
@@ -723,6 +806,7 @@ def test_status_command_surfaces_campaign_summary(
     assert "campaign:" in output
     assert "status: error" in output
     assert "champion_run_id: run_baseline" in output
+    assert "idea_journal_entry_count: 0" in output
     assert "max_crash_streak_before_rethink: 2" in output
 
 
@@ -875,6 +959,7 @@ def test_refresh_campaign_results_renders_keep_discard_crash_and_partial_rows(
     assert "- discard: `1`" in results_md
     assert "- partial: `1`" in results_md
     assert "- crash: `1`" in results_md
+    assert "## Idea Journal" in results_md
 
 
 def test_refresh_campaign_results_use_project_wide_scope_root(
@@ -986,6 +1071,43 @@ def test_campaign_apply_challenger_promotes_better_metric_and_rotates_snapshot(
     assert "primary metric improved" in str(result["summary"])
 
 
+def test_campaign_apply_challenger_records_idea_journal_for_promotion(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path, metric_value=1.0, memory="12GB")
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(state_path)
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    _write_source_file(repo, "src/model.py", "VALUE = 'challenger'\n")
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_challenger",
+        metric_value=2.0,
+        memory="12GB",
+    )
+    state = _set_decide_repeat_state(state_path, run_id="run_challenger")
+
+    _campaign_apply_challenger_outcome(repo, state_path, state, campaign)
+    updated_campaign = _load_campaign_file(repo)
+    idea_journal = updated_campaign["idea_journal"]
+    entries = idea_journal["entries"]
+
+    assert idea_journal["active_entry_id"] == ""
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["status"] == "keep"
+    assert entry["run_ids"] == ["run_challenger"]
+    assert entry["family_label"] == "src/model.py"
+    assert entry["champion_before_run_id"] == "run_baseline"
+    assert entry["champion_after_run_id"] == "run_challenger"
+    assert idea_journal["family_stats"][entry["family_key"]]["counts"]["keep"] == 1
+
+
 def test_campaign_apply_challenger_discards_and_restores_tracked_and_untracked_files(
     tmp_path: Path,
 ) -> None:
@@ -1087,6 +1209,38 @@ def test_campaign_apply_challenger_uses_memory_tie_break(
     assert result["action"] == "promote"
     assert updated_campaign["champion_run_id"] == "run_challenger"
     assert "memory tie-break" in str(result["summary"])
+
+
+def test_campaign_apply_challenger_marks_near_miss_when_losing_tie_break(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path, metric_value=1.0, memory="8GB")
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(state_path)
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    _write_source_file(repo, "src/model.py", "VALUE = 'challenger'\n")
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_challenger",
+        metric_value=1.0,
+        memory="12GB",
+    )
+    state = _set_decide_repeat_state(state_path, run_id="run_challenger")
+
+    result = _campaign_apply_challenger_outcome(repo, state_path, state, campaign)
+    updated_campaign = _load_campaign_file(repo)
+    idea_journal = updated_campaign["idea_journal"]
+    entry = idea_journal["entries"][0]
+
+    assert result["action"] == "discard"
+    assert entry["status"] == "discard"
+    assert entry["near_miss"] is True
+    assert idea_journal["family_stats"][entry["family_key"]]["near_miss_count"] == 1
 
 
 def test_campaign_apply_challenger_uses_complexity_tie_break(
@@ -1548,6 +1702,12 @@ def test_campaign_session_retries_candidate_before_discard(
     assert updated_campaign["status"] == "stopped"
     assert updated_campaign["active_candidate"]["fix_attempts"] == 1
     assert updated_campaign["last_governance_event"]["category"] == "retry_candidate"
+    assert updated_campaign["idea_journal"]["active_entry_id"]
+    assert len(updated_campaign["idea_journal"]["entries"]) == 1
+    entry = updated_campaign["idea_journal"]["entries"][0]
+    assert entry["status"] == "active"
+    assert entry["attempt_count"] == 2
+    assert entry["family_label"] == "src/model.py"
 
 
 def test_campaign_session_exhausted_candidate_triggers_oracle_rethink(

@@ -923,6 +923,142 @@ def test_render_implementation_prompt_pack_metadata_and_texts(
     assert "rendered_human_path" in bundle.context_payload
 
 
+def test_render_stage_prompt_includes_campaign_novelty_context(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _copy_scaffold(repo)
+    _write_state(repo, stage="implementation")
+    _write_backlog(repo)
+    (repo / ".autolab" / "campaign.json").write_text(
+        json.dumps(
+            {
+                "campaign_id": "campaign_test",
+                "label": "nightly",
+                "scope_kind": "experiment",
+                "iteration_id": "iter1",
+                "objective_metric": "accuracy",
+                "objective_mode": "maximize",
+                "status": "running",
+                "design_locked": False,
+                "harness_locked": False,
+                "lock_contract": {},
+                "champion_run_id": "run_baseline",
+                "champion_revision_label": "unversioned-worktree",
+                "no_improvement_streak": 1,
+                "crash_streak": 0,
+                "started_at": "2026-03-08T00:00:00Z",
+                "last_oracle_at": "",
+                "oracle_feedback": [],
+                "active_candidate": {
+                    "decision": "implementation",
+                    "started_at": "2026-03-08T00:10:00Z",
+                    "run_id": "run_trial",
+                    "fix_attempts": 1,
+                    "timeout_reference_seconds": 300.0,
+                    "journal_entry_id": "idea_0002",
+                    "family_hint": "",
+                    "thesis_hint": "",
+                },
+                "last_governance_event": {
+                    "at": "2026-03-08T00:12:00Z",
+                    "category": "retry_candidate",
+                    "run_id": "run_trial",
+                    "reason": "retrying",
+                },
+                "idea_journal": {
+                    "active_entry_id": "idea_0002",
+                    "next_entry_seq": 3,
+                    "retained_entry_limit": 100,
+                    "entries": [
+                        {
+                            "entry_id": "idea_0001",
+                            "decision": "implementation",
+                            "started_at": "2026-03-08T00:00:00Z",
+                            "updated_at": "2026-03-08T00:05:00Z",
+                            "completed_at": "2026-03-08T00:05:00Z",
+                            "status": "discard",
+                            "attempt_count": 1,
+                            "run_ids": ["run_prev"],
+                            "thesis": "implementation search touching src/baseline.py",
+                            "thesis_source": "heuristic",
+                            "family_key": "implementation:prev",
+                            "family_label": "src/baseline.py",
+                            "family_source": "heuristic",
+                            "touched_surfaces": ["src/baseline.py"],
+                            "family_surfaces": ["src/baseline.py"],
+                            "near_miss": False,
+                            "outcome_reason": "primary metric did not improve",
+                            "champion_before_run_id": "run_baseline",
+                            "champion_after_run_id": "run_baseline",
+                        },
+                        {
+                            "entry_id": "idea_0002",
+                            "decision": "implementation",
+                            "started_at": "2026-03-08T00:10:00Z",
+                            "updated_at": "2026-03-08T00:12:00Z",
+                            "completed_at": "",
+                            "status": "active",
+                            "attempt_count": 2,
+                            "run_ids": ["run_trial"],
+                            "thesis": "implementation search touching src/model.py",
+                            "thesis_source": "heuristic",
+                            "family_key": "implementation:model",
+                            "family_label": "src/model.py",
+                            "family_source": "heuristic",
+                            "touched_surfaces": ["src/model.py"],
+                            "family_surfaces": ["src/model.py"],
+                            "near_miss": False,
+                            "outcome_reason": "",
+                            "champion_before_run_id": "run_baseline",
+                            "champion_after_run_id": "",
+                        },
+                    ],
+                    "family_stats": {
+                        "implementation:prev": {
+                            "family_label": "src/baseline.py",
+                            "first_seen_at": "2026-03-08T00:00:00Z",
+                            "last_seen_at": "2026-03-08T00:05:00Z",
+                            "counts": {"keep": 0, "discard": 1, "crash": 0},
+                            "near_miss_count": 0,
+                            "last_outcome": "discard",
+                            "last_thesis": "implementation search touching src/baseline.py",
+                            "sample_surfaces": ["src/baseline.py"],
+                        }
+                    },
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    template_path = _resolve_stage_prompt_path(
+        repo, "implementation", prompt_role="runner"
+    )
+    bundle = _render_stage_prompt(
+        repo,
+        stage="implementation",
+        state=_write_state(repo, stage="implementation"),
+        template_path=template_path,
+        runner_scope={},
+        write_outputs=False,
+    )
+
+    assert bundle.context_payload["campaign_active_family"] == "src/model.py"
+    assert bundle.context_payload["campaign_same_family_streak"] == 1
+    assert bundle.context_payload["campaign_recent_failed_families"] == [
+        "src/baseline.py"
+    ]
+    assert (
+        "active_family=src/model.py"
+        in bundle.context_payload["campaign_novelty_summary"]
+    )
+    assert "Campaign novelty summary:" in bundle.prompt_text
+
+
 @pytest.mark.parametrize(
     "prompt_role,suffix",
     [("audit", "audit"), ("brief", "brief"), ("human", "human")],

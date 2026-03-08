@@ -138,6 +138,42 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 "  last_governance_event_reason: "
                 f"{summary.get('last_governance_event_reason', '')}"
             )
+            print(
+                "  idea_journal_entry_count: "
+                f"{summary.get('idea_journal_entry_count', 0)}"
+            )
+            print(
+                "  idea_journal_family_count: "
+                f"{summary.get('idea_journal_family_count', 0)}"
+            )
+            print(
+                "  idea_journal_active_family: "
+                f"{summary.get('idea_journal_active_family', '')}"
+            )
+            print(
+                "  idea_journal_active_thesis: "
+                f"{summary.get('idea_journal_active_thesis', '')}"
+            )
+            print(
+                "  idea_journal_same_family_streak: "
+                f"{summary.get('idea_journal_same_family_streak', 0)}"
+            )
+            print(
+                "  idea_journal_last_completed_status: "
+                f"{summary.get('idea_journal_last_completed_status', '')}"
+            )
+            print(
+                "  idea_journal_last_completed_family: "
+                f"{summary.get('idea_journal_last_completed_family', '')}"
+            )
+            print(
+                "  idea_journal_recent_failed_families: "
+                f"{summary.get('idea_journal_recent_failed_families', [])}"
+            )
+            print(
+                "  idea_journal_recent_near_miss_families: "
+                f"{summary.get('idea_journal_recent_near_miss_families', [])}"
+            )
             print(f"  resumable: {summary.get('resumable', False)}")
             results = _campaign_results_overview(repo_root, campaign)
             diagnostic = str(results.get("diagnostic", "")).strip()

@@ -376,7 +376,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 
 - **Path**: `<scope-root>/results.md`
 - **Format**: Markdown
-- **Content**: human-readable campaign results ledger with campaign metadata, champion summary, keep/discard/crash/partial totals, and the current TSV-equivalent results table
+- **Content**: human-readable campaign results ledger with campaign metadata, champion summary, keep/discard/crash/partial totals, a compact idea-journal summary, and the current TSV-equivalent results table
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
@@ -388,9 +388,13 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 
 - **Path**: `.autolab/campaign.json`
 - **Format**: JSON
-- **Content**: Canonical campaign control-plane state for unattended experiment search, including objective binding, champion metadata, lock contract, crash/improvement streaks, oracle export timestamp, and optional oracle feedback history.
+- **Content**: Canonical campaign control-plane state for unattended experiment search, including objective binding, champion metadata, lock contract, crash/improvement streaks, oracle export timestamp, optional oracle feedback history, and bounded novelty memory in `idea_journal`.
 - **Produced by**: campaign start/continue/stop flows, challenger promotion-discard decisions, `autolab oracle`, and `autolab oracle apply`
 - **Consumed by**: campaign runtime, status/handoff surfaces, and oracle round-trip tooling
+- **Idea journal extension**:
+  - `idea_journal.active_entry_id` points to the current challenger idea span when present
+  - `idea_journal.entries[]` records one bounded entry per idea span with thesis, family label/key, touched surfaces, attempts, run IDs, and keep/discard/crash outcome
+  - `idea_journal.family_stats{}` keeps aggregate keep/discard/crash and near-miss counts per family even after old entries are trimmed
 - **Oracle feedback extension**:
   - `oracle_feedback[]` is optional and append-only
   - each entry records `applied_at`, `source`, `summary`, `detail`, and `signal`

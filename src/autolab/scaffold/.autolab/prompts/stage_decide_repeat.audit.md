@@ -55,6 +55,11 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/dec
 - Campaign lock summary: `{{campaign_lock_summary}}`
 - Campaign no-improvement streak: `{{campaign_no_improvement_streak}}`
 - Campaign allowed decisions: `{{campaign_allowed_decisions}}`
+- Campaign novelty summary: `{{campaign_novelty_summary}}`
+- Campaign active family: `{{campaign_active_family}}`
+- Recent failed families: `{{campaign_recent_failed_families}}`
+- Recent near-miss families: `{{campaign_recent_near_miss_families}}`
+- Current same-family streak: `{{campaign_same_family_streak}}`
 
 ## MISSING-INPUT FALLBACKS
 - If backlog is missing/unreadable, choose `human_review` and report blocker.
@@ -81,6 +86,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/dec
 5. Choose `human_review` on policy ambiguity, repeated verifier failures, contradictory evidence, or missing critical inputs.
 6. Respect guardrail thresholds defined in `.autolab/verifier_policy.yaml` (`autorun.guardrails`) and prefer `human_review` when thresholds are near breach.
 7. When `{{auto_metrics_evidence}}` is available, cross-reference its `comparison` and `suggestion` fields with your own analysis before deciding.
+8. Treat novelty memory as advisory only: use it to explain repeated-family stagnation, but do not override stronger metric, lock, or policy evidence solely for novelty.
 
 ## SCHEMA GOTCHAS
 - `evidence` must be a **non-empty array** (`minItems: 1`). Each element requires all three fields: `source`, `pointer`, `summary` -- all non-empty strings.

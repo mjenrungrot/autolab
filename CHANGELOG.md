@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.45] - 2026-03-08
+
+### Summary
+
+- Added campaign idea-journal novelty memory so unattended search records per-idea thesis, family, touched surfaces, retries, keep/discard/crash outcomes, and bounded family aggregates inside `.autolab/campaign.json`.
+- Surfaced novelty-aware summaries through campaign status, handoff/continuation packets, generated results, and implementation/decide-repeat prompt context so campaigns can avoid repeating failed families and highlight near misses.
+
+<!-- autolab:range v1.2.44..v1.2.45 -->
+
 ## [1.2.44] - 2026-03-08
 
 ### Summary
