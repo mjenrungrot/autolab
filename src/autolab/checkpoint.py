@@ -6,7 +6,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from autolab.scope import _resolve_scope_context
 from autolab.state import _resolve_iteration_directory, _resolve_repo_root
@@ -186,6 +186,43 @@ def _collect_canonical_artifacts(
     return artifacts
 
 
+def _normalize_extra_artifact_paths(
+    repo_root: Path,
+    paths: Iterable[str] | None,
+) -> list[tuple[Path | None, str]]:
+    rows: list[tuple[Path | None, str]] = []
+    seen: set[str] = set()
+    if paths is None:
+        return rows
+    resolved_repo = repo_root.resolve()
+    for raw_path in paths:
+        rel_path = str(raw_path or "").strip().replace("\\", "/")
+        if not rel_path or rel_path.startswith("/"):
+            continue
+        candidate = _safe_rel_path(repo_root, rel_path)
+        if candidate is None:
+            continue
+        try:
+            normalized_rel = (
+                candidate.resolve(strict=False).relative_to(resolved_repo).as_posix()
+            )
+        except Exception:
+            try:
+                normalized_rel = candidate.relative_to(repo_root).as_posix()
+            except Exception:
+                normalized_rel = rel_path
+        if normalized_rel in seen:
+            continue
+        seen.add(normalized_rel)
+        if candidate.exists():
+            if candidate.is_symlink():
+                continue
+            rows.append((candidate, normalized_rel))
+            continue
+        rows.append((None, normalized_rel))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
@@ -203,6 +240,7 @@ def create_checkpoint(
     scope_kind: str = "",
     pinned: bool = False,
     label_origin: str = "",
+    extra_artifacts: Iterable[str] | None = None,
 ) -> tuple[str, Path]:
     """Create a checkpoint. Returns (checkpoint_id, checkpoint_dir)."""
     state = _load_json_if_exists(state_path)
@@ -237,17 +275,32 @@ def create_checkpoint(
     artifacts = _collect_canonical_artifacts(
         repo_root, iteration_dir, stage, scope_kind
     )
+    extra_rows = _normalize_extra_artifact_paths(repo_root, extra_artifacts)
+    artifact_map: dict[str, Path | None] = {
+        rel_path: abs_path for abs_path, rel_path in artifacts
+    }
+    for abs_path, rel_path in extra_rows:
+        artifact_map.setdefault(rel_path, abs_path)
     artifact_entries: list[dict[str, Any]] = []
     files_dir = checkpoint_dir / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
 
-    for abs_path, rel_path in artifacts:
-        if abs_path.is_symlink():
-            continue
+    for rel_path, abs_path in artifact_map.items():
         safe_dest = _safe_rel_path(files_dir, rel_path)
         if safe_dest is None:
             continue
         fingerprint = _path_fingerprint(repo_root, rel_path)
+        if fingerprint == "<missing>":
+            artifact_entries.append(
+                {
+                    "relative_path": rel_path,
+                    "fingerprint": fingerprint,
+                    "size_bytes": 0,
+                }
+            )
+            continue
+        if abs_path is None or abs_path.is_symlink():
+            continue
         try:
             size_bytes = abs_path.stat().st_size
         except OSError:
@@ -568,6 +621,10 @@ def verify_checkpoint(repo_root: Path, checkpoint_id: str) -> tuple[bool, list[s
         if stored_path is None:
             issues.append(f"unsafe relative_path in manifest: {rel}")
             continue
+        if expected_fp == "<missing>":
+            if stored_path.exists():
+                issues.append(f"missing artifact unexpectedly stored: {rel}")
+            continue
         if not stored_path.exists():
             issues.append(f"stored artifact missing: {rel}")
             continue
@@ -676,13 +733,22 @@ def restore_checkpoint(
     files_dir = checkpoint_dir / "files"
     for art in stored_artifacts:
         rel = art.get("relative_path", "")
+        fingerprint = str(art.get("fingerprint", "")).strip()
+        dest = _safe_rel_path(repo_root, rel)
+        if dest is None:
+            continue
+        if fingerprint == "<missing>":
+            if dest.is_file() or dest.is_symlink():
+                dest.unlink()
+                changed_files.append(rel)
+            elif dest.is_dir():
+                shutil.rmtree(dest)
+                changed_files.append(rel)
+            continue
         source = _safe_rel_path(files_dir, rel)
         if source is None or not source.exists():
             continue
         if source.is_symlink():
-            continue
-        dest = _safe_rel_path(repo_root, rel)
-        if dest is None:
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(source), str(dest))

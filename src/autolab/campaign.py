@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,9 +12,30 @@ try:
 except Exception:
     yaml = None
 
-from autolab.checkpoint import _resolve_revision_label
+from autolab.checkpoint import (
+    _collect_canonical_artifacts,
+    _resolve_revision_label,
+    create_checkpoint,
+    list_checkpoints,
+    restore_checkpoint,
+    set_checkpoint_pinned,
+    verify_checkpoint,
+)
+from autolab.config import (
+    _load_campaign_comparison_config,
+    _load_meaningful_change_config,
+)
+from autolab.launch_runtime import _parse_memory_to_mb
 from autolab.state import _resolve_iteration_directory
-from autolab.utils import _load_json_if_exists, _normalize_space, _utc_now, _write_json
+from autolab.utils import (
+    _collect_git_status_entries,
+    _load_json_if_exists,
+    _normalize_space,
+    _path_matches_any,
+    _run_git,
+    _utc_now,
+    _write_json,
+)
 
 CAMPAIGN_FILENAME = "campaign.json"
 CAMPAIGN_STATUSES = {
@@ -23,6 +45,19 @@ CAMPAIGN_STATUSES = {
     "needs_rethink",
     "error",
 }
+_CAMPAIGN_CHECKPOINT_LABEL_PREFIX = "campaign_champion_"
+_CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS = (
+    ".autolab/**",
+    ".autolab",
+)
+_RISK_SCORE_FIELDS = (
+    "project_wide_tasks",
+    "project_wide_unique_paths",
+    "tasks_total",
+    "waves_total",
+    "observed_retries",
+    "stage_attempt",
+)
 
 
 class CampaignError(RuntimeError):
@@ -314,3 +349,719 @@ def _mark_campaign_oracle_exported(repo_root: Path) -> dict[str, Any] | None:
     campaign["last_oracle_at"] = _utc_now()
     _write_campaign(repo_root, campaign)
     return campaign
+
+
+def _campaign_champion_checkpoint_label(campaign_id: str) -> str:
+    normalized = str(campaign_id or "").strip()
+    if not normalized:
+        raise CampaignError("campaign_id is required for champion snapshots")
+    return f"{_CAMPAIGN_CHECKPOINT_LABEL_PREFIX}{normalized}"
+
+
+def _campaign_iteration_dir(repo_root: Path, state: dict[str, Any]) -> Path:
+    iteration_id = _normalize_space(str(state.get("iteration_id", "")))
+    experiment_id = _normalize_space(str(state.get("experiment_id", "")))
+    if not iteration_id:
+        raise CampaignError("campaign mode requires state.iteration_id")
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        require_exists=False,
+    )
+    return iteration_dir
+
+
+def _campaign_iteration_relpath(repo_root: Path, path: Path) -> str:
+    try:
+        return path.resolve(strict=False).relative_to(repo_root.resolve()).as_posix()
+    except Exception:
+        try:
+            return path.relative_to(repo_root).as_posix()
+        except Exception as exc:
+            raise CampaignError(
+                f"path {path} is outside repository root {repo_root}"
+            ) from exc
+
+
+def _campaign_current_changed_paths(repo_root: Path) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for rel_path, _status in _collect_git_status_entries(repo_root):
+        if _path_matches_any(rel_path, _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS):
+            continue
+        if rel_path in seen:
+            continue
+        seen.add(rel_path)
+        rows.append(rel_path)
+    return rows
+
+
+def _campaign_champion_checkpoint_entries(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> list[dict[str, Any]]:
+    normalized = _normalize_campaign(campaign)
+    label = _campaign_champion_checkpoint_label(normalized["campaign_id"])
+    iteration_id = (
+        normalized["iteration_id"] if normalized["scope_kind"] == "experiment" else ""
+    )
+    checkpoints = list_checkpoints(repo_root, iteration_id=iteration_id)
+    return [
+        entry for entry in checkpoints if str(entry.get("label", "")).strip() == label
+    ]
+
+
+def _campaign_latest_champion_checkpoint_id(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> str:
+    entries = _campaign_champion_checkpoint_entries(repo_root, campaign)
+    if not entries:
+        return ""
+    return str(entries[0].get("checkpoint_id", "")).strip()
+
+
+def _campaign_has_champion_snapshot(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> bool:
+    checkpoint_id = _campaign_latest_champion_checkpoint_id(repo_root, campaign)
+    if not checkpoint_id:
+        return False
+    valid, _issues = verify_checkpoint(repo_root, checkpoint_id)
+    return bool(valid)
+
+
+def _campaign_seed_champion_snapshot(
+    repo_root: Path,
+    state_path: Path,
+    campaign: dict[str, Any],
+) -> str:
+    normalized = _normalize_campaign(campaign)
+    state_payload = _load_json_if_exists(state_path)
+    if not isinstance(state_payload, dict):
+        raise CampaignError(
+            f"campaign mode requires readable state file at {state_path}"
+        )
+    if str(state_payload.get("stage", "")).strip() != "decide_repeat":
+        raise CampaignError(
+            "campaign champion snapshot requires current stage 'decide_repeat'"
+        )
+    checkpoint_label = _campaign_champion_checkpoint_label(normalized["campaign_id"])
+    existing = _campaign_champion_checkpoint_entries(repo_root, normalized)
+    checkpoint_id, _checkpoint_dir = create_checkpoint(
+        repo_root,
+        state_path=state_path,
+        stage="decide_repeat",
+        trigger="auto",
+        label=checkpoint_label,
+        iteration_id=str(state_payload.get("iteration_id", "")).strip(),
+        experiment_id=str(state_payload.get("experiment_id", "")).strip(),
+        scope_kind=normalized["scope_kind"],
+        pinned=True,
+        label_origin="system",
+        extra_artifacts=_campaign_current_changed_paths(repo_root),
+    )
+    for entry in existing:
+        stale_id = str(entry.get("checkpoint_id", "")).strip()
+        if stale_id and stale_id != checkpoint_id:
+            try:
+                set_checkpoint_pinned(repo_root, stale_id, pinned=False)
+            except Exception:
+                continue
+    return checkpoint_id
+
+
+def _campaign_checkpoint_manifest(
+    repo_root: Path, checkpoint_id: str
+) -> dict[str, Any]:
+    path = repo_root / ".autolab" / "checkpoints" / checkpoint_id / "manifest.json"
+    payload = _load_json_if_exists(path)
+    if not isinstance(payload, dict):
+        raise CampaignError(f"campaign checkpoint {checkpoint_id} has invalid manifest")
+    return payload
+
+
+def _campaign_checkpoint_file_path(
+    repo_root: Path,
+    checkpoint_id: str,
+    relative_path: str,
+) -> Path:
+    return (
+        repo_root / ".autolab" / "checkpoints" / checkpoint_id / "files" / relative_path
+    )
+
+
+def _campaign_checkpoint_json_artifact(
+    repo_root: Path,
+    checkpoint_id: str,
+    relative_path: str,
+) -> dict[str, Any]:
+    path = _campaign_checkpoint_file_path(repo_root, checkpoint_id, relative_path)
+    payload = _load_json_if_exists(path)
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _campaign_canonical_relpaths(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> set[str]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    return {
+        rel_path
+        for _abs_path, rel_path in _collect_canonical_artifacts(
+            repo_root,
+            iteration_dir,
+            "decide_repeat",
+            str(campaign.get("scope_kind", "experiment")),
+        )
+    }
+
+
+def _campaign_generated_surface_excludes(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> tuple[str, ...]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    iteration_rel = _campaign_iteration_relpath(repo_root, iteration_dir)
+    return (f"{iteration_rel}/runs/**",)
+
+
+def _campaign_filter_surface_paths(
+    paths: list[str],
+    *,
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> list[str]:
+    meaningful_cfg = _load_meaningful_change_config(repo_root)
+    canonical_paths = _campaign_canonical_relpaths(repo_root, state, campaign)
+    generated_excludes = _campaign_generated_surface_excludes(repo_root, state)
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for rel_path in paths:
+        if not rel_path or rel_path in seen:
+            continue
+        if rel_path in canonical_paths:
+            continue
+        if _path_matches_any(rel_path, _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS):
+            continue
+        if _path_matches_any(rel_path, generated_excludes):
+            continue
+        if _path_matches_any(rel_path, meaningful_cfg.exclude_paths):
+            continue
+        seen.add(rel_path)
+        filtered.append(rel_path)
+    return filtered
+
+
+def _campaign_file_size_metric(path: Path, metric: str) -> int:
+    if not path.exists() or not path.is_file():
+        return 0
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return 0
+    if metric == "chars":
+        return len(data)
+    if metric == "lines":
+        if not data:
+            return 0
+        return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+    return 1
+
+
+def _campaign_surface_score_current(
+    repo_root: Path,
+    *,
+    paths: list[str],
+    metric: str,
+) -> int:
+    total = 0
+    for rel_path in paths:
+        if metric == "files":
+            total += 1
+            continue
+        total += _campaign_file_size_metric(repo_root / rel_path, metric)
+    return total
+
+
+def _campaign_surface_score_checkpoint(
+    repo_root: Path,
+    *,
+    checkpoint_id: str,
+    paths: list[str],
+    metric: str,
+) -> int:
+    total = 0
+    for rel_path in paths:
+        if metric == "files":
+            total += 1
+            continue
+        total += _campaign_file_size_metric(
+            _campaign_checkpoint_file_path(repo_root, checkpoint_id, rel_path),
+            metric,
+        )
+    return total
+
+
+def _campaign_normalize_int(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except Exception:
+        return 0
+
+
+def _campaign_load_current_risk_payload(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    plan_approval = _load_json_if_exists(iteration_dir / "plan_approval.json")
+    if isinstance(plan_approval, dict):
+        return plan_approval
+    plan_check = _load_json_if_exists(iteration_dir / "plan_check_result.json")
+    if isinstance(plan_check, dict):
+        approval_risk = plan_check.get("approval_risk")
+        if isinstance(approval_risk, dict):
+            return approval_risk
+    return {}
+
+
+def _campaign_load_checkpoint_risk_payload(
+    repo_root: Path,
+    checkpoint_id: str,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    approval_rel = _campaign_iteration_relpath(
+        repo_root, iteration_dir / "plan_approval.json"
+    )
+    payload = _campaign_checkpoint_json_artifact(repo_root, checkpoint_id, approval_rel)
+    if payload:
+        return payload
+    plan_check_rel = _campaign_iteration_relpath(
+        repo_root, iteration_dir / "plan_check_result.json"
+    )
+    plan_check = _campaign_checkpoint_json_artifact(
+        repo_root, checkpoint_id, plan_check_rel
+    )
+    if isinstance(plan_check.get("approval_risk"), dict):
+        return dict(plan_check["approval_risk"])
+    return {}
+
+
+def _campaign_risk_score(payload: dict[str, Any]) -> tuple[int, ...]:
+    if not payload:
+        return ()
+    counts = payload.get("counts")
+    if not isinstance(counts, dict):
+        counts = {}
+    risk_flags = payload.get("risk_flags")
+    if not isinstance(risk_flags, dict):
+        risk_flags = {}
+    trigger_reasons = payload.get("trigger_reasons")
+    if not isinstance(trigger_reasons, list):
+        trigger_reasons = []
+    score = [
+        int(bool(payload.get("requires_approval", False))),
+        int(bool(risk_flags.get("uat_required", False))),
+        int(bool(risk_flags.get("remote_profile_required", False))),
+        len([item for item in trigger_reasons if str(item).strip()]),
+    ]
+    score.extend(
+        _campaign_normalize_int(counts.get(field, 0)) for field in _RISK_SCORE_FIELDS
+    )
+    return tuple(score)
+
+
+def _campaign_load_metrics_payload(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    payload = _load_json_if_exists(iteration_dir / "runs" / run_id / "metrics.json")
+    if not isinstance(payload, dict):
+        raise CampaignError(
+            f"campaign comparison requires metrics.json for run_id={run_id}"
+        )
+    return payload
+
+
+def _campaign_load_manifest_payload(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    payload = _load_json_if_exists(
+        iteration_dir / "runs" / run_id / "run_manifest.json"
+    )
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _campaign_primary_metric_value(
+    payload: dict[str, Any],
+    *,
+    run_id: str,
+    objective_metric: str,
+) -> float | None:
+    status = str(payload.get("status", "")).strip().lower()
+    primary_metric = payload.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        raise CampaignError(
+            f"campaign metrics for run_id={run_id} are missing primary_metric"
+        )
+    metric_name = str(primary_metric.get("name", "")).strip()
+    if metric_name != objective_metric:
+        raise CampaignError(
+            "campaign metrics objective mismatch "
+            f"(run_id={run_id}, metric='{metric_name or 'missing'}', expected='{objective_metric}')"
+        )
+    value = primary_metric.get("value")
+    if status != "completed" or value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        raise CampaignError(
+            f"campaign metrics primary_metric.value for run_id={run_id} must be numeric or null"
+        )
+
+
+def _campaign_metric_decision(
+    *,
+    objective_mode: str,
+    challenger_value: float | None,
+    champion_value: float | None,
+) -> int:
+    if champion_value is None:
+        raise CampaignError("campaign champion metrics are missing a comparable value")
+    if challenger_value is None:
+        return -1
+    if objective_mode == "maximize":
+        if challenger_value > champion_value:
+            return 1
+        if challenger_value < champion_value:
+            return -1
+        return 0
+    if objective_mode == "minimize":
+        if challenger_value < champion_value:
+            return 1
+        if challenger_value > champion_value:
+            return -1
+        return 0
+    raise CampaignError(f"unsupported campaign objective_mode '{objective_mode}'")
+
+
+def _campaign_manifest_memory_mb(payload: dict[str, Any]) -> int | None:
+    if not payload:
+        return None
+    resource_request = payload.get("resource_request")
+    if not isinstance(resource_request, dict):
+        resource_request = {}
+    if "memory_mb" in resource_request:
+        try:
+            parsed = int(resource_request.get("memory_mb"))
+        except Exception:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+    for raw_value in (
+        resource_request.get("memory"),
+        resource_request.get("mem"),
+        payload.get("memory"),
+    ):
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        parsed = _parse_memory_to_mb(value)
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _campaign_status_groups(
+    repo_root: Path,
+) -> tuple[list[str], list[str]]:
+    tracked: list[str] = []
+    untracked: list[str] = []
+    for rel_path, status_code in _collect_git_status_entries(repo_root):
+        if _path_matches_any(rel_path, _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS):
+            continue
+        normalized = status_code.strip()
+        if normalized == "??":
+            untracked.append(rel_path)
+            continue
+        tracked.append(rel_path)
+    tracked = sorted(dict.fromkeys(tracked))
+    untracked = sorted(dict.fromkeys(untracked))
+    return (tracked, untracked)
+
+
+def _campaign_reset_worktree_to_head(repo_root: Path) -> None:
+    tracked_paths, untracked_paths = _campaign_status_groups(repo_root)
+    if tracked_paths:
+        restore_result = _run_git(
+            repo_root,
+            ["restore", "--staged", "--worktree", "--", *tracked_paths],
+        )
+        if restore_result.returncode != 0:
+            detail = (restore_result.stderr or restore_result.stdout or "").strip()
+            raise CampaignError(
+                f"campaign restore failed to reset tracked paths to HEAD: {detail or 'git restore failed'}"
+            )
+    for rel_path in sorted(
+        untracked_paths, key=lambda item: len(Path(item).parts), reverse=True
+    ):
+        candidate = repo_root / rel_path
+        if candidate.is_symlink() or candidate.is_file():
+            candidate.unlink(missing_ok=True)
+            continue
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+
+
+def _campaign_restore_champion_state(
+    repo_root: Path,
+    state_path: Path,
+    campaign: dict[str, Any],
+    *,
+    checkpoint_id: str,
+) -> None:
+    valid, issues = verify_checkpoint(repo_root, checkpoint_id)
+    if not valid:
+        raise CampaignError(
+            f"campaign champion checkpoint {checkpoint_id} is invalid: {'; '.join(issues)}"
+        )
+    _campaign_reset_worktree_to_head(repo_root)
+    success, message, _changed = restore_checkpoint(
+        repo_root,
+        state_path,
+        checkpoint_id,
+        archive_current=True,
+    )
+    if not success:
+        raise CampaignError(
+            f"campaign could not restore champion checkpoint {checkpoint_id}: {message}"
+        )
+
+
+def _campaign_compare_challenger(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+    *,
+    champion_checkpoint_id: str,
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    challenger_run_id = str(state.get("last_run_id", "")).strip()
+    champion_run_id = normalized["champion_run_id"]
+    if not challenger_run_id:
+        raise CampaignError("campaign comparison requires state.last_run_id")
+    if challenger_run_id == champion_run_id:
+        raise CampaignError(
+            "campaign comparison requires a challenger run distinct from the champion"
+        )
+
+    challenger_metrics = _campaign_load_metrics_payload(
+        repo_root, state, run_id=challenger_run_id
+    )
+    champion_metrics = _campaign_load_metrics_payload(
+        repo_root, state, run_id=champion_run_id
+    )
+    challenger_value = _campaign_primary_metric_value(
+        challenger_metrics,
+        run_id=challenger_run_id,
+        objective_metric=normalized["objective_metric"],
+    )
+    champion_value = _campaign_primary_metric_value(
+        champion_metrics,
+        run_id=champion_run_id,
+        objective_metric=normalized["objective_metric"],
+    )
+
+    metric_decision = _campaign_metric_decision(
+        objective_mode=normalized["objective_mode"],
+        challenger_value=challenger_value,
+        champion_value=champion_value,
+    )
+    if metric_decision > 0:
+        return {
+            "winner": "challenger",
+            "summary": (
+                "primary metric improved "
+                f"({challenger_run_id}={challenger_value} vs {champion_run_id}={champion_value})"
+            ),
+        }
+    if metric_decision < 0:
+        return {
+            "winner": "champion",
+            "summary": (
+                "primary metric did not improve "
+                f"({challenger_run_id}={challenger_value} vs {champion_run_id}={champion_value})"
+            ),
+        }
+
+    challenger_manifest = _campaign_load_manifest_payload(
+        repo_root, state, run_id=challenger_run_id
+    )
+    champion_manifest = _campaign_load_manifest_payload(
+        repo_root, state, run_id=champion_run_id
+    )
+    challenger_memory = _campaign_manifest_memory_mb(challenger_manifest)
+    champion_memory = _campaign_manifest_memory_mb(champion_manifest)
+    if (
+        challenger_memory is not None
+        and champion_memory is not None
+        and challenger_memory != champion_memory
+    ):
+        winner = "challenger" if challenger_memory < champion_memory else "champion"
+        return {
+            "winner": winner,
+            "summary": (
+                "primary metric tied; memory tie-break "
+                f"({challenger_run_id}={challenger_memory}MB vs "
+                f"{champion_run_id}={champion_memory}MB)"
+            ),
+        }
+
+    comparison_cfg = _load_campaign_comparison_config(repo_root)
+    if comparison_cfg.complexity_proxy != "none":
+        current_surface_paths = _campaign_filter_surface_paths(
+            _campaign_current_changed_paths(repo_root),
+            repo_root=repo_root,
+            state=state,
+            campaign=normalized,
+        )
+        champion_manifest_payload = _campaign_checkpoint_manifest(
+            repo_root, champion_checkpoint_id
+        )
+        champion_surface_paths = _campaign_filter_surface_paths(
+            [
+                str(entry.get("relative_path", "")).strip()
+                for entry in champion_manifest_payload.get("artifacts", [])
+                if isinstance(entry, dict)
+            ],
+            repo_root=repo_root,
+            state=state,
+            campaign=normalized,
+        )
+        challenger_surface = _campaign_surface_score_current(
+            repo_root,
+            paths=current_surface_paths,
+            metric=comparison_cfg.change_size_metric,
+        )
+        champion_surface = _campaign_surface_score_checkpoint(
+            repo_root,
+            checkpoint_id=champion_checkpoint_id,
+            paths=champion_surface_paths,
+            metric=comparison_cfg.change_size_metric,
+        )
+        if challenger_surface != champion_surface:
+            winner = (
+                "challenger" if challenger_surface < champion_surface else "champion"
+            )
+            return {
+                "winner": winner,
+                "summary": (
+                    "primary metric and memory tied; complexity tie-break "
+                    f"({comparison_cfg.change_size_metric}: "
+                    f"{challenger_run_id}={challenger_surface} vs "
+                    f"{champion_run_id}={champion_surface})"
+                ),
+            }
+
+    challenger_risk = _campaign_risk_score(
+        _campaign_load_current_risk_payload(repo_root, state)
+    )
+    champion_risk = _campaign_risk_score(
+        _campaign_load_checkpoint_risk_payload(
+            repo_root,
+            champion_checkpoint_id,
+            state,
+        )
+    )
+    if challenger_risk and champion_risk and challenger_risk != champion_risk:
+        winner = "challenger" if challenger_risk < champion_risk else "champion"
+        return {
+            "winner": winner,
+            "summary": (
+                "all prior tie-breaks tied; policy-risk tie-break "
+                f"({challenger_run_id}={challenger_risk} vs "
+                f"{champion_run_id}={champion_risk})"
+            ),
+        }
+
+    return {
+        "winner": "champion",
+        "summary": (
+            "all campaign comparisons tied; keeping existing champion "
+            f"({champion_run_id})"
+        ),
+    }
+
+
+def _campaign_apply_challenger_outcome(
+    repo_root: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    checkpoint_id = _campaign_latest_champion_checkpoint_id(repo_root, normalized)
+    if not checkpoint_id:
+        raise CampaignError(
+            "campaign champion snapshot is missing; rerun from decide_repeat to reseed"
+        )
+    comparison = _campaign_compare_challenger(
+        repo_root,
+        state,
+        normalized,
+        champion_checkpoint_id=checkpoint_id,
+    )
+    winner = str(comparison.get("winner", "")).strip()
+    summary = str(comparison.get("summary", "")).strip()
+    challenger_run_id = str(state.get("last_run_id", "")).strip()
+
+    if winner == "challenger":
+        _campaign_seed_champion_snapshot(repo_root, state_path, normalized)
+        updated = dict(normalized)
+        updated["champion_run_id"] = challenger_run_id
+        updated["champion_revision_label"] = _resolve_revision_label(repo_root)
+        updated["no_improvement_streak"] = 0
+        _write_campaign(repo_root, updated)
+        return {
+            "action": "promote",
+            "campaign": updated,
+            "summary": summary,
+        }
+
+    _campaign_restore_champion_state(
+        repo_root,
+        state_path,
+        normalized,
+        checkpoint_id=checkpoint_id,
+    )
+    updated = dict(normalized)
+    updated["no_improvement_streak"] = (
+        int(updated.get("no_improvement_streak", 0) or 0) + 1
+    )
+    _write_campaign(repo_root, updated)
+    return {
+        "action": "discard",
+        "campaign": updated,
+        "summary": summary,
+    }
+
+
+__all__ = [name for name in globals() if not name.startswith("__")]
