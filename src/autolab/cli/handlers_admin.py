@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from autolab.campaign import _mark_campaign_oracle_exported
 from autolab.cli.support import *
 from autolab.agent_surface import (
     build_agent_surface_guidance,
@@ -4803,6 +4804,13 @@ def _cmd_oracle(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    try:
+        _mark_campaign_oracle_exported(repo_root)
+    except Exception as exc:
+        print(
+            f"autolab oracle: WARN failed to update campaign oracle timestamp: {exc}",
+            file=sys.stderr,
+        )
 
     print("autolab oracle")
     print(f"state_file: {state_path}")

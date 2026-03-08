@@ -21,7 +21,7 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 ## Command map (grouped)
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`, `autolab parser init|test`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab campaign start|status|stop|continue`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`, `autolab gc`.
@@ -193,6 +193,8 @@ inlined artifact content from the active scope.
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
+- **Campaign mode**: `autolab campaign start --label overnight --scope experiment`
+- **Resume campaign**: `autolab campaign continue`
 - **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Waves/Help; Home includes a dedicated Handoff & Resume card; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`

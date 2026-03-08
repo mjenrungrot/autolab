@@ -9,6 +9,7 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 - `mode`: Manual (`autolab run`, no runner); `who_edits_artifacts`: Human; `who_runs_verifiers`: Human via stage prompt, `autolab verify`, and optionally `autolab run --verify`; `who_advances_stage`: Autolab state machine.
 - `mode`: Agent runner (`agent_runner.enabled: true`); `who_edits_artifacts`: Runner agent within allowed edit scope; `who_runs_verifiers`: Runner agent via stage prompt; Autolab can enforce via `autolab verify` / auto loop verification; `who_advances_stage`: Autolab state machine.
 - `mode`: Assistant (`--assistant`); `who_edits_artifacts`: Assistant task cycle (`select -> implement -> verify -> review`); `who_runs_verifiers`: Assistant verify phase + policy checks; `who_advances_stage`: Autolab assistant orchestration.
+- `mode`: Campaign (`autolab campaign start|continue`); `who_edits_artifacts`: Existing run/loop machinery under a campaign control plane; `who_runs_verifiers`: Autolab unattended loop with verification enabled; `who_advances_stage`: Autolab state machine plus campaign stop/rethink governance.
 
 ## Responsibility Contract
 
@@ -28,6 +29,10 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
    - Keep `agent_runner.edit_scope` strict.
    - Run `autolab loop --auto` when unattended execution is needed.
    - Let automatic verification gate progression.
+1. Campaign mode:
+   - Start only after the active design has a completed baseline run.
+   - Use `autolab campaign stop` for graceful shutdown and `autolab campaign continue` for resumable recovery.
+   - Treat `needs_rethink` as a handoff point, not as a background-retry state.
 1. Assistant mode:
    - Use for backlog/todo-driven delivery loops.
    - Treat verification failures as blocking until fixed.

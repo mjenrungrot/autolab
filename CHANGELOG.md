@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.39] - 2026-03-08
+
+### Summary
+
+- Added first-class unattended campaign mode with `autolab campaign start|status|stop|continue` and canonical `.autolab/campaign.json` state.
+- Surfaced campaign context across `autolab status`, handoff/continuation packets, resume recommendations, and `autolab oracle` exports, including resumable `autolab campaign continue` guidance.
+
+<!-- autolab:range v1.2.38..v1.2.39 -->
+
 ## [1.2.38] - 2026-03-08
 
 ### Summary

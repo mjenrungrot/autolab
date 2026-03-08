@@ -10,6 +10,7 @@ from functools import wraps
 
 from autolab.cli import handlers_admin as _handlers_admin
 from autolab.cli import handlers_backlog as _handlers_backlog
+from autolab.cli import handlers_campaign as _handlers_campaign
 from autolab.cli import handlers_observe as _handlers_observe
 from autolab.cli import handlers_project as _handlers_project
 from autolab.cli import handlers_run as _handlers_run
@@ -21,6 +22,7 @@ _TARGET_MODULES = (
     _support,
     _handlers_observe,
     _handlers_backlog,
+    _handlers_campaign,
     _handlers_project,
     _handlers_run,
     _handlers_parser,

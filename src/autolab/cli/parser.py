@@ -5,6 +5,7 @@ from __future__ import annotations
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import *
 from autolab.cli.handlers_backlog import *
+from autolab.cli.handlers_campaign import *
 from autolab.cli.handlers_project import *
 from autolab.cli.handlers_run import *
 from autolab.cli.handlers_admin import *
@@ -482,6 +483,42 @@ def _build_parser() -> argparse.ArgumentParser:
     loop.set_defaults(run_agent_mode="policy")
     loop.set_defaults(strict_implementation_progress=True)
     loop.set_defaults(handler=_cmd_loop)
+
+    campaign = subparsers.add_parser(
+        "campaign",
+        help="Manage first-class unattended research campaigns",
+    )
+    campaign_sub = campaign.add_subparsers(dest="campaign_command")
+
+    campaign_start = campaign_sub.add_parser(
+        "start", help="Start a dedicated unattended campaign and enter campaign mode"
+    )
+    campaign_start.add_argument("--state-file", default=".autolab/state.json")
+    campaign_start.add_argument("--label", required=True)
+    campaign_start.add_argument(
+        "--scope",
+        choices=("experiment", "project_wide"),
+        required=True,
+    )
+    campaign_start.set_defaults(handler=_cmd_campaign_start)
+
+    campaign_status = campaign_sub.add_parser(
+        "status", help="Show campaign state and resumability"
+    )
+    campaign_status.add_argument("--state-file", default=".autolab/state.json")
+    campaign_status.set_defaults(handler=_cmd_campaign_status)
+
+    campaign_stop = campaign_sub.add_parser(
+        "stop", help="Gracefully request campaign shutdown"
+    )
+    campaign_stop.add_argument("--state-file", default=".autolab/state.json")
+    campaign_stop.set_defaults(handler=_cmd_campaign_stop)
+
+    campaign_continue = campaign_sub.add_parser(
+        "continue", help="Resume a stopped or errored campaign"
+    )
+    campaign_continue.add_argument("--state-file", default=".autolab/state.json")
+    campaign_continue.set_defaults(handler=_cmd_campaign_continue)
 
     tui = subparsers.add_parser(
         "tui", help="Launch the interactive Textual workflow cockpit"

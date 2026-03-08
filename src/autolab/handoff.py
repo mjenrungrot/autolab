@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from autolab.campaign import (
+    CampaignError,
+    _campaign_path,
+    _campaign_summary,
+    _load_campaign,
+    _validate_campaign_binding,
+)
 from autolab.constants import ACTIVE_STAGES, DECISION_STAGES
 from autolab.plan_approval import (
     approval_next_commands_for_mode,
@@ -302,8 +309,34 @@ def _pending_human_decisions(
     return _unique_list(decisions)
 
 
+def _resolve_campaign_context(
+    repo_root: Path,
+    state: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    diagnostics: list[str] = []
+    try:
+        campaign = _load_campaign(repo_root)
+    except CampaignError as exc:
+        diagnostics.append(str(exc))
+        return ({}, diagnostics)
+    if campaign is None:
+        return ({}, diagnostics)
+
+    summary = _campaign_summary(campaign)
+    if bool(summary.get("resumable", False)):
+        try:
+            _validate_campaign_binding(repo_root, state, campaign)
+        except CampaignError as exc:
+            summary = dict(summary)
+            summary["resumable"] = False
+            summary["resume_error"] = str(exc)
+            diagnostics.append(str(exc))
+    return (summary, diagnostics)
+
+
 def _recommended_command(
     *,
+    repo_root: Path,
     state: dict[str, Any],
     blockers: list[str],
     pending_decisions: list[str],
@@ -311,6 +344,7 @@ def _recommended_command(
     plan_approval: dict[str, Any],
     plan_approval_action_mode: str,
     uat: dict[str, Any],
+    campaign: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     stage = str(state.get("stage", "")).strip()
     if stage == "human_review":
@@ -388,6 +422,25 @@ def _recommended_command(
         "status": safe_status,
         "preconditions": _unique_list(preconditions),
     }
+    if (
+        campaign
+        and command in {"autolab run", "autolab loop --auto"}
+        and executable
+        and str(campaign.get("status", "")).strip() in {"stopped", "error"}
+        and not pending_decisions
+    ):
+        resume_command = "autolab campaign continue"
+        resume_reason = "A resumable campaign is present; continue the campaign instead of resuming a one-off workflow command."
+        recommended = {
+            "command": resume_command,
+            "reason": resume_reason,
+            "executable": True,
+        }
+        safe_resume = {
+            "command": resume_command,
+            "status": safe_status,
+            "preconditions": _unique_list(preconditions),
+        }
     return (recommended, safe_resume)
 
 
@@ -510,6 +563,7 @@ def _build_artifact_pointers(
     repo_root: Path,
     iteration_dir: Path | None,
     stage: str,
+    campaign_summary: dict[str, Any],
     handoff_json_path: Path,
     handoff_md_path: Path,
     uat_summary: dict[str, Any],
@@ -538,6 +592,16 @@ def _build_artifact_pointers(
         reason="Human-readable continuation and takeover snapshot.",
         status_override="present",
     )
+    if campaign_summary:
+        _append_artifact_pointer(
+            rows=rows,
+            seen_paths=seen_paths,
+            repo_root=repo_root,
+            role="campaign",
+            path=_campaign_path(repo_root),
+            reason="Campaign control-plane state for unattended research mode.",
+            include_if_missing=True,
+        )
 
     if iteration_dir is not None:
         stage_primary_path: Path | None = None
@@ -687,6 +751,7 @@ def _build_continuation_packet(
     pending_decisions: list[str],
     recommended_next: dict[str, Any],
     safe_resume: dict[str, Any],
+    campaign_summary: dict[str, Any],
     plan_approval: dict[str, Any],
     uat_summary: dict[str, Any],
     context_rot: dict[str, Any],
@@ -764,6 +829,7 @@ def _build_continuation_packet(
             "reason": str(recommended_next.get("reason", "")).strip(),
             "executable": bool(recommended_next.get("executable", False)),
         },
+        "campaign": dict(campaign_summary) if campaign_summary else {},
         "latest_good_checkpoint": {
             "checkpoint_id": str(latest_checkpoint.get("checkpoint_id", "")).strip(),
             "stage": str(latest_checkpoint.get("stage", "")).strip(),
@@ -814,6 +880,7 @@ def _build_continuation_packet(
             repo_root=repo_root,
             iteration_dir=iteration_dir,
             stage=stage,
+            campaign_summary=campaign_summary,
             handoff_json_path=handoff_json_path,
             handoff_md_path=handoff_md_path,
             uat_summary=uat_summary,
@@ -854,6 +921,7 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     continuation = _safe_dict(payload.get("continuation_packet"))
     active_stage = _safe_dict(continuation.get("active_stage"))
     next_action = _safe_dict(continuation.get("next_action"))
+    campaign = _safe_dict(continuation.get("campaign"))
     latest_good_checkpoint = _safe_dict(continuation.get("latest_good_checkpoint"))
     policy_and_risk = _safe_dict(continuation.get("policy_and_risk"))
     run_status = _safe_dict(continuation.get("run_status"))
@@ -898,6 +966,8 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         f"- active_stage: `{active_stage.get('stage', current_stage)}`",
         f"- active_attempt: `{active_stage.get('stage_attempt', '-')}`/`{active_stage.get('max_stage_attempts', '-')}`",
         f"- active_scope_kind: `{active_stage.get('scope_kind', current_scope)}`",
+        f"- campaign_status: `{campaign.get('status', '')}`",
+        f"- campaign_label: `{campaign.get('label', '')}`",
         f"- next_safe_status: `{next_action.get('safe_status', safe_resume.get('status', 'blocked'))}`",
         f"- next_safe_command: `{next_action.get('safe_command', safe_resume.get('command', ''))}`",
         f"- recommended_command: `{next_action.get('recommended_command', recommended.get('command', ''))}`",
@@ -1230,6 +1300,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
     stage = str(state.get("stage", "")).strip()
+    campaign_summary, campaign_diagnostics = _resolve_campaign_context(repo_root, state)
 
     current_scope, scope_root, iteration_dir = _resolve_scope_context(
         repo_root,
@@ -1351,6 +1422,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     handoff_json_path = autolab_dir / _HANDOFF_FILENAME
 
     recommended_next, safe_resume = _recommended_command(
+        repo_root=repo_root,
         state=state,
         blockers=blocking_failures,
         pending_decisions=pending_decisions,
@@ -1358,6 +1430,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         plan_approval=plan_approval,
         plan_approval_action_mode=plan_approval_action_mode,
         uat=uat_summary,
+        campaign=campaign_summary,
     )
     if latest_verification:
         latest_verification_summary = {
@@ -1400,6 +1473,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "current_scope": current_scope,
         "scope_root": str(scope_root),
         "current_stage": stage,
+        "campaign": campaign_summary,
         "wave": wave_summary,
         "task_status": task_summary,
         "wave_observability": wave_observability,
@@ -1426,6 +1500,8 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         "recommended_rewind_targets": context_rot.get("recommended_rewind_targets", []),
         "artifact_drift_summary": context_rot.get("artifact_drift_summary", {}),
     }
+    if campaign_diagnostics:
+        payload["campaign_diagnostics"] = campaign_diagnostics
     if plan_approval:
         payload["plan_approval"] = plan_approval
     payload["continuation_packet"] = _build_continuation_packet(
@@ -1442,6 +1518,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         pending_decisions=pending_decisions,
         recommended_next=recommended_next,
         safe_resume=safe_resume,
+        campaign_summary=campaign_summary,
         plan_approval=plan_approval,
         uat_summary=uat_summary,
         context_rot=context_rot,
