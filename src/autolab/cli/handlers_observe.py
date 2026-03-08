@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from autolab.campaign import (
     CampaignError,
+    _campaign_lock_overview,
     _campaign_results_overview,
     _campaign_summary,
     _load_campaign,
@@ -65,6 +66,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     else:
         if campaign is not None:
             summary = _campaign_summary(campaign)
+            lock_overview = _campaign_lock_overview(repo_root, state, campaign)
             print("campaign:")
             print(f"  campaign_id: {summary.get('campaign_id', '')}")
             print(f"  label: {summary.get('label', '')}")
@@ -73,6 +75,11 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(f"  objective_metric: {summary.get('objective_metric', '')}")
             print(f"  objective_mode: {summary.get('objective_mode', '')}")
             print(f"  status: {summary.get('status', '')}")
+            print(f"  lock_mode: {summary.get('lock_mode', 'none')}")
+            print(f"  design_locked: {summary.get('design_locked', False)}")
+            print(f"  harness_locked: {summary.get('harness_locked', False)}")
+            print(f"  lock_ok: {lock_overview.get('lock_ok', True)}")
+            print(f"  lock_drift: {lock_overview.get('lock_drift', '') or 'none'}")
             print(f"  champion_run_id: {summary.get('champion_run_id', '')}")
             print(
                 "  champion_revision_label: "

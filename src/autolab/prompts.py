@@ -26,6 +26,13 @@ from autolab.agent_surface import (
     build_agent_surface_guidance,
     resolve_agent_surface,
 )
+from autolab.campaign import (
+    _campaign_allowed_decisions,
+    _campaign_lock_mode,
+    _campaign_lock_overview,
+    _campaign_locked_auto_decision,
+    _load_campaign,
+)
 from autolab.config import (
     _load_agent_runner_config,
     _load_launch_execute_policy,
@@ -611,6 +618,16 @@ def _build_prompt_context(
     metrics_summary = "unavailable: metrics summary not available for this stage"
     target_comparison = "unavailable: target comparison not available for this stage"
     decision_suggestion = "insufficient evidence in metrics/hypothesis; prefer human_review when risk is unclear"
+    campaign_lock_mode = "none"
+    campaign_lock_summary = "campaign lock mode inactive"
+    campaign_no_improvement_streak = 0
+    campaign_allowed_decisions = (
+        "hypothesis, design, implementation, stop, human_review"
+    )
+    try:
+        active_campaign = _load_campaign(repo_root)
+    except Exception:
+        active_campaign = None
     if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
         metrics_payload = _load_metrics_payload(iteration_dir, run_id)
         metrics_summary = _metrics_summary_text(metrics_payload, run_id=run_id)
@@ -627,6 +644,52 @@ def _build_prompt_context(
             run_id=run_id,
             metric_mode=metric_mode,
         )
+
+    if active_campaign is not None:
+        campaign_no_improvement_streak = int(
+            active_campaign.get("no_improvement_streak", 0) or 0
+        )
+        campaign_allowed_decisions = ", ".join(
+            _campaign_allowed_decisions(active_campaign)
+        )
+        if iteration_id:
+            try:
+                lock_overview = _campaign_lock_overview(
+                    repo_root,
+                    state,
+                    active_campaign,
+                )
+            except Exception as exc:
+                campaign_lock_mode = _campaign_lock_mode(active_campaign)
+                campaign_lock_summary = f"campaign lock unavailable: {exc}"
+            else:
+                campaign_lock_mode = (
+                    str(lock_overview.get("lock_mode", "none")).strip() or "none"
+                )
+                campaign_lock_summary = (
+                    str(lock_overview.get("lock_summary", "")).strip()
+                    or "campaign lock mode inactive"
+                )
+                if campaign_lock_mode != "none":
+                    if not bool(lock_overview.get("lock_ok", True)):
+                        decision_suggestion = (
+                            "human_review: campaign lock drift detected; stop unattended search "
+                            f"({lock_overview.get('lock_drift', 'lock drift')})"
+                        )
+                    else:
+                        locked_auto_decision = _campaign_locked_auto_decision(
+                            active_campaign
+                        )
+                        if locked_auto_decision == "implementation":
+                            decision_suggestion = (
+                                "implementation: locked campaign should continue implementation-level search "
+                                "under the current hypothesis and design"
+                            )
+                        elif locked_auto_decision == "design":
+                            decision_suggestion = (
+                                "design: locked campaign has stalled without improvement and should rethink design "
+                                "without reopening hypothesis"
+                            )
 
     auto_metrics_evidence_record: dict = {}
     if iteration_id and iteration_dir.exists() and run_id and run_id != "run_pending":
@@ -904,6 +967,10 @@ def _build_prompt_context(
         "target_comparison": target_comparison,
         "decision_suggestion": decision_suggestion,
         "auto_metrics_evidence": auto_metrics_evidence_record,
+        "campaign_lock_mode": campaign_lock_mode,
+        "campaign_lock_summary": campaign_lock_summary,
+        "campaign_no_improvement_streak": campaign_no_improvement_streak,
+        "campaign_allowed_decisions": campaign_allowed_decisions,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,

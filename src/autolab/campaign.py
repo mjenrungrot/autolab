@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 import uuid
@@ -26,15 +28,17 @@ from autolab.config import (
     _load_campaign_comparison_config,
     _load_meaningful_change_config,
 )
-from autolab.launch_runtime import _parse_memory_to_mb
+from autolab.launch_runtime import _parse_memory_to_mb, _resolve_launch_mode
 from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _collect_git_status_entries,
+    _detect_priority_host_mode,
     _load_json_if_exists,
     _manifest_timestamp,
     _normalize_space,
     _parse_utc,
+    _path_fingerprint,
     _path_matches_any,
     _run_git,
     _utc_now,
@@ -60,6 +64,24 @@ _CAMPAIGN_RESULTS_MD_FILENAME = "results.md"
 _CAMPAIGN_COMPARE_LOG_PATTERN = re.compile(
     r"^campaign (?P<action>promote|discard): champion=(?P<champion>\S+) "
     r"challenger=(?P<challenger>\S+); ?(?P<summary>.*)$"
+)
+_CAMPAIGN_LOCK_CONTRACT_FIELDS = (
+    "captured_at",
+    "hypothesis_path",
+    "hypothesis_fingerprint",
+    "design_path",
+    "design_fingerprint",
+    "extract_parser_fingerprint",
+    "evaluator_fingerprint",
+    "remote_profile_name",
+    "remote_profile_mode",
+    "remote_profile_config_fingerprint",
+)
+_CAMPAIGN_EVALUATOR_CONTRACT_PATHS = (
+    ".autolab/workflow.yaml",
+    ".autolab/verifier_policy.yaml",
+    ".autolab/schemas/decision_result.schema.json",
+    ".autolab/schemas/metrics.schema.json",
 )
 _RISK_SCORE_FIELDS = (
     "project_wide_tasks",
@@ -110,6 +132,59 @@ def _campaign_non_negative_int(payload: dict[str, Any], key: str) -> int:
     return value
 
 
+def _campaign_default_lock_contract() -> dict[str, str]:
+    return {field: "" for field in _CAMPAIGN_LOCK_CONTRACT_FIELDS}
+
+
+def _normalize_campaign_lock_contract(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_lock_contract()
+    for field in _CAMPAIGN_LOCK_CONTRACT_FIELDS:
+        normalized[field] = str(payload.get(field, "")).strip()
+    return normalized
+
+
+def _campaign_lock_mode(payload: dict[str, Any]) -> str:
+    if bool(payload.get("harness_locked", False)):
+        return "harness"
+    if bool(payload.get("design_locked", False)):
+        return "design"
+    return "none"
+
+
+def _campaign_required_lock_fields(mode: str) -> tuple[str, ...]:
+    if mode == "harness":
+        return _CAMPAIGN_LOCK_CONTRACT_FIELDS
+    if mode == "design":
+        return (
+            "captured_at",
+            "hypothesis_path",
+            "hypothesis_fingerprint",
+            "design_path",
+            "design_fingerprint",
+        )
+    return ()
+
+
+def _campaign_missing_lock_fields(payload: dict[str, Any]) -> list[str]:
+    mode = _campaign_lock_mode(payload)
+    if mode == "none":
+        return []
+    contract = _normalize_campaign_lock_contract(payload.get("lock_contract"))
+    missing: list[str] = []
+    for field in _campaign_required_lock_fields(mode):
+        if str(contract.get(field, "")).strip():
+            continue
+        missing.append(field)
+    return missing
+
+
+def _campaign_structured_fingerprint(payload: Any) -> str:
+    rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(rendered.encode("utf-8")).hexdigest()
+
+
 def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CampaignError(".autolab/campaign.json must contain a JSON object")
@@ -136,6 +211,9 @@ def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         iteration_id = ""
 
     started_at = _campaign_required_string(payload, "started_at")
+    harness_locked = bool(payload.get("harness_locked", False))
+    design_locked = bool(payload.get("design_locked", False)) or harness_locked
+    lock_contract = _normalize_campaign_lock_contract(payload.get("lock_contract"))
     return {
         "campaign_id": _campaign_required_string(payload, "campaign_id"),
         "label": _campaign_required_string(payload, "label"),
@@ -144,7 +222,9 @@ def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         "objective_metric": _campaign_required_string(payload, "objective_metric"),
         "objective_mode": objective_mode,
         "status": status,
-        "design_locked": bool(payload.get("design_locked", False)),
+        "design_locked": design_locked,
+        "harness_locked": harness_locked,
+        "lock_contract": lock_contract,
         "champion_run_id": _campaign_required_string(payload, "champion_run_id"),
         "champion_revision_label": _campaign_required_string(
             payload, "champion_revision_label"
@@ -220,6 +300,232 @@ def _resolve_campaign_objective(
     return (objective_metric, objective_mode)
 
 
+def _campaign_extract_parser_fingerprint(
+    repo_root: Path,
+    *,
+    iteration_dir: Path,
+    design_payload: dict[str, Any],
+) -> str:
+    parser_capabilities_path = iteration_dir / "parser_capabilities.json"
+    parser_capabilities_rel = (
+        _campaign_iteration_relpath(repo_root, parser_capabilities_path)
+        if parser_capabilities_path.exists()
+        else _campaign_iteration_relpath(repo_root, parser_capabilities_path)
+    )
+    payload = {
+        "extract_parser": design_payload.get("extract_parser", {}),
+        "parser_capabilities_path": parser_capabilities_rel,
+        "parser_capabilities_fingerprint": _path_fingerprint(
+            repo_root,
+            parser_capabilities_rel,
+        ),
+    }
+    return _campaign_structured_fingerprint(payload)
+
+
+def _campaign_evaluator_fingerprint(repo_root: Path) -> str:
+    payload = [
+        {
+            "path": rel_path,
+            "fingerprint": _path_fingerprint(repo_root, rel_path),
+        }
+        for rel_path in _CAMPAIGN_EVALUATOR_CONTRACT_PATHS
+    ]
+    return _campaign_structured_fingerprint(payload)
+
+
+def _campaign_remote_profile_contract(
+    repo_root: Path,
+    *,
+    design_payload: dict[str, Any],
+) -> tuple[str, str, str]:
+    launch_mode = _resolve_launch_mode(design_payload)
+    if launch_mode != "slurm":
+        return ("none", "none", "none")
+
+    remote_profiles_rel = ".autolab/remote_profiles.yaml"
+    remote_profiles_fingerprint = _path_fingerprint(repo_root, remote_profiles_rel)
+    try:
+        from autolab.remote_profiles import resolve_remote_profile
+
+        profile = resolve_remote_profile(
+            repo_root,
+            host_mode=_detect_priority_host_mode(),
+        )
+    except Exception:
+        return ("none", "none", remote_profiles_fingerprint)
+
+    return (
+        str(getattr(profile, "name", "")).strip() or "none",
+        str(getattr(profile, "mode", "")).strip() or "none",
+        remote_profiles_fingerprint,
+    )
+
+
+def _campaign_capture_lock_contract(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, str]:
+    normalized = _normalize_campaign(campaign)
+    if _campaign_lock_mode(normalized) == "none":
+        return _campaign_default_lock_contract()
+
+    design_payload, iteration_dir = _load_design_payload_for_state(repo_root, state)
+    hypothesis_path = iteration_dir / "hypothesis.md"
+    if not hypothesis_path.exists():
+        raise CampaignError(
+            f"campaign lock requires hypothesis.md at {hypothesis_path}"
+        )
+    design_path = iteration_dir / "design.yaml"
+    hypothesis_rel = _campaign_iteration_relpath(repo_root, hypothesis_path)
+    design_rel = _campaign_iteration_relpath(repo_root, design_path)
+    hypothesis_fingerprint = _path_fingerprint(repo_root, hypothesis_rel)
+    design_fingerprint = _path_fingerprint(repo_root, design_rel)
+    if hypothesis_fingerprint == "<missing>":
+        raise CampaignError(f"campaign lock requires readable {hypothesis_path}")
+    if design_fingerprint == "<missing>":
+        raise CampaignError(f"campaign lock requires readable {design_path}")
+
+    remote_profile_name, remote_profile_mode, remote_profile_config_fingerprint = (
+        _campaign_remote_profile_contract(
+            repo_root,
+            design_payload=design_payload,
+        )
+    )
+    return {
+        "captured_at": _utc_now(),
+        "hypothesis_path": hypothesis_rel,
+        "hypothesis_fingerprint": hypothesis_fingerprint,
+        "design_path": design_rel,
+        "design_fingerprint": design_fingerprint,
+        "extract_parser_fingerprint": _campaign_extract_parser_fingerprint(
+            repo_root,
+            iteration_dir=iteration_dir,
+            design_payload=design_payload,
+        ),
+        "evaluator_fingerprint": _campaign_evaluator_fingerprint(repo_root),
+        "remote_profile_name": remote_profile_name,
+        "remote_profile_mode": remote_profile_mode,
+        "remote_profile_config_fingerprint": remote_profile_config_fingerprint,
+    }
+
+
+def _campaign_lock_overview(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    mode = _campaign_lock_mode(normalized)
+    overview = {
+        "lock_mode": mode,
+        "design_locked": bool(normalized.get("design_locked", False)),
+        "harness_locked": bool(normalized.get("harness_locked", False)),
+        "lock_ok": True,
+        "lock_drift": "",
+        "lock_summary": "campaign lock mode inactive",
+    }
+    if mode == "none":
+        return overview
+
+    missing = _campaign_missing_lock_fields(normalized)
+    if missing:
+        drift = "campaign lock contract is missing required fields: " + ", ".join(
+            sorted(missing)
+        )
+        overview["lock_ok"] = False
+        overview["lock_drift"] = drift
+        overview["lock_summary"] = drift
+        return overview
+
+    contract = _normalize_campaign_lock_contract(normalized.get("lock_contract"))
+    try:
+        current = _campaign_capture_lock_contract(repo_root, state, normalized)
+    except CampaignError as exc:
+        drift = str(exc)
+        overview["lock_ok"] = False
+        overview["lock_drift"] = drift
+        overview["lock_summary"] = f"{mode} lock drift: {drift}"
+        return overview
+
+    comparisons = [
+        (
+            "hypothesis_path",
+            "hypothesis binding changed",
+        ),
+        (
+            "hypothesis_fingerprint",
+            "hypothesis.md changed",
+        ),
+        (
+            "design_path",
+            "design binding changed",
+        ),
+        (
+            "design_fingerprint",
+            "design.yaml changed",
+        ),
+    ]
+    if mode == "harness":
+        comparisons.extend(
+            [
+                (
+                    "extract_parser_fingerprint",
+                    "extract parser contract changed",
+                ),
+                (
+                    "evaluator_fingerprint",
+                    "evaluator contract changed",
+                ),
+                (
+                    "remote_profile_name",
+                    "remote profile selection changed",
+                ),
+                (
+                    "remote_profile_mode",
+                    "remote profile mode changed",
+                ),
+                (
+                    "remote_profile_config_fingerprint",
+                    "remote profile config changed",
+                ),
+            ]
+        )
+
+    for field, reason in comparisons:
+        if str(contract.get(field, "")).strip() == str(current.get(field, "")).strip():
+            continue
+        overview["lock_ok"] = False
+        overview["lock_drift"] = reason
+        overview["lock_summary"] = f"{mode} lock drift: {reason}"
+        return overview
+
+    if mode == "design":
+        overview["lock_summary"] = "design lock active: hypothesis/design unchanged"
+    else:
+        overview["lock_summary"] = (
+            "harness lock active: design, parser, evaluator, and remote profile unchanged"
+        )
+    return overview
+
+
+def _campaign_locked_auto_decision(campaign: dict[str, Any]) -> str:
+    normalized = _normalize_campaign(campaign)
+    if _campaign_lock_mode(normalized) == "none":
+        return ""
+    if int(normalized.get("no_improvement_streak", 0) or 0) > 0:
+        return "design"
+    return "implementation"
+
+
+def _campaign_allowed_decisions(campaign: dict[str, Any]) -> tuple[str, ...]:
+    normalized = _normalize_campaign(campaign)
+    if _campaign_lock_mode(normalized) == "none":
+        return ("hypothesis", "design", "implementation", "stop", "human_review")
+    return ("implementation", "design", "human_review", "stop")
+
+
 def _resolve_campaign_baseline(
     repo_root: Path,
     state: dict[str, Any],
@@ -264,6 +570,7 @@ def _create_campaign_payload(
     *,
     label: str,
     scope_kind: str,
+    lock_modes: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     normalized_label = str(label).strip()
     if not normalized_label:
@@ -271,6 +578,19 @@ def _create_campaign_payload(
     normalized_scope_kind = str(scope_kind).strip().lower()
     if normalized_scope_kind not in {"experiment", "project_wide"}:
         raise CampaignError("campaign scope must be 'experiment' or 'project_wide'")
+    normalized_lock_modes = {
+        str(item).strip().lower() for item in lock_modes if str(item).strip()
+    }
+    invalid_lock_modes = sorted(
+        item for item in normalized_lock_modes if item not in {"design", "harness"}
+    )
+    if invalid_lock_modes:
+        raise CampaignError(
+            "campaign lock mode must be 'design' or 'harness' "
+            f"(got {', '.join(invalid_lock_modes)})"
+        )
+    harness_locked = "harness" in normalized_lock_modes
+    design_locked = harness_locked or "design" in normalized_lock_modes
 
     objective_metric, objective_mode = _resolve_campaign_objective(repo_root, state)
     champion_run_id, champion_revision_label = _resolve_campaign_baseline(
@@ -278,7 +598,7 @@ def _create_campaign_payload(
         state,
         objective_metric=objective_metric,
     )
-    return {
+    payload = {
         "campaign_id": _generate_campaign_id(),
         "label": normalized_label,
         "scope_kind": normalized_scope_kind,
@@ -290,7 +610,9 @@ def _create_campaign_payload(
         "objective_metric": objective_metric,
         "objective_mode": objective_mode,
         "status": "running",
-        "design_locked": False,
+        "design_locked": design_locked,
+        "harness_locked": harness_locked,
+        "lock_contract": _campaign_default_lock_contract(),
         "champion_run_id": champion_run_id,
         "champion_revision_label": champion_revision_label,
         "no_improvement_streak": 0,
@@ -298,6 +620,13 @@ def _create_campaign_payload(
         "started_at": _utc_now(),
         "last_oracle_at": "",
     }
+    if design_locked:
+        payload["lock_contract"] = _campaign_capture_lock_contract(
+            repo_root,
+            state,
+            payload,
+        )
+    return payload
 
 
 def _validate_campaign_binding(
@@ -343,6 +672,8 @@ def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "objective_mode": normalized["objective_mode"],
         "status": normalized["status"],
         "design_locked": normalized["design_locked"],
+        "harness_locked": normalized["harness_locked"],
+        "lock_mode": _campaign_lock_mode(normalized),
         "champion_run_id": normalized["champion_run_id"],
         "champion_revision_label": normalized["champion_revision_label"],
         "no_improvement_streak": normalized["no_improvement_streak"],
@@ -1185,6 +1516,28 @@ def _campaign_has_champion_snapshot(
         return False
     valid, _issues = verify_checkpoint(repo_root, checkpoint_id)
     return bool(valid)
+
+
+def _campaign_has_lock_contract(campaign: dict[str, Any]) -> bool:
+    normalized = _normalize_campaign(campaign)
+    return not bool(_campaign_missing_lock_fields(normalized))
+
+
+def _campaign_backfill_lock_contract(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    if _campaign_lock_mode(normalized) == "none":
+        return normalized
+    normalized["lock_contract"] = _campaign_capture_lock_contract(
+        repo_root,
+        state,
+        normalized,
+    )
+    _write_campaign(repo_root, normalized)
+    return normalized
 
 
 def _campaign_seed_champion_snapshot(

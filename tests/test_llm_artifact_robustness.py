@@ -1419,7 +1419,7 @@ class TestDecideRepeatMalformedArtifacts:
             # 4. Invalid decision enum
             (
                 "invalid_decision_enum",
-                json.dumps(_make_valid_decision(decision="implementation")),
+                json.dumps(_make_valid_decision(decision="unsupported_decision")),
                 "decision must be one of",
             ),
             # 5. Empty decision string

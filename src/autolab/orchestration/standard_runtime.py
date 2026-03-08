@@ -15,6 +15,11 @@ from autolab.constants import (
     TODO_DOC_SYNC_POST_STAGES,
     TODO_DOC_SYNC_PRE_STAGES,
 )
+from autolab.campaign import (
+    _campaign_lock_mode,
+    _campaign_locked_auto_decision,
+    _load_campaign,
+)
 from autolab.models import RunOutcome, StageCheckError
 from autolab.registry import load_registry
 from autolab.config import (
@@ -834,6 +839,14 @@ def _run_once_standard(
         decision_source = "cli"
         artifact_decision_error = ""
         metrics_evidence: dict[str, Any] = {}
+        active_campaign: dict[str, Any] | None = None
+        locked_campaign_mode = "none"
+        try:
+            active_campaign = _load_campaign(repo_root)
+        except Exception:
+            active_campaign = None
+        if isinstance(active_campaign, dict):
+            locked_campaign_mode = _campaign_lock_mode(active_campaign)
         if selected_decision is None:
             artifact_decision, artifact_decision_error = _decision_from_artifact(
                 repo_root, state
@@ -841,6 +854,16 @@ def _run_once_standard(
             if artifact_decision is not None:
                 selected_decision = artifact_decision
                 decision_source = "artifact"
+        if (
+            selected_decision is None
+            and auto_decision
+            and auto_mode
+            and locked_campaign_mode != "none"
+        ):
+            locked_decision = _campaign_locked_auto_decision(active_campaign or {})
+            if locked_decision:
+                selected_decision = locked_decision
+                decision_source = "campaign_lock"
         if selected_decision is None and auto_decision:
             selected_decision = select_decision_from_todo(
                 repo_root,
@@ -870,7 +893,22 @@ def _run_once_standard(
             "auto_todo",
             "auto_metrics",
             "auto_default",
+            "campaign_lock",
         }
+
+        if locked_campaign_mode != "none" and selected_decision == "hypothesis":
+            return _handle_stage_failure(
+                repo_root,
+                state_path=state_path,
+                state=state,
+                stage_before=stage_before,
+                pre_sync_changed=pre_sync_changed,
+                detail=(
+                    "locked campaign forbids decide_repeat decision 'hypothesis'; "
+                    "use implementation, design, human_review, or stop explicitly"
+                ),
+                verification=verification_summary,
+            )
 
         # Item 6: strict mode overrides for unattended loops
         if auto_mode and selected_decision is not None:
@@ -897,7 +935,7 @@ def _run_once_standard(
             message = (
                 "stage 'decide_repeat' requires --decision "
                 "(or decision_result.json or --auto-decision) to transition. "
-                "Rerun with --decision=<hypothesis|design|stop|human_review> or enable --auto-decision."
+                "Rerun with --decision=<hypothesis|design|implementation|stop|human_review> or enable --auto-decision."
             )
             if artifact_decision_error:
                 message = (
@@ -1089,6 +1127,7 @@ def _run_once_standard(
                 "auto_todo": "(auto-selected from docs/todo.md)",
                 "auto_metrics": "(auto-selected from metrics comparison)",
                 "auto_default": "(auto-selected: default stop)",
+                "campaign_lock": "(auto-selected from campaign lock mode)",
             }
             message = (
                 f"{message} {_source_labels.get(decision_source, '(auto-selected)')}"

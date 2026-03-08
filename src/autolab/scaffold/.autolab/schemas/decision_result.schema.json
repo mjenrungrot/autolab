@@ -16,7 +16,7 @@
     },
     "decision": {
       "type": "string",
-      "enum": ["hypothesis", "design", "stop", "human_review"]
+      "enum": ["hypothesis", "design", "implementation", "stop", "human_review"]
     },
     "rationale": {
       "type": "string",

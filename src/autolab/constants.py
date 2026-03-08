@@ -37,7 +37,13 @@ _FALLBACK_ACTIVE_STAGES = (
 )
 PACKAGE_SCAFFOLD_DIR = Path(__file__).resolve().parent / "scaffold" / ".autolab"
 _FALLBACK_TERMINAL_STAGES = ("human_review", "stop")
-_FALLBACK_DECISION_STAGES = ("hypothesis", "design", "stop", "human_review")
+_FALLBACK_DECISION_STAGES = (
+    "hypothesis",
+    "design",
+    "implementation",
+    "stop",
+    "human_review",
+)
 _FALLBACK_RUNNER_ELIGIBLE_STAGES = (
     "hypothesis",
     "design",

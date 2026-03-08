@@ -1596,7 +1596,7 @@ class TestDecisionArtifactEdgeCases:
         repo, state_path, it_dir = _setup_repo(tmp_path, stage="decide_repeat")
         payload = {
             "schema_version": "1.0",
-            "decision": "implementation",  # not a valid decision stage
+            "decision": "unsupported_decision",
             "rationale": "Test rationale.",
             "evidence": [
                 {
