@@ -1670,6 +1670,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "progress" in help_text
     assert "run" in help_text
     assert "loop" in help_text
+    assert "campaign" in help_text
     assert "handoff" in help_text
     assert "resume" in help_text
     assert "tui" in help_text
@@ -1701,6 +1702,7 @@ def test_top_level_help_places_newer_command_surfaces_in_expected_groups() -> No
     )[0]
 
     assert "checkpoint" in run_workflow
+    assert "campaign" in run_workflow
     assert "uat" in run_workflow
     assert "remote" in safety_policy
     assert "hooks" in maintenance

@@ -187,6 +187,10 @@ _EXPORTS_BY_MODULE: dict[str, tuple[str, ...]] = {
     "autolab.commands": (
         "_cmd_experiment_create",
         "_cmd_experiment_move",
+        "_cmd_campaign_continue",
+        "_cmd_campaign_start",
+        "_cmd_campaign_status",
+        "_cmd_campaign_stop",
         "_cmd_focus",
         "_build_parser",
         "_cmd_init",

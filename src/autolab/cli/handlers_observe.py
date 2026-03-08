@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from autolab.campaign import CampaignError, _campaign_summary, _load_campaign
 from autolab.cli.support import *
 from autolab.plan_approval import (
     approval_next_commands_for_mode,
@@ -51,6 +52,32 @@ def _cmd_status(args: argparse.Namespace) -> int:
     attempt = state.get("stage_attempt", 0)
     max_attempts = state.get("max_stage_attempts", 5)
     print(f"stage_attempt: {attempt}/{max_attempts}")
+
+    try:
+        campaign = _load_campaign(repo_root)
+    except CampaignError as exc:
+        print(f"campaign: invalid ({exc})")
+    else:
+        if campaign is not None:
+            summary = _campaign_summary(campaign)
+            print("campaign:")
+            print(f"  campaign_id: {summary.get('campaign_id', '')}")
+            print(f"  label: {summary.get('label', '')}")
+            print(f"  scope_kind: {summary.get('scope_kind', '')}")
+            print(f"  iteration_id: {summary.get('iteration_id', '')}")
+            print(f"  objective_metric: {summary.get('objective_metric', '')}")
+            print(f"  objective_mode: {summary.get('objective_mode', '')}")
+            print(f"  status: {summary.get('status', '')}")
+            print(f"  champion_run_id: {summary.get('champion_run_id', '')}")
+            print(
+                "  champion_revision_label: "
+                f"{summary.get('champion_revision_label', '')}"
+            )
+            print(f"  no_improvement_streak: {summary.get('no_improvement_streak', 0)}")
+            print(f"  crash_streak: {summary.get('crash_streak', 0)}")
+            print(f"  started_at: {summary.get('started_at', '')}")
+            print(f"  last_oracle_at: {summary.get('last_oracle_at', '')}")
+            print(f"  resumable: {summary.get('resumable', False)}")
 
     # Phase 7b: human_review banner
     if state.get("stage") == "human_review":
@@ -807,6 +834,7 @@ def _cmd_resume(args: argparse.Namespace) -> int:
         )
         return 1
     stateful_subcommands = {
+        "campaign",
         "run",
         "loop",
         "trace",

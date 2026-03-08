@@ -139,6 +139,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "run",
             "loop",
+            "campaign",
             "checkpoint",
             "trace",
             "tui",
