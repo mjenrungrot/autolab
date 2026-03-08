@@ -103,6 +103,7 @@ Use for task-driven cycles (`select -> implement -> verify -> review`).
 At `decide_repeat`:
 
 - explicit: `autolab run --decision hypothesis|design|stop|human_review`
+- explicit: `autolab run --decision hypothesis|design|implementation|stop|human_review`
 - auto: `autolab run --auto-decision`
 
 ## Common Tasks

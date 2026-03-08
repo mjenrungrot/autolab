@@ -7,6 +7,7 @@ from typing import Any
 
 from autolab.campaign import (
     CampaignError,
+    _campaign_lock_overview,
     _campaign_path,
     _campaign_results_markdown_path,
     _campaign_results_tsv_path,
@@ -262,7 +263,7 @@ def _pending_human_decisions(
         )
     if stage == "decide_repeat" and not _decision_result_is_valid(iteration_dir):
         decisions.append(
-            "Provide decide_repeat decision via `autolab run --decision=<hypothesis|design|stop|human_review>`."
+            "Provide decide_repeat decision via `autolab run --decision=<hypothesis|design|implementation|stop|human_review>`."
         )
     action_required = str(block_reason_payload.get("action_required", "")).strip()
     if action_required:
@@ -333,6 +334,24 @@ def _resolve_campaign_context(
             summary["resumable"] = False
             summary["resume_error"] = str(exc)
             diagnostics.append(str(exc))
+    try:
+        lock_overview = _campaign_lock_overview(repo_root, state, campaign)
+    except CampaignError as exc:
+        summary = dict(summary)
+        summary["lock_ok"] = False
+        summary["lock_drift"] = str(exc)
+        summary["lock_summary"] = str(exc)
+        diagnostics.append(str(exc))
+    else:
+        summary = dict(summary)
+        summary.update(lock_overview)
+        if bool(summary.get("resumable", False)) and not bool(
+            lock_overview.get("lock_ok", True)
+        ):
+            summary["resumable"] = False
+            summary["resume_error"] = str(
+                lock_overview.get("lock_drift", "campaign lock drift detected")
+            )
     return (summary, diagnostics)
 
 
@@ -391,7 +410,7 @@ def _recommended_command(
             reason = "Implementation plan approval is required before wave execution can continue."
             executable = False
     elif stage == "decide_repeat" and pending_decisions:
-        command = "autolab run --decision=<hypothesis|design|stop|human_review>"
+        command = "autolab run --decision=<hypothesis|design|implementation|stop|human_review>"
         reason = "decide_repeat requires a decision before stage transition."
         executable = False
     elif blockers:

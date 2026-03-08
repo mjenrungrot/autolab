@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.42] - 2026-03-08
+
+### Summary
+
+- Added campaign `--lock design|harness` mode with persisted lock contracts and drift detection so unattended search stops safely when hypothesis, design, parser, evaluator, or remote-profile contracts change.
+- Added locked-campaign `implementation` decide-repeat support and lock-aware prompt, status, handoff, and runtime guidance so locked search stays in implementation while improving and escalates to redesign when it stalls.
+
+<!-- autolab:range v1.2.41..v1.2.42 -->
+
 ## [1.2.41] - 2026-03-08
 
 ### Summary

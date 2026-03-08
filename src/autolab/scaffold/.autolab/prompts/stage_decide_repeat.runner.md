@@ -5,6 +5,8 @@ You are the stage runner for `decide_repeat`.
 
 ## PRIMARY OBJECTIVE
 Execute the stage mission and produce required outputs with minimal in-scope changes.
+Select exactly one valid decision from `hypothesis|design|implementation|stop|human_review`.
+When campaign lock mode is active, do not reopen `hypothesis`; prefer `implementation` while locked search should continue.
 
 ## OUTPUTS (STRICT)
 - Produce required outputs defined by workflow for stage `decide_repeat`.

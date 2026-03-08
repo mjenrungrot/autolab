@@ -5,8 +5,12 @@ from __future__ import annotations
 from autolab.campaign import (
     CampaignError,
     _campaign_apply_challenger_outcome,
+    _campaign_backfill_lock_contract,
+    _campaign_has_lock_contract,
     _campaign_has_champion_snapshot,
     _campaign_is_resumable,
+    _campaign_lock_mode,
+    _campaign_lock_overview,
     _campaign_path,
     _campaign_results_overview,
     _campaign_seed_champion_snapshot,
@@ -168,6 +172,24 @@ def _run_campaign_session(state_path: Path) -> int:
             )
             print(f"autolab campaign: stop ({exc})", file=sys.stderr)
             return 1
+        lock_overview = _campaign_lock_overview(repo_root, state, campaign)
+        if not bool(lock_overview.get("lock_ok", True)):
+            updated = _campaign_update_status(
+                repo_root,
+                campaign,
+                status="needs_rethink",
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="lock_drift",
+            )
+            print(
+                "autolab campaign: stop "
+                f"({lock_overview.get('lock_drift', 'campaign lock drift detected')})",
+                file=sys.stderr,
+            )
+            return 1
         if str(state.get("stage", "")).strip() == "decide_repeat":
             if not _campaign_has_champion_snapshot(repo_root, campaign):
                 updated = _campaign_update_status(
@@ -300,6 +322,12 @@ def _run_campaign_session(state_path: Path) -> int:
             return 1
 
         rethink_reason = _campaign_rethink_reason(state, handoff_payload)
+        if not rethink_reason and _campaign_lock_mode(campaign) != "none":
+            stage_name = str(state.get("stage", "")).strip()
+            if stage_name == "hypothesis":
+                rethink_reason = "locked campaign cannot reopen hypothesis"
+            elif stage_name == "design":
+                rethink_reason = "locked campaign requires redesign before continuing"
         if rethink_reason:
             updated = _campaign_update_status(
                 repo_root,
@@ -388,6 +416,7 @@ def _cmd_campaign_start(args: argparse.Namespace) -> int:
             state,
             label=str(args.label),
             scope_kind=str(args.scope),
+            lock_modes=getattr(args, "lock", []) or (),
         )
         _campaign_seed_champion_snapshot(repo_root, state_path, payload)
         campaign_path = _write_campaign(repo_root, payload)
@@ -417,6 +446,7 @@ def _cmd_campaign_start(args: argparse.Namespace) -> int:
     print(f"iteration_id: {payload['iteration_id']}")
     print(f"objective_metric: {payload['objective_metric']}")
     print(f"objective_mode: {payload['objective_mode']}")
+    print(f"lock_mode: {_campaign_lock_mode(payload)}")
     print(f"champion_run_id: {payload['champion_run_id']}")
     print(f"champion_revision_label: {payload['champion_revision_label']}")
     return _run_campaign_session(state_path)
@@ -442,6 +472,14 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
 
     summary = _campaign_summary(campaign)
     print(f"campaign_file: {_campaign_path(repo_root)}")
+    lock_overview: dict[str, object] = {}
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError:
+        state = {}
+    if state:
+        lock_overview = _campaign_lock_overview(repo_root, state, campaign)
+
     for key in (
         "campaign_id",
         "label",
@@ -450,7 +488,9 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         "objective_metric",
         "objective_mode",
         "status",
+        "lock_mode",
         "design_locked",
+        "harness_locked",
         "champion_run_id",
         "champion_revision_label",
         "no_improvement_streak",
@@ -460,6 +500,10 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         "resumable",
     ):
         print(f"{key}: {summary.get(key, '')}")
+    if lock_overview:
+        print(f"lock_ok: {lock_overview.get('lock_ok', True)}")
+        print(f"lock_drift: {lock_overview.get('lock_drift', '') or 'none'}")
+        print(f"lock_summary: {lock_overview.get('lock_summary', '')}")
     results = _campaign_results_overview(repo_root, campaign)
     if results.get("diagnostic"):
         print(f"results: unavailable ({results['diagnostic']})")
@@ -494,10 +538,6 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
             f"command={lock_info.get('command', '<unknown>')}"
         )
 
-    try:
-        state = _normalize_state(_load_state(state_path))
-    except StateError:
-        state = {}
     if state:
         print(f"current_stage: {state.get('stage', '')}")
         print(f"current_iteration_id: {state.get('iteration_id', '')}")
@@ -589,6 +629,39 @@ def _cmd_campaign_continue(args: argparse.Namespace) -> int:
         print(
             "autolab campaign continue: ERROR current stage is terminal; "
             "resolve workflow state before resuming campaign",
+            file=sys.stderr,
+        )
+        return 1
+    if _campaign_lock_mode(campaign) != "none" and not _campaign_has_lock_contract(
+        campaign
+    ):
+        if (
+            str(state.get("stage", "")).strip() == "decide_repeat"
+            and str(state.get("last_run_id", "")).strip() == campaign["champion_run_id"]
+        ):
+            try:
+                campaign = _campaign_backfill_lock_contract(repo_root, state, campaign)
+            except CampaignError as exc:
+                campaign["status"] = "needs_rethink"
+                _write_campaign(repo_root, campaign)
+                print(f"autolab campaign continue: ERROR {exc}", file=sys.stderr)
+                return 1
+        else:
+            campaign["status"] = "needs_rethink"
+            _write_campaign(repo_root, campaign)
+            print(
+                "autolab campaign continue: ERROR locked campaign is missing its "
+                "lock contract and must be reseeded from decide_repeat",
+                file=sys.stderr,
+            )
+            return 1
+    lock_overview = _campaign_lock_overview(repo_root, state, campaign)
+    if not bool(lock_overview.get("lock_ok", True)):
+        campaign["status"] = "needs_rethink"
+        _write_campaign(repo_root, campaign)
+        print(
+            "autolab campaign continue: ERROR "
+            f"{lock_overview.get('lock_drift', 'campaign lock drift detected')}",
             file=sys.stderr,
         )
         return 1

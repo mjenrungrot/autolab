@@ -500,6 +500,13 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("experiment", "project_wide"),
         required=True,
     )
+    campaign_start.add_argument(
+        "--lock",
+        action="append",
+        choices=("design", "harness"),
+        default=[],
+        help="Lock campaign search to the current design or full harness contract.",
+    )
     campaign_start.set_defaults(handler=_cmd_campaign_start)
 
     campaign_status = campaign_sub.add_parser(

@@ -8,6 +8,7 @@ import subprocess
 import autolab.commands as commands_module
 import pytest
 from autolab.campaign import (
+    _campaign_backfill_lock_contract,
     _campaign_apply_challenger_outcome,
     _campaign_has_champion_snapshot,
     _campaign_results_markdown_path,
@@ -217,8 +218,11 @@ def _campaign_payload(
     *,
     status: str = "stopped",
     scope_kind: str = "experiment",
+    lock_mode: str = "none",
+    lock_contract: dict[str, object] | None = None,
 ) -> dict[str, object]:
     state = _load_state(state_path)
+    normalized_lock_mode = str(lock_mode).strip().lower() or "none"
     return {
         "campaign_id": "campaign_test",
         "label": "nightly-search",
@@ -229,7 +233,9 @@ def _campaign_payload(
         "objective_metric": "primary_metric",
         "objective_mode": "maximize",
         "status": status,
-        "design_locked": False,
+        "design_locked": normalized_lock_mode in {"design", "harness"},
+        "harness_locked": normalized_lock_mode == "harness",
+        "lock_contract": dict(lock_contract or {}),
         "champion_run_id": str(state["last_run_id"]),
         "champion_revision_label": "unversioned-worktree",
         "no_improvement_streak": 0,
@@ -369,15 +375,21 @@ def test_campaign_parser_accepts_subcommands() -> None:
             "nightly",
             "--scope",
             "experiment",
+            "--lock",
+            "design",
+            "--lock",
+            "harness",
         ]
     )
     status_args = parser.parse_args(["campaign", "status"])
     stop_args = parser.parse_args(["campaign", "stop"])
     continue_args = parser.parse_args(["campaign", "continue"])
+    run_args = parser.parse_args(["run", "--decision", "implementation"])
 
     assert start_args.state_file == "custom-state.json"
     assert start_args.label == "nightly"
     assert start_args.scope == "experiment"
+    assert start_args.lock == ["design", "harness"]
     assert getattr(start_args.handler, "__name__", "") == _cmd_campaign_start.__name__
     assert getattr(status_args.handler, "__name__", "") == _cmd_campaign_status.__name__
     assert getattr(stop_args.handler, "__name__", "") == _cmd_campaign_stop.__name__
@@ -385,6 +397,7 @@ def test_campaign_parser_accepts_subcommands() -> None:
         getattr(continue_args.handler, "__name__", "")
         == _cmd_campaign_continue.__name__
     )
+    assert run_args.decision == "implementation"
 
 
 def test_campaign_start_requires_completed_baseline_run(
@@ -481,6 +494,55 @@ def test_campaign_start_writes_campaign_file_and_enters_session(
     )
     assert results_tsv.exists()
     assert results_md.exists()
+
+
+def test_campaign_start_supports_harness_lock_and_captures_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _write_state(state_path, stage="decide_repeat")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._run_campaign_session",
+        lambda _state_path: 0,
+    )
+    monkeypatch.setattr(commands_module, "_run_campaign_session", lambda _state_path: 0)
+
+    exit_code = commands_module.main(
+        [
+            "campaign",
+            "start",
+            "--state-file",
+            str(state_path),
+            "--label",
+            "nightly",
+            "--scope",
+            "experiment",
+            "--lock",
+            "harness",
+            "--lock",
+            "design",
+        ]
+    )
+    output = capsys.readouterr().out
+    campaign_payload = _load_campaign_file(repo)
+    lock_contract = campaign_payload["lock_contract"]
+
+    assert exit_code == 0
+    assert "lock_mode: harness" in output
+    assert campaign_payload["design_locked"] is True
+    assert campaign_payload["harness_locked"] is True
+    assert str(lock_contract["captured_at"]).strip()
+    assert str(lock_contract["hypothesis_fingerprint"]).strip()
+    assert str(lock_contract["design_fingerprint"]).strip()
+    assert str(lock_contract["extract_parser_fingerprint"]).strip()
+    assert str(lock_contract["evaluator_fingerprint"]).strip()
+    assert lock_contract["remote_profile_name"] == "none"
+    assert lock_contract["remote_profile_mode"] == "none"
 
 
 def test_campaign_start_requires_decide_repeat_stage(
@@ -597,6 +659,62 @@ def test_status_command_surfaces_campaign_summary(
     assert "campaign:" in output
     assert "status: error" in output
     assert "champion_run_id: run_baseline" in output
+
+
+def test_campaign_status_and_status_command_surface_lock_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _write_state(state_path, stage="decide_repeat")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._run_campaign_session",
+        lambda _state_path: 0,
+    )
+    monkeypatch.setattr(commands_module, "_run_campaign_session", lambda _state_path: 0)
+    assert (
+        commands_module.main(
+            [
+                "campaign",
+                "start",
+                "--state-file",
+                str(state_path),
+                "--label",
+                "nightly",
+                "--scope",
+                "experiment",
+                "--lock",
+                "design",
+            ]
+        )
+        == 0
+    )
+    campaign_payload = _load_campaign_file(repo)
+    campaign_payload["status"] = "stopped"
+    _write_campaign(repo, campaign_payload)
+    _ = capsys.readouterr()
+
+    assert (
+        commands_module.main(["campaign", "status", "--state-file", str(state_path)])
+        == 0
+    )
+    campaign_status_output = capsys.readouterr().out
+    assert commands_module.main(["status", "--state-file", str(state_path)]) == 0
+    status_output = capsys.readouterr().out
+
+    assert "lock_mode: design" in campaign_status_output
+    assert "design_locked: True" in campaign_status_output
+    assert "harness_locked: False" in campaign_status_output
+    assert "lock_ok: True" in campaign_status_output
+    assert "lock_drift: none" in campaign_status_output
+    assert "lock_mode: design" in status_output
+    assert "design_locked: True" in status_output
+    assert "harness_locked: False" in status_output
+    assert "lock_ok: True" in status_output
+    assert "lock_drift: none" in status_output
 
 
 def test_refresh_campaign_results_renders_keep_discard_crash_and_partial_rows(
@@ -1038,6 +1156,76 @@ def test_campaign_continue_backfills_legacy_snapshot_from_decide_repeat(
     assert _campaign_has_champion_snapshot(repo, campaign)
 
 
+def test_campaign_continue_backfills_locked_legacy_contract_from_decide_repeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    campaign = _campaign_payload(
+        state_path,
+        status="stopped",
+        lock_mode="design",
+        lock_contract={},
+    )
+    _write_campaign(repo, campaign)
+
+    seen: dict[str, object] = {}
+
+    def _run_campaign_session_stub(resolved_state_path: Path) -> int:
+        seen["state_path"] = resolved_state_path
+        return 0
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._run_campaign_session",
+        _run_campaign_session_stub,
+    )
+    monkeypatch.setattr(
+        commands_module, "_run_campaign_session", _run_campaign_session_stub
+    )
+
+    exit_code = commands_module.main(
+        ["campaign", "continue", "--state-file", str(state_path)]
+    )
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code == 0
+    assert seen["state_path"] == state_path.resolve()
+    assert _campaign_has_champion_snapshot(repo, updated_campaign)
+    assert str(updated_campaign["lock_contract"]["captured_at"]).strip()
+    assert str(updated_campaign["lock_contract"]["design_fingerprint"]).strip()
+
+
+def test_campaign_continue_marks_locked_legacy_campaign_needs_rethink_outside_decide_repeat(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _write_state(state_path, stage="implementation")
+    campaign = _campaign_payload(
+        state_path,
+        status="stopped",
+        lock_mode="design",
+        lock_contract={},
+    )
+    _write_campaign(repo, campaign)
+
+    exit_code = commands_module.main(
+        ["campaign", "continue", "--state-file", str(state_path)]
+    )
+    captured = capsys.readouterr()
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code == 1
+    assert "missing its lock contract" in captured.err
+    assert updated_campaign["status"] == "needs_rethink"
+
+
 def test_campaign_continue_marks_legacy_campaign_needs_rethink_outside_decide_repeat(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1058,3 +1246,179 @@ def test_campaign_continue_marks_legacy_campaign_needs_rethink_outside_decide_re
     assert exit_code == 1
     assert "missing its champion snapshot" in captured.err
     assert updated_campaign["status"] == "needs_rethink"
+
+
+def test_campaign_continue_stops_on_design_lock_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _write_state(state_path, stage="decide_repeat")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._run_campaign_session",
+        lambda _state_path: 0,
+    )
+    monkeypatch.setattr(commands_module, "_run_campaign_session", lambda _state_path: 0)
+    assert (
+        commands_module.main(
+            [
+                "campaign",
+                "start",
+                "--state-file",
+                str(state_path),
+                "--label",
+                "nightly",
+                "--scope",
+                "experiment",
+                "--lock",
+                "design",
+            ]
+        )
+        == 0
+    )
+    campaign_payload = _load_campaign_file(repo)
+    campaign_payload["status"] = "stopped"
+    _write_campaign(repo, campaign_payload)
+
+    hypothesis_path = (
+        repo
+        / "experiments"
+        / "plan"
+        / str(_load_state(state_path)["iteration_id"])
+        / "hypothesis.md"
+    )
+    hypothesis_path.write_text(
+        hypothesis_path.read_text(encoding="utf-8") + "\nDrift.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        ["campaign", "continue", "--state-file", str(state_path)]
+    )
+    captured = capsys.readouterr()
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code == 1
+    assert "hypothesis.md changed" in captured.err
+    assert updated_campaign["status"] == "needs_rethink"
+
+
+def test_campaign_continue_stops_on_harness_lock_evaluator_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _ = capsys.readouterr()
+    _seed_baseline_run(repo, state_path)
+    _write_state(state_path, stage="decide_repeat")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._run_campaign_session",
+        lambda _state_path: 0,
+    )
+    monkeypatch.setattr(commands_module, "_run_campaign_session", lambda _state_path: 0)
+    assert (
+        commands_module.main(
+            [
+                "campaign",
+                "start",
+                "--state-file",
+                str(state_path),
+                "--label",
+                "nightly",
+                "--scope",
+                "experiment",
+                "--lock",
+                "harness",
+            ]
+        )
+        == 0
+    )
+    campaign_payload = _load_campaign_file(repo)
+    campaign_payload["status"] = "stopped"
+    _write_campaign(repo, campaign_payload)
+
+    workflow_path = repo / ".autolab" / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8") + "\n# evaluator drift\n",
+        encoding="utf-8",
+    )
+
+    exit_code = commands_module.main(
+        ["campaign", "continue", "--state-file", str(state_path)]
+    )
+    captured = capsys.readouterr()
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code == 1
+    assert "evaluator contract changed" in captured.err
+    assert updated_campaign["status"] == "needs_rethink"
+
+
+def test_locked_campaign_auto_decision_prefers_implementation_then_design(
+    tmp_path: Path,
+) -> None:
+    from autolab.run_standard import _run_once_standard
+
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path)
+    state = _set_decide_repeat_state(state_path, run_id="run_baseline")
+    implementation_campaign = _campaign_backfill_lock_contract(
+        repo,
+        state,
+        _campaign_payload(
+            state_path,
+            status="running",
+            lock_mode="design",
+        ),
+    )
+    _write_campaign(repo, implementation_campaign)
+
+    implementation_outcome = _run_once_standard(
+        state_path,
+        decision=None,
+        auto_decision=True,
+        auto_mode=True,
+        run_agent_mode="force_off",
+    )
+    auto_decision_payload = json.loads(
+        (repo / ".autolab" / "auto_decision.json").read_text(encoding="utf-8")
+    )
+
+    assert implementation_outcome.exit_code == 0
+    assert implementation_outcome.stage_after == "implementation"
+    assert auto_decision_payload["outputs"]["selected_decision"] == "implementation"
+
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "decision_result.json"
+    ).unlink(missing_ok=True)
+    redesign_campaign = _campaign_backfill_lock_contract(
+        repo,
+        _load_state(state_path),
+        _campaign_payload(
+            state_path,
+            status="running",
+            lock_mode="design",
+        )
+        | {"no_improvement_streak": 1},
+    )
+    _write_campaign(repo, redesign_campaign)
+
+    redesign_outcome = _run_once_standard(
+        state_path,
+        decision=None,
+        auto_decision=True,
+        auto_mode=True,
+        run_agent_mode="force_off",
+    )
+    auto_decision_payload = json.loads(
+        (repo / ".autolab" / "auto_decision.json").read_text(encoding="utf-8")
+    )
+
+    assert redesign_outcome.exit_code == 0
+    assert redesign_outcome.stage_after == "design"
+    assert auto_decision_payload["outputs"]["selected_decision"] == "design"
