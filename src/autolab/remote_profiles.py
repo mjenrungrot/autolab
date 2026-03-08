@@ -434,6 +434,25 @@ def poll_remote_job(
     return (str(proc.stdout or ""), str(proc.stderr or ""))
 
 
+def cancel_remote_job(
+    profile: RemoteProfileConfig,
+    *,
+    job_id: str,
+    timeout_seconds: float,
+) -> tuple[str, str]:
+    proc = run_remote_command(
+        profile,
+        ["scancel", job_id],
+        cwd=profile.remote_repo_root,
+        timeout_seconds=timeout_seconds,
+    )
+    if proc.returncode != 0:
+        raise StageCheckError(
+            f"remote cancel failed for job_id={job_id} on {profile.login_host}"
+        )
+    return (str(proc.stdout or ""), str(proc.stderr or ""))
+
+
 def pull_remote_artifacts(
     profile: RemoteProfileConfig,
     *,

@@ -845,8 +845,12 @@ def _run_once_standard(
             active_campaign = _load_campaign(repo_root)
         except Exception:
             active_campaign = None
+        campaign_repeat_guard_override = False
         if isinstance(active_campaign, dict):
             locked_campaign_mode = _campaign_lock_mode(active_campaign)
+            campaign_repeat_guard_override = (
+                str(active_campaign.get("status", "")).strip().lower() == "running"
+            )
         if selected_decision is None:
             artifact_decision, artifact_decision_error = _decision_from_artifact(
                 repo_root, state
@@ -1025,24 +1029,31 @@ def _run_once_standard(
                 no_progress_decisions = 0
             repeat_guard["last_change_baseline"] = current_snapshot
 
-            if (
+            same_decision_breach = (
                 same_decision_streak > guardrails.max_same_decision_streak
-                or no_progress_decisions >= guardrails.max_no_progress_decisions
+            )
+            no_progress_breach = (
+                no_progress_decisions >= guardrails.max_no_progress_decisions
+            )
+            if not campaign_repeat_guard_override and (
+                same_decision_breach or no_progress_breach
             ):
+                breach_rule = (
+                    "same_decision_streak" if same_decision_breach else "no_progress"
+                )
+                breach_counters = {
+                    "same_decision_streak": same_decision_streak,
+                    "max_same_decision_streak": guardrails.max_same_decision_streak,
+                    "no_progress_decisions": no_progress_decisions,
+                    "max_no_progress_decisions": guardrails.max_no_progress_decisions,
+                }
                 selected_decision = guardrails.on_breach
                 same_decision_streak = 0
                 no_progress_decisions = 0
                 _write_guardrail_breach(
                     repo_root,
-                    rule="same_decision_streak"
-                    if same_decision_streak > guardrails.max_same_decision_streak
-                    else "no_progress",
-                    counters={
-                        "same_decision_streak": same_decision_streak,
-                        "max_same_decision_streak": guardrails.max_same_decision_streak,
-                        "no_progress_decisions": no_progress_decisions,
-                        "max_no_progress_decisions": guardrails.max_no_progress_decisions,
-                    },
+                    rule=breach_rule,
+                    counters=breach_counters,
                     stage="decide_repeat",
                     remediation=f"Escalated to '{guardrails.on_breach}'. Review experiment progress and consider manual intervention.",
                 )

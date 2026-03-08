@@ -5572,50 +5572,27 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_oracle(args: argparse.Namespace) -> int:
-    state_path = Path(args.state_file).expanduser().resolve()
-    repo_root = _resolve_repo_root(state_path)
+def _export_oracle_document(
+    *,
+    state_path: Path,
+    repo_root: Path,
+    timeout_seconds: float,
+    output_path: Path | None = None,
+) -> tuple[Path, int, str]:
     try:
         artifacts = refresh_handoff(state_path)
     except Exception as exc:
-        print(
-            f"autolab oracle: ERROR failed to refresh handoff: {exc}", file=sys.stderr
-        )
-        return 1
+        raise RuntimeError(f"failed to refresh handoff: {exc}") from exc
 
     handoff_payload = artifacts.payload
     continuation_packet = handoff_payload.get("continuation_packet")
     if not isinstance(continuation_packet, dict):
-        print(
-            "autolab oracle: ERROR handoff continuation_packet is missing",
-            file=sys.stderr,
-        )
-        return 1
+        raise RuntimeError("handoff continuation_packet is missing")
 
-    try:
-        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
-    except Exception:
-        print(
-            "autolab oracle: ERROR --timeout-seconds must be a number",
-            file=sys.stderr,
-        )
-        return 1
-    if timeout_seconds <= 0:
-        print(
-            "autolab oracle: ERROR --timeout-seconds must be > 0",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        sources, diagnostics = _oracle_collect_sources(
-            repo_root=repo_root,
-            handoff_payload=handoff_payload,
-        )
-    except Exception as exc:
-        print(f"autolab oracle: ERROR {exc}", file=sys.stderr)
-        return 1
-
+    sources, diagnostics = _oracle_collect_sources(
+        repo_root=repo_root,
+        handoff_payload=handoff_payload,
+    )
     prompt_text = _build_oracle_prompt(
         continuation_packet=continuation_packet,
         sources=sources,
@@ -5635,26 +5612,14 @@ def _cmd_oracle(args: argparse.Namespace) -> int:
         detail = (
             agent_stderr.strip() or agent_stdout.strip() or "agent returned no output"
         )
-        print(
-            f"autolab oracle: ERROR agent failed with exit_code={agent_returncode}: {detail}",
-            file=sys.stderr,
-        )
-        return 1
+        raise RuntimeError(f"agent failed with exit_code={agent_returncode}: {detail}")
 
     validation_error = _validate_oracle_output(agent_stdout, sources=sources)
     if validation_error:
-        print(f"autolab oracle: ERROR {validation_error}", file=sys.stderr)
-        return 1
+        raise RuntimeError(validation_error)
 
-    output_text = str(getattr(args, "output", "") or "").strip()
-    if output_text:
-        output_path = Path(output_text).expanduser()
-        output_path = (
-            output_path.resolve(strict=False)
-            if output_path.is_absolute()
-            else (repo_root / output_path).resolve(strict=False)
-        )
-    else:
+    resolved_output_path = output_path
+    if resolved_output_path is None:
         scope_root = Path(
             str(handoff_payload.get("scope_root", "")).strip() or repo_root
         )
@@ -5662,37 +5627,73 @@ def _cmd_oracle(args: argparse.Namespace) -> int:
             scope_root = (repo_root / scope_root).resolve(strict=False)
         else:
             scope_root = scope_root.resolve(strict=False)
-        output_path = (scope_root / "oracle.md").resolve(strict=False)
+        resolved_output_path = (scope_root / "oracle.md").resolve(strict=False)
+    else:
+        if not resolved_output_path.is_absolute():
+            resolved_output_path = (repo_root / resolved_output_path).resolve(
+                strict=False
+            )
+        else:
+            resolved_output_path = resolved_output_path.resolve(strict=False)
 
-    if not _docs_path_within_repo_root(repo_root, output_path):
+    if not _docs_path_within_repo_root(repo_root, resolved_output_path):
+        raise RuntimeError(
+            f"output path resolves outside repository root: {resolved_output_path}"
+        )
+
+    try:
+        resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output_path.write_text(agent_stdout.rstrip() + "\n", encoding="utf-8")
+    except Exception as exc:
+        raise RuntimeError(f"failed writing oracle document: {exc}") from exc
+
+    _mark_campaign_oracle_exported(repo_root)
+    return (resolved_output_path, len(sources), command_display)
+
+
+def _cmd_oracle(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+
+    try:
+        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
+    except Exception:
         print(
-            "autolab oracle: ERROR output path resolves outside repository root: "
-            f"{output_path}",
+            "autolab oracle: ERROR --timeout-seconds must be a number",
+            file=sys.stderr,
+        )
+        return 1
+    if timeout_seconds <= 0:
+        print(
+            "autolab oracle: ERROR --timeout-seconds must be > 0",
             file=sys.stderr,
         )
         return 1
 
+    output_text = str(getattr(args, "output", "") or "").strip()
+    if output_text:
+        requested_output_path = Path(output_text).expanduser()
+    else:
+        requested_output_path = None
+
     try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(agent_stdout.rstrip() + "\n", encoding="utf-8")
+        output_path, source_count, command_display = _export_oracle_document(
+            state_path=state_path,
+            repo_root=repo_root,
+            timeout_seconds=timeout_seconds,
+            output_path=requested_output_path,
+        )
     except Exception as exc:
         print(
-            f"autolab oracle: ERROR failed writing oracle document: {exc}",
+            f"autolab oracle: ERROR {exc}",
             file=sys.stderr,
         )
         return 1
-    try:
-        _mark_campaign_oracle_exported(repo_root)
-    except Exception as exc:
-        print(
-            f"autolab oracle: WARN failed to update campaign oracle timestamp: {exc}",
-            file=sys.stderr,
-        )
 
     print("autolab oracle")
     print(f"state_file: {state_path}")
     print(f"output_path: {output_path}")
-    print(f"artifacts_inlined: {len(sources)}")
+    print(f"artifacts_inlined: {source_count}")
     print(f"llm_command: {command_display}")
     return 0
 

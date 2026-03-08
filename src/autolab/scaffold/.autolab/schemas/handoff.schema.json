@@ -381,6 +381,50 @@
       },
       "additionalProperties": false
     },
+    "campaignSummary": {
+      "type": "object",
+      "properties": {
+        "campaign_id": {"type": "string"},
+        "label": {"type": "string"},
+        "scope_kind": {"type": "string"},
+        "iteration_id": {"type": "string"},
+        "objective_metric": {"type": "string"},
+        "objective_mode": {"type": "string"},
+        "status": {"type": "string"},
+        "design_locked": {"type": "boolean"},
+        "harness_locked": {"type": "boolean"},
+        "lock_mode": {"type": "string"},
+        "lock_ok": {"type": "boolean"},
+        "lock_drift": {"type": "string"},
+        "lock_summary": {"type": "string"},
+        "champion_run_id": {"type": "string"},
+        "champion_revision_label": {"type": "string"},
+        "no_improvement_streak": {"type": "integer", "minimum": 0},
+        "crash_streak": {"type": "integer", "minimum": 0},
+        "started_at": {"type": "string"},
+        "last_oracle_at": {"type": "string"},
+        "oracle_feedback_count": {"type": "integer", "minimum": 0},
+        "resumable": {"type": "boolean"},
+        "resume_error": {"type": "string"},
+        "max_fix_attempts_per_idea": {"type": "integer", "minimum": 0},
+        "max_timeout_factor": {"type": "number", "exclusiveMinimum": 0},
+        "max_no_improvement_streak": {"type": "integer", "minimum": 1},
+        "max_crash_streak_before_rethink": {"type": "integer", "minimum": 1},
+        "active_candidate_decision": {"type": "string"},
+        "active_candidate_started_at": {"type": "string"},
+        "active_candidate_run_id": {"type": "string"},
+        "active_candidate_fix_attempts": {"type": "integer", "minimum": 0},
+        "active_candidate_timeout_reference_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "last_governance_event_at": {"type": "string"},
+        "last_governance_event_category": {"type": "string"},
+        "last_governance_event_run_id": {"type": "string"},
+        "last_governance_event_reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "continuationPacket": {
       "type": "object",
       "required": [
@@ -407,6 +451,7 @@
         "policy_and_risk": {"$ref": "#/$defs/policyAndRiskSummary"},
         "run_status": {"$ref": "#/$defs/runStatusSummary"},
         "uat_status": {"$ref": "#/$defs/uatStatusSummary"},
+        "campaign": {"$ref": "#/$defs/campaignSummary"},
         "top_blockers": {"$ref": "#/$defs/stringList"},
         "artifact_pointers": {
           "type": "array",
@@ -1078,6 +1123,12 @@
     "handoff_markdown_path": {
       "type": "string",
       "minLength": 1
+    },
+    "campaign": {
+      "$ref": "#/$defs/campaignSummary"
+    },
+    "campaign_diagnostics": {
+      "$ref": "#/$defs/stringList"
     },
     "uat": {
       "$ref": "#/$defs/uatSummary"

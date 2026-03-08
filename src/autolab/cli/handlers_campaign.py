@@ -5,16 +5,25 @@ from __future__ import annotations
 from autolab.campaign import (
     CampaignError,
     _campaign_apply_challenger_outcome,
+    _campaign_apply_crash_outcome,
     _campaign_backfill_lock_contract,
+    _campaign_bump_active_candidate_fix_attempts,
+    _campaign_cancel_slurm_run_for_timeout,
+    _campaign_candidate_run_id_from_state,
     _campaign_has_lock_contract,
+    _campaign_has_active_candidate,
     _campaign_has_champion_snapshot,
     _campaign_is_resumable,
     _campaign_lock_mode,
     _campaign_lock_overview,
     _campaign_path,
     _campaign_results_overview,
+    _campaign_run_duration_seconds,
     _campaign_seed_champion_snapshot,
-    _campaign_summary,
+    _campaign_set_active_candidate,
+    _campaign_set_last_governance_event,
+    _campaign_summary_with_governance,
+    _campaign_sync_active_candidate_from_state,
     _create_campaign_payload,
     _load_campaign,
     _normalize_campaign,
@@ -24,6 +33,9 @@ from autolab.campaign import (
 )
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
+from autolab.config import _load_campaign_governance_config
+
+_CAMPAIGN_ACTIVE_CANDIDATE_STAGES = {"implementation", "design"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,8 +112,6 @@ def _campaign_update_status(
     updated["status"] = status
     if crash_delta:
         updated["crash_streak"] = int(updated.get("crash_streak", 0) or 0) + crash_delta
-    elif status == "running":
-        updated["crash_streak"] = 0
     _write_campaign(repo_root, updated)
     return updated
 
@@ -128,6 +138,311 @@ def _campaign_refresh_results_best_effort(
             f"tsv={results_tsv_path} md={results_md_path}"
         ),
     )
+
+
+def _campaign_fail_control_plane(
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    context: str,
+    message: str,
+) -> int:
+    updated = _campaign_update_status(
+        repo_root,
+        campaign,
+        status="error",
+        crash_delta=1,
+    )
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        updated,
+        context=context,
+    )
+    print(message, file=sys.stderr)
+    return 1
+
+
+def _campaign_refresh_handoff_required(
+    state_path: Path,
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    context: str,
+) -> tuple[dict[str, Any] | None, int | None]:
+    handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
+    if handoff_payload is not None:
+        return (handoff_payload, None)
+    return (
+        None,
+        _campaign_fail_control_plane(
+            repo_root,
+            campaign,
+            context=context,
+            message=(
+                "autolab campaign: ERROR failed to refresh handoff snapshot: "
+                f"{handoff_error}"
+            ),
+        ),
+    )
+
+
+def _campaign_sync_candidate_state(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    updated = _campaign_sync_active_candidate_from_state(campaign, state)
+    stage_name = str(state.get("stage", "")).strip().lower()
+    if (
+        stage_name in _CAMPAIGN_ACTIVE_CANDIDATE_STAGES
+        and not _campaign_has_active_candidate(updated)
+    ):
+        updated = _campaign_set_active_candidate(
+            updated,
+            decision=stage_name,
+            run_id=_campaign_candidate_run_id_from_state(state, updated),
+            timeout_reference_seconds=(
+                _campaign_run_duration_seconds(
+                    repo_root,
+                    state,
+                    run_id=str(updated.get("champion_run_id", "")).strip(),
+                )
+                or 0.0
+            ),
+        )
+    return updated
+
+
+def _campaign_governance_threshold_breach(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> tuple[str, str] | None:
+    governance = _load_campaign_governance_config(repo_root)
+    crash_streak = int(campaign.get("crash_streak", 0) or 0)
+    if crash_streak >= governance.max_crash_streak_before_rethink:
+        return (
+            "crash_rethink",
+            (
+                "campaign crash streak reached "
+                f"{crash_streak}/{governance.max_crash_streak_before_rethink}; "
+                "exporting oracle packet for rethink"
+            ),
+        )
+    no_improvement_streak = int(campaign.get("no_improvement_streak", 0) or 0)
+    if no_improvement_streak >= governance.max_no_improvement_streak:
+        return (
+            "stagnation_rethink",
+            (
+                "campaign no-improvement streak reached "
+                f"{no_improvement_streak}/{governance.max_no_improvement_streak}; "
+                "exporting oracle packet for rethink"
+            ),
+        )
+    return None
+
+
+def _campaign_export_oracle_and_stop(
+    state_path: Path,
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    category: str,
+    reason: str,
+    run_id: str = "",
+    context: str,
+) -> int:
+    from autolab.cli.handlers_admin import _export_oracle_document
+
+    try:
+        output_path, source_count, command_display = _export_oracle_document(
+            state_path=state_path,
+            repo_root=repo_root,
+            timeout_seconds=240.0,
+            output_path=None,
+        )
+    except Exception as exc:
+        return _campaign_fail_control_plane(
+            repo_root,
+            campaign,
+            context=f"{context}_oracle_error",
+            message=f"autolab campaign: ERROR failed to export oracle packet: {exc}",
+        )
+
+    refreshed_campaign = _load_campaign(repo_root) or campaign
+    updated = dict(_normalize_campaign(refreshed_campaign))
+    updated["status"] = "needs_rethink"
+    updated = _campaign_set_last_governance_event(
+        updated,
+        category=category,
+        run_id=run_id,
+        reason=reason,
+    )
+    _write_campaign(repo_root, updated)
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        updated,
+        context=context,
+    )
+    _handoff_payload, error_code = _campaign_refresh_handoff_required(
+        state_path,
+        repo_root,
+        updated,
+        context=f"{context}_handoff_refresh",
+    )
+    if error_code is not None:
+        return error_code
+
+    _append_log(
+        repo_root,
+        (
+            "campaign oracle export: "
+            f"context={context} output={output_path} "
+            f"sources={source_count} llm_command={command_display}"
+        ),
+    )
+    print(f"autolab campaign: stop ({reason})", file=sys.stderr)
+    return 1
+
+
+def _campaign_after_candidate_outcome(
+    state_path: Path,
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    context: str,
+) -> int | None:
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        campaign,
+        context=context,
+    )
+    threshold = _campaign_governance_threshold_breach(repo_root, campaign)
+    if threshold is not None:
+        category, reason = threshold
+        last_event = campaign.get("last_governance_event")
+        if not isinstance(last_event, dict):
+            last_event = {}
+        return _campaign_export_oracle_and_stop(
+            state_path,
+            repo_root,
+            campaign,
+            category=category,
+            reason=reason,
+            run_id=str(last_event.get("run_id", "")).strip(),
+            context=context,
+        )
+    _handoff_payload, error_code = _campaign_refresh_handoff_required(
+        state_path,
+        repo_root,
+        campaign,
+        context=f"{context}_handoff_refresh",
+    )
+    if error_code is not None:
+        return error_code
+    return None
+
+
+def _campaign_check_active_candidate_timeout(
+    state_path: Path,
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> tuple[dict[str, Any], int | None]:
+    normalized = _normalize_campaign(campaign)
+    if not _campaign_has_active_candidate(normalized):
+        return (normalized, None)
+    if str(state.get("stage", "")).strip().lower() != "slurm_monitor":
+        return (normalized, None)
+
+    candidate = normalized.get("active_candidate")
+    if not isinstance(candidate, dict):
+        candidate = {}
+    run_id = str(candidate.get("run_id", "")).strip()
+    timeout_reference_seconds = float(
+        candidate.get("timeout_reference_seconds", 0.0) or 0.0
+    )
+    if not run_id or timeout_reference_seconds <= 0:
+        return (normalized, None)
+
+    governance = _load_campaign_governance_config(repo_root)
+    elapsed_seconds = _campaign_run_duration_seconds(
+        repo_root,
+        state,
+        run_id=run_id,
+        allow_incomplete=True,
+    )
+    if elapsed_seconds is None:
+        return (normalized, None)
+    timeout_budget_seconds = timeout_reference_seconds * governance.max_timeout_factor
+    if elapsed_seconds <= timeout_budget_seconds:
+        return (normalized, None)
+
+    try:
+        cancel_result = _campaign_cancel_slurm_run_for_timeout(
+            repo_root,
+            state,
+            run_id=run_id,
+            elapsed_seconds=elapsed_seconds,
+            timeout_reference_seconds=timeout_reference_seconds,
+            max_timeout_factor=governance.max_timeout_factor,
+        )
+    except CampaignError as exc:
+        return (
+            normalized,
+            _campaign_fail_control_plane(
+                repo_root,
+                normalized,
+                context="timeout_cancel_error",
+                message=f"autolab campaign: ERROR {exc}",
+            ),
+        )
+
+    reason = (
+        "challenger exceeded timeout budget "
+        f"({elapsed_seconds:.1f}s > {timeout_budget_seconds:.1f}s)"
+    )
+    try:
+        crash_result = _campaign_apply_crash_outcome(
+            repo_root,
+            state_path,
+            state,
+            normalized,
+            reason=reason,
+            category="timeout_discard",
+            run_id=run_id,
+        )
+    except CampaignError as exc:
+        return (
+            normalized,
+            _campaign_fail_control_plane(
+                repo_root,
+                normalized,
+                context="timeout_crash_discard_error",
+                message=f"autolab campaign: ERROR {exc}",
+            ),
+        )
+
+    updated_campaign = crash_result.get("campaign")
+    if not isinstance(updated_campaign, dict):
+        updated_campaign = normalized
+    _append_log(
+        repo_root,
+        (
+            "campaign timeout discard: "
+            f"run_id={run_id} job_id={cancel_result.get('job_id', '')} "
+            f"elapsed_seconds={elapsed_seconds:.3f} "
+            f"timeout_reference_seconds={timeout_reference_seconds:.3f}"
+        ),
+    )
+    follow_up = _campaign_after_candidate_outcome(
+        state_path,
+        repo_root,
+        updated_campaign,
+        context="timeout_discard",
+    )
+    if follow_up is not None:
+        return (updated_campaign, follow_up)
+    return (updated_campaign, 0)
 
 
 def _run_campaign_session(state_path: Path) -> int:
@@ -162,16 +477,13 @@ def _run_campaign_session(state_path: Path) -> int:
             state = _normalize_state(_load_state(state_path))
             campaign = _validate_campaign_binding(repo_root, state, campaign)
         except (CampaignError, StateError) as exc:
-            updated = _campaign_update_status(
-                repo_root, campaign, status="needs_rethink"
-            )
-            _campaign_refresh_results_best_effort(
+            return _campaign_fail_control_plane(
                 repo_root,
-                updated,
+                campaign,
                 context="binding_error",
+                message=f"autolab campaign: ERROR {exc}",
             )
-            print(f"autolab campaign: stop ({exc})", file=sys.stderr)
-            return 1
+
         lock_overview = _campaign_lock_overview(repo_root, state, campaign)
         if not bool(lock_overview.get("lock_ok", True)):
             updated = _campaign_update_status(
@@ -190,6 +502,58 @@ def _run_campaign_session(state_path: Path) -> int:
                 file=sys.stderr,
             )
             return 1
+
+        synced_campaign = _campaign_sync_candidate_state(repo_root, state, campaign)
+        if synced_campaign != campaign:
+            _write_campaign(repo_root, synced_campaign)
+            campaign = synced_campaign
+
+        if (
+            _campaign_has_active_candidate(campaign)
+            and str(state.get("stage", "")).strip() == "human_review"
+        ):
+            try:
+                crash_result = _campaign_apply_crash_outcome(
+                    repo_root,
+                    state_path,
+                    state,
+                    campaign,
+                    reason=(
+                        "challenger escalated to human_review during unattended campaign"
+                    ),
+                    category="human_review_discard",
+                )
+            except CampaignError as exc:
+                return _campaign_fail_control_plane(
+                    repo_root,
+                    campaign,
+                    context="human_review_discard_error",
+                    message=f"autolab campaign: ERROR {exc}",
+                )
+            updated_campaign = crash_result.get("campaign")
+            if not isinstance(updated_campaign, dict):
+                updated_campaign = campaign
+            follow_up = _campaign_after_candidate_outcome(
+                state_path,
+                repo_root,
+                updated_campaign,
+                context="human_review_discard",
+            )
+            if follow_up is not None:
+                return follow_up
+            continue
+
+        campaign, timeout_exit_code = _campaign_check_active_candidate_timeout(
+            state_path,
+            repo_root,
+            state,
+            campaign,
+        )
+        if timeout_exit_code is not None:
+            if timeout_exit_code == 0:
+                continue
+            return timeout_exit_code
+
         if str(state.get("stage", "")).strip() == "decide_repeat":
             if not _campaign_has_champion_snapshot(repo_root, campaign):
                 updated = _campaign_update_status(
@@ -218,18 +582,12 @@ def _run_campaign_session(state_path: Path) -> int:
                         campaign,
                     )
                 except CampaignError as exc:
-                    updated = _campaign_update_status(
+                    return _campaign_fail_control_plane(
                         repo_root,
                         campaign,
-                        status="needs_rethink",
-                    )
-                    _campaign_refresh_results_best_effort(
-                        repo_root,
-                        updated,
                         context="compare_error",
+                        message=f"autolab campaign: ERROR {exc}",
                     )
-                    print(f"autolab campaign: stop ({exc})", file=sys.stderr)
-                    return 1
                 updated_campaign = compare_result.get("campaign")
                 if not isinstance(updated_campaign, dict):
                     updated_campaign = campaign
@@ -242,55 +600,21 @@ def _run_campaign_session(state_path: Path) -> int:
                         f"challenger={challenger_run_id}; {summary or 'no summary'}"
                     ),
                 )
-                _campaign_refresh_results_best_effort(
-                    repo_root,
-                    updated_campaign,
-                    context=action,
-                )
                 if summary:
                     print(f"autolab campaign: {action} ({summary})")
                 else:
                     print(f"autolab campaign: {action}")
-                handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
-                if handoff_payload is None:
-                    updated = _campaign_update_status(
-                        repo_root,
-                        updated_campaign,
-                        status="error",
-                        crash_delta=1,
-                    )
-                    _campaign_refresh_results_best_effort(
-                        repo_root,
-                        updated,
-                        context="handoff_refresh_error_after_compare",
-                    )
-                    print(
-                        f"autolab campaign: ERROR failed to refresh handoff snapshot: {handoff_error}",
-                        file=sys.stderr,
-                    )
-                    return 1
+                follow_up = _campaign_after_candidate_outcome(
+                    state_path,
+                    repo_root,
+                    updated_campaign,
+                    context=action,
+                )
+                if follow_up is not None:
+                    return follow_up
                 continue
 
         loop_exit_code = _cmd_loop(_campaign_loop_args(state_path))
-
-        handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
-        if handoff_payload is None:
-            updated = _campaign_update_status(
-                repo_root,
-                campaign,
-                status="error",
-                crash_delta=1,
-            )
-            _campaign_refresh_results_best_effort(
-                repo_root,
-                updated,
-                context="handoff_refresh_error",
-            )
-            print(
-                f"autolab campaign: ERROR failed to refresh handoff snapshot: {handoff_error}",
-                file=sys.stderr,
-            )
-            return 1
 
         try:
             campaign = _load_campaign(repo_root)
@@ -304,22 +628,136 @@ def _run_campaign_session(state_path: Path) -> int:
                 _campaign_update_status(repo_root, campaign, status="stopped")
                 print("autolab campaign: stop requested acknowledged")
                 return 0
-
             state = _normalize_state(_load_state(state_path))
         except (CampaignError, StateError) as exc:
-            updated = _campaign_update_status(
+            return _campaign_fail_control_plane(
                 repo_root,
                 campaign,
-                status="error",
-                crash_delta=1,
-            )
-            _campaign_refresh_results_best_effort(
-                repo_root,
-                updated,
                 context="post_loop_state_error",
+                message=f"autolab campaign: ERROR {exc}",
             )
-            print(f"autolab campaign: ERROR {exc}", file=sys.stderr)
-            return 1
+
+        synced_campaign = _campaign_sync_candidate_state(repo_root, state, campaign)
+        if synced_campaign != campaign:
+            _write_campaign(repo_root, synced_campaign)
+            campaign = synced_campaign
+
+        if loop_exit_code != 0:
+            if _campaign_has_active_candidate(campaign):
+                if str(state.get("stage", "")).strip() == "human_review":
+                    try:
+                        crash_result = _campaign_apply_crash_outcome(
+                            repo_root,
+                            state_path,
+                            state,
+                            campaign,
+                            reason=(
+                                "challenger escalated to human_review during unattended campaign"
+                            ),
+                            category="human_review_discard",
+                        )
+                    except CampaignError as exc:
+                        return _campaign_fail_control_plane(
+                            repo_root,
+                            campaign,
+                            context="loop_human_review_discard_error",
+                            message=f"autolab campaign: ERROR {exc}",
+                        )
+                    updated_campaign = crash_result.get("campaign")
+                    if not isinstance(updated_campaign, dict):
+                        updated_campaign = campaign
+                    follow_up = _campaign_after_candidate_outcome(
+                        state_path,
+                        repo_root,
+                        updated_campaign,
+                        context="loop_human_review_discard",
+                    )
+                    if follow_up is not None:
+                        return follow_up
+                    continue
+
+                governance = _load_campaign_governance_config(repo_root)
+                updated_campaign = _campaign_bump_active_candidate_fix_attempts(
+                    campaign
+                )
+                candidate = updated_campaign.get("active_candidate")
+                if not isinstance(candidate, dict):
+                    candidate = {}
+                fix_attempts = int(candidate.get("fix_attempts", 0) or 0)
+                run_id = str(candidate.get("run_id", "")).strip()
+                if fix_attempts <= governance.max_fix_attempts_per_idea:
+                    updated_campaign = _campaign_set_last_governance_event(
+                        updated_campaign,
+                        category="retry_candidate",
+                        run_id=run_id,
+                        reason=(
+                            "recoverable challenger failure; retrying same idea "
+                            f"({fix_attempts}/{governance.max_fix_attempts_per_idea})"
+                        ),
+                    )
+                    _write_campaign(repo_root, updated_campaign)
+                    _append_log(
+                        repo_root,
+                        (
+                            "campaign retry: "
+                            f"run_id={run_id or 'pending'} "
+                            f"fix_attempts={fix_attempts}/"
+                            f"{governance.max_fix_attempts_per_idea}"
+                        ),
+                    )
+                    continue
+
+                try:
+                    crash_result = _campaign_apply_crash_outcome(
+                        repo_root,
+                        state_path,
+                        state,
+                        campaign,
+                        reason=(
+                            "challenger exhausted fix-attempt budget "
+                            f"({fix_attempts - 1}/{governance.max_fix_attempts_per_idea})"
+                        ),
+                        category="crash_discard",
+                        run_id=run_id,
+                    )
+                except CampaignError as exc:
+                    return _campaign_fail_control_plane(
+                        repo_root,
+                        campaign,
+                        context="loop_crash_discard_error",
+                        message=f"autolab campaign: ERROR {exc}",
+                    )
+                updated_campaign = crash_result.get("campaign")
+                if not isinstance(updated_campaign, dict):
+                    updated_campaign = campaign
+                follow_up = _campaign_after_candidate_outcome(
+                    state_path,
+                    repo_root,
+                    updated_campaign,
+                    context="crash_discard",
+                )
+                if follow_up is not None:
+                    return follow_up
+                continue
+
+            return _campaign_fail_control_plane(
+                repo_root,
+                campaign,
+                context="loop_exit_error",
+                message=(
+                    "autolab campaign: ERROR loop exited before campaign could continue"
+                ),
+            )
+
+        handoff_payload, error_code = _campaign_refresh_handoff_required(
+            state_path,
+            repo_root,
+            campaign,
+            context="handoff_refresh",
+        )
+        if error_code is not None:
+            return error_code
+        assert handoff_payload is not None
 
         rethink_reason = _campaign_rethink_reason(state, handoff_payload)
         if not rethink_reason and _campaign_lock_mode(campaign) != "none":
@@ -329,36 +767,14 @@ def _run_campaign_session(state_path: Path) -> int:
             elif stage_name == "design":
                 rethink_reason = "locked campaign requires redesign before continuing"
         if rethink_reason:
-            updated = _campaign_update_status(
+            return _campaign_export_oracle_and_stop(
+                state_path,
                 repo_root,
                 campaign,
-                status="needs_rethink",
-            )
-            _campaign_refresh_results_best_effort(
-                repo_root,
-                updated,
+                category="needs_rethink",
+                reason=rethink_reason,
                 context="needs_rethink",
             )
-            print(f"autolab campaign: stop ({rethink_reason})", file=sys.stderr)
-            return 1
-
-        if loop_exit_code != 0:
-            updated = _campaign_update_status(
-                repo_root,
-                campaign,
-                status="error",
-                crash_delta=1,
-            )
-            _campaign_refresh_results_best_effort(
-                repo_root,
-                updated,
-                context="loop_exit_error",
-            )
-            print(
-                "autolab campaign: ERROR loop exited before campaign could continue",
-                file=sys.stderr,
-            )
-            return int(loop_exit_code or 1)
 
         updated = _campaign_update_status(repo_root, campaign, status="running")
         _campaign_refresh_results_best_effort(
@@ -470,7 +886,7 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         print("status: none")
         return 0
 
-    summary = _campaign_summary(campaign)
+    summary = _campaign_summary_with_governance(repo_root, campaign)
     print(f"campaign_file: {_campaign_path(repo_root)}")
     lock_overview: dict[str, object] = {}
     try:
@@ -497,6 +913,19 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         "crash_streak",
         "started_at",
         "last_oracle_at",
+        "max_fix_attempts_per_idea",
+        "max_timeout_factor",
+        "max_no_improvement_streak",
+        "max_crash_streak_before_rethink",
+        "active_candidate_decision",
+        "active_candidate_started_at",
+        "active_candidate_run_id",
+        "active_candidate_fix_attempts",
+        "active_candidate_timeout_reference_seconds",
+        "last_governance_event_at",
+        "last_governance_event_category",
+        "last_governance_event_run_id",
+        "last_governance_event_reason",
         "resumable",
     ):
         print(f"{key}: {summary.get(key, '')}")

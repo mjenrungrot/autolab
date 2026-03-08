@@ -118,6 +118,14 @@ class CampaignComparisonConfig:
 
 
 @dataclass(frozen=True)
+class CampaignGovernanceConfig:
+    max_fix_attempts_per_idea: int
+    max_timeout_factor: float
+    max_no_improvement_streak: int
+    max_crash_streak_before_rethink: int
+
+
+@dataclass(frozen=True)
 class MeaningfulChangeConfig:
     require_verification: bool
     require_implementation_progress: bool

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from autolab.checkpoint import (
 )
 from autolab.config import (
     _load_campaign_comparison_config,
+    _load_campaign_governance_config,
     _load_meaningful_change_config,
 )
 from autolab.launch_runtime import _parse_memory_to_mb, _resolve_launch_mode
@@ -66,6 +68,7 @@ _CAMPAIGN_COMPARE_LOG_PATTERN = re.compile(
     r"^campaign (?P<action>promote|discard): champion=(?P<champion>\S+) "
     r"challenger=(?P<challenger>\S+); ?(?P<summary>.*)$"
 )
+_CAMPAIGN_DECISION_STAGES = {"implementation", "design"}
 _CAMPAIGN_LOCK_CONTRACT_FIELDS = (
     "captured_at",
     "hypothesis_path",
@@ -225,6 +228,63 @@ def _campaign_structured_fingerprint(payload: Any) -> str:
     return hashlib.sha1(rendered.encode("utf-8")).hexdigest()
 
 
+def _campaign_default_active_candidate() -> dict[str, Any]:
+    return {
+        "decision": "",
+        "started_at": "",
+        "run_id": "",
+        "fix_attempts": 0,
+        "timeout_reference_seconds": 0.0,
+    }
+
+
+def _normalize_campaign_active_candidate(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_active_candidate()
+    normalized["decision"] = str(payload.get("decision", "")).strip().lower()
+    if normalized["decision"] not in _CAMPAIGN_DECISION_STAGES:
+        normalized["decision"] = ""
+    normalized["started_at"] = str(payload.get("started_at", "")).strip()
+    normalized["run_id"] = str(payload.get("run_id", "")).strip()
+    normalized["fix_attempts"] = _campaign_non_negative_int(payload, "fix_attempts")
+    try:
+        timeout_reference_seconds = float(payload.get("timeout_reference_seconds", 0.0))
+    except Exception as exc:
+        raise CampaignError(
+            ".autolab/campaign.json field 'active_candidate.timeout_reference_seconds' must be numeric"
+        ) from exc
+    if timeout_reference_seconds < 0:
+        raise CampaignError(
+            ".autolab/campaign.json field 'active_candidate.timeout_reference_seconds' must be >= 0"
+        )
+    normalized["timeout_reference_seconds"] = timeout_reference_seconds
+    return normalized
+
+
+def _campaign_default_last_governance_event() -> dict[str, str]:
+    return {
+        "at": "",
+        "category": "",
+        "run_id": "",
+        "reason": "",
+    }
+
+
+def _normalize_campaign_last_governance_event(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_last_governance_event()
+    for key in normalized:
+        normalized[key] = str(payload.get(key, "")).strip()
+    return normalized
+
+
+def _campaign_has_active_candidate(payload: dict[str, Any]) -> bool:
+    candidate = _normalize_campaign_active_candidate(payload.get("active_candidate"))
+    return bool(candidate["decision"] and candidate["started_at"])
+
+
 def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CampaignError(".autolab/campaign.json must contain a JSON object")
@@ -277,6 +337,12 @@ def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         "last_oracle_at": str(payload.get("last_oracle_at", "")).strip(),
         "oracle_feedback": _normalize_campaign_oracle_feedback(
             payload.get("oracle_feedback")
+        ),
+        "active_candidate": _normalize_campaign_active_candidate(
+            payload.get("active_candidate")
+        ),
+        "last_governance_event": _normalize_campaign_last_governance_event(
+            payload.get("last_governance_event")
         ),
     }
 
@@ -557,8 +623,6 @@ def _campaign_locked_auto_decision(campaign: dict[str, Any]) -> str:
     normalized = _normalize_campaign(campaign)
     if _campaign_lock_mode(normalized) == "none":
         return ""
-    if int(normalized.get("no_improvement_streak", 0) or 0) > 0:
-        return "design"
     return "implementation"
 
 
@@ -663,6 +727,8 @@ def _create_campaign_payload(
         "started_at": _utc_now(),
         "last_oracle_at": "",
         "oracle_feedback": [],
+        "active_candidate": _campaign_default_active_candidate(),
+        "last_governance_event": _campaign_default_last_governance_event(),
     }
     if design_locked:
         payload["lock_contract"] = _campaign_capture_lock_contract(
@@ -707,7 +773,7 @@ def _campaign_is_resumable(payload: dict[str, Any]) -> bool:
 
 def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_campaign(payload)
-    return {
+    summary = {
         "campaign_id": normalized["campaign_id"],
         "label": normalized["label"],
         "scope_kind": normalized["scope_kind"],
@@ -729,6 +795,100 @@ def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "resumable": _campaign_is_resumable(normalized),
     }
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    last_event = _normalize_campaign_last_governance_event(
+        normalized.get("last_governance_event")
+    )
+    summary.update(
+        {
+            "active_candidate_decision": candidate["decision"],
+            "active_candidate_started_at": candidate["started_at"],
+            "active_candidate_run_id": candidate["run_id"],
+            "active_candidate_fix_attempts": candidate["fix_attempts"],
+            "active_candidate_timeout_reference_seconds": candidate[
+                "timeout_reference_seconds"
+            ],
+            "last_governance_event_at": last_event["at"],
+            "last_governance_event_category": last_event["category"],
+            "last_governance_event_run_id": last_event["run_id"],
+            "last_governance_event_reason": last_event["reason"],
+        }
+    )
+    return summary
+
+
+def _campaign_summary_with_governance(
+    repo_root: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    summary = _campaign_summary(payload)
+    governance = _load_campaign_governance_config(repo_root)
+    summary.update(
+        {
+            "max_fix_attempts_per_idea": governance.max_fix_attempts_per_idea,
+            "max_timeout_factor": governance.max_timeout_factor,
+            "max_no_improvement_streak": governance.max_no_improvement_streak,
+            "max_crash_streak_before_rethink": (
+                governance.max_crash_streak_before_rethink
+            ),
+        }
+    )
+    return summary
+
+
+def _campaign_set_last_governance_event(
+    campaign: dict[str, Any],
+    *,
+    category: str,
+    reason: str,
+    run_id: str = "",
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    normalized["last_governance_event"] = {
+        "at": _utc_now(),
+        "category": str(category).strip(),
+        "run_id": str(run_id).strip(),
+        "reason": str(reason).strip(),
+    }
+    return normalized
+
+
+def _campaign_reset_active_candidate(campaign: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    normalized["active_candidate"] = _campaign_default_active_candidate()
+    return normalized
+
+
+def _campaign_set_active_candidate(
+    campaign: dict[str, Any],
+    *,
+    decision: str,
+    started_at: str = "",
+    run_id: str = "",
+    fix_attempts: int = 0,
+    timeout_reference_seconds: float = 0.0,
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    candidate = _campaign_default_active_candidate()
+    candidate["decision"] = str(decision).strip().lower()
+    candidate["started_at"] = str(started_at or _utc_now()).strip()
+    candidate["run_id"] = str(run_id).strip()
+    candidate["fix_attempts"] = max(0, int(fix_attempts))
+    candidate["timeout_reference_seconds"] = max(
+        0.0, float(timeout_reference_seconds or 0.0)
+    )
+    normalized["active_candidate"] = candidate
+    return normalized
+
+
+def _campaign_bump_active_candidate_fix_attempts(
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    candidate["fix_attempts"] = int(candidate.get("fix_attempts", 0) or 0) + 1
+    normalized["active_candidate"] = candidate
+    return normalized
 
 
 def _mark_campaign_oracle_exported(repo_root: Path) -> dict[str, Any] | None:
@@ -1252,6 +1412,21 @@ def _campaign_row_status_and_summary(
             ),
         )
     if manifest_status == "failed":
+        timeout_payload = manifest_payload.get("campaign_timeout")
+        if isinstance(timeout_payload, dict):
+            timeout_reason = _campaign_compact_text(timeout_payload.get("reason", ""))
+            elapsed_seconds = timeout_payload.get("elapsed_seconds")
+            timeout_reference_seconds = timeout_payload.get("timeout_reference_seconds")
+            if timeout_reason and elapsed_seconds is not None:
+                return (
+                    "crash",
+                    _campaign_compact_text(
+                        f"{timeout_reason} (elapsed={elapsed_seconds}s, "
+                        f"reference={timeout_reference_seconds}s)"
+                    ),
+                )
+            if timeout_reason:
+                return ("crash", timeout_reason)
         return ("crash", "run manifest status=failed")
     if not metrics_payload:
         return ("crash", "metrics artifact missing")
@@ -1923,6 +2098,244 @@ def _campaign_load_manifest_payload(
     return payload
 
 
+def _campaign_candidate_run_id_from_state(
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> str:
+    champion_run_id = str(campaign.get("champion_run_id", "")).strip()
+    for key in ("pending_run_id", "last_run_id"):
+        run_id = str(state.get(key, "")).strip()
+        if run_id and run_id != champion_run_id:
+            return run_id
+    return ""
+
+
+def _campaign_sync_active_candidate_from_state(
+    campaign: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    if not _campaign_has_active_candidate(normalized):
+        return normalized
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    if candidate["run_id"]:
+        return normalized
+    run_id = _campaign_candidate_run_id_from_state(state, normalized)
+    if not run_id:
+        return normalized
+    candidate["run_id"] = run_id
+    normalized["active_candidate"] = candidate
+    return normalized
+
+
+def _campaign_manifest_timestamps(payload: dict[str, Any]) -> tuple[str, str]:
+    timestamps = payload.get("timestamps")
+    if not isinstance(timestamps, dict):
+        timestamps = {}
+    started_at = (
+        str(timestamps.get("started_at", "")).strip()
+        or str(payload.get("started_at", "")).strip()
+    )
+    completed_at = (
+        str(timestamps.get("completed_at", "")).strip()
+        or str(payload.get("completed_at", "")).strip()
+    )
+    return (started_at, completed_at)
+
+
+def _campaign_run_duration_seconds_from_manifest(
+    payload: dict[str, Any],
+    *,
+    allow_incomplete: bool = False,
+) -> float | None:
+    started_at_text, completed_at_text = _campaign_manifest_timestamps(payload)
+    started_at = _parse_utc(started_at_text)
+    if started_at is None:
+        return None
+    completed_at = _parse_utc(completed_at_text)
+    if completed_at is None:
+        if not allow_incomplete:
+            return None
+        completed_at = _parse_utc(_utc_now())
+        if completed_at is None:
+            return None
+    elapsed_seconds = (completed_at - started_at).total_seconds()
+    if elapsed_seconds < 0:
+        return None
+    return elapsed_seconds
+
+
+def _campaign_run_duration_seconds(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    run_id: str,
+    allow_incomplete: bool = False,
+) -> float | None:
+    manifest_payload = _campaign_load_manifest_payload(repo_root, state, run_id=run_id)
+    if not manifest_payload:
+        return None
+    return _campaign_run_duration_seconds_from_manifest(
+        manifest_payload,
+        allow_incomplete=allow_incomplete,
+    )
+
+
+def _campaign_manifest_job_id(payload: dict[str, Any]) -> str:
+    candidates = (
+        payload.get("job_id"),
+        (payload.get("slurm") or {}).get("job_id")
+        if isinstance(payload.get("slurm"), dict)
+        else "",
+        (payload.get("resource_request") or {}).get("job_id")
+        if isinstance(payload.get("resource_request"), dict)
+        else "",
+        (
+            ((payload.get("resource_request") or {}).get("slurm") or {}).get("job_id")
+            if isinstance((payload.get("resource_request") or {}).get("slurm"), dict)
+            else ""
+        ),
+    )
+    for raw in candidates:
+        value = str(raw or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _campaign_cancel_slurm_run_for_timeout(
+    repo_root: Path,
+    state: dict[str, Any],
+    *,
+    run_id: str,
+    elapsed_seconds: float,
+    timeout_reference_seconds: float,
+    max_timeout_factor: float,
+) -> dict[str, Any]:
+    iteration_dir = _campaign_iteration_dir(repo_root, state)
+    manifest_path = iteration_dir / "runs" / run_id / "run_manifest.json"
+    payload = _load_json_if_exists(manifest_path)
+    if not isinstance(payload, dict):
+        raise CampaignError(
+            f"campaign timeout cancellation requires run manifest at {manifest_path}"
+        )
+
+    host_mode = (
+        str(
+            payload.get("host_mode")
+            or payload.get("launch_mode")
+            or _detect_priority_host_mode()
+        )
+        .strip()
+        .lower()
+    )
+    if host_mode == "slurm_interactive":
+        host_mode = "slurm"
+    if host_mode != "slurm":
+        raise CampaignError(
+            f"campaign timeout cancellation only supports slurm manifests (run_id={run_id})"
+        )
+
+    job_id = _campaign_manifest_job_id(payload)
+    if not job_id:
+        raise CampaignError(
+            f"campaign timeout cancellation requires job_id for run_id={run_id}"
+        )
+
+    command_text = ""
+    stdout_text = ""
+    stderr_text = ""
+    remote_execution = payload.get("remote_execution")
+    if isinstance(remote_execution, dict):
+        remote_profile_name = str(remote_execution.get("profile", "")).strip()
+        remote_profile_mode = str(remote_execution.get("mode", "")).strip().lower()
+    else:
+        remote_profile_name = ""
+        remote_profile_mode = ""
+
+    if remote_profile_name and remote_profile_mode not in {"", "shared_fs"}:
+        from autolab.remote_profiles import cancel_remote_job, resolve_remote_profile
+
+        profile = resolve_remote_profile(
+            repo_root,
+            host_mode="slurm",
+            profile_name=remote_profile_name,
+        )
+        stdout_text, stderr_text = cancel_remote_job(
+            profile,
+            job_id=job_id,
+            timeout_seconds=30.0,
+        )
+        command_text = f"ssh {profile.login_host} scancel {job_id}"
+    else:
+        try:
+            proc = subprocess.run(
+                ["scancel", job_id],
+                cwd=repo_root,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30.0,
+            )
+        except FileNotFoundError as exc:
+            raise CampaignError(
+                f"campaign timeout cancellation requires scancel for run_id={run_id}: {exc}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise CampaignError(
+                f"campaign timeout cancellation timed out for run_id={run_id}: {exc}"
+            ) from exc
+        stdout_text = str(proc.stdout or "")
+        stderr_text = str(proc.stderr or "")
+        if proc.returncode != 0:
+            detail = stderr_text.strip() or stdout_text.strip() or "unknown error"
+            raise CampaignError(
+                f"campaign timeout cancellation failed for run_id={run_id}: {detail}"
+            )
+        command_text = f"scancel {job_id}"
+
+    artifact_sync = payload.get("artifact_sync_to_local")
+    if not isinstance(artifact_sync, dict):
+        artifact_sync = {}
+    artifact_sync["status"] = "failed"
+    payload["artifact_sync_to_local"] = artifact_sync
+    payload["status"] = "failed"
+
+    timestamps = payload.get("timestamps")
+    if not isinstance(timestamps, dict):
+        timestamps = {}
+    started_at_text, completed_at_text = _campaign_manifest_timestamps(payload)
+    if not started_at_text:
+        started_at_text = _utc_now()
+    if not completed_at_text:
+        completed_at_text = _utc_now()
+    timestamps["started_at"] = started_at_text
+    timestamps["completed_at"] = completed_at_text
+    payload["timestamps"] = timestamps
+    payload["started_at"] = started_at_text
+    payload["completed_at"] = completed_at_text
+    payload["campaign_timeout"] = {
+        "detected_at": _utc_now(),
+        "elapsed_seconds": round(float(elapsed_seconds), 3),
+        "timeout_reference_seconds": round(float(timeout_reference_seconds), 3),
+        "max_timeout_factor": float(max_timeout_factor),
+        "reason": (
+            "campaign timeout governance aborted challenger after exceeding "
+            "champion-relative duration budget"
+        ),
+        "cancel_command": command_text,
+        "cancel_stdout": stdout_text.strip(),
+        "cancel_stderr": stderr_text.strip(),
+    }
+    _write_json(manifest_path, payload)
+    return {
+        "run_id": run_id,
+        "job_id": job_id,
+        "manifest_path": str(manifest_path),
+        "cancel_command": command_text,
+    }
+
+
 def _campaign_primary_metric_value(
     payload: dict[str, Any],
     *,
@@ -2225,6 +2638,52 @@ def _campaign_compare_challenger(
     }
 
 
+def _campaign_apply_crash_outcome(
+    repo_root: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+    *,
+    reason: str,
+    category: str = "crash_discard",
+    run_id: str = "",
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    checkpoint_id = _campaign_latest_champion_checkpoint_id(repo_root, normalized)
+    if not checkpoint_id:
+        raise CampaignError(
+            "campaign champion snapshot is missing; rerun from decide_repeat to reseed"
+        )
+    crash_run_id = str(run_id).strip() or _campaign_candidate_run_id_from_state(
+        state, normalized
+    )
+    _campaign_restore_champion_state(
+        repo_root,
+        state_path,
+        normalized,
+        checkpoint_id=checkpoint_id,
+    )
+    updated = dict(normalized)
+    updated["no_improvement_streak"] = (
+        int(updated.get("no_improvement_streak", 0) or 0) + 1
+    )
+    updated["crash_streak"] = int(updated.get("crash_streak", 0) or 0) + 1
+    updated = _campaign_reset_active_candidate(updated)
+    updated = _campaign_set_last_governance_event(
+        updated,
+        category=category,
+        run_id=crash_run_id,
+        reason=reason,
+    )
+    _write_campaign(repo_root, updated)
+    return {
+        "action": category,
+        "campaign": updated,
+        "summary": str(reason).strip(),
+        "run_id": crash_run_id,
+    }
+
+
 def _campaign_apply_challenger_outcome(
     repo_root: Path,
     state_path: Path,
@@ -2253,6 +2712,14 @@ def _campaign_apply_challenger_outcome(
         updated["champion_run_id"] = challenger_run_id
         updated["champion_revision_label"] = _resolve_revision_label(repo_root)
         updated["no_improvement_streak"] = 0
+        updated["crash_streak"] = 0
+        updated = _campaign_reset_active_candidate(updated)
+        updated = _campaign_set_last_governance_event(
+            updated,
+            category="promotion",
+            run_id=challenger_run_id,
+            reason=summary,
+        )
         _write_campaign(repo_root, updated)
         return {
             "action": "promote",
@@ -2269,6 +2736,14 @@ def _campaign_apply_challenger_outcome(
     updated = dict(normalized)
     updated["no_improvement_streak"] = (
         int(updated.get("no_improvement_streak", 0) or 0) + 1
+    )
+    updated["crash_streak"] = 0
+    updated = _campaign_reset_active_candidate(updated)
+    updated = _campaign_set_last_governance_event(
+        updated,
+        category="metric_discard",
+        run_id=challenger_run_id,
+        reason=summary,
     )
     _write_campaign(repo_root, updated)
     return {

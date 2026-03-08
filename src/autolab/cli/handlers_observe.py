@@ -6,7 +6,7 @@ from autolab.campaign import (
     CampaignError,
     _campaign_lock_overview,
     _campaign_results_overview,
-    _campaign_summary,
+    _campaign_summary_with_governance,
     _load_campaign,
 )
 from autolab.cli.support import *
@@ -65,7 +65,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"campaign: invalid ({exc})")
     else:
         if campaign is not None:
-            summary = _campaign_summary(campaign)
+            summary = _campaign_summary_with_governance(repo_root, campaign)
             lock_overview = _campaign_lock_overview(repo_root, state, campaign)
             print("campaign:")
             print(f"  campaign_id: {summary.get('campaign_id', '')}")
@@ -89,6 +89,55 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(f"  crash_streak: {summary.get('crash_streak', 0)}")
             print(f"  started_at: {summary.get('started_at', '')}")
             print(f"  last_oracle_at: {summary.get('last_oracle_at', '')}")
+            print(
+                "  max_fix_attempts_per_idea: "
+                f"{summary.get('max_fix_attempts_per_idea', 0)}"
+            )
+            print(f"  max_timeout_factor: {summary.get('max_timeout_factor', 0.0)}")
+            print(
+                "  max_no_improvement_streak: "
+                f"{summary.get('max_no_improvement_streak', 0)}"
+            )
+            print(
+                "  max_crash_streak_before_rethink: "
+                f"{summary.get('max_crash_streak_before_rethink', 0)}"
+            )
+            print(
+                "  active_candidate_decision: "
+                f"{summary.get('active_candidate_decision', '')}"
+            )
+            print(
+                "  active_candidate_started_at: "
+                f"{summary.get('active_candidate_started_at', '')}"
+            )
+            print(
+                "  active_candidate_run_id: "
+                f"{summary.get('active_candidate_run_id', '')}"
+            )
+            print(
+                "  active_candidate_fix_attempts: "
+                f"{summary.get('active_candidate_fix_attempts', 0)}"
+            )
+            print(
+                "  active_candidate_timeout_reference_seconds: "
+                f"{summary.get('active_candidate_timeout_reference_seconds', 0.0)}"
+            )
+            print(
+                "  last_governance_event_at: "
+                f"{summary.get('last_governance_event_at', '')}"
+            )
+            print(
+                "  last_governance_event_category: "
+                f"{summary.get('last_governance_event_category', '')}"
+            )
+            print(
+                "  last_governance_event_run_id: "
+                f"{summary.get('last_governance_event_run_id', '')}"
+            )
+            print(
+                "  last_governance_event_reason: "
+                f"{summary.get('last_governance_event_reason', '')}"
+            )
             print(f"  resumable: {summary.get('resumable', False)}")
             results = _campaign_results_overview(repo_root, campaign)
             diagnostic = str(results.get("diagnostic", "")).strip()

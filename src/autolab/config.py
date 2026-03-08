@@ -53,6 +53,7 @@ from autolab.models import (
     AgentRunnerEditScopeConfig,
     AutoCommitConfig,
     CampaignComparisonConfig,
+    CampaignGovernanceConfig,
     EffectivePolicyResult,
     ExtractRuntimeConfig,
     GuardrailConfig,
@@ -336,6 +337,51 @@ def _load_campaign_comparison_config(repo_root: Path) -> CampaignComparisonConfi
     return CampaignComparisonConfig(
         complexity_proxy=complexity_proxy,
         change_size_metric=change_size_metric,
+    )
+
+
+def _load_campaign_governance_config(repo_root: Path) -> CampaignGovernanceConfig:
+    policy = _load_verifier_policy(repo_root)
+    autorun = policy.get("autorun")
+    campaign = autorun.get("campaign") if isinstance(autorun, dict) else {}
+    if not isinstance(campaign, dict):
+        campaign = {}
+
+    try:
+        max_fix_attempts_per_idea = int(campaign.get("max_fix_attempts_per_idea", 2))
+    except Exception:
+        max_fix_attempts_per_idea = 2
+    if max_fix_attempts_per_idea < 0:
+        max_fix_attempts_per_idea = 0
+
+    max_timeout_factor = _coerce_float(
+        campaign.get("max_timeout_factor", 2.0),
+        default=2.0,
+    )
+    if max_timeout_factor <= 0:
+        max_timeout_factor = 2.0
+
+    try:
+        max_no_improvement_streak = int(campaign.get("max_no_improvement_streak", 3))
+    except Exception:
+        max_no_improvement_streak = 3
+    if max_no_improvement_streak < 1:
+        max_no_improvement_streak = 1
+
+    try:
+        max_crash_streak_before_rethink = int(
+            campaign.get("max_crash_streak_before_rethink", 2)
+        )
+    except Exception:
+        max_crash_streak_before_rethink = 2
+    if max_crash_streak_before_rethink < 1:
+        max_crash_streak_before_rethink = 1
+
+    return CampaignGovernanceConfig(
+        max_fix_attempts_per_idea=max_fix_attempts_per_idea,
+        max_timeout_factor=max_timeout_factor,
+        max_no_improvement_streak=max_no_improvement_streak,
+        max_crash_streak_before_rethink=max_crash_streak_before_rethink,
     )
 
 

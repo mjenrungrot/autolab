@@ -11,7 +11,7 @@ from autolab.campaign import (
     _campaign_path,
     _campaign_results_markdown_path,
     _campaign_results_tsv_path,
-    _campaign_summary,
+    _campaign_summary_with_governance,
     _load_campaign,
     _validate_campaign_binding,
 )
@@ -325,7 +325,7 @@ def _resolve_campaign_context(
     if campaign is None:
         return ({}, diagnostics)
 
-    summary = _campaign_summary(campaign)
+    summary = _campaign_summary_with_governance(repo_root, campaign)
     if bool(summary.get("resumable", False)):
         try:
             _validate_campaign_binding(repo_root, state, campaign)
