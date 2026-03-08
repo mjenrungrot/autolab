@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from autolab.campaign import CampaignError, _campaign_summary, _load_campaign
+from autolab.campaign import (
+    CampaignError,
+    _campaign_results_overview,
+    _campaign_summary,
+    _load_campaign,
+)
 from autolab.cli.support import *
 from autolab.plan_approval import (
     approval_next_commands_for_mode,
@@ -78,6 +83,30 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(f"  started_at: {summary.get('started_at', '')}")
             print(f"  last_oracle_at: {summary.get('last_oracle_at', '')}")
             print(f"  resumable: {summary.get('resumable', False)}")
+            results = _campaign_results_overview(repo_root, campaign)
+            diagnostic = str(results.get("diagnostic", "")).strip()
+            if diagnostic:
+                print(f"  results: unavailable ({diagnostic})")
+            else:
+                print(
+                    "  results_tsv: "
+                    f"{results.get('results_tsv_path', '') or 'missing'} "
+                    f"[{'present' if results.get('results_tsv_exists', False) else 'missing'}]"
+                )
+                print(
+                    "  results_md: "
+                    f"{results.get('results_md_path', '') or 'missing'} "
+                    f"[{'present' if results.get('results_md_exists', False) else 'missing'}]"
+                )
+                counts = results.get("counts", {})
+                if isinstance(counts, dict):
+                    print(
+                        "  results_counts: "
+                        f"keep={int(counts.get('keep', 0) or 0)} "
+                        f"discard={int(counts.get('discard', 0) or 0)} "
+                        f"crash={int(counts.get('crash', 0) or 0)} "
+                        f"partial={int(counts.get('partial', 0) or 0)}"
+                    )
 
     # Phase 7b: human_review banner
     if state.get("stage") == "human_review":

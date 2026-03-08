@@ -32,6 +32,7 @@ Operator playbooks live in `docs/skills/autolab/SKILL.md`.
 1. Campaign mode:
    - Start only after the active design has a completed baseline run.
    - Use `autolab campaign stop` for graceful shutdown and `autolab campaign continue` for resumable recovery.
+   - Expect generated scope-root `results.tsv` and `results.md` ledgers to refresh automatically as campaign decisions are applied.
    - Treat `needs_rethink` as a handoff point, not as a background-retry state.
 1. Assistant mode:
    - Use for backlog/todo-driven delivery loops.

@@ -8,6 +8,8 @@ from typing import Any
 from autolab.campaign import (
     CampaignError,
     _campaign_path,
+    _campaign_results_markdown_path,
+    _campaign_results_tsv_path,
     _campaign_summary,
     _load_campaign,
     _validate_campaign_binding,
@@ -526,6 +528,7 @@ def _append_artifact_pointer(
     reason: str,
     include_if_missing: bool = False,
     status_override: str = "",
+    inline_in_oracle: bool = True,
 ) -> None:
     if path is None:
         return
@@ -542,7 +545,7 @@ def _append_artifact_pointer(
             "path": pointer_path,
             "status": status,
             "reason": reason,
-            "inline_in_oracle": True,
+            "inline_in_oracle": bool(inline_in_oracle),
         }
     )
     seen_paths.add(pointer_path)
@@ -602,6 +605,35 @@ def _build_artifact_pointers(
             reason="Campaign control-plane state for unattended research mode.",
             include_if_missing=True,
         )
+        try:
+            results_md_path = _campaign_results_markdown_path(
+                repo_root, campaign_summary
+            )
+            results_tsv_path = _campaign_results_tsv_path(repo_root, campaign_summary)
+        except CampaignError:
+            results_md_path = None
+            results_tsv_path = None
+        if results_md_path is not None:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="campaign_results_markdown",
+                path=results_md_path,
+                reason="Generated human-readable campaign results ledger.",
+                include_if_missing=True,
+            )
+        if results_tsv_path is not None:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="campaign_results_tsv",
+                path=results_tsv_path,
+                reason="Generated tabular campaign results ledger.",
+                include_if_missing=True,
+                inline_in_oracle=False,
+            )
 
     if iteration_dir is not None:
         stage_primary_path: Path | None = None

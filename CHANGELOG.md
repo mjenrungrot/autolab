@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.41] - 2026-03-08
+
+### Summary
+
+- Added generated campaign `results.tsv` and `results.md` ledgers that replay baseline, kept, discarded, partial, and crashed runs from campaign artifacts.
+- Surfaced campaign results paths and counts across campaign status, general status, handoff packets, and oracle exports for overnight experiment review.
+
+<!-- autolab:range v1.2.40..v1.2.41 -->
+
 ## [1.2.40] - 2026-03-08
 
 ### Summary

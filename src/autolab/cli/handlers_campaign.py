@@ -8,11 +8,13 @@ from autolab.campaign import (
     _campaign_has_champion_snapshot,
     _campaign_is_resumable,
     _campaign_path,
+    _campaign_results_overview,
     _campaign_seed_champion_snapshot,
     _campaign_summary,
     _create_campaign_payload,
     _load_campaign,
     _normalize_campaign,
+    _refresh_campaign_results,
     _validate_campaign_binding,
     _write_campaign,
 )
@@ -100,6 +102,30 @@ def _campaign_update_status(
     return updated
 
 
+def _campaign_refresh_results_best_effort(
+    repo_root: Path,
+    campaign: dict[str, Any],
+    *,
+    context: str,
+) -> None:
+    try:
+        result = _refresh_campaign_results(repo_root, campaign)
+    except CampaignError as exc:
+        _append_log(repo_root, f"campaign results refresh warning ({context}): {exc}")
+        return
+    results_tsv_path = result.get("results_tsv_path")
+    results_md_path = result.get("results_md_path")
+    _append_log(
+        repo_root,
+        (
+            "campaign results refresh: "
+            f"context={context} "
+            f"rows={int(result.get('row_count', 0) or 0)} "
+            f"tsv={results_tsv_path} md={results_md_path}"
+        ),
+    )
+
+
 def _run_campaign_session(state_path: Path) -> int:
     from autolab.cli.handlers_run import _cmd_loop
 
@@ -119,7 +145,12 @@ def _run_campaign_session(state_path: Path) -> int:
             return 1
 
         if campaign["status"] == "stop_requested":
-            _campaign_update_status(repo_root, campaign, status="stopped")
+            updated = _campaign_update_status(repo_root, campaign, status="stopped")
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="stop_requested",
+            )
             print("autolab campaign: stop requested acknowledged")
             return 0
 
@@ -127,12 +158,28 @@ def _run_campaign_session(state_path: Path) -> int:
             state = _normalize_state(_load_state(state_path))
             campaign = _validate_campaign_binding(repo_root, state, campaign)
         except (CampaignError, StateError) as exc:
-            _campaign_update_status(repo_root, campaign, status="needs_rethink")
+            updated = _campaign_update_status(
+                repo_root, campaign, status="needs_rethink"
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="binding_error",
+            )
             print(f"autolab campaign: stop ({exc})", file=sys.stderr)
             return 1
         if str(state.get("stage", "")).strip() == "decide_repeat":
             if not _campaign_has_champion_snapshot(repo_root, campaign):
-                _campaign_update_status(repo_root, campaign, status="needs_rethink")
+                updated = _campaign_update_status(
+                    repo_root,
+                    campaign,
+                    status="needs_rethink",
+                )
+                _campaign_refresh_results_best_effort(
+                    repo_root,
+                    updated,
+                    context="missing_champion_snapshot",
+                )
                 print(
                     "autolab campaign: stop (champion snapshot is missing; "
                     "restart from decide_repeat to reseed campaign state)",
@@ -149,7 +196,16 @@ def _run_campaign_session(state_path: Path) -> int:
                         campaign,
                     )
                 except CampaignError as exc:
-                    _campaign_update_status(repo_root, campaign, status="needs_rethink")
+                    updated = _campaign_update_status(
+                        repo_root,
+                        campaign,
+                        status="needs_rethink",
+                    )
+                    _campaign_refresh_results_best_effort(
+                        repo_root,
+                        updated,
+                        context="compare_error",
+                    )
                     print(f"autolab campaign: stop ({exc})", file=sys.stderr)
                     return 1
                 updated_campaign = compare_result.get("campaign")
@@ -164,17 +220,27 @@ def _run_campaign_session(state_path: Path) -> int:
                         f"challenger={challenger_run_id}; {summary or 'no summary'}"
                     ),
                 )
+                _campaign_refresh_results_best_effort(
+                    repo_root,
+                    updated_campaign,
+                    context=action,
+                )
                 if summary:
                     print(f"autolab campaign: {action} ({summary})")
                 else:
                     print(f"autolab campaign: {action}")
                 handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
                 if handoff_payload is None:
-                    _campaign_update_status(
+                    updated = _campaign_update_status(
                         repo_root,
                         updated_campaign,
                         status="error",
                         crash_delta=1,
+                    )
+                    _campaign_refresh_results_best_effort(
+                        repo_root,
+                        updated,
+                        context="handoff_refresh_error_after_compare",
                     )
                     print(
                         f"autolab campaign: ERROR failed to refresh handoff snapshot: {handoff_error}",
@@ -187,7 +253,17 @@ def _run_campaign_session(state_path: Path) -> int:
 
         handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
         if handoff_payload is None:
-            _campaign_update_status(repo_root, campaign, status="error", crash_delta=1)
+            updated = _campaign_update_status(
+                repo_root,
+                campaign,
+                status="error",
+                crash_delta=1,
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="handoff_refresh_error",
+            )
             print(
                 f"autolab campaign: ERROR failed to refresh handoff snapshot: {handoff_error}",
                 file=sys.stderr,
@@ -209,25 +285,59 @@ def _run_campaign_session(state_path: Path) -> int:
 
             state = _normalize_state(_load_state(state_path))
         except (CampaignError, StateError) as exc:
-            _campaign_update_status(repo_root, campaign, status="error", crash_delta=1)
+            updated = _campaign_update_status(
+                repo_root,
+                campaign,
+                status="error",
+                crash_delta=1,
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="post_loop_state_error",
+            )
             print(f"autolab campaign: ERROR {exc}", file=sys.stderr)
             return 1
 
         rethink_reason = _campaign_rethink_reason(state, handoff_payload)
         if rethink_reason:
-            _campaign_update_status(repo_root, campaign, status="needs_rethink")
+            updated = _campaign_update_status(
+                repo_root,
+                campaign,
+                status="needs_rethink",
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="needs_rethink",
+            )
             print(f"autolab campaign: stop ({rethink_reason})", file=sys.stderr)
             return 1
 
         if loop_exit_code != 0:
-            _campaign_update_status(repo_root, campaign, status="error", crash_delta=1)
+            updated = _campaign_update_status(
+                repo_root,
+                campaign,
+                status="error",
+                crash_delta=1,
+            )
+            _campaign_refresh_results_best_effort(
+                repo_root,
+                updated,
+                context="loop_exit_error",
+            )
             print(
                 "autolab campaign: ERROR loop exited before campaign could continue",
                 file=sys.stderr,
             )
             return int(loop_exit_code or 1)
 
-        _campaign_update_status(repo_root, campaign, status="running")
+        updated = _campaign_update_status(repo_root, campaign, status="running")
+        _campaign_refresh_results_best_effort(
+            repo_root,
+            updated,
+            context="loop_continue",
+        )
 
 
 def _cmd_campaign_start(args: argparse.Namespace) -> int:
@@ -293,6 +403,11 @@ def _cmd_campaign_start(args: argparse.Namespace) -> int:
             f"scope={payload['scope_kind']} metric={payload['objective_metric']}"
         ),
     )
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        payload,
+        context="start",
+    )
     print("autolab campaign start")
     print(f"state_file: {state_path}")
     print(f"campaign_file: {campaign_path}")
@@ -345,6 +460,29 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         "resumable",
     ):
         print(f"{key}: {summary.get(key, '')}")
+    results = _campaign_results_overview(repo_root, campaign)
+    if results.get("diagnostic"):
+        print(f"results: unavailable ({results['diagnostic']})")
+    else:
+        print(
+            "results_tsv: "
+            f"{results.get('results_tsv_path', '') or 'missing'} "
+            f"[{'present' if results.get('results_tsv_exists', False) else 'missing'}]"
+        )
+        print(
+            "results_md: "
+            f"{results.get('results_md_path', '') or 'missing'} "
+            f"[{'present' if results.get('results_md_exists', False) else 'missing'}]"
+        )
+        counts = results.get("counts", {})
+        if isinstance(counts, dict):
+            print(
+                "results_counts: "
+                f"keep={int(counts.get('keep', 0) or 0)} "
+                f"discard={int(counts.get('discard', 0) or 0)} "
+                f"crash={int(counts.get('crash', 0) or 0)} "
+                f"partial={int(counts.get('partial', 0) or 0)}"
+            )
 
     lock_info = _inspect_lock(autolab_dir / "lock")
     if lock_info is None:
@@ -386,6 +524,11 @@ def _cmd_campaign_stop(args: argparse.Namespace) -> int:
         campaign["status"] = "stop_requested"
         _write_campaign(repo_root, campaign)
         _append_log(repo_root, f"campaign stop requested: {campaign['campaign_id']}")
+        _campaign_refresh_results_best_effort(
+            repo_root,
+            campaign,
+            context="stop_requested_command",
+        )
         print("autolab campaign stop")
         print(f"campaign_id: {campaign['campaign_id']}")
         print("status: stop_requested")
@@ -400,6 +543,11 @@ def _cmd_campaign_stop(args: argparse.Namespace) -> int:
     campaign["status"] = "stopped"
     _write_campaign(repo_root, campaign)
     _append_log(repo_root, f"campaign stopped: {campaign['campaign_id']}")
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        campaign,
+        context="stop_command",
+    )
     print("autolab campaign stop")
     print(f"campaign_id: {campaign['campaign_id']}")
     print("status: stopped")
@@ -469,6 +617,11 @@ def _cmd_campaign_continue(args: argparse.Namespace) -> int:
     campaign["status"] = "running"
     _write_campaign(repo_root, campaign)
     _append_log(repo_root, f"campaign continue: {campaign['campaign_id']}")
+    _campaign_refresh_results_best_effort(
+        repo_root,
+        campaign,
+        context="continue",
+    )
     print("autolab campaign continue")
     print(f"state_file: {state_path}")
     print(f"campaign_id: {campaign['campaign_id']}")
