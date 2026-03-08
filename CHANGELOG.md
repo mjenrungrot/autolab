@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.40] - 2026-03-08
+
+### Summary
+
+- Added champion/challenger campaign arbitration that compares each completed challenger run against the active champion at `decide_repeat` and promotes or discards automatically.
+- Added campaign-owned champion snapshots and strict discard restore so unattended experiment search can continue from the accepted champion state after non-winning runs.
+
+<!-- autolab:range v1.2.39..v1.2.40 -->
+
 ## [1.2.39] - 2026-03-08
 
 ### Summary

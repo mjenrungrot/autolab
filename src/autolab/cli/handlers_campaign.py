@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from autolab.campaign import (
     CampaignError,
+    _campaign_apply_challenger_outcome,
+    _campaign_has_champion_snapshot,
     _campaign_is_resumable,
     _campaign_path,
+    _campaign_seed_champion_snapshot,
     _campaign_summary,
     _create_campaign_payload,
     _load_campaign,
@@ -127,6 +130,58 @@ def _run_campaign_session(state_path: Path) -> int:
             _campaign_update_status(repo_root, campaign, status="needs_rethink")
             print(f"autolab campaign: stop ({exc})", file=sys.stderr)
             return 1
+        if str(state.get("stage", "")).strip() == "decide_repeat":
+            if not _campaign_has_champion_snapshot(repo_root, campaign):
+                _campaign_update_status(repo_root, campaign, status="needs_rethink")
+                print(
+                    "autolab campaign: stop (champion snapshot is missing; "
+                    "restart from decide_repeat to reseed campaign state)",
+                    file=sys.stderr,
+                )
+                return 1
+            challenger_run_id = str(state.get("last_run_id", "")).strip()
+            if challenger_run_id and challenger_run_id != campaign["champion_run_id"]:
+                try:
+                    compare_result = _campaign_apply_challenger_outcome(
+                        repo_root,
+                        state_path,
+                        state,
+                        campaign,
+                    )
+                except CampaignError as exc:
+                    _campaign_update_status(repo_root, campaign, status="needs_rethink")
+                    print(f"autolab campaign: stop ({exc})", file=sys.stderr)
+                    return 1
+                updated_campaign = compare_result.get("campaign")
+                if not isinstance(updated_campaign, dict):
+                    updated_campaign = campaign
+                summary = str(compare_result.get("summary", "")).strip()
+                action = str(compare_result.get("action", "")).strip() or "compare"
+                _append_log(
+                    repo_root,
+                    (
+                        f"campaign {action}: champion={campaign['champion_run_id']} "
+                        f"challenger={challenger_run_id}; {summary or 'no summary'}"
+                    ),
+                )
+                if summary:
+                    print(f"autolab campaign: {action} ({summary})")
+                else:
+                    print(f"autolab campaign: {action}")
+                handoff_payload, handoff_error = _safe_refresh_handoff(state_path)
+                if handoff_payload is None:
+                    _campaign_update_status(
+                        repo_root,
+                        updated_campaign,
+                        status="error",
+                        crash_delta=1,
+                    )
+                    print(
+                        f"autolab campaign: ERROR failed to refresh handoff snapshot: {handoff_error}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                continue
 
         loop_exit_code = _cmd_loop(_campaign_loop_args(state_path))
 
@@ -196,6 +251,13 @@ def _cmd_campaign_start(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if str(state.get("stage", "")).strip() != "decide_repeat":
+        print(
+            "autolab campaign start: ERROR current stage must be 'decide_repeat' "
+            "to seed the accepted champion baseline",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         existing = _load_campaign(repo_root)
@@ -217,6 +279,7 @@ def _cmd_campaign_start(args: argparse.Namespace) -> int:
             label=str(args.label),
             scope_kind=str(args.scope),
         )
+        _campaign_seed_champion_snapshot(repo_root, state_path, payload)
         campaign_path = _write_campaign(repo_root, payload)
     except CampaignError as exc:
         print(f"autolab campaign start: ERROR {exc}", file=sys.stderr)
@@ -381,6 +444,27 @@ def _cmd_campaign_continue(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if not _campaign_has_champion_snapshot(repo_root, campaign):
+        if (
+            str(state.get("stage", "")).strip() == "decide_repeat"
+            and str(state.get("last_run_id", "")).strip() == campaign["champion_run_id"]
+        ):
+            try:
+                _campaign_seed_champion_snapshot(repo_root, state_path, campaign)
+            except CampaignError as exc:
+                campaign["status"] = "needs_rethink"
+                _write_campaign(repo_root, campaign)
+                print(f"autolab campaign continue: ERROR {exc}", file=sys.stderr)
+                return 1
+        else:
+            campaign["status"] = "needs_rethink"
+            _write_campaign(repo_root, campaign)
+            print(
+                "autolab campaign continue: ERROR campaign is missing its "
+                "champion snapshot and must be reseeded from decide_repeat",
+                file=sys.stderr,
+            )
+            return 1
 
     campaign["status"] = "running"
     _write_campaign(repo_root, campaign)

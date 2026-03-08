@@ -112,6 +112,12 @@ class GuardrailConfig:
 
 
 @dataclass(frozen=True)
+class CampaignComparisonConfig:
+    complexity_proxy: str
+    change_size_metric: str
+
+
+@dataclass(frozen=True)
 class MeaningfulChangeConfig:
     require_verification: bool
     require_implementation_progress: bool

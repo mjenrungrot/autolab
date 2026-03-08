@@ -52,6 +52,7 @@ from autolab.models import (
     AgentRunnerConfig,
     AgentRunnerEditScopeConfig,
     AutoCommitConfig,
+    CampaignComparisonConfig,
     EffectivePolicyResult,
     ExtractRuntimeConfig,
     GuardrailConfig,
@@ -309,6 +310,32 @@ def _load_guardrail_config(repo_root: Path) -> GuardrailConfig:
         max_stalled_blocker_cycles=max_stalled_blocker_cycles,
         max_consecutive_errors=max_consecutive_errors,
         error_backoff_base_seconds=error_backoff_base_seconds,
+    )
+
+
+def _load_campaign_comparison_config(repo_root: Path) -> CampaignComparisonConfig:
+    policy = _load_verifier_policy(repo_root)
+    autorun = policy.get("autorun")
+    campaign = autorun.get("campaign") if isinstance(autorun, dict) else {}
+    if not isinstance(campaign, dict):
+        campaign = {}
+
+    complexity_proxy = (
+        str(campaign.get("complexity_proxy", "changed_surface")).strip().lower()
+        or "changed_surface"
+    )
+    if complexity_proxy not in {"changed_surface", "none"}:
+        complexity_proxy = "changed_surface"
+
+    change_size_metric = (
+        str(campaign.get("change_size_metric", "files")).strip().lower() or "files"
+    )
+    if change_size_metric not in {"files", "lines", "chars"}:
+        change_size_metric = "files"
+
+    return CampaignComparisonConfig(
+        complexity_proxy=complexity_proxy,
+        change_size_metric=change_size_metric,
     )
 
 
