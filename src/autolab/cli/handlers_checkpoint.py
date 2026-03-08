@@ -17,6 +17,7 @@ def _cmd_checkpoint_create(args: argparse.Namespace) -> int:
 
     stage = str(state.get("stage", "")).strip()
     label = str(getattr(args, "label", "") or "").strip()
+    pinned = bool(getattr(args, "pin", False))
     iteration_id = str(getattr(args, "iteration_id", "") or "").strip()
     scope_kind = str(getattr(args, "scope", "") or "").strip()
 
@@ -36,6 +37,8 @@ def _cmd_checkpoint_create(args: argparse.Namespace) -> int:
             iteration_id=iteration_id,
             experiment_id=experiment_id,
             scope_kind=scope_kind,
+            pinned=pinned,
+            label_origin="user" if label else "",
         )
     except Exception as exc:
         print(f"autolab checkpoint create: ERROR {exc}", file=sys.stderr)
@@ -47,6 +50,8 @@ def _cmd_checkpoint_create(args: argparse.Namespace) -> int:
     print(f"stage: {stage}")
     if label:
         print(f"label: {label}")
+    if pinned:
+        print("pinned: true")
     return 0
 
 
@@ -96,7 +101,55 @@ def _cmd_checkpoint_list(args: argparse.Namespace) -> int:
         label = cp.get("label", "")
         if label:
             parts.append(f"label={label}")
+        if cp.get("pinned", False):
+            parts.append("pinned=true")
         print(f"  {' '.join(parts)}")
+    return 0
+
+
+def _cmd_checkpoint_pin(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    checkpoint_id = str(getattr(args, "checkpoint_id", "") or "").strip()
+
+    try:
+        from autolab.checkpoint import set_checkpoint_pinned
+
+        manifest = set_checkpoint_pinned(
+            repo_root,
+            checkpoint_id,
+            pinned=True,
+        )
+    except Exception as exc:
+        print(f"autolab checkpoint pin: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab checkpoint pin")
+    print(f"checkpoint_id: {checkpoint_id}")
+    print(f"pinned: {bool(manifest.get('pinned', False))}")
+    return 0
+
+
+def _cmd_checkpoint_unpin(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    checkpoint_id = str(getattr(args, "checkpoint_id", "") or "").strip()
+
+    try:
+        from autolab.checkpoint import set_checkpoint_pinned
+
+        manifest = set_checkpoint_pinned(
+            repo_root,
+            checkpoint_id,
+            pinned=False,
+        )
+    except Exception as exc:
+        print(f"autolab checkpoint unpin: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    print("autolab checkpoint unpin")
+    print(f"checkpoint_id: {checkpoint_id}")
+    print(f"pinned: {bool(manifest.get('pinned', False))}")
     return 0
 
 

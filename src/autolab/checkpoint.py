@@ -93,6 +93,24 @@ def _validate_checkpoint_id(checkpoint_id: str) -> bool:
     )
 
 
+def _checkpoint_has_user_label(entry: dict[str, Any]) -> bool:
+    label = str(entry.get("label", "")).strip()
+    if not label:
+        return False
+    label_origin = str(entry.get("label_origin", "")).strip().lower()
+    if label_origin == "user":
+        return True
+    if label_origin == "system":
+        return False
+    return str(entry.get("trigger", "")).strip().lower() == "manual"
+
+
+def _is_checkpoint_protected(entry: dict[str, Any]) -> bool:
+    if "gc_protected" in entry:
+        return bool(entry.get("gc_protected", False))
+    return bool(entry.get("pinned", False)) or _checkpoint_has_user_label(entry)
+
+
 def _safe_rel_path(base: Path, rel: str) -> Path | None:
     """Resolve *rel* under *base*, returning None if it escapes."""
     if not rel or rel.startswith("/") or "\\" in rel:
@@ -183,6 +201,8 @@ def create_checkpoint(
     iteration_id: str = "",
     experiment_id: str = "",
     scope_kind: str = "",
+    pinned: bool = False,
+    label_origin: str = "",
 ) -> tuple[str, Path]:
     """Create a checkpoint. Returns (checkpoint_id, checkpoint_dir)."""
     state = _load_json_if_exists(state_path)
@@ -281,6 +301,13 @@ def create_checkpoint(
     }
     if label:
         manifest["label"] = label
+        manifest["label_origin"] = label_origin.strip().lower() or (
+            "user" if trigger == "manual" else "system"
+        )
+    if pinned or _checkpoint_has_user_label(manifest):
+        manifest["gc_protected"] = True
+    if pinned:
+        manifest["pinned"] = True
 
     _write_json(checkpoint_dir / "manifest.json", manifest)
     _update_checkpoint_index(autolab_dir, checkpoint_id, manifest)
@@ -317,10 +344,78 @@ def _update_checkpoint_index(
     }
     if manifest.get("label"):
         entry["label"] = manifest["label"]
+    if manifest.get("label_origin"):
+        entry["label_origin"] = manifest["label_origin"]
     if manifest.get("experiment_id"):
         entry["experiment_id"] = manifest["experiment_id"]
+    if manifest.get("pinned", False):
+        entry["pinned"] = True
 
     index["checkpoints"].append(entry)
+    _write_json(index_path, index)
+
+
+def _rewrite_checkpoint_index_entry(
+    autolab_dir: Path, checkpoint_id: str, manifest: dict[str, Any]
+) -> None:
+    index_path = autolab_dir / "checkpoints" / "index.json"
+    index = _load_json_if_exists(index_path)
+    if not isinstance(index, dict):
+        index = {"schema_version": "1.0", "checkpoints": []}
+    checkpoints = index.get("checkpoints", [])
+    if not isinstance(checkpoints, list):
+        checkpoints = []
+
+    replacement = {
+        "checkpoint_id": checkpoint_id,
+        "created_at": manifest.get("created_at", _utc_now()),
+        "stage": manifest.get("stage", ""),
+        "trigger": manifest.get("trigger", ""),
+        "iteration_id": manifest.get("iteration_id", ""),
+        "artifact_count": len(manifest.get("artifacts", [])),
+        "revision_label": manifest.get("revision_label", ""),
+    }
+    if manifest.get("label"):
+        replacement["label"] = manifest["label"]
+    if manifest.get("label_origin"):
+        replacement["label_origin"] = manifest["label_origin"]
+    if "gc_protected" in manifest:
+        replacement["gc_protected"] = bool(manifest.get("gc_protected", False))
+    if manifest.get("experiment_id"):
+        replacement["experiment_id"] = manifest["experiment_id"]
+    if manifest.get("pinned", False):
+        replacement["pinned"] = True
+
+    updated = False
+    for idx, entry in enumerate(checkpoints):
+        if entry.get("checkpoint_id") == checkpoint_id:
+            checkpoints[idx] = replacement
+            updated = True
+            break
+    if not updated:
+        checkpoints.append(replacement)
+
+    index["checkpoints"] = checkpoints
+    _write_json(index_path, index)
+
+
+def _remove_checkpoint_index_entries(
+    autolab_dir: Path, checkpoint_ids: set[str]
+) -> None:
+    if not checkpoint_ids:
+        return
+    index_path = autolab_dir / "checkpoints" / "index.json"
+    index = _load_json_if_exists(index_path)
+    if not isinstance(index, dict):
+        return
+    checkpoints = index.get("checkpoints", [])
+    if not isinstance(checkpoints, list):
+        return
+    index["checkpoints"] = [
+        entry
+        for entry in checkpoints
+        if str(entry.get("checkpoint_id", "")) not in checkpoint_ids
+    ]
     _write_json(index_path, index)
 
 
@@ -339,7 +434,9 @@ def _prune_auto_checkpoints(
         return
 
     prunable_entries = [
-        (i, cp) for i, cp in enumerate(checkpoints) if cp.get("trigger") in triggers
+        (i, cp)
+        for i, cp in enumerate(checkpoints)
+        if cp.get("trigger") in triggers and not _is_checkpoint_protected(cp)
     ]
     if len(prunable_entries) <= max_auto:
         return
@@ -388,6 +485,43 @@ def list_checkpoints(
         filtered = [cp for cp in filtered if cp.get("trigger") == trigger]
 
     return sorted(filtered, key=lambda c: c.get("created_at", ""), reverse=True)
+
+
+def set_checkpoint_pinned(
+    repo_root: Path,
+    checkpoint_id: str,
+    *,
+    pinned: bool,
+) -> dict[str, Any]:
+    if not _validate_checkpoint_id(checkpoint_id):
+        raise ValueError(f"invalid checkpoint id: {checkpoint_id}")
+
+    autolab_dir = repo_root / ".autolab"
+    manifest_path = autolab_dir / "checkpoints" / checkpoint_id / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"checkpoint {checkpoint_id} not found")
+
+    manifest = _load_json_if_exists(manifest_path)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"invalid manifest for {checkpoint_id}")
+
+    if manifest.get("label") and not manifest.get("label_origin"):
+        manifest["label_origin"] = (
+            "user"
+            if str(manifest.get("trigger", "")).strip().lower() == "manual"
+            else "system"
+        )
+
+    if pinned:
+        manifest["pinned"] = True
+        manifest["gc_protected"] = True
+    else:
+        manifest.pop("pinned", None)
+        manifest["gc_protected"] = False
+
+    _write_json(manifest_path, manifest)
+    _rewrite_checkpoint_index_entry(autolab_dir, checkpoint_id, manifest)
+    return manifest
 
 
 # ---------------------------------------------------------------------------

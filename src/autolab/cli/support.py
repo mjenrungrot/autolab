@@ -166,6 +166,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "slurm-job-list",
             "report",
             "reset",
+            "gc",
         ),
     ),
 )
