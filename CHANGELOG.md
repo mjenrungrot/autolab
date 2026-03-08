@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.35] - 2026-03-07
+
+### Summary
+
+- Added `autolab gc` with preview-first retention controls for checkpoints, reset archives, execution artifacts, traceability outputs, and managed docs-view projections.
+- Added checkpoint pin and unpin commands plus protection metadata so important recovery points can be retained or explicitly made prunable.
+
+<!-- autolab:range v1.2.34..v1.2.35 -->
+
 ## [1.2.34] - 2026-03-06
 
 ### Summary

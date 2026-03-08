@@ -10,6 +10,7 @@ from autolab.cli.handlers_run import *
 from autolab.cli.handlers_admin import *
 from autolab.cli.handlers_parser import *
 from autolab.cli.handlers_checkpoint import *
+from autolab.cli.handlers_gc import *
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -99,6 +100,12 @@ def _build_parser() -> argparse.ArgumentParser:
     cp_create.add_argument("--state-file", default=".autolab/state.json")
     cp_create.add_argument("--label", default="")
     cp_create.add_argument(
+        "--pin",
+        action="store_true",
+        default=False,
+        help="Protect the new checkpoint from autolab gc pruning",
+    )
+    cp_create.add_argument(
         "--scope",
         choices=("project_wide", "experiment"),
         default="",
@@ -117,6 +124,78 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cp_list.add_argument("--json", action="store_true", default=False)
     cp_list.set_defaults(handler=_cmd_checkpoint_list)
+
+    cp_pin = checkpoint_sub.add_parser("pin", help="Protect a checkpoint from pruning")
+    cp_pin.add_argument("checkpoint_id", help="Checkpoint id to pin")
+    cp_pin.add_argument("--state-file", default=".autolab/state.json")
+    cp_pin.set_defaults(handler=_cmd_checkpoint_pin)
+
+    cp_unpin = checkpoint_sub.add_parser(
+        "unpin", help="Allow a checkpoint to be pruned again"
+    )
+    cp_unpin.add_argument("checkpoint_id", help="Checkpoint id to unpin")
+    cp_unpin.add_argument("--state-file", default=".autolab/state.json")
+    cp_unpin.set_defaults(handler=_cmd_checkpoint_unpin)
+
+    gc = subparsers.add_parser(
+        "gc",
+        help="Preview or prune recoverable autolab artifacts",
+    )
+    gc.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json)",
+    )
+    gc.add_argument(
+        "--apply",
+        action="store_true",
+        default=False,
+        help="Delete the reported artifacts instead of previewing them",
+    )
+    gc.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit machine-readable output",
+    )
+    gc.add_argument(
+        "--only",
+        action="append",
+        choices=GC_ONLY_CHOICES,
+        default=[],
+        help="Limit GC to a specific artifact class; repeat to include multiple classes",
+    )
+    gc.add_argument(
+        "--checkpoint-keep-latest",
+        type=int,
+        default=DEFAULT_CHECKPOINT_KEEP_LATEST,
+        help="Keep this many unprotected checkpoints per iteration/stage",
+    )
+    gc.add_argument(
+        "--execution-keep-latest",
+        type=int,
+        default=DEFAULT_EXECUTION_KEEP_LATEST,
+        help="Keep this many non-active execution bundles",
+    )
+    gc.add_argument(
+        "--traceability-keep-latest",
+        type=int,
+        default=DEFAULT_TRACEABILITY_KEEP_LATEST,
+        help="Keep this many non-active traceability outputs",
+    )
+    gc.add_argument(
+        "--reset-archive-max-age-days",
+        type=int,
+        default=DEFAULT_RESET_ARCHIVE_MAX_AGE_DAYS,
+        help="Expire reset archives older than this many days",
+    )
+    gc.add_argument(
+        "--views-keep-latest",
+        type=int,
+        default=DEFAULT_DOCS_VIEWS_KEEP_LATEST,
+        help="Keep this many managed docs-view output directories",
+    )
+    gc.set_defaults(handler=_cmd_gc)
 
     hooks = subparsers.add_parser(
         "hooks", help="Manage git hooks for version-tagging and checkpoints"

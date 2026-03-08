@@ -2989,6 +2989,14 @@ def _cmd_docs_generate(args: argparse.Namespace) -> int:
                     )
                 output_path.write_text(rendered_by_view[view], encoding="utf-8")
                 written_paths.append(output_path)
+            from autolab.gc import update_managed_docs_manifest
+
+            update_managed_docs_manifest(
+                repo_root,
+                output_dir,
+                written_paths=written_paths,
+                iteration_id=str(context.get("iteration_id", "") or ""),
+            )
         except Exception as exc:
             print(
                 "autolab docs generate: ERROR failed writing docs output to "
