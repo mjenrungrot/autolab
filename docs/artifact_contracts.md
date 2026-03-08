@@ -314,24 +314,50 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `latest_verifier_summary`, `blocking_failures`, `pending_human_decisions`
   - `files_changed_since_last_green_point`
   - `recommended_next_command`, `safe_resume_point`
+  - `continuation_packet` (nested scope-root continuation/export envelope)
   - optional `plan_approval` snapshot when an iteration-scoped approval artifact exists
   - `wave_observability` (`wave_summary`, `task_summary`, `summary`, `critical_path`, `file_conflicts`, `waves`, `tasks`, `diagnostics`, `source_paths`)
   - `last_green_at`, `baseline_snapshot`
   - `handoff_json_path`, `handoff_markdown_path`
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
-- **Consumed by**: `autolab resume`, `autolab tui` Home and Waves panels, takeover automation, and generated docs state/sidecar views
-- **Presentation note**: CLI/docs consumers render wave retry/block/deferred/skipped detail, critical-path timing context, and observability diagnostics from `wave_observability`.
+- **Consumed by**: `autolab resume`, `autolab oracle`, `autolab tui` Home and Waves panels, takeover automation, and generated docs state/sidecar views
+- **Presentation note**: top-level handoff fields remain the concise summary surface; CLI/docs consumers render wave retry/block/deferred/skipped detail, critical-path timing context, and observability diagnostics from `wave_observability`, while richer continuation exports read `continuation_packet`.
+
+## continuation_packet
+
+- **Path**: `.autolab/handoff.json -> continuation_packet`
+- **Format**: Nested JSON object
+- **Content**: Scope-root continuation envelope derived from the active handoff snapshot. It carries the current continuation context plus the artifact references used to build richer takeover exports without changing the top-level handoff summary contract.
+- **Scope-root resolution**:
+  - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
+  - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
+- **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
+- **Consumed by**: `autolab oracle` and continuation-oriented takeover tooling
+- **Export note**: `autolab oracle` resolves `continuation_packet` into `<scope-root>/oracle.md`, inlining current artifact content at export time.
 
 ## handoff.md
 
 - **Path**: `<scope-root>/handoff.md`
 - **Format**: Markdown
-- **Content**: Human-readable handoff summary (scope, stage, optional plan approval status/triggers, wave/task status, critical path, per-wave timings/retries, blocked/deferred/skipped tasks, file conflicts, per-task evidence, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
+- **Content**: Concise human-readable handoff summary (scope, stage, optional plan approval status/triggers, wave/task status, critical path, per-wave timings/retries, blocked/deferred/skipped tasks, file conflicts, per-task evidence, verifier summary, blockers, pending decisions, changed files, recommended next command, safe resume status)
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: human takeover workflows and incident handoff review
+- **Relationship to `oracle.md`**: `handoff.md` stays pointer-oriented and concise; use `autolab oracle` when you want the expanded inlined continuation export.
+
+## oracle.md
+
+- **Path**: `<scope-root>/oracle.md`
+- **Format**: Markdown
+- **Content**: On-demand expanded continuation export derived from `handoff.json.continuation_packet`, combining the current handoff state with inlined artifact content from the active scope root.
+- **Scope-root resolution**:
+  - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
+  - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
+- **Produced by**: `autolab oracle` (on demand only; not auto-refreshed by run/verify/handoff)
+- **Consumed by**: rich human/agent takeover workflows that need a single inlined scope-root export
+- **Relationship to `handoff.md`**: `oracle.md` is the dense, inlined companion to the concise `handoff.md` summary.
 
 ## context sidecars (`discuss.json` / `research.json`)
 

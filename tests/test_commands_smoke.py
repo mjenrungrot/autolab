@@ -1683,6 +1683,7 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "hooks" in help_text
     assert "update" in help_text
     assert "report" in help_text
+    assert "oracle" in help_text
     assert "Record a human review decision" in help_text
     assert "Recommended onboarding flow:" in help_text
 
@@ -1765,6 +1766,11 @@ def test_progress_handoff_and_resume_preview_generate_handoff_artifacts(
     assert handoff_payload["current_scope"] in {"experiment", "project_wide"}
     assert handoff_payload["current_stage"] == "hypothesis"
     assert "recommended_next_command" in handoff_payload
+    assert "continuation_packet" in handoff_payload
+    assert (
+        handoff_payload["continuation_packet"]["next_action"]["recommended_command"]
+        == handoff_payload["recommended_next_command"]["command"]
+    )
     assert "plan_approval" not in handoff_payload
     handoff_md_path = Path(handoff_payload["handoff_markdown_path"])
     assert handoff_md_path.exists()

@@ -2331,6 +2331,15 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
     handoff_payload = context.get("handoff_payload")
     if not isinstance(handoff_payload, dict):
         handoff_payload = {}
+    continuation_packet = handoff_payload.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        continuation_packet = {}
+    next_action = continuation_packet.get("next_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
+    top_blockers = continuation_packet.get("top_blockers")
+    if not isinstance(top_blockers, list):
+        top_blockers = []
     wave = handoff_payload.get("wave")
     if not isinstance(wave, dict):
         wave = {}
@@ -2377,12 +2386,17 @@ def _render_docs_state_view(context: dict[str, Any]) -> str:
         "## Handoff Readiness",
         f"- handoff_json_path: `{_docs_relpath(repo_root, context.get('handoff_path'))}`",
         f"- handoff_markdown_path: `{_docs_relpath(repo_root, context.get('handoff_markdown_path'))}`",
-        f"- safe_resume_status: `{safe_resume.get('status', 'blocked')}`",
-        f"- safe_resume_command: `{safe_resume.get('command', '')}`",
-        f"- recommended_next_command: `{recommended.get('command', '')}`",
-        f"- blockers: {len(blocking_failures)}",
+        f"- safe_resume_status: `{next_action.get('safe_status', safe_resume.get('status', 'blocked'))}`",
+        f"- safe_resume_command: `{next_action.get('safe_command', safe_resume.get('command', ''))}`",
+        f"- recommended_next_command: `{next_action.get('recommended_command', recommended.get('command', ''))}`",
+        f"- blockers: {len(top_blockers) if top_blockers else len(blocking_failures)}",
         f"- pending_human_decisions: {len(pending_decisions)}",
     ]
+    if top_blockers:
+        lines.append(
+            "- top_blockers: "
+            + ", ".join(str(item).strip() for item in top_blockers if str(item).strip())
+        )
     if plan_approval:
         counts = plan_approval.get("counts")
         if not isinstance(counts, dict):
@@ -2633,6 +2647,12 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
     handoff = context.get("handoff_payload")
     if not isinstance(handoff, dict):
         handoff = {}
+    continuation_packet = handoff.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        continuation_packet = {}
+    next_action = continuation_packet.get("next_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
     bundle = context.get("context_bundle_payload")
     if not isinstance(bundle, dict):
         bundle = {}
@@ -2693,9 +2713,12 @@ def _render_docs_sidecar_view(context: dict[str, Any]) -> str:
             path=_docs_relpath(repo_root, context.get("handoff_path")),
             status=_status_from_error(handoff, str(context.get("handoff_error", ""))),
             safe_resume=_docs_markdown_escape(
-                str(handoff.get("safe_resume_point", {}).get("status", ""))
-                if isinstance(handoff.get("safe_resume_point"), dict)
-                else ""
+                str(
+                    next_action.get(
+                        "safe_status",
+                        handoff.get("safe_resume_point", {}).get("status", ""),
+                    )
+                )
             )
             or "n/a",
         ),
@@ -4414,6 +4437,378 @@ def _cmd_report(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def _resolve_oracle_agent_invocation(
+    repo_root: Path,
+) -> tuple[list[str], dict[str, str], str]:
+    return _resolve_local_agent_invocation(
+        repo_root,
+        override_env_var="AUTOLAB_ORACLE_AGENT_COMMAND",
+    )
+
+
+def _run_oracle_agent(
+    repo_root: Path,
+    *,
+    prompt_text: str,
+    timeout_seconds: float,
+) -> tuple[int, str, str, str]:
+    return _run_local_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+        override_env_var="AUTOLAB_ORACLE_AGENT_COMMAND",
+    )
+
+
+def _oracle_language_for_path(path_text: str) -> str:
+    suffix = Path(path_text).suffix.lower()
+    if suffix == ".md":
+        return "markdown"
+    if suffix == ".json":
+        return "json"
+    if suffix in {".yaml", ".yml"}:
+        return "yaml"
+    if suffix == ".py":
+        return "python"
+    if suffix in {".sh", ".bash"}:
+        return "bash"
+    if suffix == ".toml":
+        return "toml"
+    if suffix == ".log":
+        return "text"
+    return "text"
+
+
+def _oracle_build_appendix_block(
+    *,
+    path_text: str,
+    role: str,
+    status: str,
+    reason: str,
+    content: str,
+) -> str:
+    language = _oracle_language_for_path(path_text)
+    body = content.rstrip("\n")
+    if not body:
+        body = "Artifact content is empty."
+    return "\n".join(
+        [
+            f"### Artifact: {path_text}",
+            "",
+            f"- role: `{role}`",
+            f"- status: `{status}`",
+            f"- reason: {reason}",
+            "",
+            f"```{language}",
+            body,
+            "```",
+            "",
+        ]
+    ).rstrip()
+
+
+def _oracle_collect_sources(
+    *,
+    repo_root: Path,
+    handoff_payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    packet = handoff_payload.get("continuation_packet")
+    if not isinstance(packet, dict):
+        raise RuntimeError("handoff continuation_packet is missing or invalid")
+    raw_pointers = packet.get("artifact_pointers")
+    if not isinstance(raw_pointers, list) or not raw_pointers:
+        raise RuntimeError("handoff continuation_packet has no artifact_pointers")
+
+    diagnostics: list[str] = []
+    packet_diagnostics = packet.get("diagnostics")
+    if isinstance(packet_diagnostics, list):
+        diagnostics.extend(
+            str(item).strip() for item in packet_diagnostics if str(item).strip()
+        )
+
+    sources: list[dict[str, Any]] = []
+    for raw_pointer in raw_pointers:
+        if not isinstance(raw_pointer, dict):
+            continue
+        if not bool(raw_pointer.get("inline_in_oracle", False)):
+            continue
+        path_text = str(raw_pointer.get("path", "")).strip()
+        if not path_text:
+            continue
+        role = str(raw_pointer.get("role", "artifact")).strip() or "artifact"
+        status = str(raw_pointer.get("status", "")).strip() or "unknown"
+        reason = (
+            str(raw_pointer.get("reason", "")).strip()
+            or "Relevant continuation artifact."
+        )
+        content = ""
+
+        resolved_path, pointer_error = _docs_resolve_pointer_path(repo_root, path_text)
+        if pointer_error:
+            diagnostics.append(pointer_error)
+            status = "invalid"
+            content = f"Artifact resolution error: {pointer_error}"
+        elif resolved_path is None or not resolved_path.exists():
+            status = "missing"
+            content = f"Artifact unavailable at {path_text}."
+        else:
+            try:
+                content = resolved_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                content = resolved_path.read_text(encoding="utf-8", errors="replace")
+            except Exception as exc:
+                diagnostics.append(f"failed reading {path_text}: {exc}")
+                status = "invalid"
+                content = f"Artifact read error for {path_text}: {exc}"
+            else:
+                status = "present"
+
+        appendix_block = _oracle_build_appendix_block(
+            path_text=path_text,
+            role=role,
+            status=status,
+            reason=reason,
+            content=content,
+        )
+        sources.append(
+            {
+                "role": role,
+                "path": path_text,
+                "status": status,
+                "reason": reason,
+                "content": content,
+                "appendix_block": appendix_block,
+                "appendix_heading": f"### Artifact: {path_text}",
+                "appendix_snippet": content.strip()[:120],
+            }
+        )
+
+    if not sources:
+        raise RuntimeError(
+            "handoff continuation_packet produced no oracle-inline sources"
+        )
+    return (sources, diagnostics)
+
+
+def _build_oracle_prompt(
+    *,
+    continuation_packet: dict[str, Any],
+    sources: list[dict[str, Any]],
+    diagnostics: list[str],
+) -> str:
+    source_catalog = [
+        {
+            "role": str(item.get("role", "")).strip(),
+            "path": str(item.get("path", "")).strip(),
+            "status": str(item.get("status", "")).strip(),
+            "reason": str(item.get("reason", "")).strip(),
+        }
+        for item in sources
+    ]
+    appendix_blocks = "\n\n".join(
+        str(item.get("appendix_block", "")).rstrip() for item in sources
+    ).strip()
+    return "\n".join(
+        [
+            "You are an Autolab oracle assistant.",
+            "Use only the provided continuation packet and artifact contents.",
+            "Do not browse the web. Do not invent facts or sources.",
+            "",
+            "Return Markdown with these sections in order:",
+            "# Autolab Oracle",
+            "## Summary",
+            "## Continuation Packet",
+            "## Expert Review",
+            "## Recommended Next Steps",
+            "## Artifact Guide",
+            "## Appendices",
+            "",
+            "Requirements:",
+            "- In `## Continuation Packet`, include a fenced `json` block containing the exact continuation packet JSON.",
+            "- In `## Artifact Guide`, include a short markdown table with columns Path | Role | Status | Why it matters.",
+            "- Under `## Appendices`, paste every appendix block provided below exactly as-is and in the same order.",
+            "- Do not replace appendices with links, summaries, or references.",
+            "",
+            "Continuation packet (JSON):",
+            "```json",
+            json.dumps(continuation_packet, indent=2, sort_keys=True),
+            "```",
+            "",
+            "Artifact catalog (JSON):",
+            "```json",
+            json.dumps(source_catalog, indent=2, sort_keys=True),
+            "```",
+            "",
+            "Diagnostics:",
+            "```json",
+            json.dumps(diagnostics, indent=2),
+            "```",
+            "",
+            "Required appendix blocks (paste exactly):",
+            appendix_blocks,
+            "",
+            "Now produce the oracle document.",
+        ]
+    )
+
+
+def _oracle_output_includes_source(output_text: str, source: dict[str, Any]) -> bool:
+    appendix_block = str(source.get("appendix_block", "")).strip()
+    if appendix_block and appendix_block in output_text:
+        return True
+    heading = str(source.get("appendix_heading", "")).strip()
+    snippet = str(source.get("appendix_snippet", "")).strip()
+    if heading and heading not in output_text:
+        return False
+    if snippet and snippet not in output_text:
+        return False
+    return bool(heading)
+
+
+def _validate_oracle_output(
+    output_text: str,
+    *,
+    sources: list[dict[str, Any]],
+) -> str:
+    required_sections = (
+        "# Autolab Oracle",
+        "## Summary",
+        "## Continuation Packet",
+        "## Expert Review",
+        "## Recommended Next Steps",
+        "## Artifact Guide",
+        "## Appendices",
+    )
+    for marker in required_sections:
+        if marker not in output_text:
+            return f"oracle output missing required section '{marker}'"
+    for source in sources:
+        if not _oracle_output_includes_source(output_text, source):
+            return (
+                "oracle output omitted required appendix block for "
+                f"{str(source.get('path', '')).strip() or 'unknown artifact'}"
+            )
+    return ""
+
+
+def _cmd_oracle(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        artifacts = refresh_handoff(state_path)
+    except Exception as exc:
+        print(
+            f"autolab oracle: ERROR failed to refresh handoff: {exc}", file=sys.stderr
+        )
+        return 1
+
+    handoff_payload = artifacts.payload
+    continuation_packet = handoff_payload.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        print(
+            "autolab oracle: ERROR handoff continuation_packet is missing",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
+    except Exception:
+        print(
+            "autolab oracle: ERROR --timeout-seconds must be a number",
+            file=sys.stderr,
+        )
+        return 1
+    if timeout_seconds <= 0:
+        print(
+            "autolab oracle: ERROR --timeout-seconds must be > 0",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        sources, diagnostics = _oracle_collect_sources(
+            repo_root=repo_root,
+            handoff_payload=handoff_payload,
+        )
+    except Exception as exc:
+        print(f"autolab oracle: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    prompt_text = _build_oracle_prompt(
+        continuation_packet=continuation_packet,
+        sources=sources,
+        diagnostics=diagnostics,
+    )
+    (
+        agent_returncode,
+        agent_stdout,
+        agent_stderr,
+        command_display,
+    ) = _run_oracle_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+    )
+    if agent_returncode != 0:
+        detail = (
+            agent_stderr.strip() or agent_stdout.strip() or "agent returned no output"
+        )
+        print(
+            f"autolab oracle: ERROR agent failed with exit_code={agent_returncode}: {detail}",
+            file=sys.stderr,
+        )
+        return 1
+
+    validation_error = _validate_oracle_output(agent_stdout, sources=sources)
+    if validation_error:
+        print(f"autolab oracle: ERROR {validation_error}", file=sys.stderr)
+        return 1
+
+    output_text = str(getattr(args, "output", "") or "").strip()
+    if output_text:
+        output_path = Path(output_text).expanduser()
+        output_path = (
+            output_path.resolve(strict=False)
+            if output_path.is_absolute()
+            else (repo_root / output_path).resolve(strict=False)
+        )
+    else:
+        scope_root = Path(
+            str(handoff_payload.get("scope_root", "")).strip() or repo_root
+        )
+        if not scope_root.is_absolute():
+            scope_root = (repo_root / scope_root).resolve(strict=False)
+        else:
+            scope_root = scope_root.resolve(strict=False)
+        output_path = (scope_root / "oracle.md").resolve(strict=False)
+
+    if not _docs_path_within_repo_root(repo_root, output_path):
+        print(
+            "autolab oracle: ERROR output path resolves outside repository root: "
+            f"{output_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(agent_stdout.rstrip() + "\n", encoding="utf-8")
+    except Exception as exc:
+        print(
+            f"autolab oracle: ERROR failed writing oracle document: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("autolab oracle")
+    print(f"state_file: {state_path}")
+    print(f"output_path: {output_path}")
+    print(f"artifacts_inlined: {len(sources)}")
+    print(f"llm_command: {command_display}")
     return 0
 
 

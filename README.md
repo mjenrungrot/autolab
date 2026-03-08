@@ -12,7 +12,7 @@ python -m pip install -e .
 python -m pip install git+https://github.com/mjenrungrot/autolab.git@main
 
 # Pinned release (CI / stable)
-python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.37
+python -m pip install git+https://github.com/mjenrungrot/autolab.git@v1.2.38
 ```
 
 Upgrade to the latest stable GitHub tag in one step:
@@ -33,7 +33,7 @@ python -m pip install git+https://github.com/mjenrungrot/autolab.git@vX.Y.Z
 autolab sync-scaffold --force
 ```
 
-Enable full repo hook setup (staged-file formatting + repo style check + default-branch version bump):
+Enable full repo hook setup (staged-file formatting + repo style check + default-branch version bump + pre-push pytest):
 
 ```bash
 ./scripts/install-hooks.sh
@@ -53,6 +53,7 @@ The pre-commit hook now runs `./scripts/check_style.sh` on every commit. It also
 `pyproject.toml` version, then syncs it to the next patch release and can sync
 the current `vX.Y.Z` tag to GitHub (`origin`) after each commit on the default
 branch.
+The pre-push hook now runs `pytest` from the repository root before each push.
 On default-branch commits, pre-commit now fails hard unless staged `CHANGELOG.md`
 contains a valid section for exactly `v<previous>..v<current>` with a real
 `### Summary` block.
@@ -94,17 +95,17 @@ See `docs/workflow_modes.md` for detailed responsibility contracts per mode.
 
 **Command categories (onboarding-first).**
 
-- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab discuss`, `autolab research`, `autolab trace`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab parser init|test`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`, `autolab parser init|test`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
-- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
+- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`, `autolab gc`.
 
 **Recommended first run sequence.** `autolab init` -> `autolab configure --check` -> `autolab status` -> `autolab run --verify`.
 
 **Run mode.** `autolab run` executes a single transition; `autolab loop --max-iterations N` runs bounded multi-step; `autolab loop --auto --max-hours H` enables unattended operation. Add `--verify` to run policy-driven verification before evaluation. Use `--decision <stage>` to force a human choice at `decide_repeat`, or `--auto-decision` to let Autolab choose from the backlog. For high-risk implementation plans, use `autolab run --plan-only` to stop after planning, `autolab approve-plan --status approve|retry|stop` to record the checkpoint decision, and `autolab run --execute-approved-plan` to execute the approved plan without replanning. See `docs/workflow_modes.md`.
 
-**Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state, including critical-path duration/basis, per-wave timing windows, retry reasons, blocked/deferred/skipped tasks, file conflicts, per-task evidence summaries, and pending implementation plan approvals. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `approve-plan`, `skip`, `focus`, and `experiment move`).
+**Progress, handoff, and resume.** `autolab progress` refreshes and summarizes takeover state, including critical-path duration/basis, per-wave timing windows, retry reasons, blocked/deferred/skipped tasks, file conflicts, per-task evidence summaries, and pending implementation plan approvals. `autolab handoff` writes both handoff artifacts: machine JSON (`.autolab/handoff.json`) and human Markdown (`<scope-root>/handoff.md`). The machine snapshot now also carries a nested `continuation_packet`, which is the richer scope-root continuation envelope used for downstream takeover/export flows. `autolab oracle` materializes that packet into an on-demand scope-root `oracle.md` export by combining the handoff snapshot with inlined artifact content from the current scope root. `autolab resume` previews the recommended next command and can execute it with `--apply` when the safe-resume point is ready. Handoff artifacts are auto-refreshed on verification updates, each run/loop iteration, and manual stage-steering exits (for example `review`, `approve-plan`, `skip`, `focus`, and `experiment move`); `oracle.md` is emitted only when requested.
 
 **Traceability coverage.** `autolab trace` builds a per-iteration end-to-end coverage artifact (`traceability_coverage.json`) linking hypothesis claim, design requirements, plan tasks, verification evidence, metrics, and decision context. Use `--iteration-id <id>` to render a non-active iteration and `--json` for machine-readable command output. A convenience pointer (`.autolab/traceability_latest.json`) is also updated for quick inspection.
 
@@ -139,6 +140,7 @@ autolab render --stage design --view runner --stats
 - Semantic colors are used for status readability (success/info/warning/error) without changing workflow behavior.
 
 Safety behavior is unchanged: starts locked (read-only), mutating actions require unlock + confirmation, mutating completion auto-locks, and snapshot refresh failures fail closed. Run/loop actions remain preset-first with optional advanced controls; high-risk and backlog-steering actions stay hidden until advanced mode is enabled. External artifact open defaults to `cursor` when `EDITOR` is unset. See `docs/tui_cockpit.md`.
+Cockpit handoff surfaces remain backed by `.autolab/handoff.json`; generate the expanded scope-root `oracle.md` export separately with `autolab oracle` when you need the inlined continuation view.
 
 **Agent runner.** Controlled via `agent_runner` in `.autolab/verifier_policy.yaml`. Runners: `codex` (sandboxed, default preset), `claude` (non-interactive `claude -p`), or `custom` (your own command template). Toggle per-run with `--run-agent` / `--no-run-agent`. Edit scope defaults to `scope_root_plus_core`; set `scope_root_only` for strict isolation. Project-wide tasks resolve through `scope_roots.project_wide_root` (must be repo-relative, non-empty, not `..`-escaping, and point to an existing directory). See `docs/runner_reference.md`.
 

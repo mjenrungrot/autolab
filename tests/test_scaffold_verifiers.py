@@ -381,6 +381,78 @@ def _write_handoff(repo: Path, *, valid: bool = True) -> None:
             "required_by": "none",
             "artifact_path": str(repo / "experiments" / "plan" / "iter1" / "uat.md"),
             "status": "not_required",
+            "pending": False,
+            "pending_message": "",
+            "suggested_init_command": "",
+            "suggested_check_titles": [],
+        },
+        "continuation_packet": {
+            "schema_version": "1.0",
+            "generated_at": "2026-01-01T00:00:00Z",
+            "active_stage": {
+                "stage": "implementation_review",
+                "stage_attempt": 1,
+                "max_stage_attempts": 3,
+                "scope_kind": "experiment",
+                "scope_root": str(repo / "experiments" / "plan" / "iter1"),
+            },
+            "next_action": {
+                "recommended_command": "autolab run",
+                "safe_command": "autolab run",
+                "safe_status": "ready",
+                "preconditions": [],
+                "reason": "continue workflow",
+                "executable": True,
+            },
+            "latest_good_checkpoint": {
+                "checkpoint_id": "cp_demo",
+                "stage": "implementation_review",
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_green_at": "2026-01-01T00:00:00Z",
+                "recommended_rewind_targets": [],
+            },
+            "policy_and_risk": {
+                "plan_approval_status": "",
+                "plan_requires_approval": False,
+                "plan_trigger_reasons": [],
+                "plan_hash": "",
+                "risk_fingerprint": "",
+                "guardrail_breach": "",
+                "block_reason": "",
+                "context_rot_flags": [],
+                "effective_flags": [],
+            },
+            "run_status": {
+                "run_id": "",
+                "host_mode": "",
+                "manifest_status": "",
+                "sync_status": "",
+                "metrics_status": "",
+                "manifest_path": "",
+                "metrics_path": "",
+            },
+            "uat_status": {
+                "required": False,
+                "required_by": "none",
+                "status": "not_required",
+                "artifact_path": str(
+                    repo / "experiments" / "plan" / "iter1" / "uat.md"
+                ),
+                "pending": False,
+                "pending_message": "",
+                "suggested_init_command": "",
+            },
+            "top_blockers": [],
+            "artifact_pointers": [
+                {
+                    "role": "machine_packet",
+                    "path": ".autolab/handoff.json",
+                    "status": "present",
+                    "reason": "Compact continuation source for prompts and tooling.",
+                    "inline_in_oracle": True,
+                }
+            ],
+            "diagnostics": [],
         },
     }
     if not valid:

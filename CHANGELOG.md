@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.38] - 2026-03-08
+
+### Summary
+
+- Added a nested `continuation_packet` to handoff artifacts so `autolab progress`, `autolab handoff`, `autolab resume`, docs views, and the TUI can share one compact continuation source.
+- Added `autolab oracle` to generate an on-demand scope-root `oracle.md` expert-review export with the continuation packet plus inlined artifact content.
+
+<!-- autolab:range v1.2.37..v1.2.38 -->
+
 ## [1.2.37] - 2026-03-08
 
 ### Summary

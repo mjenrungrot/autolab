@@ -153,6 +153,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "review",
             "skip",
             "handoff",
+            "oracle",
             "resume",
         ),
     ),
