@@ -359,6 +359,31 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Consumed by**: rich human/agent takeover workflows that need a single inlined scope-root export
 - **Relationship to `handoff.md`**: `oracle.md` is the dense, inlined companion to the concise `handoff.md` summary.
 
+## results.tsv
+
+- **Path**: `<scope-root>/results.tsv`
+- **Format**: TSV
+- **Columns**: `revision_label`, `run_id`, `primary_metric`, `memory_gb`, `status`, `summary`
+- **Status vocabulary**: `keep`, `discard`, `crash`, `partial`
+- **Scope-root resolution**:
+  - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
+  - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
+- **Produced by**: campaign-mode results regeneration on campaign start/continue, challenger promotion-discard decisions, and campaign stop/rethink/error exits
+- **Consumed by**: unattended-campaign scan/review workflows and status surfaces
+- **Authorship rule**: generated from canonical campaign/run artifacts; not user-authored
+
+## results.md
+
+- **Path**: `<scope-root>/results.md`
+- **Format**: Markdown
+- **Content**: human-readable campaign results ledger with campaign metadata, champion summary, keep/discard/crash/partial totals, and the current TSV-equivalent results table
+- **Scope-root resolution**:
+  - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
+  - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
+- **Produced by**: campaign-mode results regeneration on campaign start/continue, challenger promotion-discard decisions, and campaign stop/rethink/error exits
+- **Consumed by**: handoff/oracle expert review and wake-up scan workflows
+- **Relationship to `results.tsv`**: `results.md` is the readable companion to the canonical generated table in `results.tsv`
+
 ## context sidecars (`discuss.json` / `research.json`)
 
 - **Paths**:

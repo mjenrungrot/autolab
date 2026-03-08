@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -26,11 +27,14 @@ from autolab.config import (
     _load_meaningful_change_config,
 )
 from autolab.launch_runtime import _parse_memory_to_mb
+from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
     _collect_git_status_entries,
     _load_json_if_exists,
+    _manifest_timestamp,
     _normalize_space,
+    _parse_utc,
     _path_matches_any,
     _run_git,
     _utc_now,
@@ -49,6 +53,13 @@ _CAMPAIGN_CHECKPOINT_LABEL_PREFIX = "campaign_champion_"
 _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS = (
     ".autolab/**",
     ".autolab",
+)
+_CAMPAIGN_RESULT_STATUSES = ("keep", "discard", "crash", "partial")
+_CAMPAIGN_RESULTS_TSV_FILENAME = "results.tsv"
+_CAMPAIGN_RESULTS_MD_FILENAME = "results.md"
+_CAMPAIGN_COMPARE_LOG_PATTERN = re.compile(
+    r"^campaign (?P<action>promote|discard): champion=(?P<champion>\S+) "
+    r"challenger=(?P<challenger>\S+); ?(?P<summary>.*)$"
 )
 _RISK_SCORE_FIELDS = (
     "project_wide_tasks",
@@ -349,6 +360,749 @@ def _mark_campaign_oracle_exported(repo_root: Path) -> dict[str, Any] | None:
     campaign["last_oracle_at"] = _utc_now()
     _write_campaign(repo_root, campaign)
     return campaign
+
+
+def _campaign_scope_root(repo_root: Path, campaign: dict[str, Any]) -> Path:
+    normalized = _normalize_campaign(campaign)
+    if normalized["scope_kind"] == "project_wide":
+        try:
+            return _resolve_project_wide_root(repo_root)
+        except Exception as exc:
+            raise CampaignError(
+                f"campaign results require a valid project-wide scope root: {exc}"
+            ) from exc
+    iteration_dir, _iteration_type = _resolve_iteration_directory(
+        repo_root,
+        iteration_id=normalized["iteration_id"],
+        require_exists=False,
+    )
+    return iteration_dir
+
+
+def _campaign_results_tsv_path(repo_root: Path, campaign: dict[str, Any]) -> Path:
+    return _campaign_scope_root(repo_root, campaign) / _CAMPAIGN_RESULTS_TSV_FILENAME
+
+
+def _campaign_results_markdown_path(repo_root: Path, campaign: dict[str, Any]) -> Path:
+    return _campaign_scope_root(repo_root, campaign) / _CAMPAIGN_RESULTS_MD_FILENAME
+
+
+def _campaign_iteration_dir_for_results(
+    repo_root: Path, campaign: dict[str, Any]
+) -> Path:
+    normalized = _normalize_campaign(campaign)
+    if normalized["scope_kind"] == "experiment":
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=normalized["iteration_id"],
+            require_exists=False,
+        )
+        return iteration_dir
+
+    champion_run_id = normalized["champion_run_id"]
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for run_dir in repo_root.glob(f"experiments/*/*/runs/{champion_run_id}"):
+        if not run_dir.is_dir():
+            continue
+        iteration_dir = run_dir.parent.parent
+        key = iteration_dir.resolve(strict=False).as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(iteration_dir)
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise CampaignError(
+            "campaign results could not resolve a baseline iteration for "
+            f"champion run_id={champion_run_id}"
+        )
+    candidate_text = ", ".join(
+        _campaign_iteration_relpath(repo_root, item) for item in candidates
+    )
+    raise CampaignError(
+        "campaign results found multiple possible baseline iterations for "
+        f"champion run_id={champion_run_id}: {candidate_text}"
+    )
+
+
+def _campaign_results_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {status: 0 for status in _CAMPAIGN_RESULT_STATUSES}
+    for row in rows:
+        status = str(row.get("status", "")).strip().lower()
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _campaign_read_results_tsv(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return []
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    expected = [
+        "revision_label",
+        "run_id",
+        "primary_metric",
+        "memory_gb",
+        "status",
+        "summary",
+    ]
+    if header != expected:
+        return []
+    rows: list[dict[str, str]] = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        values = line.split("\t")
+        if len(values) < len(expected):
+            values.extend([""] * (len(expected) - len(values)))
+        rows.append(dict(zip(expected, values[: len(expected)], strict=False)))
+    return rows
+
+
+def _campaign_results_overview(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    try:
+        tsv_path = _campaign_results_tsv_path(repo_root, normalized)
+        md_path = _campaign_results_markdown_path(repo_root, normalized)
+    except CampaignError as exc:
+        return {
+            "results_tsv_path": "",
+            "results_tsv_exists": False,
+            "results_md_path": "",
+            "results_md_exists": False,
+            "counts": {status: 0 for status in _CAMPAIGN_RESULT_STATUSES},
+            "diagnostic": str(exc),
+        }
+
+    rows = _campaign_read_results_tsv(tsv_path)
+    return {
+        "results_tsv_path": _campaign_iteration_relpath(repo_root, tsv_path),
+        "results_tsv_exists": tsv_path.exists(),
+        "results_md_path": _campaign_iteration_relpath(repo_root, md_path),
+        "results_md_exists": md_path.exists(),
+        "counts": _campaign_results_counts(rows),
+        "diagnostic": "",
+    }
+
+
+def _campaign_compact_text(value: Any) -> str:
+    return " ".join(
+        str(value or "").replace("\t", " ").replace("\n", " ").split()
+    ).strip()
+
+
+def _campaign_primary_metric_text(payload: dict[str, Any]) -> str:
+    primary_metric = payload.get("primary_metric")
+    if not isinstance(primary_metric, dict):
+        return ""
+    value = primary_metric.get("value")
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _campaign_memory_gb_text(payload: dict[str, Any]) -> str:
+    memory_mb = _campaign_manifest_memory_mb(payload)
+    if memory_mb is None or memory_mb <= 0:
+        return ""
+    value = memory_mb / 1024.0
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _campaign_revision_label_from_manifest(
+    payload: dict[str, Any],
+    *,
+    fallback: str = "",
+) -> str:
+    workspace_revision = payload.get("workspace_revision")
+    if isinstance(workspace_revision, dict):
+        label = str(workspace_revision.get("label", "")).strip()
+        if label:
+            return label
+    remote_execution = payload.get("remote_execution")
+    if isinstance(remote_execution, dict):
+        code_sync = remote_execution.get("code_sync")
+        if isinstance(code_sync, dict):
+            for key in ("resolved_remote_revision_label", "requested_revision_label"):
+                label = str(code_sync.get(key, "")).strip()
+                if label:
+                    return label
+    revision_label = str(payload.get("revision_label", "")).strip()
+    if revision_label:
+        return revision_label
+    return str(fallback).strip() or "unversioned-worktree"
+
+
+def _campaign_run_window_membership(
+    *,
+    run_id: str,
+    timestamp,
+    started_at,
+    baseline_run_id: str,
+    comparison_events: dict[str, dict[str, Any]],
+    kept_checkpoints: dict[str, dict[str, Any]],
+) -> bool:
+    if run_id == baseline_run_id:
+        return True
+    if run_id in comparison_events or run_id in kept_checkpoints:
+        return True
+    if started_at is None:
+        return True
+    if timestamp is None:
+        return False
+    return bool(timestamp >= started_at)
+
+
+def _campaign_collect_iteration_runs(iteration_dir: Path) -> list[dict[str, Any]]:
+    runs_root = iteration_dir / "runs"
+    if not runs_root.exists():
+        return []
+
+    rows: dict[str, dict[str, Any]] = {}
+    for manifest_path in runs_root.glob("*/run_manifest.json"):
+        payload = _load_json_if_exists(manifest_path)
+        if not isinstance(payload, dict):
+            payload = {}
+        run_id = str(payload.get("run_id", "")).strip() or manifest_path.parent.name
+        if not run_id:
+            continue
+        row = rows.setdefault(
+            run_id,
+            {
+                "run_id": run_id,
+                "manifest_path": None,
+                "manifest_payload": {},
+                "metrics_path": None,
+                "metrics_payload": {},
+            },
+        )
+        row["manifest_path"] = manifest_path
+        row["manifest_payload"] = payload
+
+    for metrics_path in runs_root.glob("*/metrics.json"):
+        payload = _load_json_if_exists(metrics_path)
+        if not isinstance(payload, dict):
+            payload = {}
+        run_id = str(payload.get("run_id", "")).strip() or metrics_path.parent.name
+        if not run_id:
+            continue
+        row = rows.setdefault(
+            run_id,
+            {
+                "run_id": run_id,
+                "manifest_path": None,
+                "manifest_payload": {},
+                "metrics_path": None,
+                "metrics_payload": {},
+            },
+        )
+        row["metrics_path"] = metrics_path
+        row["metrics_payload"] = payload
+
+    result: list[dict[str, Any]] = []
+    for row in rows.values():
+        manifest_payload = row.get("manifest_payload")
+        if not isinstance(manifest_payload, dict):
+            manifest_payload = {}
+        run_id = str(row.get("run_id", "")).strip()
+        result.append(
+            {
+                **row,
+                "timestamp": _manifest_timestamp(manifest_payload, run_id),
+            }
+        )
+    result.sort(
+        key=lambda item: (
+            item.get("timestamp") is None,
+            item.get("timestamp"),
+            str(item.get("run_id", "")).strip(),
+        )
+    )
+    return result
+
+
+def _campaign_comparison_events(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> list[dict[str, Any]]:
+    normalized = _normalize_campaign(campaign)
+    log_path = repo_root / ".autolab" / "logs" / "orchestrator.log"
+    if not log_path.exists():
+        return []
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return []
+    started_at = _parse_utc(normalized["started_at"])
+    events: list[dict[str, Any]] = []
+    for line in lines:
+        timestamp_text, separator, message = line.partition(" ")
+        if not separator:
+            continue
+        timestamp = _parse_utc(timestamp_text)
+        if started_at is not None and timestamp is not None and timestamp < started_at:
+            continue
+        match = _CAMPAIGN_COMPARE_LOG_PATTERN.match(message.strip())
+        if not match:
+            continue
+        action = "keep" if match.group("action") == "promote" else "discard"
+        challenger = match.group("challenger").strip()
+        if not challenger:
+            continue
+        events.append(
+            {
+                "run_id": challenger,
+                "status": action,
+                "summary": _campaign_compact_text(match.group("summary")),
+                "timestamp": timestamp,
+                "champion_before": match.group("champion").strip(),
+            }
+        )
+    return events
+
+
+def _campaign_comparison_event_map(
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for event in events:
+        run_id = str(event.get("run_id", "")).strip()
+        if not run_id:
+            continue
+        rows[run_id] = event
+    return rows
+
+
+def _campaign_baseline_run_id(
+    campaign: dict[str, Any],
+    comparison_events: list[dict[str, Any]],
+    kept_rows: list[dict[str, Any]],
+) -> str:
+    normalized = _normalize_campaign(campaign)
+    for event in comparison_events:
+        champion_before = str(event.get("champion_before", "")).strip()
+        if champion_before:
+            return champion_before
+    for row in kept_rows:
+        run_id = str(row.get("run_id", "")).strip()
+        if run_id:
+            return run_id
+    return normalized["champion_run_id"]
+
+
+def _campaign_checkpoint_run_artifacts(
+    repo_root: Path,
+    checkpoint_id: str,
+    *,
+    iteration_dir: Path,
+    run_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    normalized_checkpoint_id = str(checkpoint_id).strip()
+    normalized_run_id = str(run_id).strip()
+    if not normalized_checkpoint_id or not normalized_run_id:
+        return ({}, {})
+    run_root_rel = _campaign_iteration_relpath(
+        repo_root,
+        iteration_dir / "runs" / normalized_run_id,
+    )
+    manifest_payload = _campaign_checkpoint_json_artifact(
+        repo_root,
+        normalized_checkpoint_id,
+        f"{run_root_rel}/run_manifest.json",
+    )
+    metrics_payload = _campaign_checkpoint_json_artifact(
+        repo_root,
+        normalized_checkpoint_id,
+        f"{run_root_rel}/metrics.json",
+    )
+    return (manifest_payload, metrics_payload)
+
+
+def _campaign_kept_run_checkpoints(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> list[dict[str, Any]]:
+    normalized = _normalize_campaign(campaign)
+    rows: list[dict[str, Any]] = []
+    for entry in _campaign_champion_checkpoint_entries(repo_root, normalized):
+        checkpoint_id = str(entry.get("checkpoint_id", "")).strip()
+        if not checkpoint_id:
+            continue
+        manifest = _campaign_checkpoint_manifest(repo_root, checkpoint_id)
+        state_snapshot = manifest.get("state_snapshot")
+        if not isinstance(state_snapshot, dict):
+            state_snapshot = {}
+        run_id = str(state_snapshot.get("last_run_id", "")).strip()
+        if not run_id:
+            continue
+        created_at = str(manifest.get("created_at", "")).strip()
+        rows.append(
+            {
+                "checkpoint_id": checkpoint_id,
+                "run_id": run_id,
+                "created_at": created_at,
+                "timestamp": _parse_utc(created_at),
+                "revision_label": str(manifest.get("revision_label", "")).strip()
+                or normalized["champion_revision_label"],
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            item.get("timestamp") is None,
+            item.get("timestamp"),
+            str(item.get("checkpoint_id", "")).strip(),
+        )
+    )
+    deduped: list[dict[str, Any]] = []
+    last_run_id = ""
+    for row in rows:
+        run_id = str(row.get("run_id", "")).strip()
+        if not run_id or run_id == last_run_id:
+            continue
+        deduped.append(row)
+        last_run_id = run_id
+    if not deduped:
+        deduped.append(
+            {
+                "checkpoint_id": "",
+                "run_id": normalized["champion_run_id"],
+                "created_at": normalized["started_at"],
+                "timestamp": _parse_utc(normalized["started_at"]),
+                "revision_label": normalized["champion_revision_label"],
+            }
+        )
+    return deduped
+
+
+def _campaign_row_status_and_summary(
+    *,
+    run_id: str,
+    metrics_payload: dict[str, Any],
+    manifest_payload: dict[str, Any],
+    baseline_run_id: str,
+    comparison_events: dict[str, dict[str, Any]],
+) -> tuple[str, str]:
+    if run_id == baseline_run_id:
+        return ("keep", "accepted baseline")
+
+    event = comparison_events.get(run_id)
+    if isinstance(event, dict):
+        status = str(event.get("status", "")).strip().lower()
+        summary = _campaign_compact_text(event.get("summary", ""))
+        if status in {"keep", "discard"}:
+            return (status, summary or f"campaign {status}")
+
+    metrics_status = str(metrics_payload.get("status", "")).strip().lower()
+    manifest_status = str(manifest_payload.get("status", "")).strip().lower()
+    if metrics_status == "partial" or manifest_status == "partial":
+        return (
+            "partial",
+            _campaign_compact_text(
+                f"partial run evidence (manifest={manifest_status or 'missing'}, "
+                f"metrics={metrics_status or 'missing'})"
+            ),
+        )
+    if manifest_status == "failed":
+        return ("crash", "run manifest status=failed")
+    if not metrics_payload:
+        return ("crash", "metrics artifact missing")
+    if metrics_status != "completed":
+        return ("crash", f"metrics status={metrics_status or 'missing'}")
+    primary_metric = metrics_payload.get("primary_metric")
+    metric_value = None
+    if isinstance(primary_metric, dict):
+        metric_value = primary_metric.get("value")
+    if metric_value is None:
+        return ("crash", "primary metric value missing")
+    return ("partial", "campaign outcome unavailable")
+
+
+def _campaign_render_results_markdown(
+    *,
+    repo_root: Path,
+    campaign: dict[str, Any],
+    rows: list[dict[str, Any]],
+    diagnostics: list[str],
+    tsv_path: Path,
+) -> str:
+    normalized = _normalize_campaign(campaign)
+    counts = _campaign_results_counts(rows)
+    lines = [
+        "# Campaign Results",
+        "",
+        f"- generated_at: `{_utc_now()}`",
+        f"- campaign_id: `{normalized['campaign_id']}`",
+        f"- label: `{normalized['label']}`",
+        f"- scope_kind: `{normalized['scope_kind']}`",
+        f"- iteration_id: `{normalized['iteration_id']}`",
+        f"- objective_metric: `{normalized['objective_metric']}`",
+        f"- objective_mode: `{normalized['objective_mode']}`",
+        f"- status: `{normalized['status']}`",
+        f"- champion_run_id: `{normalized['champion_run_id']}`",
+        f"- champion_revision_label: `{normalized['champion_revision_label']}`",
+        f"- results_tsv: `{_campaign_iteration_relpath(repo_root, tsv_path)}`",
+        "",
+        "## Totals",
+        "",
+        f"- keep: `{counts['keep']}`",
+        f"- discard: `{counts['discard']}`",
+        f"- crash: `{counts['crash']}`",
+        f"- partial: `{counts['partial']}`",
+        "",
+        "## Results",
+        "",
+        "| revision_label | run_id | primary_metric | memory_gb | status | summary |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {revision_label} | {run_id} | {primary_metric} | {memory_gb} | {status} | {summary} |".format(
+                revision_label=str(row.get("revision_label", "")).replace("|", "/"),
+                run_id=str(row.get("run_id", "")).replace("|", "/"),
+                primary_metric=str(row.get("primary_metric", "")).replace("|", "/"),
+                memory_gb=str(row.get("memory_gb", "")).replace("|", "/"),
+                status=str(row.get("status", "")).replace("|", "/"),
+                summary=str(row.get("summary", "")).replace("|", "/"),
+            )
+        )
+    if diagnostics:
+        lines.extend(["", "## Diagnostics", ""])
+        lines.extend(f"- {item}" for item in diagnostics)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _refresh_campaign_results(
+    repo_root: Path,
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    iteration_dir = _campaign_iteration_dir_for_results(repo_root, normalized)
+    scope_root = _campaign_scope_root(repo_root, normalized)
+    results_tsv_path = _campaign_results_tsv_path(repo_root, normalized)
+    results_md_path = _campaign_results_markdown_path(repo_root, normalized)
+    started_at = _parse_utc(normalized["started_at"])
+    comparison_events = _campaign_comparison_events(repo_root, normalized)
+    comparison_event_map = _campaign_comparison_event_map(comparison_events)
+    kept_rows = _campaign_kept_run_checkpoints(repo_root, normalized)
+    kept_by_run_id = {
+        str(item.get("run_id", "")).strip(): item
+        for item in kept_rows
+        if item.get("run_id")
+    }
+    baseline_run_id = _campaign_baseline_run_id(
+        normalized,
+        comparison_events,
+        kept_rows,
+    )
+    iteration_runs = _campaign_collect_iteration_runs(iteration_dir)
+    selected_runs: dict[str, dict[str, Any]] = {}
+    for entry in iteration_runs:
+        run_id = str(entry.get("run_id", "")).strip()
+        if not run_id:
+            continue
+        if not _campaign_run_window_membership(
+            run_id=run_id,
+            timestamp=entry.get("timestamp"),
+            started_at=started_at,
+            baseline_run_id=baseline_run_id,
+            comparison_events=comparison_event_map,
+            kept_checkpoints=kept_by_run_id,
+        ):
+            continue
+        selected_runs[run_id] = dict(entry)
+
+    if baseline_run_id and baseline_run_id not in selected_runs:
+        selected_runs[baseline_run_id] = {
+            "run_id": baseline_run_id,
+            "manifest_path": None,
+            "manifest_payload": {},
+            "metrics_path": None,
+            "metrics_payload": {},
+            "timestamp": None,
+        }
+
+    for kept_info in kept_rows:
+        run_id = str(kept_info.get("run_id", "")).strip()
+        if not run_id or run_id in selected_runs:
+            continue
+        selected_runs[run_id] = {
+            "run_id": run_id,
+            "manifest_path": None,
+            "manifest_payload": {},
+            "metrics_path": None,
+            "metrics_payload": {},
+            "timestamp": kept_info.get("timestamp"),
+        }
+
+    for event in comparison_events:
+        run_id = str(event.get("run_id", "")).strip()
+        if not run_id or run_id in selected_runs:
+            continue
+        selected_runs[run_id] = {
+            "run_id": run_id,
+            "manifest_path": None,
+            "manifest_payload": {},
+            "metrics_path": None,
+            "metrics_payload": {},
+            "timestamp": event.get("timestamp"),
+        }
+
+    baseline_first: list[dict[str, Any]] = []
+    ordered_run_ids: set[str] = set()
+    if baseline_run_id and baseline_run_id in selected_runs:
+        baseline_first.append(selected_runs[baseline_run_id])
+        ordered_run_ids.add(baseline_run_id)
+
+    compared_runs: list[dict[str, Any]] = []
+    for event in comparison_events:
+        run_id = str(event.get("run_id", "")).strip()
+        if not run_id or run_id in ordered_run_ids:
+            continue
+        entry = selected_runs.get(run_id)
+        if entry is None:
+            continue
+        compared_runs.append(entry)
+        ordered_run_ids.add(run_id)
+
+    non_compared = [
+        entry
+        for run_id, entry in selected_runs.items()
+        if run_id not in ordered_run_ids
+    ]
+    non_compared.sort(
+        key=lambda item: (
+            item.get("timestamp") is None,
+            item.get("timestamp"),
+            str(item.get("run_id", "")).strip(),
+        )
+    )
+    ordered_runs = baseline_first + compared_runs + non_compared
+
+    rows: list[dict[str, Any]] = []
+    diagnostics: list[str] = []
+    for entry in ordered_runs:
+        run_id = str(entry.get("run_id", "")).strip()
+        kept_info = kept_by_run_id.get(run_id, {})
+        checkpoint_id = str(kept_info.get("checkpoint_id", "")).strip()
+        manifest_payload = entry.get("manifest_payload")
+        if not isinstance(manifest_payload, dict):
+            manifest_payload = {}
+        metrics_payload = entry.get("metrics_payload")
+        if not isinstance(metrics_payload, dict):
+            metrics_payload = {}
+        if checkpoint_id and (not manifest_payload or not metrics_payload):
+            checkpoint_manifest, checkpoint_metrics = (
+                _campaign_checkpoint_run_artifacts(
+                    repo_root,
+                    checkpoint_id,
+                    iteration_dir=iteration_dir,
+                    run_id=run_id,
+                )
+            )
+            if not manifest_payload:
+                manifest_payload = checkpoint_manifest
+            if not metrics_payload:
+                metrics_payload = checkpoint_metrics
+        event = comparison_event_map.get(run_id, {})
+        if entry.get("timestamp") is None and isinstance(event, dict):
+            entry["timestamp"] = event.get("timestamp")
+        status, summary = _campaign_row_status_and_summary(
+            run_id=run_id,
+            metrics_payload=metrics_payload,
+            manifest_payload=manifest_payload,
+            baseline_run_id=baseline_run_id,
+            comparison_events=comparison_event_map,
+        )
+        revision_fallback = str(kept_info.get("revision_label", "")).strip()
+        if run_id == baseline_run_id and not revision_fallback:
+            revision_fallback = normalized["champion_revision_label"]
+        rows.append(
+            {
+                "revision_label": _campaign_revision_label_from_manifest(
+                    manifest_payload,
+                    fallback=revision_fallback,
+                ),
+                "run_id": run_id,
+                "primary_metric": _campaign_primary_metric_text(metrics_payload),
+                "memory_gb": _campaign_memory_gb_text(manifest_payload),
+                "status": status,
+                "summary": _campaign_compact_text(summary),
+            }
+        )
+        if (
+            run_id != baseline_run_id
+            and run_id not in comparison_event_map
+            and status == "partial"
+        ):
+            diagnostics.append(
+                f"run_id={run_id} has no recorded campaign compare outcome; rendered as partial"
+            )
+        if (
+            not manifest_payload
+            and not metrics_payload
+            and run_id in comparison_event_map
+        ):
+            diagnostics.append(
+                f"run_id={run_id} is reconstructed from campaign compare history without run artifacts"
+            )
+
+    results_tsv_path.parent.mkdir(parents=True, exist_ok=True)
+    tsv_lines = [
+        "\t".join(
+            [
+                "revision_label",
+                "run_id",
+                "primary_metric",
+                "memory_gb",
+                "status",
+                "summary",
+            ]
+        )
+    ]
+    for row in rows:
+        tsv_lines.append(
+            "\t".join(
+                [
+                    _campaign_compact_text(row.get("revision_label", "")),
+                    _campaign_compact_text(row.get("run_id", "")),
+                    _campaign_compact_text(row.get("primary_metric", "")),
+                    _campaign_compact_text(row.get("memory_gb", "")),
+                    _campaign_compact_text(row.get("status", "")),
+                    _campaign_compact_text(row.get("summary", "")),
+                ]
+            )
+        )
+    results_tsv_path.write_text("\n".join(tsv_lines).rstrip() + "\n", encoding="utf-8")
+    results_md_path.write_text(
+        _campaign_render_results_markdown(
+            repo_root=repo_root,
+            campaign=normalized,
+            rows=rows,
+            diagnostics=diagnostics,
+            tsv_path=results_tsv_path,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "results_tsv_path": results_tsv_path,
+        "results_md_path": results_md_path,
+        "row_count": len(rows),
+        "counts": _campaign_results_counts(rows),
+        "diagnostics": diagnostics,
+        "iteration_dir": iteration_dir,
+        "scope_root": scope_root,
+    }
 
 
 def _campaign_champion_checkpoint_label(campaign_id: str) -> str:

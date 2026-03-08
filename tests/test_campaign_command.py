@@ -10,7 +10,10 @@ import pytest
 from autolab.campaign import (
     _campaign_apply_challenger_outcome,
     _campaign_has_champion_snapshot,
+    _campaign_results_markdown_path,
+    _campaign_results_tsv_path,
     _campaign_seed_champion_snapshot,
+    _refresh_campaign_results,
 )
 from autolab.checkpoint import list_checkpoints
 from autolab.cli.handlers_campaign import (
@@ -21,6 +24,7 @@ from autolab.cli.handlers_campaign import (
 )
 from autolab.cli.parser import _build_parser
 from autolab.handoff import refresh_handoff
+from autolab.utils import _append_log
 
 try:
     import yaml
@@ -98,9 +102,31 @@ def _seed_baseline_run(
     run_id: str = "run_baseline",
     metric_value: float = 1.0,
     memory: str = "8GB",
+    manifest_status: str = "completed",
+    metrics_status: str = "completed",
+    sync_status: str = "completed",
+    started_at: str | None = None,
+    completed_at: str | None = None,
 ) -> Path:
     state = _write_state(state_path, last_run_id=run_id)
     iteration_id = str(state["iteration_id"])
+    if started_at is None:
+        started_at = (
+            "2026-03-07T23:50:00Z"
+            if run_id == "run_baseline"
+            else "2026-03-08T00:10:00Z"
+        )
+    if completed_at is None and manifest_status in {
+        "completed",
+        "failed",
+        "partial",
+        "synced",
+    }:
+        completed_at = (
+            "2026-03-07T23:55:00Z"
+            if run_id == "run_baseline"
+            else "2026-03-08T00:15:00Z"
+        )
     run_dir = repo / "experiments" / "plan" / iteration_id / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "metrics.json").write_text(
@@ -109,13 +135,15 @@ def _seed_baseline_run(
                 "schema_version": "1.0",
                 "iteration_id": iteration_id,
                 "run_id": run_id,
-                "status": "completed",
+                "status": metrics_status,
                 "primary_metric": {
                     "name": "primary_metric",
-                    "value": metric_value,
+                    "value": metric_value if metrics_status == "completed" else None,
                     "delta_vs_baseline": 0.0
                     if run_id == "run_baseline"
-                    else metric_value - 1.0,
+                    else (
+                        metric_value - 1.0 if metrics_status == "completed" else None
+                    ),
                 },
             },
             indent=2,
@@ -129,10 +157,16 @@ def _seed_baseline_run(
                 "schema_version": "1.0",
                 "run_id": run_id,
                 "iteration_id": iteration_id,
-                "status": "completed",
+                "status": manifest_status,
                 "host_mode": "local",
                 "resource_request": {"memory": memory},
-                "artifact_sync_to_local": {"status": "completed"},
+                "artifact_sync_to_local": {"status": sync_status},
+                "timestamps": {
+                    "started_at": started_at,
+                    **({"completed_at": completed_at} if completed_at else {}),
+                },
+                "started_at": started_at,
+                **({"completed_at": completed_at} if completed_at else {}),
             },
             indent=2,
         )
@@ -266,6 +300,7 @@ def _update_campaign_policy(
     *,
     complexity_proxy: str | None = None,
     change_size_metric: str | None = None,
+    project_wide_root: str | None = None,
 ) -> None:
     if yaml is None:  # pragma: no cover
         raise AssertionError("PyYAML is required for campaign policy tests")
@@ -280,7 +315,23 @@ def _update_campaign_policy(
         campaign["complexity_proxy"] = complexity_proxy
     if change_size_metric is not None:
         campaign["change_size_metric"] = change_size_metric
+    if project_wide_root is not None:
+        scope_roots = payload.setdefault("scope_roots", {})
+        assert isinstance(scope_roots, dict)
+        scope_roots["project_wide_root"] = project_wide_root
     policy_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _read_results_tsv(path: Path) -> list[dict[str, str]]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header = lines[0].split("\t")
+    rows: list[dict[str, str]] = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        values = line.split("\t")
+        rows.append(dict(zip(header, values[: len(header)], strict=False)))
+    return rows
 
 
 def _campaign_checkpoint_entries(
@@ -414,6 +465,22 @@ def test_campaign_start_writes_campaign_file_and_enters_session(
     assert campaign_payload["status"] == "running"
     assert campaign_payload["champion_run_id"] == "run_baseline"
     assert _campaign_has_champion_snapshot(repo, campaign_payload)
+    results_tsv = (
+        repo
+        / "experiments"
+        / "plan"
+        / str(campaign_payload["iteration_id"])
+        / "results.tsv"
+    )
+    results_md = (
+        repo
+        / "experiments"
+        / "plan"
+        / str(campaign_payload["iteration_id"])
+        / "results.md"
+    )
+    assert results_tsv.exists()
+    assert results_md.exists()
 
 
 def test_campaign_start_requires_decide_repeat_stage(
@@ -485,6 +552,8 @@ def test_campaign_status_prints_campaign_summary(
     assert "objective_metric: primary_metric" in output
     assert "status: stopped" in output
     assert "resumable: True" in output
+    assert "results_tsv:" in output
+    assert "results_md:" in output
 
 
 def test_refresh_handoff_prefers_campaign_continue_for_resumable_campaign(
@@ -528,6 +597,153 @@ def test_status_command_surfaces_campaign_summary(
     assert "campaign:" in output
     assert "status: error" in output
     assert "champion_run_id: run_baseline" in output
+
+
+def test_refresh_campaign_results_renders_keep_discard_crash_and_partial_rows(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path, metric_value=1.0, memory="12GB")
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(state_path)
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    _write_source_file(repo, "src/model.py", "VALUE = 'keep'\n")
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_keep",
+        metric_value=2.0,
+        memory="12GB",
+        started_at="2026-03-08T00:10:00Z",
+        completed_at="2026-03-08T00:15:00Z",
+    )
+    state = _set_decide_repeat_state(state_path, run_id="run_keep")
+    keep_result = _campaign_apply_challenger_outcome(repo, state_path, state, campaign)
+    updated_campaign = _load_campaign_file(repo)
+    _append_log(
+        repo,
+        f"campaign promote: champion=run_baseline challenger=run_keep; {keep_result['summary']}",
+    )
+
+    _write_source_file(repo, "src/model.py", "VALUE = 'discard'\n")
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_discard",
+        metric_value=0.5,
+        memory="12GB",
+        started_at="2026-03-08T00:20:00Z",
+        completed_at="2026-03-08T00:25:00Z",
+    )
+    state = _set_decide_repeat_state(state_path, run_id="run_discard")
+    discard_result = _campaign_apply_challenger_outcome(
+        repo, state_path, state, updated_campaign
+    )
+    updated_campaign = _load_campaign_file(repo)
+    _append_log(
+        repo,
+        f"campaign discard: champion=run_keep challenger=run_discard; {discard_result['summary']}",
+    )
+
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_partial",
+        metric_value=1.0,
+        metrics_status="partial",
+        manifest_status="partial",
+        sync_status="failed",
+        started_at="2026-03-08T00:30:00Z",
+        completed_at="2026-03-08T00:35:00Z",
+    )
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_crash",
+        metric_value=1.0,
+        metrics_status="failed",
+        manifest_status="failed",
+        sync_status="failed",
+        started_at="2026-03-08T00:40:00Z",
+        completed_at="2026-03-08T00:45:00Z",
+    )
+
+    result = _refresh_campaign_results(repo, updated_campaign)
+    rows = _read_results_tsv(Path(result["results_tsv_path"]))
+    rows_by_run = {row["run_id"]: row for row in rows}
+
+    assert [row["run_id"] for row in rows] == [
+        "run_baseline",
+        "run_keep",
+        "run_discard",
+        "run_partial",
+        "run_crash",
+    ]
+    assert rows_by_run["run_baseline"]["status"] == "keep"
+    assert rows_by_run["run_keep"]["status"] == "keep"
+    assert rows_by_run["run_discard"]["status"] == "discard"
+    assert rows_by_run["run_partial"]["status"] == "partial"
+    assert rows_by_run["run_crash"]["status"] == "crash"
+    results_md = Path(result["results_md_path"]).read_text(encoding="utf-8")
+    assert "- keep: `2`" in results_md
+    assert "- discard: `1`" in results_md
+    assert "- partial: `1`" in results_md
+    assert "- crash: `1`" in results_md
+
+
+def test_refresh_campaign_results_use_project_wide_scope_root(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    (repo / "src").mkdir(parents=True, exist_ok=True)
+    _update_campaign_policy(repo, project_wide_root="src")
+    _seed_baseline_run(repo, state_path, metric_value=1.0)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    campaign = _campaign_payload(state_path, scope_kind="project_wide")
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+
+    result = _refresh_campaign_results(repo, campaign)
+
+    assert Path(result["results_tsv_path"]) == _campaign_results_tsv_path(
+        repo, campaign
+    )
+    assert Path(result["results_md_path"]) == _campaign_results_markdown_path(
+        repo, campaign
+    )
+    assert _campaign_results_tsv_path(repo, campaign).exists()
+    assert _campaign_results_markdown_path(repo, campaign).exists()
+
+
+def test_refresh_handoff_includes_campaign_results_artifacts(
+    tmp_path: Path,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    campaign = _campaign_payload(state_path, status="stopped")
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+    _refresh_campaign_results(repo, campaign)
+
+    artifacts = refresh_handoff(state_path)
+    pointers = artifacts.payload["continuation_packet"]["artifact_pointers"]
+
+    assert any(
+        entry.get("role") == "campaign_results_markdown"
+        and entry.get("path") == "experiments/plan/bootstrap_iteration/results.md"
+        and entry.get("inline_in_oracle") is True
+        for entry in pointers
+    )
+    assert any(
+        entry.get("role") == "campaign_results_tsv"
+        and entry.get("path") == "experiments/plan/bootstrap_iteration/results.tsv"
+        and entry.get("inline_in_oracle") is False
+        for entry in pointers
+    )
 
 
 def test_campaign_seed_champion_snapshot_pins_latest_and_unpins_previous(
