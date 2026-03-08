@@ -1032,6 +1032,10 @@ def test_system_commands_are_contextual_for_files_filter(tmp_path: Path) -> None
             assert "Go to Files view" in home_titles
             assert "Quick open selected item" in home_titles
             assert "Show command history" in home_titles
+            assert "Checkpoint: create manual checkpoint" in home_titles
+            assert "Remote: diagnose active profile" in home_titles
+            assert "UAT: initialize artifact" in home_titles
+            assert "Hooks: install Autolab post-commit hook" in home_titles
             assert "Focus Files Name Filter" not in home_titles
 
             app._command_history.appendleft(

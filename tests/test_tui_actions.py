@@ -5,13 +5,16 @@ from pathlib import Path
 import pytest
 
 from autolab.tui.actions import (
+    build_checkpoint_create_intent,
     build_experiment_create_intent,
     build_experiment_move_intent,
     build_focus_intent,
+    build_hooks_install_intent,
     build_human_review_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
+    build_remote_doctor_intent,
     build_run_intent,
     build_todo_sync_intent,
     build_uat_init_intent,
@@ -35,7 +38,10 @@ def test_action_catalog_contains_required_entries() -> None:
     assert "resolve_human_review" in action_ids
     assert "run_loop" in action_ids
     assert "todo_sync" in action_ids
+    assert "checkpoint_create" in action_ids
+    assert "remote_doctor" in action_ids
     assert "uat_init" in action_ids
+    assert "hooks_install" in action_ids
     assert "focus_experiment" in action_ids
     assert "experiment_create" in action_ids
     assert "experiment_move" in action_ids
@@ -66,11 +72,32 @@ def test_action_catalog_contains_required_entries() -> None:
     assert run_loop.advanced is True
     assert run_loop.risk_level == "high"
 
+    checkpoint_action = next(
+        action for action in actions if action.action_id == "checkpoint_create"
+    )
+    assert checkpoint_action.kind == "mutating"
+    assert checkpoint_action.requires_arm is True
+    assert checkpoint_action.requires_confirmation is True
+
+    remote_action = next(
+        action for action in actions if action.action_id == "remote_doctor"
+    )
+    assert remote_action.kind == "view"
+    assert remote_action.requires_arm is False
+    assert remote_action.requires_confirmation is True
+
     uat_action = next(action for action in actions if action.action_id == "uat_init")
     assert uat_action.kind == "mutating"
     assert uat_action.requires_arm is True
     assert uat_action.requires_confirmation is True
     assert "--suggest" in uat_action.help_text
+
+    hooks_action = next(
+        action for action in actions if action.action_id == "hooks_install"
+    )
+    assert hooks_action.kind == "mutating"
+    assert hooks_action.requires_arm is True
+    assert hooks_action.requires_confirmation is True
 
     human_review_action = next(
         action for action in actions if action.action_id == "resolve_human_review"
@@ -178,13 +205,29 @@ def test_build_verify_and_todo_sync_intents(tmp_path: Path) -> None:
     assert todo_sync_intent.mutating is True
 
 
-def test_build_uat_init_intent(tmp_path: Path) -> None:
+def test_build_checkpoint_remote_uat_and_hooks_intents(tmp_path: Path) -> None:
     state_path = tmp_path / ".autolab" / "state.json"
+
+    checkpoint_intent = build_checkpoint_create_intent(state_path=state_path)
+    assert checkpoint_intent.argv[:3] == ("autolab", "checkpoint", "create")
+    assert checkpoint_intent.mutating is True
+    assert ".autolab/checkpoints/index.json" in checkpoint_intent.expected_writes
+
+    remote_intent = build_remote_doctor_intent(state_path=state_path)
+    assert remote_intent.argv[:3] == ("autolab", "remote", "doctor")
+    assert remote_intent.expected_writes == ()
+    assert remote_intent.mutating is False
+
     uat_intent = build_uat_init_intent(state_path=state_path)
     assert uat_intent.argv[:3] == ("autolab", "uat", "init")
     assert "--suggest" in uat_intent.argv
     assert uat_intent.mutating is True
     assert "experiments/*/*/uat.md" in uat_intent.expected_writes
+
+    hooks_intent = build_hooks_install_intent(state_path=state_path)
+    assert hooks_intent.argv[:3] == ("autolab", "hooks", "install")
+    assert hooks_intent.mutating is True
+    assert hooks_intent.expected_writes == (".git/hooks/post-commit",)
 
 
 def test_build_verify_intent_omits_blank_stage(tmp_path: Path) -> None:

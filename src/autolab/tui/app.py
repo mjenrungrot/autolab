@@ -32,13 +32,16 @@ from textual.widgets import (
 
 from autolab.constants import BACKLOG_COMPLETED_STATUSES, EXPERIMENT_TYPES
 from autolab.tui.actions import (
+    build_checkpoint_create_intent,
     build_experiment_create_intent,
     build_experiment_move_intent,
     build_focus_intent,
+    build_hooks_install_intent,
     build_human_review_intent,
     build_lock_break_intent,
     build_loop_intent,
     build_open_in_editor_intent,
+    build_remote_doctor_intent,
     build_run_intent,
     build_todo_sync_intent,
     build_uat_init_intent,
@@ -4453,11 +4456,35 @@ class AutolabCockpitApp(App[None]):
                     self.action_toggle_safety_lock,
                 ),
                 SystemCommand(
+                    "Checkpoint: create manual checkpoint",
+                    "Create a manual checkpoint for the current workflow state.",
+                    lambda: self._start_ui_flow(
+                        label="checkpoint-create",
+                        flow_factory=lambda: self._execute_action("checkpoint_create"),
+                    ),
+                ),
+                SystemCommand(
+                    "Remote: diagnose active profile",
+                    "Run remote profile diagnostics for the current repository.",
+                    lambda: self._start_ui_flow(
+                        label="remote-doctor",
+                        flow_factory=lambda: self._execute_action("remote_doctor"),
+                    ),
+                ),
+                SystemCommand(
                     "UAT: initialize artifact",
                     "Create the current iteration UAT artifact with suggested checks.",
                     lambda: self._start_ui_flow(
                         label="uat-init",
                         flow_factory=lambda: self._execute_action("uat_init"),
+                    ),
+                ),
+                SystemCommand(
+                    "Hooks: install Autolab post-commit hook",
+                    "Install the Autolab post-commit hook helper in the repository.",
+                    lambda: self._start_ui_flow(
+                        label="hooks-install",
+                        flow_factory=lambda: self._execute_action("hooks_install"),
                     ),
                 ),
                 SystemCommand(
@@ -6174,8 +6201,14 @@ class AutolabCockpitApp(App[None]):
             intent = build_loop_intent(state_path=snapshot.state_path, options=options)
         elif action_id == "todo_sync":
             intent = build_todo_sync_intent(state_path=snapshot.state_path)
+        elif action_id == "checkpoint_create":
+            intent = build_checkpoint_create_intent(state_path=snapshot.state_path)
+        elif action_id == "remote_doctor":
+            intent = build_remote_doctor_intent(state_path=snapshot.state_path)
         elif action_id == "uat_init":
             intent = build_uat_init_intent(state_path=snapshot.state_path)
+        elif action_id == "hooks_install":
+            intent = build_hooks_install_intent(state_path=snapshot.state_path)
         elif action_id == "lock_break":
             intent = build_lock_break_intent(
                 state_path=snapshot.state_path,

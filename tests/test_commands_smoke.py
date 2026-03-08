@@ -1674,13 +1674,51 @@ def test_top_level_help_groups_commands_for_onboarding() -> None:
     assert "resume" in help_text
     assert "tui" in help_text
     assert "render" in help_text
+    assert "checkpoint" in help_text
+    assert "uat" in help_text
     assert "parser" in help_text
     assert "todo" in help_text
     assert "policy" in help_text
+    assert "remote" in help_text
+    assert "hooks" in help_text
     assert "update" in help_text
     assert "report" in help_text
     assert "Record a human review decision" in help_text
     assert "Recommended onboarding flow:" in help_text
+
+
+def test_top_level_help_places_newer_command_surfaces_in_expected_groups() -> None:
+    help_text = commands_module._build_parser().format_help()
+    run_workflow = help_text.split("    Run workflow:\n", 1)[1].split(
+        "    Backlog steering:\n", 1
+    )[0]
+    safety_policy = help_text.split("    Safety and policy:\n", 1)[1].split(
+        "    Maintenance:\n", 1
+    )[0]
+    maintenance = help_text.split("    Maintenance:\n", 1)[1].split(
+        "\n\noptions:\n", 1
+    )[0]
+
+    assert "checkpoint" in run_workflow
+    assert "uat" in run_workflow
+    assert "remote" in safety_policy
+    assert "hooks" in maintenance
+    assert "Other commands:" not in help_text
+
+
+def test_readme_and_quickstart_surface_checkpoint_remote_uat_and_hooks() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    readme_text = (repo_root / "README.md").read_text(encoding="utf-8")
+    quickstart_text = (repo_root / "docs" / "quickstart.md").read_text(encoding="utf-8")
+
+    for text in (readme_text, quickstart_text):
+        assert "autolab checkpoint create|list|pin|unpin" in text
+        assert "autolab remote show|doctor|smoke" in text
+        assert "autolab uat init" in text
+        assert "autolab hooks install" in text
+
+    assert "autolab hooks install" in readme_text
+    assert "./scripts/install-hooks.sh" in readme_text
 
 
 def test_init_help_includes_from_existing_flag(

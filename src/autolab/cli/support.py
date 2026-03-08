@@ -139,6 +139,7 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "run",
             "loop",
+            "checkpoint",
             "trace",
             "tui",
             "render",
@@ -156,10 +157,11 @@ TOP_LEVEL_COMMAND_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     ("Backlog steering", ("focus", "todo", "experiment")),
-    ("Safety and policy", ("policy", "guardrails", "lock", "unlock")),
+    ("Safety and policy", ("policy", "remote", "guardrails", "lock", "unlock")),
     (
         "Maintenance",
         (
+            "hooks",
             "sync-scaffold",
             "update",
             "install-skill",
