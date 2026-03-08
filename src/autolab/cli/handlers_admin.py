@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import math
+import re
 
-from autolab.campaign import _mark_campaign_oracle_exported
+from autolab.campaign import (
+    _append_campaign_oracle_feedback,
+    _campaign_summary,
+    _load_campaign,
+    _mark_campaign_oracle_exported,
+)
 from autolab.cli.support import *
 from autolab.agent_surface import (
     build_agent_surface_guidance,
     infer_agent_surface_provider,
     resolve_agent_surface,
 )
-from autolab.plan_approval import resolve_plan_approval_state
+from autolab.plan_approval import (
+    append_plan_approval_note,
+    load_plan_approval,
+    resolve_plan_approval_state,
+)
 from autolab.sidecar_context import resolve_context_sidecars
 from autolab.sidecar_tools import (
     DISCUSS_COLLECTIONS,
@@ -4441,6 +4451,531 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+_ORACLE_APPLY_DISCUSS_COLLECTIONS = (
+    "locked_decisions",
+    "preferences",
+    "constraints",
+    "open_questions",
+)
+_ORACLE_APPLY_FEEDBACK_SIGNALS = {"none", "stop", "rethink"}
+
+
+def _resolve_oracle_apply_agent_invocation(
+    repo_root: Path,
+) -> tuple[list[str], dict[str, str], str]:
+    return _resolve_local_agent_invocation(
+        repo_root,
+        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
+    )
+
+
+def _run_oracle_apply_agent(
+    repo_root: Path,
+    *,
+    prompt_text: str,
+    timeout_seconds: float,
+) -> tuple[int, str, str, str]:
+    return _run_local_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
+    )
+
+
+def _oracle_apply_input_source_label(repo_root: Path, path: Path) -> str:
+    return _sidecar_relpath(repo_root, path)
+
+
+def _read_oracle_apply_input(
+    args: argparse.Namespace,
+    *,
+    repo_root: Path,
+) -> tuple[str, str]:
+    notes_path_text = str(getattr(args, "notes", "") or "").strip()
+    from_stdin = bool(getattr(args, "stdin", False))
+    if bool(notes_path_text) == from_stdin:
+        raise RuntimeError("choose exactly one of --notes or --stdin")
+
+    if notes_path_text:
+        notes_path = Path(notes_path_text).expanduser()
+        if not notes_path.is_absolute():
+            notes_path = (repo_root / notes_path).resolve(strict=False)
+        else:
+            notes_path = notes_path.resolve(strict=False)
+        if not notes_path.exists() or not notes_path.is_file():
+            raise RuntimeError(f"notes file not found: {notes_path}")
+        try:
+            note_text = notes_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            note_text = notes_path.read_text(encoding="utf-8", errors="replace")
+        source_label = _oracle_apply_input_source_label(repo_root, notes_path)
+    else:
+        note_text = sys.stdin.read()
+        source_label = "stdin"
+
+    if not str(note_text).strip():
+        raise RuntimeError("input notes are empty")
+    return (source_label, str(note_text))
+
+
+def _extract_markdown_section(markdown_text: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"^## {re.escape(heading)}\s*$\n(?P<body>.*?)(?=^## \S|\Z)",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(markdown_text)
+    if not match:
+        return ""
+    return str(match.group("body") or "").strip()
+
+
+def _prepare_oracle_apply_notes(note_text: str) -> str:
+    normalized = str(note_text or "").strip()
+    if "# Autolab Oracle" not in normalized:
+        return normalized
+    expert_review = _extract_markdown_section(normalized, "Expert Review")
+    next_steps = _extract_markdown_section(normalized, "Recommended Next Steps")
+    extracted_sections: list[str] = []
+    if expert_review:
+        extracted_sections.extend(["## Expert Review", expert_review])
+    if next_steps:
+        extracted_sections.extend(["", "## Recommended Next Steps", next_steps])
+    return "\n".join(extracted_sections).strip() or normalized
+
+
+def _normalize_oracle_apply_discuss_updates(
+    raw_payload: Any,
+    *,
+    scope_kind: str,
+) -> dict[str, list[dict[str, Any]]]:
+    if raw_payload in ("", None):
+        raw_payload = {}
+    if not isinstance(raw_payload, dict):
+        raise StageCheckError("oracle apply discuss_updates must be an object")
+    output: dict[str, list[dict[str, Any]]] = {
+        name: [] for name in _ORACLE_APPLY_DISCUSS_COLLECTIONS
+    }
+    for collection_name in _ORACLE_APPLY_DISCUSS_COLLECTIONS:
+        raw_entries = raw_payload.get(collection_name, [])
+        if raw_entries in ("", None):
+            raw_entries = []
+        if not isinstance(raw_entries, list):
+            raise StageCheckError(
+                f"oracle apply discuss_updates.{collection_name} must be a list"
+            )
+        seen_ids: set[str] = set()
+        seen_summaries: set[str] = set()
+        normalized_entries: list[dict[str, Any]] = []
+        for index, raw_entry in enumerate(raw_entries):
+            entry = _normalize_discuss_entry(
+                collection_name,
+                raw_entry,
+                index=index,
+                scope_kind=scope_kind,
+            )
+            if not isinstance(entry, dict):
+                continue
+            item_id = str(entry.get("id", "")).strip()
+            summary_key = _normalize_space(str(entry.get("summary", ""))).lower()
+            if not item_id or item_id in seen_ids:
+                continue
+            if summary_key and summary_key in seen_summaries:
+                continue
+            seen_ids.add(item_id)
+            if summary_key:
+                seen_summaries.add(summary_key)
+            normalized_entries.append(entry)
+        output[collection_name] = normalized_entries
+    return output
+
+
+def _normalize_oracle_apply_research_questions(
+    raw_payload: Any,
+) -> list[dict[str, str]]:
+    if raw_payload in ("", None):
+        raw_payload = []
+    if not isinstance(raw_payload, list):
+        raise StageCheckError("oracle apply research_questions must be a list")
+    output: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, raw_entry in enumerate(raw_payload):
+        if isinstance(raw_entry, str):
+            summary = _normalize_space(raw_entry)
+            detail = summary
+            item_id = ""
+        elif isinstance(raw_entry, dict):
+            summary = _normalize_space(str(raw_entry.get("summary", "")))
+            detail = _normalize_space(str(raw_entry.get("detail", ""))) or summary
+            item_id = _normalize_space(str(raw_entry.get("id", "")))
+        else:
+            continue
+        if not summary:
+            continue
+        item_id = item_id or _slugify_sidecar_item_id("rq", summary, index)
+        dedupe_key = (item_id, summary.lower())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        output.append(
+            {
+                "id": item_id,
+                "summary": summary,
+                "detail": detail,
+            }
+        )
+    return output
+
+
+def _normalize_oracle_apply_todo_hints(
+    raw_payload: Any,
+    *,
+    current_stage: str,
+) -> list[dict[str, Any]]:
+    if raw_payload in ("", None):
+        raw_payload = []
+    if not isinstance(raw_payload, list):
+        raise StageCheckError("oracle apply todo_hints must be a list")
+    default_stage = current_stage if current_stage in ALL_STAGES else "implementation"
+    output: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_entry in raw_payload:
+        if isinstance(raw_entry, str):
+            summary = _normalize_space(raw_entry)
+            detail = summary
+            stage = default_stage
+            priority = ""
+            owner = ""
+            labels: list[str] = []
+        elif isinstance(raw_entry, dict):
+            summary = _normalize_space(str(raw_entry.get("summary", "")))
+            detail = _normalize_space(str(raw_entry.get("detail", ""))) or summary
+            stage = _normalize_space(str(raw_entry.get("stage", ""))).lower()
+            priority = _normalize_space(str(raw_entry.get("priority", ""))).lower()
+            owner = _normalize_space(str(raw_entry.get("owner", "")))
+            labels = []
+            raw_labels = raw_entry.get("labels", [])
+            if raw_labels not in ("", None):
+                if not isinstance(raw_labels, list):
+                    raise StageCheckError(
+                        "oracle apply todo_hints labels must be a list"
+                    )
+                labels = [
+                    _normalize_space(str(item)).lower()
+                    for item in raw_labels
+                    if _normalize_space(str(item))
+                ]
+        else:
+            continue
+        if not summary:
+            continue
+        if stage not in ALL_STAGES:
+            stage = default_stage
+        dedupe_key = (stage, summary.lower())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        output.append(
+            {
+                "summary": summary,
+                "detail": detail,
+                "stage": stage,
+                "priority": priority,
+                "owner": owner,
+                "labels": labels,
+            }
+        )
+    return output
+
+
+def _normalize_oracle_apply_campaign_feedback(
+    raw_payload: Any,
+) -> list[dict[str, str]]:
+    if raw_payload in ("", None):
+        raw_payload = []
+    if not isinstance(raw_payload, list):
+        raise StageCheckError("oracle apply campaign_feedback must be a list")
+    output: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw_entry in raw_payload:
+        if isinstance(raw_entry, str):
+            summary = _normalize_space(raw_entry)
+            detail = summary
+            signal = "none"
+        elif isinstance(raw_entry, dict):
+            summary = _normalize_space(str(raw_entry.get("summary", "")))
+            detail = _normalize_space(str(raw_entry.get("detail", ""))) or summary
+            signal = _normalize_space(str(raw_entry.get("signal", ""))).lower()
+        else:
+            continue
+        if signal not in _ORACLE_APPLY_FEEDBACK_SIGNALS:
+            raise StageCheckError(
+                f"oracle apply campaign_feedback signal '{signal}' is unsupported"
+            )
+        if not summary and not detail:
+            continue
+        dedupe_key = (summary.lower(), detail.lower(), signal)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        output.append(
+            {
+                "summary": summary,
+                "detail": detail,
+                "signal": signal,
+            }
+        )
+    return output
+
+
+def _normalize_oracle_apply_payload(
+    raw_payload: dict[str, Any],
+    *,
+    scope_kind: str,
+    current_stage: str,
+) -> dict[str, Any]:
+    if not isinstance(raw_payload, dict):
+        raise StageCheckError("oracle apply classifier must return a JSON object")
+    summary = raw_payload.get("summary", "")
+    if summary not in ("", None) and not isinstance(summary, str):
+        raise StageCheckError("oracle apply summary must be a string")
+    plan_approval_note = raw_payload.get("plan_approval_note", "")
+    if plan_approval_note not in ("", None) and not isinstance(plan_approval_note, str):
+        raise StageCheckError("oracle apply plan_approval_note must be a string")
+    return {
+        "summary": _normalize_space(str(summary or "")),
+        "discuss_updates": _normalize_oracle_apply_discuss_updates(
+            raw_payload.get("discuss_updates", {}),
+            scope_kind=scope_kind,
+        ),
+        "research_questions": _normalize_oracle_apply_research_questions(
+            raw_payload.get("research_questions", [])
+        ),
+        "todo_hints": _normalize_oracle_apply_todo_hints(
+            raw_payload.get("todo_hints", []),
+            current_stage=current_stage,
+        ),
+        "campaign_feedback": _normalize_oracle_apply_campaign_feedback(
+            raw_payload.get("campaign_feedback", [])
+        ),
+        "plan_approval_note": _normalize_space(str(plan_approval_note or "")),
+    }
+
+
+def _oracle_apply_entry_key(entry: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(entry.get("id", "")).strip(),
+        _normalize_space(str(entry.get("summary", ""))).lower(),
+    )
+
+
+def _merge_oracle_sidecar_entries(
+    existing_entries: Any,
+    additions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    output: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    if isinstance(existing_entries, list):
+        for raw_entry in existing_entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            key = _oracle_apply_entry_key(raw_entry)
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append(raw_entry)
+
+    added = 0
+    for entry in additions:
+        if not isinstance(entry, dict):
+            continue
+        key = _oracle_apply_entry_key(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(entry)
+        added += 1
+    return (output, added)
+
+
+def _build_oracle_apply_prompt(
+    *,
+    state: dict[str, Any],
+    scope_kind: str,
+    context_resolution: dict[str, Any],
+    effective_discuss: dict[str, Any],
+    effective_research: dict[str, Any],
+    campaign_summary: dict[str, Any],
+    plan_approval_summary: dict[str, Any],
+    prepared_notes: str,
+    source_label: str,
+) -> str:
+    prompt_payload = {
+        "scope_kind": scope_kind,
+        "stage": str(state.get("stage", "")).strip(),
+        "iteration_id": str(state.get("iteration_id", "")).strip(),
+        "experiment_id": str(state.get("experiment_id", "")).strip(),
+        "context_resolution": {
+            "compact_render": str(context_resolution.get("compact_render", "")).strip(),
+            "diagnostics": list(context_resolution.get("diagnostics", []))
+            if isinstance(context_resolution.get("diagnostics"), list)
+            else [],
+        },
+        "effective_discuss": effective_discuss,
+        "effective_research": effective_research,
+        "campaign": campaign_summary,
+        "plan_approval": plan_approval_summary,
+    }
+    return "\n".join(
+        [
+            "You are an Autolab oracle-ingestion assistant.",
+            "Classify the expert feedback into steering updates for the current repository state.",
+            "Use only the provided repo-local context. Do not browse the web or invent files or statuses.",
+            "",
+            "Return only a single JSON object with these keys:",
+            "- summary: short sentence",
+            "- discuss_updates: object with optional arrays locked_decisions, preferences, constraints, open_questions",
+            "- research_questions: array of unresolved research questions",
+            "- todo_hints: array of concrete next-step tasks",
+            "- campaign_feedback: array of campaign steering notes",
+            "- plan_approval_note: string",
+            "",
+            "Constraints:",
+            f"- Allowed todo_hints.stage values: {', '.join(sorted(ALL_STAGES))}",
+            "- campaign_feedback.signal must be one of: none, stop, rethink",
+            "- Prefer empty arrays or empty strings when a bucket does not apply",
+            "- Do not include markdown fences or commentary outside the JSON object",
+            "",
+            "Current context (JSON):",
+            "```json",
+            json.dumps(prompt_payload, indent=2, sort_keys=True),
+            "```",
+            "",
+            f"Expert notes source: {source_label}",
+            "Expert notes to classify:",
+            "```markdown",
+            prepared_notes.strip(),
+            "```",
+            "",
+            "Now return only the JSON object.",
+        ]
+    )
+
+
+def _build_oracle_apply_sidecar_payload(
+    *,
+    sidecar_kind: str,
+    scope_kind: str,
+    scope_root: Path,
+    iteration_id: str,
+    experiment_id: str,
+    dependency_refs: list[dict[str, str]],
+    existing_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": "1.0",
+        "sidecar_kind": sidecar_kind,
+        "scope_kind": scope_kind,
+        "scope_root": str(scope_root),
+        "generated_at": _utc_now(),
+        "derived_from": dependency_refs,
+        "stale_if": dependency_refs,
+    }
+    if scope_kind == "experiment":
+        payload["iteration_id"] = iteration_id
+        payload["experiment_id"] = experiment_id
+    collections = SIDECAR_COLLECTIONS_BY_KIND.get(sidecar_kind, ())
+    existing = existing_payload if isinstance(existing_payload, dict) else {}
+    for collection_name in collections:
+        payload[collection_name] = (
+            list(existing.get(collection_name, []))
+            if isinstance(existing.get(collection_name), list)
+            else []
+        )
+    return payload
+
+
+def _oracle_apply_mirrored_open_questions(
+    research_questions: list[dict[str, str]],
+    *,
+    scope_kind: str,
+) -> list[dict[str, Any]]:
+    mirrored: list[dict[str, Any]] = []
+    for index, question in enumerate(research_questions):
+        entry = _normalize_discuss_entry(
+            "open_questions",
+            {
+                "summary": str(question.get("summary", "")).strip(),
+                "detail": str(question.get("detail", "")).strip(),
+            },
+            index=index,
+            scope_kind=scope_kind,
+        )
+        if isinstance(entry, dict):
+            mirrored.append(entry)
+    return mirrored
+
+
+def _apply_oracle_todo_hints(
+    repo_root: Path,
+    *,
+    state: dict[str, Any],
+    todo_hints: list[dict[str, Any]],
+) -> tuple[list[Path], int]:
+    if not todo_hints:
+        return ([], 0)
+    open_tasks = list_open_tasks(repo_root)
+    seen = {
+        (
+            _normalize_space(str(task.get("stage", ""))).lower(),
+            _normalize_space(str(task.get("text", ""))).lower(),
+        )
+        for task in open_tasks
+    }
+    todo_path = repo_root / "docs" / "todo.md"
+    default_stage = str(state.get("stage", "")).strip().lower()
+    if default_stage not in ALL_STAGES:
+        default_stage = "implementation"
+
+    inserted = 0
+    for hint in todo_hints:
+        summary = _normalize_space(str(hint.get("summary", "")))
+        if not summary:
+            continue
+        stage = _normalize_space(str(hint.get("stage", ""))).lower()
+        if stage not in ALL_STAGES:
+            stage = default_stage
+        dedupe_key = (stage, summary.lower())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        priority = _normalize_space(str(hint.get("priority", ""))).lower()
+        owner = _normalize_space(str(hint.get("owner", "")))
+        labels = [
+            _normalize_space(str(item)).lower()
+            for item in hint.get("labels", [])
+            if _normalize_space(str(item))
+        ]
+        if "oracle" not in labels:
+            labels.append("oracle")
+        tags: list[str] = []
+        if priority:
+            tags.append(f"[priority:{priority}]")
+        if owner:
+            tags.append(f"[owner:{owner}]")
+        for label in labels:
+            tags.append(f"[label:{label}]")
+        suffix = f" {' '.join(tags)}" if tags else ""
+        _insert_todo_task_line(todo_path, line=f"- [stage:{stage}] {summary}{suffix}")
+        inserted += 1
+
+    if inserted == 0:
+        return ([], 0)
+    changed_files, _message = _safe_todo_pre_sync(repo_root, state)
+    return ([todo_path, *changed_files], inserted)
+
+
 def _resolve_oracle_agent_invocation(
     repo_root: Path,
 ) -> tuple[list[str], dict[str, str], str]:
@@ -4693,6 +5228,348 @@ def _validate_oracle_output(
                 f"{str(source.get('path', '')).strip() or 'unknown artifact'}"
             )
     return ""
+
+
+def _cmd_oracle_apply(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
+    except Exception:
+        print(
+            "autolab oracle apply: ERROR --timeout-seconds must be a number",
+            file=sys.stderr,
+        )
+        return 1
+    if timeout_seconds <= 0:
+        print(
+            "autolab oracle apply: ERROR --timeout-seconds must be > 0",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        source_label, raw_notes = _read_oracle_apply_input(args, repo_root=repo_root)
+    except Exception as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    current_stage = str(state.get("stage", "")).strip().lower()
+    scope_kind = "experiment" if iteration_id and experiment_id else "project_wide"
+    context_resolution = resolve_context_sidecars(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        scope_kind=scope_kind,
+    )
+    effective_discuss = context_resolution.get("effective_discuss")
+    if not isinstance(effective_discuss, dict):
+        effective_discuss = {name: [] for name in DISCUSS_COLLECTIONS}
+    effective_research = context_resolution.get("effective_research")
+    if not isinstance(effective_research, dict):
+        effective_research = {name: [] for name in RESEARCH_COLLECTIONS}
+
+    discuss_paths = resolve_sidecar_output_paths(
+        repo_root,
+        scope_kind=scope_kind,
+        sidecar_kind="discuss",
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+    )
+    research_paths = resolve_sidecar_output_paths(
+        repo_root,
+        scope_kind=scope_kind,
+        sidecar_kind="research",
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+    )
+    existing_discuss = _load_json_if_exists(discuss_paths["json_path"])
+    if not isinstance(existing_discuss, dict):
+        existing_discuss = None
+    existing_research = _load_json_if_exists(research_paths["json_path"])
+    if not isinstance(existing_research, dict):
+        existing_research = None
+
+    active_campaign = _load_campaign(repo_root)
+    campaign_summary = _campaign_summary(active_campaign) if active_campaign else {}
+
+    iteration_dir: Path | None = None
+    plan_approval_summary: dict[str, Any] = {}
+    if scope_kind == "experiment":
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        loaded_plan_approval = load_plan_approval(iteration_dir)
+        if loaded_plan_approval:
+            plan_approval_summary = {
+                "status": str(loaded_plan_approval.get("status", "")).strip(),
+                "requires_approval": bool(
+                    loaded_plan_approval.get("requires_approval", False)
+                ),
+                "trigger_reasons": list(loaded_plan_approval.get("trigger_reasons", []))
+                if isinstance(loaded_plan_approval.get("trigger_reasons"), list)
+                else [],
+                "notes": str(loaded_plan_approval.get("notes", "")).strip(),
+            }
+
+    prepared_notes = _prepare_oracle_apply_notes(raw_notes)
+    prompt_text = _build_oracle_apply_prompt(
+        state=state,
+        scope_kind=scope_kind,
+        context_resolution=context_resolution,
+        effective_discuss=effective_discuss,
+        effective_research=effective_research,
+        campaign_summary=campaign_summary,
+        plan_approval_summary=plan_approval_summary,
+        prepared_notes=prepared_notes,
+        source_label=source_label,
+    )
+    (
+        agent_returncode,
+        agent_stdout,
+        agent_stderr,
+        command_display,
+    ) = _run_oracle_apply_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+    )
+    if agent_returncode != 0:
+        detail = (
+            agent_stderr.strip() or agent_stdout.strip() or "agent returned no output"
+        )
+        print(
+            f"autolab oracle apply: ERROR agent failed with exit_code={agent_returncode}: {detail}",
+            file=sys.stderr,
+        )
+        return 1
+
+    classifier_payload = _extract_json_object(agent_stdout)
+    if not isinstance(classifier_payload, dict):
+        print(
+            "autolab oracle apply: ERROR classifier output was not valid JSON",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        normalized_payload = _normalize_oracle_apply_payload(
+            classifier_payload,
+            scope_kind=scope_kind,
+            current_stage=current_stage,
+        )
+    except StageCheckError as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    changed_files: list[Path] = []
+    discuss_counts = {name: 0 for name in _ORACLE_APPLY_DISCUSS_COLLECTIONS}
+    research_questions_added = 0
+    todo_added = 0
+    campaign_feedback_added = 0
+    ignored_campaign_feedback = 0
+    plan_approval_updated = False
+    campaign_status = str(campaign_summary.get("status", "")).strip()
+
+    discuss_dependency_refs = build_sidecar_dependency_refs(
+        repo_root,
+        context_resolution,
+        exclude_paths={_sidecar_relpath(repo_root, discuss_paths["json_path"])},
+    )
+    research_dependency_refs = build_sidecar_dependency_refs(
+        repo_root,
+        context_resolution,
+        exclude_paths={_sidecar_relpath(repo_root, research_paths["json_path"])},
+    )
+
+    mirrored_open_questions = _oracle_apply_mirrored_open_questions(
+        normalized_payload["research_questions"],
+        scope_kind=scope_kind,
+    )
+    discuss_payload = _build_oracle_apply_sidecar_payload(
+        sidecar_kind="discuss",
+        scope_kind=scope_kind,
+        scope_root=discuss_paths["scope_root"],
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        dependency_refs=discuss_dependency_refs,
+        existing_payload=existing_discuss,
+    )
+    discuss_added_total = 0
+    for collection_name in _ORACLE_APPLY_DISCUSS_COLLECTIONS:
+        additions = list(normalized_payload["discuss_updates"].get(collection_name, []))
+        if collection_name == "open_questions":
+            additions.extend(mirrored_open_questions)
+        merged_entries, added_count = _merge_oracle_sidecar_entries(
+            discuss_payload.get(collection_name, []),
+            additions,
+        )
+        discuss_payload[collection_name] = merged_entries
+        discuss_counts[collection_name] = added_count
+        discuss_added_total += added_count
+    if discuss_added_total > 0:
+        _write_sidecar_outputs(
+            repo_root=repo_root,
+            sidecar_payload=discuss_payload,
+            output_paths=discuss_paths,
+        )
+        changed_files.extend(
+            [discuss_paths["json_path"], discuss_paths["markdown_path"]]
+        )
+
+    if normalized_payload["research_questions"]:
+        research_payload = _build_oracle_apply_sidecar_payload(
+            sidecar_kind="research",
+            scope_kind=scope_kind,
+            scope_root=research_paths["scope_root"],
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            dependency_refs=research_dependency_refs,
+            existing_payload=existing_research,
+        )
+        merged_questions, research_questions_added = _merge_oracle_sidecar_entries(
+            research_payload.get("questions", []),
+            normalized_payload["research_questions"],
+        )
+        research_payload["questions"] = merged_questions
+        if research_questions_added > 0:
+            _write_sidecar_outputs(
+                repo_root=repo_root,
+                sidecar_payload=research_payload,
+                output_paths=research_paths,
+            )
+            changed_files.extend(
+                [research_paths["json_path"], research_paths["markdown_path"]]
+            )
+
+    todo_changed_files, todo_added = _apply_oracle_todo_hints(
+        repo_root,
+        state=state,
+        todo_hints=normalized_payload["todo_hints"],
+    )
+    changed_files.extend(todo_changed_files)
+
+    if active_campaign is not None:
+        before_feedback_count = len(active_campaign.get("oracle_feedback", []))
+        before_status = str(active_campaign.get("status", "")).strip()
+        updated_campaign = active_campaign
+        for feedback in normalized_payload["campaign_feedback"]:
+            maybe_updated = _append_campaign_oracle_feedback(
+                repo_root,
+                source=source_label,
+                summary=str(feedback.get("summary", "")).strip(),
+                detail=str(feedback.get("detail", "")).strip(),
+                signal=str(feedback.get("signal", "")).strip(),
+            )
+            if isinstance(maybe_updated, dict):
+                updated_campaign = maybe_updated
+        if isinstance(updated_campaign, dict):
+            campaign_status = str(updated_campaign.get("status", "")).strip()
+            after_feedback_count = len(updated_campaign.get("oracle_feedback", []))
+            campaign_feedback_added = max(
+                0, int(after_feedback_count) - int(before_feedback_count)
+            )
+            if campaign_feedback_added > 0 or campaign_status != before_status:
+                changed_files.append(repo_root / ".autolab" / "campaign.json")
+    else:
+        ignored_campaign_feedback = len(normalized_payload["campaign_feedback"])
+
+    plan_note = normalized_payload["plan_approval_note"]
+    if (
+        plan_note
+        and iteration_dir is not None
+        and (iteration_dir / "plan_approval.json").exists()
+    ):
+        before_payload = load_plan_approval(iteration_dir)
+        before_notes = str(before_payload.get("notes", "")).strip()
+        after_payload = append_plan_approval_note(
+            iteration_dir,
+            note=plan_note,
+            source_label="oracle",
+        )
+        after_notes = str(after_payload.get("notes", "")).strip()
+        if after_notes != before_notes:
+            plan_approval_updated = True
+            changed_files.extend(
+                [
+                    iteration_dir / "plan_approval.json",
+                    iteration_dir / "plan_approval.md",
+                ]
+            )
+
+    handoff_warning = ""
+    try:
+        handoff_artifacts = refresh_handoff(state_path)
+    except Exception as exc:
+        handoff_warning = str(exc)
+    else:
+        changed_files.extend(
+            [
+                handoff_artifacts.handoff_json_path,
+                handoff_artifacts.handoff_md_path,
+            ]
+        )
+
+    changed_files = list(dict.fromkeys(changed_files))
+    summary = normalized_payload["summary"]
+    if not summary:
+        summary = (
+            "oracle apply updated "
+            f"discuss={discuss_added_total} "
+            f"research_questions={research_questions_added} "
+            f"todo={todo_added} "
+            f"campaign_feedback={campaign_feedback_added}"
+        )
+    _persist_agent_result(
+        repo_root,
+        status="complete",
+        summary=summary,
+        changed_files=changed_files,
+    )
+    _append_log(
+        repo_root,
+        (
+            "oracle apply: "
+            f"source={source_label} "
+            f"discuss={discuss_added_total} "
+            f"research_questions={research_questions_added} "
+            f"todo={todo_added} "
+            f"campaign_feedback={campaign_feedback_added} "
+            f"campaign_status={campaign_status or 'none'} "
+            f"plan_approval_note={plan_approval_updated}"
+        ),
+    )
+    if handoff_warning:
+        print(
+            f"autolab oracle apply: WARN failed to refresh handoff snapshot: {handoff_warning}",
+            file=sys.stderr,
+        )
+
+    print("autolab oracle apply")
+    print(f"state_file: {state_path}")
+    print(f"input_source: {source_label}")
+    print(f"summary: {summary}")
+    print(f"discuss_updates: {discuss_added_total}")
+    print(f"research_questions_added: {research_questions_added}")
+    print(f"todo_added: {todo_added}")
+    print(f"campaign_feedback_added: {campaign_feedback_added}")
+    print(f"ignored_campaign_feedback: {ignored_campaign_feedback}")
+    print(f"plan_approval_updated: {plan_approval_updated}")
+    if campaign_status:
+        print(f"campaign_status: {campaign_status}")
+    print(f"changed_files: {len(changed_files)}")
+    print(f"llm_command: {command_display}")
+    return 0
 
 
 def _cmd_oracle(args: argparse.Namespace) -> int:

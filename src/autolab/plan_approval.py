@@ -459,3 +459,35 @@ def record_manual_uat_request(iteration_dir: Path) -> dict[str, Any]:
     _write_json(json_path, payload)
     md_path.write_text(render_plan_approval_markdown(payload), encoding="utf-8")
     return payload
+
+
+def append_plan_approval_note(
+    iteration_dir: Path,
+    *,
+    note: str,
+    source_label: str = "oracle",
+) -> dict[str, Any]:
+    payload = load_plan_approval(iteration_dir)
+    normalized_note = str(note).strip()
+    normalized_label = str(source_label).strip() or "oracle"
+    if not payload or not normalized_note:
+        return payload
+
+    existing_notes = str(payload.get("notes", "")).strip()
+    existing_lines = [
+        line.rstrip() for line in existing_notes.splitlines() if str(line).strip()
+    ]
+    duplicate = any(
+        line.startswith(f"[{normalized_label} ") and line.endswith(normalized_note)
+        for line in existing_lines
+    )
+    if duplicate:
+        return payload
+
+    existing_lines.append(f"[{normalized_label} {_utc_now()}] {normalized_note}")
+    payload["notes"] = "\n".join(existing_lines)
+    json_path = plan_approval_json_path(iteration_dir)
+    md_path = plan_approval_markdown_path(iteration_dir)
+    _write_json(json_path, payload)
+    md_path.write_text(render_plan_approval_markdown(payload), encoding="utf-8")
+    return payload

@@ -61,6 +61,7 @@ _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS = (
 _CAMPAIGN_RESULT_STATUSES = ("keep", "discard", "crash", "partial")
 _CAMPAIGN_RESULTS_TSV_FILENAME = "results.tsv"
 _CAMPAIGN_RESULTS_MD_FILENAME = "results.md"
+_CAMPAIGN_ORACLE_FEEDBACK_SIGNALS = {"none", "stop", "rethink"}
 _CAMPAIGN_COMPARE_LOG_PATTERN = re.compile(
     r"^campaign (?P<action>promote|discard): champion=(?P<champion>\S+) "
     r"challenger=(?P<challenger>\S+); ?(?P<summary>.*)$"
@@ -142,6 +143,45 @@ def _normalize_campaign_lock_contract(payload: Any) -> dict[str, str]:
     normalized = _campaign_default_lock_contract()
     for field in _CAMPAIGN_LOCK_CONTRACT_FIELDS:
         normalized[field] = str(payload.get(field, "")).strip()
+    return normalized
+
+
+def _normalize_campaign_oracle_feedback_entry(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        payload = {}
+    signal = str(payload.get("signal", "")).strip().lower()
+    if signal not in _CAMPAIGN_ORACLE_FEEDBACK_SIGNALS:
+        signal = "none"
+    summary = str(payload.get("summary", "")).strip()
+    detail = str(payload.get("detail", "")).strip() or summary
+    return {
+        "applied_at": str(payload.get("applied_at", "")).strip(),
+        "source": str(payload.get("source", "")).strip(),
+        "summary": summary,
+        "detail": detail,
+        "signal": signal,
+    }
+
+
+def _normalize_campaign_oracle_feedback(payload: Any) -> list[dict[str, str]]:
+    if not isinstance(payload, list):
+        payload = []
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for raw_entry in payload:
+        entry = _normalize_campaign_oracle_feedback_entry(raw_entry)
+        if not entry["summary"] and not entry["detail"]:
+            continue
+        dedupe_key = (
+            entry["source"],
+            entry["summary"],
+            entry["detail"],
+            entry["signal"],
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized.append(entry)
     return normalized
 
 
@@ -235,6 +275,9 @@ def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         "crash_streak": _campaign_non_negative_int(payload, "crash_streak"),
         "started_at": started_at,
         "last_oracle_at": str(payload.get("last_oracle_at", "")).strip(),
+        "oracle_feedback": _normalize_campaign_oracle_feedback(
+            payload.get("oracle_feedback")
+        ),
     }
 
 
@@ -619,6 +662,7 @@ def _create_campaign_payload(
         "crash_streak": 0,
         "started_at": _utc_now(),
         "last_oracle_at": "",
+        "oracle_feedback": [],
     }
     if design_locked:
         payload["lock_contract"] = _campaign_capture_lock_contract(
@@ -680,6 +724,9 @@ def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "crash_streak": normalized["crash_streak"],
         "started_at": normalized["started_at"],
         "last_oracle_at": normalized["last_oracle_at"],
+        "oracle_feedback_count": len(
+            _normalize_campaign_oracle_feedback(normalized.get("oracle_feedback"))
+        ),
         "resumable": _campaign_is_resumable(normalized),
     }
 
@@ -691,6 +738,66 @@ def _mark_campaign_oracle_exported(repo_root: Path) -> dict[str, Any] | None:
     campaign["last_oracle_at"] = _utc_now()
     _write_campaign(repo_root, campaign)
     return campaign
+
+
+def _append_campaign_oracle_feedback(
+    repo_root: Path,
+    *,
+    source: str,
+    summary: str,
+    detail: str = "",
+    signal: str = "",
+) -> dict[str, Any] | None:
+    campaign = _load_campaign(repo_root)
+    if campaign is None:
+        return None
+
+    normalized = _normalize_campaign(campaign)
+    normalized_signal = str(signal).strip().lower()
+    if normalized_signal not in _CAMPAIGN_ORACLE_FEEDBACK_SIGNALS:
+        normalized_signal = "none"
+    entry = _normalize_campaign_oracle_feedback_entry(
+        {
+            "applied_at": _utc_now(),
+            "source": source,
+            "summary": summary,
+            "detail": detail,
+            "signal": normalized_signal,
+        }
+    )
+    if not entry["summary"] and not entry["detail"]:
+        return normalized
+
+    existing_feedback = _normalize_campaign_oracle_feedback(
+        normalized.get("oracle_feedback")
+    )
+    dedupe_key = (
+        entry["source"],
+        entry["summary"],
+        entry["detail"],
+        entry["signal"],
+    )
+    seen = {
+        (
+            str(item.get("source", "")).strip(),
+            str(item.get("summary", "")).strip(),
+            str(item.get("detail", "")).strip(),
+            str(item.get("signal", "")).strip(),
+        )
+        for item in existing_feedback
+        if isinstance(item, dict)
+    }
+    if dedupe_key not in seen:
+        existing_feedback.append(entry)
+        normalized["oracle_feedback"] = existing_feedback
+
+    if normalized_signal == "rethink":
+        normalized["status"] = "needs_rethink"
+    elif normalized_signal == "stop":
+        normalized["status"] = "stop_requested"
+
+    _write_campaign(repo_root, normalized)
+    return normalized
 
 
 def _campaign_scope_root(repo_root: Path, campaign: dict[str, Any]) -> Path:

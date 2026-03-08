@@ -850,7 +850,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     oracle = subparsers.add_parser(
         "oracle",
-        help="Generate an expert-review oracle document from the continuation packet",
+        help="Generate or apply oracle expert-review feedback",
     )
     oracle.add_argument(
         "--state-file",
@@ -869,6 +869,57 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional output path for the oracle document (default: <scope-root>/oracle.md).",
     )
     oracle.set_defaults(handler=_cmd_oracle)
+    oracle_subparsers = oracle.add_subparsers(dest="oracle_command")
+
+    oracle_export = oracle_subparsers.add_parser(
+        "export",
+        help="Generate an expert-review oracle document from the continuation packet",
+    )
+    oracle_export.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    oracle_export.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="LLM command timeout in seconds (default: 240).",
+    )
+    oracle_export.add_argument(
+        "--output",
+        default="",
+        help="Optional output path for the oracle document (default: <scope-root>/oracle.md).",
+    )
+    oracle_export.set_defaults(handler=_cmd_oracle)
+
+    oracle_apply = oracle_subparsers.add_parser(
+        "apply",
+        help="Apply expert notes into sidecars, todos, and campaign steering state",
+    )
+    oracle_apply.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    oracle_apply_input = oracle_apply.add_mutually_exclusive_group(required=True)
+    oracle_apply_input.add_argument(
+        "--notes",
+        default="",
+        help="Path to a notes file or oracle export to ingest.",
+    )
+    oracle_apply_input.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read notes to ingest from stdin.",
+    )
+    oracle_apply.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="LLM command timeout in seconds (default: 240).",
+    )
+    oracle_apply.set_defaults(handler=_cmd_oracle_apply)
 
     handoff = subparsers.add_parser(
         "handoff",

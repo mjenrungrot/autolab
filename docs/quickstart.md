@@ -21,7 +21,7 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 ## Command map (grouped)
 
 - **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`, `autolab parser init|test`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab campaign start|status|stop|continue`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab resume`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab campaign start|status|stop|continue`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab oracle apply`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
 - **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`, `autolab gc`.
@@ -179,6 +179,9 @@ autolab handoff
 # Export the richer scope-root oracle handoff with inlined artifact content
 autolab oracle
 
+# Apply expert feedback back into sidecars / todos / campaign state
+autolab oracle apply --notes experiments/plan/bootstrap_iteration/oracle.md
+
 # Preview safe resume command (or execute with --apply)
 autolab resume
 ```
@@ -187,7 +190,10 @@ autolab resume
 `continuation_packet` for richer continuation exports. `autolab handoff` also
 refreshes the concise scope-root `handoff.md`; `autolab oracle` is the on-demand
 expanded export that resolves that packet into `<scope-root>/oracle.md` with
-inlined artifact content from the active scope.
+inlined artifact content from the active scope. `autolab oracle apply` ingests
+expert notes from a file or stdin and writes validated updates back into the
+existing discuss/research sidecars, TODO queue, campaign feedback, and optional
+plan-approval notes.
 
 ## What's next
 
@@ -199,7 +205,7 @@ inlined artifact content from the active scope.
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review decision**: `autolab review --status=pass|retry|stop`
-- **Takeover artifacts**: `autolab progress`, `autolab handoff`, `autolab oracle`, `autolab resume --apply`
+- **Takeover artifacts**: `autolab progress`, `autolab handoff`, `autolab oracle`, `autolab oracle apply`, `autolab resume --apply`
 - **Retarget state focus**: `autolab focus --experiment-id e1`
 - **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
 - **Create a new experiment**: `autolab experiment create --experiment-id e2 --iteration-id iter2`
