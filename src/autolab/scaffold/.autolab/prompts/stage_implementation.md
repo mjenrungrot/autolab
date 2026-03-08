@@ -40,6 +40,7 @@ Example: `src/autolab/example_golden_iterations/experiments/plan/iter_golden/imp
 - `{{iteration_path}}/design.yaml`
 - `{{iteration_path}}/hypothesis.md`
 - Prior review/verifier context (`{{review_feedback}}`, `{{verifier_errors}}`) when available
+- Campaign novelty summary (`{{campaign_novelty_summary}}`) plus recent failed/near-miss families when campaign mode is active
 
 ## MISSING-INPUT FALLBACKS
 - If `design.yaml` is missing, stop and request design-stage completion.
@@ -107,6 +108,7 @@ Canonical minimal task block:
 5. Update `implementation_plan.md` with change summary, files changed, verifier outputs, exact commands executed, and evidence paths to logs/output files.
 6. Include a dedicated `## Dry Run` section whenever policy requires `dry_run` for `implementation`.
 7. Include short bounded excerpts for failing commands and explain remediation.
+8. Treat campaign novelty memory as advisory steering: avoid recently failed/crashed idea families when alternatives exist, and explicitly justify any revisit to a near-miss family.
 
 {{shared:verification_ritual.md}}
 

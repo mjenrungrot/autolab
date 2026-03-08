@@ -162,17 +162,29 @@ def test_registry_optional_tokens_are_loaded(tmp_path: Path) -> None:
     registry = load_registry(repo)
 
     launch = registry.get("launch")
+    implementation = registry.get("implementation")
     implementation_review = registry.get("implementation_review")
     decide_repeat = registry.get("decide_repeat")
     assert launch is not None
+    assert implementation is not None
     assert implementation_review is not None
     assert decide_repeat is not None
     assert "launch_execute" in launch.optional_tokens
     assert "verifier_outputs" in implementation_review.optional_tokens
+    assert "campaign_novelty_summary" in implementation.optional_tokens
+    assert "campaign_active_family" in implementation.optional_tokens
+    assert "campaign_recent_failed_families" in implementation.optional_tokens
+    assert "campaign_recent_near_miss_families" in implementation.optional_tokens
+    assert "campaign_same_family_streak" in implementation.optional_tokens
     assert "campaign_lock_mode" in decide_repeat.optional_tokens
     assert "campaign_lock_summary" in decide_repeat.optional_tokens
     assert "campaign_no_improvement_streak" in decide_repeat.optional_tokens
     assert "campaign_allowed_decisions" in decide_repeat.optional_tokens
+    assert "campaign_novelty_summary" in decide_repeat.optional_tokens
+    assert "campaign_active_family" in decide_repeat.optional_tokens
+    assert "campaign_recent_failed_families" in decide_repeat.optional_tokens
+    assert "campaign_recent_near_miss_families" in decide_repeat.optional_tokens
+    assert "campaign_same_family_streak" in decide_repeat.optional_tokens
 
 
 def test_registry_runner_prompt_file_loaded_for_implementation(tmp_path: Path) -> None:

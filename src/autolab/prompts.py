@@ -31,6 +31,8 @@ from autolab.campaign import (
     _campaign_lock_mode,
     _campaign_lock_overview,
     _campaign_locked_auto_decision,
+    _campaign_novelty_summary,
+    _campaign_novelty_summary_text,
     _load_campaign,
 )
 from autolab.config import (
@@ -624,6 +626,11 @@ def _build_prompt_context(
     campaign_allowed_decisions = (
         "hypothesis, design, implementation, stop, human_review"
     )
+    campaign_novelty_summary = "no campaign novelty memory recorded"
+    campaign_active_family = "no active family recorded"
+    campaign_recent_failed_families: list[str] = []
+    campaign_recent_near_miss_families: list[str] = []
+    campaign_same_family_streak = 0
     try:
         active_campaign = _load_campaign(repo_root)
     except Exception:
@@ -651,6 +658,25 @@ def _build_prompt_context(
         )
         campaign_allowed_decisions = ", ".join(
             _campaign_allowed_decisions(active_campaign)
+        )
+        novelty_summary = _campaign_novelty_summary(active_campaign)
+        campaign_novelty_summary = _campaign_novelty_summary_text(active_campaign)
+        campaign_active_family = (
+            str(novelty_summary.get("active_family", "")).strip()
+            or "no active family recorded"
+        )
+        recent_failed = novelty_summary.get("recent_failed_families", [])
+        if isinstance(recent_failed, list):
+            campaign_recent_failed_families = [
+                str(item).strip() for item in recent_failed if str(item).strip()
+            ]
+        recent_near_miss = novelty_summary.get("recent_near_miss_families", [])
+        if isinstance(recent_near_miss, list):
+            campaign_recent_near_miss_families = [
+                str(item).strip() for item in recent_near_miss if str(item).strip()
+            ]
+        campaign_same_family_streak = int(
+            novelty_summary.get("same_family_streak", 0) or 0
         )
         if iteration_id:
             try:
@@ -971,6 +997,11 @@ def _build_prompt_context(
         "campaign_lock_summary": campaign_lock_summary,
         "campaign_no_improvement_streak": campaign_no_improvement_streak,
         "campaign_allowed_decisions": campaign_allowed_decisions,
+        "campaign_novelty_summary": campaign_novelty_summary,
+        "campaign_active_family": campaign_active_family,
+        "campaign_recent_failed_families": campaign_recent_failed_families,
+        "campaign_recent_near_miss_families": campaign_recent_near_miss_families,
+        "campaign_same_family_streak": campaign_same_family_streak,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,
@@ -1313,6 +1344,38 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         ),
         "auto_metrics_evidence": _to_text(
             context.get("auto_metrics_evidence"), "auto_metrics_evidence"
+        ),
+        "campaign_lock_mode": _to_text(
+            context.get("campaign_lock_mode"), "campaign_lock_mode"
+        ),
+        "campaign_lock_summary": _to_text(
+            context.get("campaign_lock_summary"), "campaign_lock_summary"
+        ),
+        "campaign_no_improvement_streak": _to_text(
+            context.get("campaign_no_improvement_streak"),
+            "campaign_no_improvement_streak",
+        ),
+        "campaign_allowed_decisions": _to_text(
+            context.get("campaign_allowed_decisions"),
+            "campaign_allowed_decisions",
+        ),
+        "campaign_novelty_summary": _to_text(
+            context.get("campaign_novelty_summary"), "campaign_novelty_summary"
+        ),
+        "campaign_active_family": _to_text(
+            context.get("campaign_active_family"), "campaign_active_family"
+        ),
+        "campaign_recent_failed_families": _to_text(
+            context.get("campaign_recent_failed_families"),
+            "campaign_recent_failed_families",
+        ),
+        "campaign_recent_near_miss_families": _to_text(
+            context.get("campaign_recent_near_miss_families"),
+            "campaign_recent_near_miss_families",
+        ),
+        "campaign_same_family_streak": _to_text(
+            context.get("campaign_same_family_streak"),
+            "campaign_same_family_streak",
         ),
         "launch_mode": _to_text(context.get("launch_mode"), "launch_mode"),
         "launch_execute": _to_text(context.get("launch_execute"), "launch_execute"),

@@ -17,6 +17,15 @@ When campaign lock mode is active, do not reopen `hypothesis`; prefer `implement
 - `iteration_id={{iteration_id}}`
 - `iteration_path={{iteration_path}}`
 - `run_id={{run_id}}`
+- Campaign novelty summary: `{{campaign_novelty_summary}}`
+- Campaign active family: `{{campaign_active_family}}`
+- Recent failed families: `{{campaign_recent_failed_families}}`
+- Recent near-miss families: `{{campaign_recent_near_miss_families}}`
+- Current same-family streak: `{{campaign_same_family_streak}}`
+
+## MISSING-INPUT FALLBACKS
+- If campaign novelty memory is unavailable, continue using metrics, review evidence, and lock/policy context as the primary decision inputs.
+- If family history is sparse, do not invent novelty concerns; rely on the measured run evidence instead.
 
 ## STOP CONDITIONS
 - Stop when required input files are missing.
@@ -28,3 +37,4 @@ When campaign lock mode is active, do not reopen `hypothesis`; prefer `implement
 ## FAILURE / RETRY BEHAVIOR
 - On verifier failure, fix artifacts and rerun verification.
 - Do not force stage transitions manually.
+- Treat campaign novelty memory as advisory context only; do not override lock, metric, or policy evidence just to force novelty.

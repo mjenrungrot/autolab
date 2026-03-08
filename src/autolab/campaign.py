@@ -61,6 +61,13 @@ _CAMPAIGN_WORKTREE_EXCLUDE_PATTERNS = (
     ".autolab",
 )
 _CAMPAIGN_RESULT_STATUSES = ("keep", "discard", "crash", "partial")
+_CAMPAIGN_IDEA_ENTRY_STATUSES = ("active", "keep", "discard", "crash")
+_CAMPAIGN_IDEA_FINAL_STATUSES = ("keep", "discard", "crash")
+_CAMPAIGN_IDEA_JOURNAL_RETAIN_LIMIT = 100
+_CAMPAIGN_IDEA_RECENT_FAMILY_LIMIT = 3
+_CAMPAIGN_IDEA_RECENT_ENTRY_LIMIT = 5
+_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT = 5
+_CAMPAIGN_IDEA_SURFACE_LIMIT = 12
 _CAMPAIGN_RESULTS_TSV_FILENAME = "results.tsv"
 _CAMPAIGN_RESULTS_MD_FILENAME = "results.md"
 _CAMPAIGN_ORACLE_FEEDBACK_SIGNALS = {"none", "stop", "rethink"}
@@ -235,6 +242,9 @@ def _campaign_default_active_candidate() -> dict[str, Any]:
         "run_id": "",
         "fix_attempts": 0,
         "timeout_reference_seconds": 0.0,
+        "journal_entry_id": "",
+        "family_hint": "",
+        "thesis_hint": "",
     }
 
 
@@ -259,7 +269,253 @@ def _normalize_campaign_active_candidate(payload: Any) -> dict[str, Any]:
             ".autolab/campaign.json field 'active_candidate.timeout_reference_seconds' must be >= 0"
         )
     normalized["timeout_reference_seconds"] = timeout_reference_seconds
+    normalized["journal_entry_id"] = str(payload.get("journal_entry_id", "")).strip()
+    normalized["family_hint"] = str(payload.get("family_hint", "")).strip()
+    normalized["thesis_hint"] = str(payload.get("thesis_hint", "")).strip()
     return normalized
+
+
+def _campaign_string_list(
+    payload: Any,
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    if not isinstance(payload, list):
+        payload = []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_item in payload:
+        text = str(raw_item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+        if limit is not None and len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _campaign_default_idea_journal_entry() -> dict[str, Any]:
+    return {
+        "entry_id": "",
+        "decision": "",
+        "started_at": "",
+        "updated_at": "",
+        "completed_at": "",
+        "status": "active",
+        "attempt_count": 1,
+        "run_ids": [],
+        "thesis": "",
+        "thesis_source": "",
+        "family_key": "",
+        "family_label": "",
+        "family_source": "",
+        "touched_surfaces": [],
+        "family_surfaces": [],
+        "near_miss": False,
+        "outcome_reason": "",
+        "champion_before_run_id": "",
+        "champion_after_run_id": "",
+    }
+
+
+def _normalize_campaign_idea_journal_entry(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_idea_journal_entry()
+    normalized["entry_id"] = str(payload.get("entry_id", "")).strip()
+    normalized["decision"] = str(payload.get("decision", "")).strip().lower()
+    if normalized["decision"] not in _CAMPAIGN_DECISION_STAGES:
+        normalized["decision"] = ""
+    normalized["started_at"] = str(payload.get("started_at", "")).strip()
+    normalized["updated_at"] = str(payload.get("updated_at", "")).strip()
+    normalized["completed_at"] = str(payload.get("completed_at", "")).strip()
+    status = str(payload.get("status", "active")).strip().lower() or "active"
+    if status not in _CAMPAIGN_IDEA_ENTRY_STATUSES:
+        status = "active"
+    normalized["status"] = status
+    try:
+        attempt_count = int(payload.get("attempt_count", 1))
+    except Exception as exc:
+        raise CampaignError(
+            ".autolab/campaign.json field 'idea_journal.entries[].attempt_count' must be an integer"
+        ) from exc
+    normalized["attempt_count"] = max(1, attempt_count)
+    normalized["run_ids"] = _campaign_string_list(
+        payload.get("run_ids"),
+        limit=_CAMPAIGN_IDEA_SURFACE_LIMIT,
+    )
+    normalized["thesis"] = str(payload.get("thesis", "")).strip()
+    normalized["thesis_source"] = str(payload.get("thesis_source", "")).strip()
+    normalized["family_key"] = str(payload.get("family_key", "")).strip()
+    normalized["family_label"] = str(payload.get("family_label", "")).strip()
+    normalized["family_source"] = str(payload.get("family_source", "")).strip()
+    normalized["touched_surfaces"] = _campaign_string_list(
+        payload.get("touched_surfaces"),
+        limit=_CAMPAIGN_IDEA_SURFACE_LIMIT,
+    )
+    normalized["family_surfaces"] = _campaign_string_list(
+        payload.get("family_surfaces"),
+        limit=_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT,
+    )
+    normalized["near_miss"] = bool(payload.get("near_miss", False))
+    normalized["outcome_reason"] = str(payload.get("outcome_reason", "")).strip()
+    normalized["champion_before_run_id"] = str(
+        payload.get("champion_before_run_id", "")
+    ).strip()
+    normalized["champion_after_run_id"] = str(
+        payload.get("champion_after_run_id", "")
+    ).strip()
+    return normalized
+
+
+def _campaign_default_family_stats_entry() -> dict[str, Any]:
+    return {
+        "family_label": "",
+        "first_seen_at": "",
+        "last_seen_at": "",
+        "counts": {status: 0 for status in _CAMPAIGN_IDEA_FINAL_STATUSES},
+        "near_miss_count": 0,
+        "last_outcome": "",
+        "last_thesis": "",
+        "sample_surfaces": [],
+    }
+
+
+def _normalize_campaign_family_stats_entry(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_family_stats_entry()
+    normalized["family_label"] = str(payload.get("family_label", "")).strip()
+    normalized["first_seen_at"] = str(payload.get("first_seen_at", "")).strip()
+    normalized["last_seen_at"] = str(payload.get("last_seen_at", "")).strip()
+    counts_payload = payload.get("counts")
+    if not isinstance(counts_payload, dict):
+        counts_payload = {}
+    counts: dict[str, int] = {}
+    for status in _CAMPAIGN_IDEA_FINAL_STATUSES:
+        counts[status] = _campaign_non_negative_int(counts_payload, status)
+    normalized["counts"] = counts
+    normalized["near_miss_count"] = _campaign_non_negative_int(
+        payload, "near_miss_count"
+    )
+    last_outcome = str(payload.get("last_outcome", "")).strip().lower()
+    if last_outcome not in _CAMPAIGN_IDEA_FINAL_STATUSES:
+        last_outcome = ""
+    normalized["last_outcome"] = last_outcome
+    normalized["last_thesis"] = str(payload.get("last_thesis", "")).strip()
+    normalized["sample_surfaces"] = _campaign_string_list(
+        payload.get("sample_surfaces"),
+        limit=_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT,
+    )
+    return normalized
+
+
+def _campaign_default_idea_journal() -> dict[str, Any]:
+    return {
+        "active_entry_id": "",
+        "next_entry_seq": 1,
+        "retained_entry_limit": _CAMPAIGN_IDEA_JOURNAL_RETAIN_LIMIT,
+        "entries": [],
+        "family_stats": {},
+    }
+
+
+def _campaign_trim_idea_journal_entries(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _campaign_default_idea_journal()
+    normalized.update(payload)
+    retained_entry_limit = max(
+        1,
+        int(
+            normalized.get("retained_entry_limit", _CAMPAIGN_IDEA_JOURNAL_RETAIN_LIMIT)
+        ),
+    )
+    active_entry_id = str(normalized.get("active_entry_id", "")).strip()
+    entries = normalized.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    completed_indices = [
+        index
+        for index, entry in enumerate(entries)
+        if isinstance(entry, dict)
+        and str(entry.get("entry_id", "")).strip() != active_entry_id
+        and str(entry.get("status", "")).strip().lower()
+        in _CAMPAIGN_IDEA_FINAL_STATUSES
+    ]
+    overflow = len(completed_indices) - retained_entry_limit
+    if overflow <= 0:
+        normalized["entries"] = entries
+        return normalized
+    drop_indices = set(completed_indices[:overflow])
+    normalized["entries"] = [
+        entry for index, entry in enumerate(entries) if index not in drop_indices
+    ]
+    return normalized
+
+
+def _normalize_campaign_idea_journal(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = _campaign_default_idea_journal()
+    normalized["active_entry_id"] = str(payload.get("active_entry_id", "")).strip()
+    try:
+        next_entry_seq = int(payload.get("next_entry_seq", 1))
+    except Exception as exc:
+        raise CampaignError(
+            ".autolab/campaign.json field 'idea_journal.next_entry_seq' must be an integer"
+        ) from exc
+    normalized["next_entry_seq"] = max(1, next_entry_seq)
+    try:
+        retained_entry_limit = int(
+            payload.get("retained_entry_limit", _CAMPAIGN_IDEA_JOURNAL_RETAIN_LIMIT)
+        )
+    except Exception as exc:
+        raise CampaignError(
+            ".autolab/campaign.json field 'idea_journal.retained_entry_limit' must be an integer"
+        ) from exc
+    normalized["retained_entry_limit"] = max(1, retained_entry_limit)
+
+    raw_entries = payload.get("entries")
+    if not isinstance(raw_entries, list):
+        raw_entries = []
+    entries: list[dict[str, Any]] = []
+    seen_entry_ids: set[str] = set()
+    for raw_entry in raw_entries:
+        entry = _normalize_campaign_idea_journal_entry(raw_entry)
+        entry_id = entry["entry_id"]
+        if not entry_id or entry_id in seen_entry_ids:
+            continue
+        seen_entry_ids.add(entry_id)
+        entries.append(entry)
+    if (
+        normalized["active_entry_id"]
+        and normalized["active_entry_id"] not in seen_entry_ids
+    ):
+        normalized["active_entry_id"] = ""
+    if not normalized["active_entry_id"]:
+        for entry in reversed(entries):
+            if entry["status"] == "active":
+                normalized["active_entry_id"] = entry["entry_id"]
+                break
+    normalized["next_entry_seq"] = max(
+        normalized["next_entry_seq"],
+        len(entries) + 1,
+    )
+    normalized["entries"] = entries
+
+    family_stats_payload = payload.get("family_stats")
+    if not isinstance(family_stats_payload, dict):
+        family_stats_payload = {}
+    family_stats: dict[str, dict[str, Any]] = {}
+    for raw_key, raw_entry in family_stats_payload.items():
+        family_key = str(raw_key or "").strip()
+        if not family_key:
+            continue
+        family_stats[family_key] = _normalize_campaign_family_stats_entry(raw_entry)
+    normalized["family_stats"] = family_stats
+    return _campaign_trim_idea_journal_entries(normalized)
 
 
 def _campaign_default_last_governance_event() -> dict[str, str]:
@@ -344,6 +600,7 @@ def _normalize_campaign(payload: dict[str, Any]) -> dict[str, Any]:
         "last_governance_event": _normalize_campaign_last_governance_event(
             payload.get("last_governance_event")
         ),
+        "idea_journal": _normalize_campaign_idea_journal(payload.get("idea_journal")),
     }
 
 
@@ -359,6 +616,369 @@ def _write_campaign(repo_root: Path, payload: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(path, _normalize_campaign(payload))
     return path
+
+
+def _campaign_find_idea_entry_index(
+    idea_journal: dict[str, Any],
+    entry_id: str,
+) -> int:
+    normalized_entry_id = str(entry_id or "").strip()
+    if not normalized_entry_id:
+        return -1
+    entries = idea_journal.get("entries")
+    if not isinstance(entries, list):
+        return -1
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("entry_id", "")).strip() == normalized_entry_id:
+            return index
+    return -1
+
+
+def _campaign_active_idea_entry_info(
+    campaign: dict[str, Any],
+) -> tuple[int, dict[str, Any] | None]:
+    normalized = _normalize_campaign(campaign)
+    idea_journal = _normalize_campaign_idea_journal(normalized.get("idea_journal"))
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    entry_id = candidate["journal_entry_id"] or idea_journal["active_entry_id"]
+    entry_index = _campaign_find_idea_entry_index(idea_journal, entry_id)
+    if entry_index < 0:
+        return (-1, None)
+    entries = idea_journal.get("entries")
+    if not isinstance(entries, list) or entry_index >= len(entries):
+        return (-1, None)
+    entry = entries[entry_index]
+    if not isinstance(entry, dict):
+        return (-1, None)
+    return (entry_index, dict(entry))
+
+
+def _campaign_collapse_family_surface(rel_path: str) -> str:
+    normalized = str(rel_path or "").strip().strip("/")
+    if not normalized:
+        return ""
+    parts = Path(normalized).parts
+    if len(parts) >= 2:
+        return "/".join(parts[:2])
+    return normalized
+
+
+def _campaign_derive_idea_entry_surfaces(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    touched_surfaces = _campaign_filter_surface_paths(
+        _campaign_current_changed_paths(repo_root),
+        repo_root=repo_root,
+        state=state,
+        campaign=campaign,
+    )
+    touched_surfaces = touched_surfaces[:_CAMPAIGN_IDEA_SURFACE_LIMIT]
+    family_surfaces = _campaign_string_list(
+        [_campaign_collapse_family_surface(item) for item in touched_surfaces],
+        limit=_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT,
+    )
+    return (touched_surfaces, family_surfaces)
+
+
+def _campaign_family_key(
+    *,
+    decision: str,
+    family_hint: str,
+    family_surfaces: list[str],
+    touched_surfaces: list[str],
+) -> tuple[str, str]:
+    normalized_family_hint = str(family_hint or "").strip()
+    if normalized_family_hint:
+        return (
+            f"{decision or 'unknown'}:{_campaign_structured_fingerprint({'hint': normalized_family_hint.lower()})[:12]}",
+            "hint",
+        )
+    seed = {
+        "decision": str(decision or "").strip().lower(),
+        "family_surfaces": list(family_surfaces),
+        "touched_surfaces": list(
+            touched_surfaces[:_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT]
+        ),
+    }
+    return (
+        f"{decision or 'unknown'}:{_campaign_structured_fingerprint(seed)[:12]}",
+        "heuristic",
+    )
+
+
+def _campaign_family_label(
+    *,
+    decision: str,
+    family_hint: str,
+    family_surfaces: list[str],
+) -> str:
+    normalized_family_hint = str(family_hint or "").strip()
+    if normalized_family_hint:
+        return normalized_family_hint
+    if family_surfaces:
+        return ", ".join(family_surfaces[:_CAMPAIGN_IDEA_RECENT_FAMILY_LIMIT])
+    normalized_decision = str(decision or "").strip()
+    return f"{normalized_decision} search" if normalized_decision else "unknown search"
+
+
+def _campaign_thesis_text(
+    *,
+    decision: str,
+    thesis_hint: str,
+    family_surfaces: list[str],
+    touched_surfaces: list[str],
+) -> tuple[str, str]:
+    normalized_thesis_hint = str(thesis_hint or "").strip()
+    if normalized_thesis_hint:
+        return (normalized_thesis_hint, "hint")
+    normalized_decision = str(decision or "").strip() or "implementation"
+    surface_basis = (
+        family_surfaces or touched_surfaces[:_CAMPAIGN_IDEA_RECENT_FAMILY_LIMIT]
+    )
+    if surface_basis:
+        return (
+            f"{normalized_decision} search touching {', '.join(surface_basis[:_CAMPAIGN_IDEA_RECENT_FAMILY_LIMIT])}",
+            "heuristic",
+        )
+    return (f"{normalized_decision} search", "heuristic")
+
+
+def _campaign_next_idea_entry_id(idea_journal: dict[str, Any]) -> str:
+    next_entry_seq = int(idea_journal.get("next_entry_seq", 1) or 1)
+    return f"idea_{next_entry_seq:04d}"
+
+
+def _campaign_merge_family_stats(
+    idea_journal: dict[str, Any],
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    family_key = str(entry.get("family_key", "")).strip()
+    status = str(entry.get("status", "")).strip().lower()
+    if not family_key or status not in _CAMPAIGN_IDEA_FINAL_STATUSES:
+        return idea_journal
+    family_stats = idea_journal.get("family_stats")
+    if not isinstance(family_stats, dict):
+        family_stats = {}
+    stats = _normalize_campaign_family_stats_entry(family_stats.get(family_key))
+    family_label = str(entry.get("family_label", "")).strip()
+    if family_label:
+        stats["family_label"] = family_label
+    stats["first_seen_at"] = (
+        stats["first_seen_at"]
+        or str(entry.get("started_at", "")).strip()
+        or str(entry.get("updated_at", "")).strip()
+    )
+    stats["last_seen_at"] = (
+        str(entry.get("completed_at", "")).strip()
+        or str(entry.get("updated_at", "")).strip()
+        or stats["last_seen_at"]
+    )
+    counts = stats.get("counts")
+    if not isinstance(counts, dict):
+        counts = {item: 0 for item in _CAMPAIGN_IDEA_FINAL_STATUSES}
+    counts[status] = int(counts.get(status, 0) or 0) + 1
+    stats["counts"] = counts
+    if bool(entry.get("near_miss", False)):
+        stats["near_miss_count"] = int(stats.get("near_miss_count", 0) or 0) + 1
+    stats["last_outcome"] = status
+    stats["last_thesis"] = str(entry.get("thesis", "")).strip()
+    existing_sample_surfaces = (
+        list(stats.get("sample_surfaces", []))
+        if isinstance(stats.get("sample_surfaces"), list)
+        else []
+    )
+    entry_family_surfaces = (
+        list(entry.get("family_surfaces", []))
+        if isinstance(entry.get("family_surfaces"), list)
+        else []
+    )
+    stats["sample_surfaces"] = _campaign_string_list(
+        [*existing_sample_surfaces, *entry_family_surfaces],
+        limit=_CAMPAIGN_IDEA_SAMPLE_SURFACE_LIMIT,
+    )
+    family_stats[family_key] = stats
+    idea_journal["family_stats"] = family_stats
+    return idea_journal
+
+
+def _campaign_sync_active_idea_journal(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = _normalize_campaign(campaign)
+    if not _campaign_has_active_candidate(normalized):
+        return normalized
+
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    idea_journal = _normalize_campaign_idea_journal(normalized.get("idea_journal"))
+    entry_index, entry = _campaign_active_idea_entry_info(normalized)
+    timestamp = _utc_now()
+    if entry is None:
+        entry = _campaign_default_idea_journal_entry()
+        entry["entry_id"] = _campaign_next_idea_entry_id(idea_journal)
+        entry["started_at"] = candidate["started_at"] or timestamp
+        entry["updated_at"] = entry["started_at"]
+        entry["decision"] = candidate["decision"]
+        entry["champion_before_run_id"] = str(
+            normalized.get("champion_run_id", "")
+        ).strip()
+        idea_journal["active_entry_id"] = entry["entry_id"]
+        idea_journal["next_entry_seq"] = (
+            int(idea_journal.get("next_entry_seq", 1) or 1) + 1
+        )
+        entries = idea_journal.get("entries")
+        if not isinstance(entries, list):
+            entries = []
+        entries.append(entry)
+        idea_journal["entries"] = entries
+        candidate["journal_entry_id"] = entry["entry_id"]
+        entry_index = len(entries) - 1
+    else:
+        candidate["journal_entry_id"] = str(entry.get("entry_id", "")).strip()
+
+    touched_surfaces, family_surfaces = _campaign_derive_idea_entry_surfaces(
+        repo_root,
+        state,
+        normalized,
+    )
+    family_key, family_source = _campaign_family_key(
+        decision=candidate["decision"],
+        family_hint=candidate["family_hint"],
+        family_surfaces=family_surfaces,
+        touched_surfaces=touched_surfaces,
+    )
+    thesis, thesis_source = _campaign_thesis_text(
+        decision=candidate["decision"],
+        thesis_hint=candidate["thesis_hint"],
+        family_surfaces=family_surfaces,
+        touched_surfaces=touched_surfaces,
+    )
+    run_ids = (
+        list(entry.get("run_ids", [])) if isinstance(entry.get("run_ids"), list) else []
+    )
+    run_id = candidate["run_id"]
+    if run_id and run_id not in run_ids:
+        run_ids.append(run_id)
+
+    entry["decision"] = candidate["decision"]
+    entry["updated_at"] = timestamp
+    entry["status"] = "active"
+    entry["attempt_count"] = max(
+        int(entry.get("attempt_count", 1) or 1),
+        int(candidate.get("fix_attempts", 0) or 0) + 1,
+        1,
+    )
+    entry["run_ids"] = _campaign_string_list(
+        run_ids,
+        limit=_CAMPAIGN_IDEA_SURFACE_LIMIT,
+    )
+    entry["thesis"] = thesis
+    entry["thesis_source"] = thesis_source
+    entry["family_key"] = family_key
+    entry["family_label"] = _campaign_family_label(
+        decision=candidate["decision"],
+        family_hint=candidate["family_hint"],
+        family_surfaces=family_surfaces,
+    )
+    entry["family_source"] = family_source
+    entry["touched_surfaces"] = touched_surfaces
+    entry["family_surfaces"] = family_surfaces
+    if not str(entry.get("champion_before_run_id", "")).strip():
+        entry["champion_before_run_id"] = str(
+            normalized.get("champion_run_id", "")
+        ).strip()
+
+    entries = idea_journal.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    entries[entry_index] = entry
+    idea_journal["entries"] = entries
+    idea_journal["active_entry_id"] = candidate["journal_entry_id"]
+    normalized["active_candidate"] = candidate
+    normalized["idea_journal"] = _campaign_trim_idea_journal_entries(idea_journal)
+    return normalized
+
+
+def _campaign_finalize_active_idea_journal(
+    repo_root: Path,
+    state: dict[str, Any],
+    campaign: dict[str, Any],
+    *,
+    status: str,
+    reason: str,
+    near_miss: bool = False,
+    champion_after_run_id: str = "",
+    run_id: str = "",
+) -> dict[str, Any]:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in _CAMPAIGN_IDEA_FINAL_STATUSES:
+        raise CampaignError(
+            f"unsupported idea journal final status '{normalized_status or status}'"
+        )
+    normalized = _normalize_campaign(campaign)
+    if not _campaign_has_active_candidate(normalized):
+        fallback_decision = str(state.get("stage", "")).strip().lower()
+        if fallback_decision not in _CAMPAIGN_DECISION_STAGES:
+            fallback_decision = "implementation"
+        fallback_run_id = str(
+            run_id or _campaign_candidate_run_id_from_state(state, normalized)
+        ).strip()
+        normalized = _campaign_set_active_candidate(
+            normalized,
+            decision=fallback_decision,
+            run_id=fallback_run_id,
+        )
+    normalized = _campaign_sync_active_idea_journal(repo_root, state, normalized)
+    idea_journal = _normalize_campaign_idea_journal(normalized.get("idea_journal"))
+    candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
+    entry_index = _campaign_find_idea_entry_index(
+        idea_journal,
+        candidate["journal_entry_id"] or idea_journal.get("active_entry_id", ""),
+    )
+    if entry_index < 0:
+        return normalized
+    entries = idea_journal.get("entries")
+    if not isinstance(entries, list):
+        return normalized
+    entry = entries[entry_index]
+    if not isinstance(entry, dict):
+        return normalized
+
+    timestamp = _utc_now()
+    finalized = dict(entry)
+    finalized["updated_at"] = timestamp
+    finalized["completed_at"] = timestamp
+    finalized["status"] = normalized_status
+    finalized["near_miss"] = (
+        bool(near_miss) if normalized_status == "discard" else False
+    )
+    finalized["outcome_reason"] = str(reason or "").strip()
+    effective_run_id = str(run_id or candidate["run_id"]).strip()
+    finalized_run_ids = (
+        list(finalized.get("run_ids", []))
+        if isinstance(finalized.get("run_ids"), list)
+        else []
+    )
+    finalized["run_ids"] = _campaign_string_list(
+        [*finalized_run_ids, effective_run_id],
+        limit=_CAMPAIGN_IDEA_SURFACE_LIMIT,
+    )
+    finalized["champion_after_run_id"] = (
+        str(champion_after_run_id or "").strip()
+        or str(finalized.get("champion_after_run_id", "")).strip()
+        or str(normalized.get("champion_run_id", "")).strip()
+    )
+    entries[entry_index] = finalized
+    idea_journal["entries"] = entries
+    idea_journal["active_entry_id"] = ""
+    idea_journal = _campaign_merge_family_stats(idea_journal, finalized)
+    normalized["idea_journal"] = _campaign_trim_idea_journal_entries(idea_journal)
+    return normalized
 
 
 def _load_design_payload_for_state(
@@ -729,6 +1349,7 @@ def _create_campaign_payload(
         "oracle_feedback": [],
         "active_candidate": _campaign_default_active_candidate(),
         "last_governance_event": _campaign_default_last_governance_event(),
+        "idea_journal": _campaign_default_idea_journal(),
     }
     if design_locked:
         payload["lock_contract"] = _campaign_capture_lock_contract(
@@ -771,8 +1392,133 @@ def _campaign_is_resumable(payload: dict[str, Any]) -> bool:
     return normalized["status"] in {"stopped", "error"}
 
 
+def _campaign_entry_family_display(entry: dict[str, Any]) -> str:
+    family_label = str(entry.get("family_label", "")).strip()
+    if family_label:
+        return family_label
+    family_key = str(entry.get("family_key", "")).strip()
+    if family_key:
+        return family_key
+    decision = str(entry.get("decision", "")).strip()
+    return f"{decision} search" if decision else ""
+
+
+def _campaign_recent_family_labels(
+    entries: list[dict[str, Any]],
+    *,
+    predicate,
+    limit: int = _CAMPAIGN_IDEA_RECENT_FAMILY_LIMIT,
+) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for entry in reversed(entries):
+        if not predicate(entry):
+            continue
+        label = _campaign_entry_family_display(entry)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _campaign_novelty_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_campaign(payload)
+    idea_journal = _normalize_campaign_idea_journal(normalized.get("idea_journal"))
+    entries = [
+        dict(entry)
+        for entry in idea_journal.get("entries", [])
+        if isinstance(entry, dict)
+    ]
+    active_entry_id = str(idea_journal.get("active_entry_id", "")).strip()
+    active_entry = next(
+        (
+            dict(entry)
+            for entry in entries
+            if str(entry.get("entry_id", "")).strip() == active_entry_id
+        ),
+        {},
+    )
+    completed_entries = [
+        dict(entry)
+        for entry in entries
+        if str(entry.get("status", "")).strip().lower() in _CAMPAIGN_IDEA_FINAL_STATUSES
+    ]
+    last_completed = dict(completed_entries[-1]) if completed_entries else {}
+
+    active_family_key = str(active_entry.get("family_key", "")).strip()
+    if not active_family_key and last_completed:
+        active_family_key = str(last_completed.get("family_key", "")).strip()
+    same_family_streak = 0
+    if active_family_key:
+        for entry in reversed(entries):
+            if str(entry.get("family_key", "")).strip() != active_family_key:
+                break
+            same_family_streak += 1
+
+    recent_entries = [
+        dict(entry) for entry in entries[-_CAMPAIGN_IDEA_RECENT_ENTRY_LIMIT:]
+    ]
+    return {
+        "entry_count": len(entries),
+        "family_count": len(
+            [
+                key
+                for key in idea_journal.get("family_stats", {}).keys()
+                if str(key).strip()
+            ]
+        )
+        if isinstance(idea_journal.get("family_stats"), dict)
+        else 0,
+        "active_family": _campaign_entry_family_display(active_entry),
+        "active_thesis": str(active_entry.get("thesis", "")).strip(),
+        "same_family_streak": same_family_streak,
+        "last_completed_status": str(last_completed.get("status", "")).strip(),
+        "last_completed_family": _campaign_entry_family_display(last_completed),
+        "recent_failed_families": _campaign_recent_family_labels(
+            completed_entries,
+            predicate=lambda entry: (
+                str(entry.get("status", "")).strip().lower() in {"discard", "crash"}
+            ),
+        ),
+        "recent_near_miss_families": _campaign_recent_family_labels(
+            completed_entries,
+            predicate=lambda entry: bool(entry.get("near_miss", False)),
+        ),
+        "recent_entries": recent_entries,
+    }
+
+
+def _campaign_novelty_summary_text(payload: dict[str, Any]) -> str:
+    summary = _campaign_novelty_summary(payload)
+    parts = [
+        f"same_family_streak={int(summary.get('same_family_streak', 0) or 0)}",
+        f"active_family={str(summary.get('active_family', '')).strip() or 'none'}",
+        f"active_thesis={str(summary.get('active_thesis', '')).strip() or 'none'}",
+        f"last_completed={str(summary.get('last_completed_status', '')).strip() or 'none'}:{str(summary.get('last_completed_family', '')).strip() or 'none'}",
+        "recent_failed_families="
+        + (
+            ", ".join(summary.get("recent_failed_families", []))
+            if isinstance(summary.get("recent_failed_families"), list)
+            and summary.get("recent_failed_families")
+            else "none"
+        ),
+        "recent_near_miss_families="
+        + (
+            ", ".join(summary.get("recent_near_miss_families", []))
+            if isinstance(summary.get("recent_near_miss_families"), list)
+            and summary.get("recent_near_miss_families")
+            else "none"
+        ),
+    ]
+    return "; ".join(parts)
+
+
 def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_campaign(payload)
+    novelty_summary = _campaign_novelty_summary(normalized)
     summary = {
         "campaign_id": normalized["campaign_id"],
         "label": normalized["label"],
@@ -794,6 +1540,33 @@ def _campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
             _normalize_campaign_oracle_feedback(normalized.get("oracle_feedback"))
         ),
         "resumable": _campaign_is_resumable(normalized),
+        "idea_journal_entry_count": int(novelty_summary.get("entry_count", 0) or 0),
+        "idea_journal_family_count": int(novelty_summary.get("family_count", 0) or 0),
+        "idea_journal_active_family": str(
+            novelty_summary.get("active_family", "")
+        ).strip(),
+        "idea_journal_active_thesis": str(
+            novelty_summary.get("active_thesis", "")
+        ).strip(),
+        "idea_journal_same_family_streak": int(
+            novelty_summary.get("same_family_streak", 0) or 0
+        ),
+        "idea_journal_last_completed_status": str(
+            novelty_summary.get("last_completed_status", "")
+        ).strip(),
+        "idea_journal_last_completed_family": str(
+            novelty_summary.get("last_completed_family", "")
+        ).strip(),
+        "idea_journal_recent_failed_families": list(
+            novelty_summary.get("recent_failed_families", [])
+        )
+        if isinstance(novelty_summary.get("recent_failed_families"), list)
+        else [],
+        "idea_journal_recent_near_miss_families": list(
+            novelty_summary.get("recent_near_miss_families", [])
+        )
+        if isinstance(novelty_summary.get("recent_near_miss_families"), list)
+        else [],
     }
     candidate = _normalize_campaign_active_candidate(normalized.get("active_candidate"))
     last_event = _normalize_campaign_last_governance_event(
@@ -867,6 +1640,9 @@ def _campaign_set_active_candidate(
     run_id: str = "",
     fix_attempts: int = 0,
     timeout_reference_seconds: float = 0.0,
+    journal_entry_id: str = "",
+    family_hint: str = "",
+    thesis_hint: str = "",
 ) -> dict[str, Any]:
     normalized = _normalize_campaign(campaign)
     candidate = _campaign_default_active_candidate()
@@ -877,6 +1653,9 @@ def _campaign_set_active_candidate(
     candidate["timeout_reference_seconds"] = max(
         0.0, float(timeout_reference_seconds or 0.0)
     )
+    candidate["journal_entry_id"] = str(journal_entry_id).strip()
+    candidate["family_hint"] = str(family_hint).strip()
+    candidate["thesis_hint"] = str(thesis_hint).strip()
     normalized["active_candidate"] = candidate
     return normalized
 
@@ -1451,6 +2230,10 @@ def _campaign_render_results_markdown(
 ) -> str:
     normalized = _normalize_campaign(campaign)
     counts = _campaign_results_counts(rows)
+    novelty_summary = _campaign_novelty_summary(normalized)
+    recent_entries = novelty_summary.get("recent_entries", [])
+    if not isinstance(recent_entries, list):
+        recent_entries = []
     lines = [
         "# Campaign Results",
         "",
@@ -1473,11 +2256,47 @@ def _campaign_render_results_markdown(
         f"- crash: `{counts['crash']}`",
         f"- partial: `{counts['partial']}`",
         "",
-        "## Results",
+        "## Idea Journal",
         "",
-        "| revision_label | run_id | primary_metric | memory_gb | status | summary |",
-        "| --- | --- | --- | --- | --- | --- |",
+        f"- active_family: `{str(novelty_summary.get('active_family', '')).strip() or 'none'}`",
+        f"- active_thesis: {str(novelty_summary.get('active_thesis', '')).strip() or 'none'}",
+        f"- same_family_streak: `{int(novelty_summary.get('same_family_streak', 0) or 0)}`",
+        f"- last_completed: `{str(novelty_summary.get('last_completed_status', '')).strip() or 'none'}` / `{str(novelty_summary.get('last_completed_family', '')).strip() or 'none'}`",
+        f"- recent_failed_families: `{', '.join(novelty_summary.get('recent_failed_families', [])) if novelty_summary.get('recent_failed_families') else 'none'}`",
+        f"- recent_near_miss_families: `{', '.join(novelty_summary.get('recent_near_miss_families', [])) if novelty_summary.get('recent_near_miss_families') else 'none'}`",
+        "",
+        "### Recent Ideas",
+        "",
+        "| entry_id | family | status | attempts | runs | thesis | reason |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
+    for entry in recent_entries:
+        if not isinstance(entry, dict):
+            continue
+        lines.append(
+            "| {entry_id} | {family} | {status} | {attempts} | {runs} | {thesis} | {reason} |".format(
+                entry_id=str(entry.get("entry_id", "")).replace("|", "/"),
+                family=_campaign_entry_family_display(entry).replace("|", "/"),
+                status=str(entry.get("status", "")).replace("|", "/"),
+                attempts=str(entry.get("attempt_count", "")).replace("|", "/"),
+                runs=", ".join(
+                    _campaign_string_list(entry.get("run_ids"), limit=3)
+                ).replace("|", "/"),
+                thesis=str(entry.get("thesis", "")).replace("|", "/"),
+                reason=str(entry.get("outcome_reason", "")).replace("|", "/"),
+            )
+        )
+    if not recent_entries:
+        lines.append("| none | none | none | 0 | none | none | none |")
+    lines.extend(
+        [
+            "",
+            "## Results",
+            "",
+            "| revision_label | run_id | primary_metric | memory_gb | status | summary |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for row in rows:
         lines.append(
             "| {revision_label} | {run_id} | {primary_metric} | {memory_gb} | {status} | {summary} |".format(
@@ -2525,6 +3344,8 @@ def _campaign_compare_challenger(
     if metric_decision > 0:
         return {
             "winner": "challenger",
+            "decision_basis": "primary_metric",
+            "near_miss": False,
             "summary": (
                 "primary metric improved "
                 f"({challenger_run_id}={challenger_value} vs {champion_run_id}={champion_value})"
@@ -2533,6 +3354,8 @@ def _campaign_compare_challenger(
     if metric_decision < 0:
         return {
             "winner": "champion",
+            "decision_basis": "primary_metric_regression",
+            "near_miss": False,
             "summary": (
                 "primary metric did not improve "
                 f"({challenger_run_id}={challenger_value} vs {champion_run_id}={champion_value})"
@@ -2555,6 +3378,8 @@ def _campaign_compare_challenger(
         winner = "challenger" if challenger_memory < champion_memory else "champion"
         return {
             "winner": winner,
+            "decision_basis": "memory_tie_break",
+            "near_miss": winner == "champion",
             "summary": (
                 "primary metric tied; memory tie-break "
                 f"({challenger_run_id}={challenger_memory}MB vs "
@@ -2600,6 +3425,8 @@ def _campaign_compare_challenger(
             )
             return {
                 "winner": winner,
+                "decision_basis": "complexity_tie_break",
+                "near_miss": winner == "champion",
                 "summary": (
                     "primary metric and memory tied; complexity tie-break "
                     f"({comparison_cfg.change_size_metric}: "
@@ -2622,6 +3449,8 @@ def _campaign_compare_challenger(
         winner = "challenger" if challenger_risk < champion_risk else "champion"
         return {
             "winner": winner,
+            "decision_basis": "policy_risk_tie_break",
+            "near_miss": winner == "champion",
             "summary": (
                 "all prior tie-breaks tied; policy-risk tie-break "
                 f"({challenger_run_id}={challenger_risk} vs "
@@ -2631,6 +3460,8 @@ def _campaign_compare_challenger(
 
     return {
         "winner": "champion",
+        "decision_basis": "all_tied_keep_champion",
+        "near_miss": False,
         "summary": (
             "all campaign comparisons tied; keeping existing champion "
             f"({champion_run_id})"
@@ -2657,13 +3488,21 @@ def _campaign_apply_crash_outcome(
     crash_run_id = str(run_id).strip() or _campaign_candidate_run_id_from_state(
         state, normalized
     )
+    updated = _campaign_finalize_active_idea_journal(
+        repo_root,
+        state,
+        normalized,
+        status="crash",
+        reason=reason,
+        champion_after_run_id=str(normalized.get("champion_run_id", "")).strip(),
+        run_id=crash_run_id,
+    )
     _campaign_restore_champion_state(
         repo_root,
         state_path,
         normalized,
         checkpoint_id=checkpoint_id,
     )
-    updated = dict(normalized)
     updated["no_improvement_streak"] = (
         int(updated.get("no_improvement_streak", 0) or 0) + 1
     )
@@ -2705,10 +3544,19 @@ def _campaign_apply_challenger_outcome(
     winner = str(comparison.get("winner", "")).strip()
     summary = str(comparison.get("summary", "")).strip()
     challenger_run_id = str(state.get("last_run_id", "")).strip()
+    near_miss = bool(comparison.get("near_miss", False))
 
     if winner == "challenger":
+        updated = _campaign_finalize_active_idea_journal(
+            repo_root,
+            state,
+            normalized,
+            status="keep",
+            reason=summary,
+            champion_after_run_id=challenger_run_id,
+            run_id=challenger_run_id,
+        )
         _campaign_seed_champion_snapshot(repo_root, state_path, normalized)
-        updated = dict(normalized)
         updated["champion_run_id"] = challenger_run_id
         updated["champion_revision_label"] = _resolve_revision_label(repo_root)
         updated["no_improvement_streak"] = 0
@@ -2727,13 +3575,22 @@ def _campaign_apply_challenger_outcome(
             "summary": summary,
         }
 
+    updated = _campaign_finalize_active_idea_journal(
+        repo_root,
+        state,
+        normalized,
+        status="discard",
+        reason=summary,
+        near_miss=near_miss,
+        champion_after_run_id=str(normalized.get("champion_run_id", "")).strip(),
+        run_id=challenger_run_id,
+    )
     _campaign_restore_champion_state(
         repo_root,
         state_path,
         normalized,
         checkpoint_id=checkpoint_id,
     )
-    updated = dict(normalized)
     updated["no_improvement_streak"] = (
         int(updated.get("no_improvement_streak", 0) or 0) + 1
     )

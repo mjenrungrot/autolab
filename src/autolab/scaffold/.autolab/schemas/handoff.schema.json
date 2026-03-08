@@ -404,6 +404,21 @@
         "started_at": {"type": "string"},
         "last_oracle_at": {"type": "string"},
         "oracle_feedback_count": {"type": "integer", "minimum": 0},
+        "idea_journal_entry_count": {"type": "integer", "minimum": 0},
+        "idea_journal_family_count": {"type": "integer", "minimum": 0},
+        "idea_journal_active_family": {"type": "string"},
+        "idea_journal_active_thesis": {"type": "string"},
+        "idea_journal_same_family_streak": {"type": "integer", "minimum": 0},
+        "idea_journal_last_completed_status": {"type": "string"},
+        "idea_journal_last_completed_family": {"type": "string"},
+        "idea_journal_recent_failed_families": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "idea_journal_recent_near_miss_families": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
         "resumable": {"type": "boolean"},
         "resume_error": {"type": "string"},
         "max_fix_attempts_per_idea": {"type": "integer", "minimum": 0},

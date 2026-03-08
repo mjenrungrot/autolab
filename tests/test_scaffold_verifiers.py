@@ -1766,10 +1766,11 @@ def test_prompt_lint_accepts_workflow_declared_optional_runner_tokens(
     prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
     original = prompt_path.read_text(encoding="utf-8")
     prompt_path.write_text(
-        original.rstrip()
-        + "\n\n## MISSING-INPUT FALLBACKS\n"
-        + "- If unavailable, continue without it.\n"
-        + "- optional={{custom_optional_token}}\n",
+        original.replace(
+            "## MISSING-INPUT FALLBACKS\n",
+            "## MISSING-INPUT FALLBACKS\n- optional={{custom_optional_token}}\n",
+            1,
+        ),
         encoding="utf-8",
     )
 
@@ -1927,8 +1928,15 @@ def test_prompt_lint_requires_missing_input_fallbacks_when_optional_tokens_used(
     _write_review_result(repo, include_docs_check=True)
     prompt_path = repo / ".autolab" / "prompts" / "stage_implementation.runner.md"
     original = prompt_path.read_text(encoding="utf-8")
+    without_fallbacks = original.replace(
+        "## MISSING-INPUT FALLBACKS\n"
+        "- If campaign novelty memory is unavailable, continue with the current design constraints and treat the novelty fields as advisory-only.\n"
+        "- If family history is sparse, prefer the simplest in-scope implementation that still addresses the active requirement set.\n\n",
+        "",
+        1,
+    )
     prompt_path.write_text(
-        original.rstrip() + "\n\nOptional context: {{review_feedback}}\n",
+        without_fallbacks.rstrip() + "\n\nOptional context: {{review_feedback}}\n",
         encoding="utf-8",
     )
 

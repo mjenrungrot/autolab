@@ -23,6 +23,7 @@ from autolab.campaign import (
     _campaign_set_active_candidate,
     _campaign_set_last_governance_event,
     _campaign_summary_with_governance,
+    _campaign_sync_active_idea_journal,
     _campaign_sync_active_candidate_from_state,
     _create_campaign_payload,
     _load_campaign,
@@ -210,6 +211,7 @@ def _campaign_sync_candidate_state(
                 or 0.0
             ),
         )
+    updated = _campaign_sync_active_idea_journal(repo_root, state, updated)
     return updated
 
 
@@ -695,6 +697,11 @@ def _run_campaign_session(state_path: Path) -> int:
                             f"({fix_attempts}/{governance.max_fix_attempts_per_idea})"
                         ),
                     )
+                    updated_campaign = _campaign_sync_active_idea_journal(
+                        repo_root,
+                        state,
+                        updated_campaign,
+                    )
                     _write_campaign(repo_root, updated_campaign)
                     _append_log(
                         repo_root,
@@ -926,6 +933,15 @@ def _cmd_campaign_status(args: argparse.Namespace) -> int:
         "last_governance_event_category",
         "last_governance_event_run_id",
         "last_governance_event_reason",
+        "idea_journal_entry_count",
+        "idea_journal_family_count",
+        "idea_journal_active_family",
+        "idea_journal_active_thesis",
+        "idea_journal_same_family_streak",
+        "idea_journal_last_completed_status",
+        "idea_journal_last_completed_family",
+        "idea_journal_recent_failed_families",
+        "idea_journal_recent_near_miss_families",
         "resumable",
     ):
         print(f"{key}: {summary.get(key, '')}")

@@ -78,7 +78,7 @@ stages:
     brief_prompt_file: stage_implementation.brief.md
     human_prompt_file: stage_implementation.human.md
     required_tokens: [iteration_id, iteration_path]
-    optional_tokens: [review_feedback, verifier_errors]
+    optional_tokens: [review_feedback, verifier_errors, campaign_novelty_summary, campaign_active_family, campaign_recent_failed_families, campaign_recent_near_miss_families, campaign_same_family_streak]
     required_outputs: [implementation_plan.md, plan_contract.json]
     next_stage: implementation_review
     verifier_categories:
@@ -220,7 +220,7 @@ stages:
     brief_prompt_file: stage_decide_repeat.brief.md
     human_prompt_file: stage_decide_repeat.human.md
     required_tokens: [iteration_id, iteration_path, run_id]
-    optional_tokens: [metrics_summary, target_comparison, decision_suggestion, auto_metrics_evidence, campaign_lock_mode, campaign_lock_summary, campaign_no_improvement_streak, campaign_allowed_decisions]
+    optional_tokens: [metrics_summary, target_comparison, decision_suggestion, auto_metrics_evidence, campaign_lock_mode, campaign_lock_summary, campaign_no_improvement_streak, campaign_allowed_decisions, campaign_novelty_summary, campaign_active_family, campaign_recent_failed_families, campaign_recent_near_miss_families, campaign_same_family_streak]
     required_outputs: [decision_result.json]
     next_stage: ''
     decision_map:
