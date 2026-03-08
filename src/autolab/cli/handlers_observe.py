@@ -342,6 +342,71 @@ def _observe_format_seconds(value: Any, *, blank: str = "n/a") -> str:
     return f"{numeric:.3f}".rstrip("0").rstrip(".") + "s"
 
 
+def _observe_continuation_packet(payload: dict[str, Any]) -> dict[str, Any]:
+    packet = payload.get("continuation_packet")
+    if isinstance(packet, dict):
+        return packet
+    return {}
+
+
+def _observe_next_action(
+    payload: dict[str, Any],
+    *,
+    recommended: dict[str, Any],
+    safe_resume: dict[str, Any],
+) -> tuple[str, bool, str, str, list[str]]:
+    packet = _observe_continuation_packet(payload)
+    next_action = packet.get("next_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
+    command_text = str(
+        next_action.get("recommended_command", recommended.get("command", ""))
+    ).strip()
+    executable = bool(
+        next_action.get("executable", recommended.get("executable", False))
+    )
+    reason = str(next_action.get("reason", recommended.get("reason", ""))).strip()
+    status = str(
+        next_action.get("safe_status", safe_resume.get("status", "blocked"))
+    ).strip()
+    if not status:
+        status = "blocked"
+    safe_command = str(
+        next_action.get("safe_command", safe_resume.get("command", ""))
+    ).strip()
+    preconditions = next_action.get(
+        "preconditions", safe_resume.get("preconditions", [])
+    )
+    if not isinstance(preconditions, list):
+        preconditions = []
+    return (command_text, executable, reason, status, preconditions)
+
+
+def _observe_uat_status(
+    payload: dict[str, Any], *, uat: dict[str, Any]
+) -> dict[str, Any]:
+    packet = _observe_continuation_packet(payload)
+    uat_status = packet.get("uat_status")
+    if not isinstance(uat_status, dict):
+        return uat
+    merged = dict(uat)
+    merged.update(uat_status)
+    return merged
+
+
+def _observe_top_blockers(payload: dict[str, Any], *, blocking: list[str]) -> list[str]:
+    packet = _observe_continuation_packet(payload)
+    top_blockers = packet.get("top_blockers")
+    if not isinstance(top_blockers, list):
+        return blocking
+    output: list[str] = []
+    for item in top_blockers:
+        text = str(item).strip()
+        if text:
+            output.append(text)
+    return output or blocking
+
+
 def _cmd_progress(args: argparse.Namespace) -> int:
     state_path = Path(args.state_file).expanduser().resolve()
     payload, error = _safe_refresh_handoff(state_path)
@@ -388,6 +453,13 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     uat = payload.get("uat", {})
     if not isinstance(uat, dict):
         uat = {}
+    top_blockers = _observe_top_blockers(payload, blocking=blocking)
+    command_text, executable, reason, safe_status, preconditions = _observe_next_action(
+        payload,
+        recommended=recommended,
+        safe_resume=safe_resume,
+    )
+    uat = _observe_uat_status(payload, uat=uat)
 
     print("autolab progress")
     print(f"state_file: {state_path}")
@@ -408,8 +480,13 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     print(f"uat_required: {bool(uat.get('required', False))}")
     print(f"uat_status: {uat.get('status', 'not_required')}")
     print(f"uat_pending: {bool(uat.get('pending', False))}")
-    print(f"recommended_next_command: {recommended.get('command', '')}")
-    print(f"safe_resume_status: {safe_resume.get('status', 'blocked')}")
+    print(f"recommended_next_command: {command_text}")
+    print(f"safe_resume_status: {safe_status}")
+    print(
+        f"safe_resume_command: {str(safe_resume.get('command', command_text)).strip()}"
+    )
+    print(f"recommended_executable: {executable}")
+    print(f"recommendation_reason: {reason}")
     if uat:
         print(f"uat_required_by: {uat.get('required_by', 'none')}")
         print(f"uat_artifact: {uat.get('artifact_path', '')}")
@@ -422,6 +499,16 @@ def _cmd_progress(args: argparse.Namespace) -> int:
                 text = str(title).strip()
                 if text:
                     print(f"  - {text}")
+    if top_blockers:
+        print("top_blockers:")
+        for blocker in top_blockers:
+            print(f"  - {blocker}")
+    if preconditions:
+        print("safe_resume_preconditions:")
+        for item in preconditions:
+            text = str(item).strip()
+            if text:
+                print(f"  - {text}")
     critical_wave_ids = _observe_non_empty_strings(critical_path.get("wave_ids", []))
     critical_task_ids = _observe_non_empty_strings(critical_path.get("task_ids", []))
     print("critical_path:")
@@ -618,6 +705,14 @@ def _cmd_handoff(args: argparse.Namespace) -> int:
     recommended = payload.get("recommended_next_command", {})
     if not isinstance(recommended, dict):
         recommended = {}
+    safe_resume = payload.get("safe_resume_point", {})
+    if not isinstance(safe_resume, dict):
+        safe_resume = {}
+    command_text, _executable, _reason, _status, _preconditions = _observe_next_action(
+        payload,
+        recommended=recommended,
+        safe_resume=safe_resume,
+    )
 
     try:
         from autolab.checkpoint import create_checkpoint
@@ -636,7 +731,7 @@ def _cmd_handoff(args: argparse.Namespace) -> int:
     print(f"state_file: {state_path}")
     print(f"handoff_json: {handoff_json_path}")
     print(f"handoff_md: {handoff_md_path}")
-    print(f"recommended_next_command: {recommended.get('command', '')}")
+    print(f"recommended_next_command: {command_text}")
     return 0
 
 
@@ -655,13 +750,11 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     safe_resume = payload.get("safe_resume_point", {})
     if not isinstance(safe_resume, dict):
         safe_resume = {}
-    command_text = str(recommended.get("command", "")).strip()
-    executable = bool(recommended.get("executable", False))
-    reason = str(recommended.get("reason", "")).strip()
-    status = str(safe_resume.get("status", "blocked")).strip() or "blocked"
-    preconditions = safe_resume.get("preconditions", [])
-    if not isinstance(preconditions, list):
-        preconditions = []
+    command_text, executable, reason, status, preconditions = _observe_next_action(
+        payload,
+        recommended=recommended,
+        safe_resume=safe_resume,
+    )
 
     print("autolab resume")
     print(f"state_file: {state_path}")
@@ -729,6 +822,7 @@ def _cmd_resume(args: argparse.Namespace) -> int:
         "lock",
         "unlock",
         "report",
+        "oracle",
         "progress",
         "handoff",
         "resume",

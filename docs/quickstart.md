@@ -20,11 +20,11 @@ repository. If run outside a repo, it upgrades and skips scaffold sync.
 
 ## Command map (grouped)
 
-- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`.
-- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab tui`, `autolab render`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab resume`.
+- **Getting started**: `autolab init`, `autolab configure`, `autolab status`, `autolab progress`, `autolab docs generate`, `autolab explain stage`, `autolab parser init|test`.
+- **Run workflow**: `autolab run`, `autolab loop`, `autolab checkpoint create|list|pin|unpin`, `autolab trace`, `autolab tui`, `autolab render`, `autolab discuss`, `autolab research`, `autolab verify`, `autolab verify-golden`, `autolab lint`, `autolab approve-plan`, `autolab uat init`, `autolab review`, `autolab skip`, `autolab handoff`, `autolab oracle`, `autolab resume`.
 - **Backlog steering**: `autolab focus`, `autolab todo sync|list|add|done|remove`, `autolab experiment create`, `autolab experiment move`.
 - **Safety and policy**: `autolab policy list|show|doctor|apply preset`, `autolab remote show|doctor|smoke`, `autolab guardrails`, `autolab lock status|break`, `autolab unlock`.
-- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`.
+- **Maintenance**: `autolab hooks install`, `autolab sync-scaffold`, `autolab update`, `autolab install-skill`, `autolab slurm-job-list append|verify`, `autolab report`, `autolab reset`, `autolab gc`.
 
 `autolab hooks install` installs the Autolab `post-commit` helper only; any
 repo-managed `pre-commit` or `core.hooksPath` setup remains separate.
@@ -114,11 +114,12 @@ Edit `.autolab/verifier_policy.yaml`:
        - design
        - implementation
        - implementation_review
-       - launch
-       - slurm_monitor
-       - extract_results
        - update_docs
+       - decide_repeat
    ```
+
+`launch`, `slurm_monitor`, and `extract_results` are deterministic runtime stages
+and should not be listed under `agent_runner.stages`.
 
 ## Step 3: Customize prompts (optional)
 
@@ -166,7 +167,7 @@ autolab verify --stage hypothesis
 autolab lint --stage hypothesis
 ```
 
-## Step 6: Capture handoff and safe resume context
+## Step 6: Capture handoff, oracle, and safe resume context
 
 ```bash
 # Refresh and print concise takeover state
@@ -175,19 +176,28 @@ autolab progress
 # Emit machine + human handoff artifacts
 autolab handoff
 
+# Export the richer scope-root oracle handoff with inlined artifact content
+autolab oracle
+
 # Preview safe resume command (or execute with --apply)
 autolab resume
 ```
+
+`.autolab/handoff.json` is the machine handoff snapshot and now nests a
+`continuation_packet` for richer continuation exports. `autolab handoff` also
+refreshes the concise scope-root `handoff.md`; `autolab oracle` is the on-demand
+expanded export that resolves that packet into `<scope-root>/oracle.md` with
+inlined artifact content from the active scope.
 
 ## What's next
 
 - **Multi-step execution**: `autolab loop --max-iterations 5`
 - **Unattended mode**: `autolab loop --auto --max-hours 2 --max-iterations 10`
-- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Help; Home includes a dedicated Handoff & Resume card; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
+- **Interactive inspector**: `autolab tui` (mode-based UI with Home/Runs/Files/Console/Waves/Help; Home includes a dedicated Handoff & Resume card; advanced actions include focus/create/move experiment steering; `human_review` can be resolved in Home with `pass|retry|stop`; starts locked; mutating actions require unlock + confirm; refresh failures fail closed until next successful refresh)
 - **Assistant mode**: `autolab loop --auto --assistant --max-hours 2`
 - **Manual decisions**: `autolab run --decision=design`
 - **Human review decision**: `autolab review --status=pass|retry|stop`
-- **Takeover artifacts**: `autolab progress`, `autolab handoff`, `autolab resume --apply`
+- **Takeover artifacts**: `autolab progress`, `autolab handoff`, `autolab oracle`, `autolab resume --apply`
 - **Retarget state focus**: `autolab focus --experiment-id e1`
 - **Steer backlog tasks**: `autolab todo list`, `autolab todo add "Implement feature X" --stage implementation`
 - **Create a new experiment**: `autolab experiment create --experiment-id e2 --iteration-id iter2`
@@ -201,7 +211,7 @@ autolab resume
   backlog.yaml            # Experiment/hypothesis backlog
   verifier_policy.yaml    # Verification and runner policy
   agent_result.json       # Last agent execution result
-  handoff.json            # Machine handoff + safe resume snapshot
+  handoff.json            # Machine handoff + continuation packet + safe resume snapshot
   todo_state.json         # Task tracking state
   context/
     project_map.json      # Project-wide brownfield map (from --from-existing)
@@ -215,7 +225,8 @@ autolab resume
   verifiers/              # Verification scripts
 experiments/
   plan/<iteration_id>/    # Iteration artifacts
-    handoff.md            # Human-readable handoff snapshot (scope-root)
+    handoff.md            # Concise human-readable handoff snapshot (scope-root)
+    oracle.md             # Expanded scope-root continuation export with inlined content
     hypothesis.md
     design.yaml
     implementation_plan.md
@@ -229,3 +240,6 @@ experiments/
 docs/
   todo.md                 # Task list for assistant mode
 ```
+
+For project-wide work, `handoff.md` and `oracle.md` resolve under the configured
+`scope_roots.project_wide_root` instead of an iteration directory.

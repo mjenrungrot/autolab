@@ -655,6 +655,18 @@ def _load_handoff_summary(
     verifier = payload.get("latest_verifier_summary")
     if not isinstance(verifier, dict):
         verifier = {}
+    continuation = payload.get("continuation_packet")
+    if not isinstance(continuation, dict):
+        continuation = {}
+    active_stage = continuation.get("active_stage")
+    if not isinstance(active_stage, dict):
+        active_stage = {}
+    next_action = continuation.get("next_action")
+    if not isinstance(next_action, dict):
+        next_action = {}
+    uat_status = continuation.get("uat_status")
+    if not isinstance(uat_status, dict):
+        uat_status = {}
     recommended = payload.get("recommended_next_command")
     if not isinstance(recommended, dict):
         recommended = {}
@@ -706,10 +718,16 @@ def _load_handoff_summary(
     return HandoffSummary(
         handoff_json_path=handoff_json_path,
         handoff_md_path=handoff_md_path,
-        current_scope=str(payload.get("current_scope", "experiment")).strip()
+        current_scope=str(
+            active_stage.get("scope_kind", payload.get("current_scope", "experiment"))
+        ).strip()
         or "experiment",
-        scope_root=str(payload.get("scope_root", "")).strip(),
-        current_stage=str(payload.get("current_stage", "")).strip(),
+        scope_root=str(
+            active_stage.get("scope_root", payload.get("scope_root", ""))
+        ).strip(),
+        current_stage=str(
+            active_stage.get("stage", payload.get("current_stage", ""))
+        ).strip(),
         wave_status=str(wave.get("status", "unavailable")).strip() or "unavailable",
         wave_current=_coerce_optional_int(wave.get("current")),
         wave_executed=_coerce_int(wave.get("executed"), default=0, minimum=0),
@@ -724,13 +742,25 @@ def _load_handoff_summary(
         pending_decision_count=len(
             [item for item in pending_human if str(item).strip()]
         ),
-        recommended_command=str(recommended.get("command", "")).strip(),
-        safe_resume_status=str(safe_resume.get("status", "blocked")).strip()
+        recommended_command=str(
+            next_action.get("recommended_command", recommended.get("command", ""))
+        ).strip(),
+        safe_resume_status=str(
+            next_action.get("safe_status", safe_resume.get("status", "blocked"))
+        ).strip()
         or "blocked",
-        safe_resume_command=str(safe_resume.get("command", "")).strip(),
-        uat_pending=bool(uat.get("pending", False)),
-        uat_pending_message=str(uat.get("pending_message", "")).strip(),
-        uat_suggested_init_command=str(uat.get("suggested_init_command", "")).strip(),
+        safe_resume_command=str(
+            next_action.get("safe_command", safe_resume.get("command", ""))
+        ).strip(),
+        uat_pending=bool(uat_status.get("pending", uat.get("pending", False))),
+        uat_pending_message=str(
+            uat_status.get("pending_message", uat.get("pending_message", ""))
+        ).strip(),
+        uat_suggested_init_command=str(
+            uat_status.get(
+                "suggested_init_command", uat.get("suggested_init_command", "")
+            )
+        ).strip(),
         uat_suggested_check_titles=tuple(
             str(item).strip()
             for item in uat.get("suggested_check_titles", [])

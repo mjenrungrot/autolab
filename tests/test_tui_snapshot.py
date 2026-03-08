@@ -101,10 +101,86 @@ def test_snapshot_loads_handoff_summary_when_available(
             "status": "ready",
             "preconditions": [],
         },
+        "continuation_packet": {
+            "schema_version": "1.0",
+            "generated_at": "2026-02-01T00:00:00Z",
+            "active_stage": {
+                "stage": "implementation",
+                "stage_attempt": 1,
+                "max_stage_attempts": 3,
+                "scope_kind": "experiment",
+                "scope_root": str(handoff_md_path.parent),
+            },
+            "next_action": {
+                "recommended_command": "autolab oracle",
+                "safe_command": "autolab oracle",
+                "safe_status": "blocked",
+                "preconditions": ["Resolve schema_checks failed"],
+                "reason": "packet-preferred summary",
+                "executable": False,
+            },
+            "latest_good_checkpoint": {
+                "checkpoint_id": "cp_1",
+                "stage": "implementation",
+                "created_at": "2026-02-01T00:00:00Z",
+                "last_green_at": "2026-02-01T00:00:00Z",
+                "recommended_rewind_targets": [],
+            },
+            "policy_and_risk": {
+                "plan_approval_status": "",
+                "plan_requires_approval": False,
+                "plan_trigger_reasons": [],
+                "plan_hash": "",
+                "risk_fingerprint": "",
+                "guardrail_breach": "",
+                "block_reason": "",
+                "context_rot_flags": [],
+                "effective_flags": [],
+            },
+            "run_status": {
+                "run_id": "",
+                "host_mode": "",
+                "manifest_status": "",
+                "sync_status": "completed",
+                "metrics_status": "",
+                "manifest_path": "",
+                "metrics_path": "",
+            },
+            "uat_status": {
+                "required": False,
+                "required_by": "none",
+                "status": "not_required",
+                "artifact_path": "",
+                "pending": False,
+                "pending_message": "",
+                "suggested_init_command": "",
+            },
+            "top_blockers": ["schema_checks failed"],
+            "artifact_pointers": [
+                {
+                    "role": "machine_packet",
+                    "path": ".autolab/handoff.json",
+                    "status": "present",
+                    "reason": "Compact continuation source for prompts and tooling.",
+                    "inline_in_oracle": True,
+                }
+            ],
+            "diagnostics": [],
+        },
         "last_green_at": "2026-02-01T00:00:00Z",
         "baseline_snapshot": {},
         "handoff_json_path": str(repo / ".autolab" / "handoff.json"),
         "handoff_markdown_path": str(handoff_md_path),
+        "uat": {
+            "required": False,
+            "required_by": "none",
+            "artifact_path": "",
+            "status": "not_required",
+            "pending": False,
+            "pending_message": "",
+            "suggested_init_command": "",
+            "suggested_check_titles": [],
+        },
     }
     handoff_json_path = repo / ".autolab" / "handoff.json"
     handoff_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,10 +218,8 @@ def test_snapshot_loads_handoff_summary_when_available(
     assert snapshot.handoff.task_total == 5
     assert snapshot.handoff.task_failed == 1
     assert snapshot.handoff.blocker_count == 1
-    assert (
-        snapshot.handoff.recommended_command == "autolab verify --stage implementation"
-    )
-    assert snapshot.handoff.safe_resume_status == "ready"
+    assert snapshot.handoff.recommended_command == "autolab oracle"
+    assert snapshot.handoff.safe_resume_status == "blocked"
     common_paths = {item.path for item in snapshot.common_artifacts}
     assert handoff_md_path in common_paths
 

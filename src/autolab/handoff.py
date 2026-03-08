@@ -12,7 +12,7 @@ from autolab.plan_approval import (
     load_plan_approval,
     resolve_plan_approval_state,
 )
-from autolab.scope import _detect_scope_kind_from_plan_contract, _resolve_scope_context
+from autolab.scope import _resolve_scope_context
 from autolab.state import (
     _normalize_state,
     _resolve_repo_root,
@@ -225,17 +225,6 @@ def _compute_changed_since_green(
     return (sorted(set(delta)), current_snapshot, stored_green_at)
 
 
-def _detect_scope(
-    *,
-    repo_root: Path,
-    iteration_dir: Path | None,
-) -> str:
-    return _detect_scope_kind_from_plan_contract(
-        repo_root=repo_root,
-        iteration_dir=iteration_dir,
-    )
-
-
 def _compute_wave_observability(
     *,
     repo_root: Path,
@@ -402,6 +391,440 @@ def _recommended_command(
     return (recommended, safe_resume)
 
 
+def _relative_or_absolute_path(repo_root: Path, path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        return path.resolve(strict=False).relative_to(repo_root).as_posix() or "."
+    except Exception:
+        try:
+            return path.relative_to(repo_root).as_posix() or "."
+        except Exception:
+            return str(path)
+
+
+def _load_run_status(
+    *,
+    repo_root: Path,
+    iteration_dir: Path | None,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(state.get("last_run_id", "")).strip()
+    manifest_path: Path | None = None
+    manifest_payload: dict[str, Any] = {}
+    metrics_path: Path | None = None
+    metrics_payload: dict[str, Any] = {}
+
+    runs_root = iteration_dir / "runs" if iteration_dir is not None else None
+    if runs_root is not None:
+        if run_id:
+            manifest_path = runs_root / run_id / "run_manifest.json"
+        elif runs_root.exists():
+            manifests = sorted(runs_root.glob("*/run_manifest.json"), reverse=True)
+            if manifests:
+                manifest_path = manifests[0]
+        if manifest_path is not None and manifest_path.exists():
+            manifest_payload = _safe_dict(_load_json_if_exists(manifest_path))
+            if not run_id:
+                run_id = (
+                    str(manifest_payload.get("run_id", "")).strip()
+                    or manifest_path.parent.name
+                )
+        elif manifest_path is not None and not run_id:
+            run_id = manifest_path.parent.name
+
+    if manifest_path is not None:
+        metrics_path = manifest_path.parent / "metrics.json"
+        if metrics_path.exists():
+            metrics_payload = _safe_dict(_load_json_if_exists(metrics_path))
+
+    manifest_sync = ""
+    if manifest_payload:
+        artifact_sync = _safe_dict(manifest_payload.get("artifact_sync_to_local"))
+        manifest_sync = str(artifact_sync.get("status", "")).strip()
+
+    return {
+        "run_id": run_id,
+        "host_mode": str(manifest_payload.get("host_mode", "")).strip()
+        or str(manifest_payload.get("launch_mode", "")).strip(),
+        "manifest_status": str(manifest_payload.get("status", "")).strip()
+        or (
+            "missing"
+            if manifest_path is not None and not manifest_path.exists()
+            else ""
+        ),
+        "sync_status": str(state.get("sync_status", "")).strip() or manifest_sync,
+        "metrics_status": str(metrics_payload.get("status", "")).strip()
+        or (
+            "missing" if metrics_path is not None and not metrics_path.exists() else ""
+        ),
+        "manifest_path": _relative_or_absolute_path(repo_root, manifest_path),
+        "metrics_path": _relative_or_absolute_path(repo_root, metrics_path),
+    }
+
+
+def _append_artifact_pointer(
+    *,
+    rows: list[dict[str, Any]],
+    seen_paths: set[str],
+    repo_root: Path,
+    role: str,
+    path: Path | None,
+    reason: str,
+    include_if_missing: bool = False,
+    status_override: str = "",
+) -> None:
+    if path is None:
+        return
+    pointer_path = _relative_or_absolute_path(repo_root, path)
+    if not pointer_path or pointer_path in seen_paths:
+        return
+    exists = path.exists()
+    status = str(status_override).strip() or ("present" if exists else "missing")
+    if status != "present" and not include_if_missing:
+        return
+    rows.append(
+        {
+            "role": role,
+            "path": pointer_path,
+            "status": status,
+            "reason": reason,
+            "inline_in_oracle": True,
+        }
+    )
+    seen_paths.add(pointer_path)
+
+
+def _build_top_blockers(
+    *,
+    blocking_failures: list[str],
+    pending_decisions: list[str],
+    limit: int = 6,
+) -> list[str]:
+    combined = _unique_list([*blocking_failures, *pending_decisions])
+    return combined[:limit]
+
+
+def _build_artifact_pointers(
+    *,
+    repo_root: Path,
+    iteration_dir: Path | None,
+    stage: str,
+    handoff_json_path: Path,
+    handoff_md_path: Path,
+    uat_summary: dict[str, Any],
+    plan_approval: dict[str, Any],
+    run_status: dict[str, Any],
+    review_blockers: list[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    _append_artifact_pointer(
+        rows=rows,
+        seen_paths=seen_paths,
+        repo_root=repo_root,
+        role="machine_packet",
+        path=handoff_json_path,
+        reason="Compact continuation source for prompts and tooling.",
+        status_override="present",
+    )
+    _append_artifact_pointer(
+        rows=rows,
+        seen_paths=seen_paths,
+        repo_root=repo_root,
+        role="human_handoff",
+        path=handoff_md_path,
+        reason="Human-readable continuation and takeover snapshot.",
+        status_override="present",
+    )
+
+    if iteration_dir is not None:
+        stage_primary_path: Path | None = None
+        stage_primary_reason = ""
+        if stage == "hypothesis":
+            stage_primary_path = iteration_dir / "hypothesis.md"
+            stage_primary_reason = "Current hypothesis stage artifact."
+        elif stage == "design":
+            stage_primary_path = iteration_dir / "design.yaml"
+            stage_primary_reason = "Current design stage artifact."
+        elif stage == "implementation":
+            stage_primary_path = iteration_dir / "implementation_plan.md"
+            stage_primary_reason = "Current implementation plan artifact."
+        elif stage in {"implementation_review", "human_review"}:
+            stage_primary_path = iteration_dir / "implementation_review.md"
+            stage_primary_reason = "Current implementation review artifact."
+        elif stage == "update_docs":
+            stage_primary_path = iteration_dir / "docs_update.md"
+            stage_primary_reason = "Current documentation update artifact."
+        elif stage in {"decide_repeat", "stop"}:
+            stage_primary_path = iteration_dir / "decision_result.json"
+            stage_primary_reason = "Current decision artifact."
+        if stage_primary_path is not None:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="stage_artifact",
+                path=stage_primary_path,
+                reason=stage_primary_reason,
+                include_if_missing=True,
+            )
+
+        if stage == "implementation" or plan_approval:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="plan_approval",
+                path=iteration_dir / "plan_approval.json",
+                reason="Implementation plan approval and risk gate snapshot.",
+                include_if_missing=(stage == "implementation"),
+            )
+
+        if stage in {
+            "implementation",
+            "implementation_review",
+            "launch",
+            "slurm_monitor",
+            "extract_results",
+            "update_docs",
+            "decide_repeat",
+        }:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="plan_execution_summary",
+                path=iteration_dir / "plan_execution_summary.json",
+                reason="Wave/task execution evidence, retries, and verification rollup.",
+                include_if_missing=(stage == "implementation"),
+            )
+
+        if (
+            stage in {"implementation_review", "human_review", "launch"}
+            or review_blockers
+        ):
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="review_result",
+                path=iteration_dir / "review_result.json",
+                reason="Implementation review gate result and blocking findings.",
+                include_if_missing=(stage in {"implementation_review", "human_review"}),
+            )
+
+        run_manifest_path_text = str(run_status.get("manifest_path", "")).strip()
+        run_metrics_path_text = str(run_status.get("metrics_path", "")).strip()
+        run_manifest_path = (
+            repo_root / run_manifest_path_text if run_manifest_path_text else None
+        )
+        run_metrics_path = (
+            repo_root / run_metrics_path_text if run_metrics_path_text else None
+        )
+        if run_manifest_path is not None:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="run_manifest",
+                path=run_manifest_path,
+                reason="Latest run manifest and execution status.",
+                include_if_missing=True,
+            )
+        if run_metrics_path is not None:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="run_metrics",
+                path=run_metrics_path,
+                reason="Latest run metrics and completion state.",
+                include_if_missing=True,
+            )
+
+        if bool(uat_summary.get("required", False)) or bool(
+            uat_summary.get("pending", False)
+        ):
+            artifact_path = str(uat_summary.get("artifact_path", "")).strip()
+            uat_path = repo_root / artifact_path if artifact_path else None
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="uat",
+                path=uat_path,
+                reason="User-acceptance testing gate artifact.",
+                include_if_missing=True,
+            )
+
+        if stage in {"update_docs", "decide_repeat"}:
+            _append_artifact_pointer(
+                rows=rows,
+                seen_paths=seen_paths,
+                repo_root=repo_root,
+                role="traceability",
+                path=iteration_dir / "traceability_coverage.json",
+                reason="End-to-end requirement-to-decision evidence coverage.",
+            )
+
+    return rows[:8]
+
+
+def _build_continuation_packet(
+    *,
+    repo_root: Path,
+    scope_root: Path,
+    state: dict[str, Any],
+    stage: str,
+    current_scope: str,
+    handoff_json_path: Path,
+    handoff_md_path: Path,
+    iteration_dir: Path | None,
+    latest_verification_summary: dict[str, Any],
+    blocking_failures: list[str],
+    pending_decisions: list[str],
+    recommended_next: dict[str, Any],
+    safe_resume: dict[str, Any],
+    plan_approval: dict[str, Any],
+    uat_summary: dict[str, Any],
+    context_rot: dict[str, Any],
+    recent_checkpoints: list[dict[str, Any]],
+    last_green_at: str,
+    block_reason: dict[str, Any],
+    guardrail_breach: dict[str, Any],
+    wave_observability: dict[str, Any],
+    review_blockers: list[str],
+) -> dict[str, Any]:
+    latest_checkpoint = _safe_dict(recent_checkpoints[0]) if recent_checkpoints else {}
+    trigger_reasons = [
+        str(item).strip()
+        for item in _safe_list(plan_approval.get("trigger_reasons"))
+        if str(item).strip()
+    ]
+    effective_flags: list[str] = []
+    if approval_requires_action(plan_approval):
+        effective_flags.append("plan_approval_required")
+    elif plan_approval:
+        effective_flags.append("plan_approval_recorded")
+    if bool(uat_summary.get("required", False)):
+        effective_flags.append("uat_required")
+    if bool(uat_summary.get("pending", False)):
+        effective_flags.append("uat_pending")
+    if latest_verification_summary.get("passed") is False:
+        effective_flags.append("verification_failing")
+    if str(block_reason.get("reason", "")).strip():
+        effective_flags.append("manual_block")
+    if str(guardrail_breach.get("rule", "")).strip():
+        effective_flags.append("guardrail_breach")
+    if _safe_list(context_rot.get("context_rot_flags")):
+        effective_flags.append("context_rot_detected")
+
+    run_status = _load_run_status(
+        repo_root=repo_root,
+        iteration_dir=iteration_dir,
+        state=state,
+    )
+    diagnostics = _unique_list(
+        [
+            *[
+                str(item).strip()
+                for item in _safe_list(wave_observability.get("diagnostics"))
+                if str(item).strip()
+            ],
+            *[
+                str(item).strip()
+                for item in _safe_list(context_rot.get("context_rot_flags"))
+                if str(item).strip()
+            ],
+        ]
+    )
+
+    return {
+        "schema_version": "1.0",
+        "generated_at": _utc_now(),
+        "active_stage": {
+            "stage": stage,
+            "stage_attempt": int(state.get("stage_attempt", 0) or 0),
+            "max_stage_attempts": int(state.get("max_stage_attempts", 0) or 0),
+            "scope_kind": current_scope or "experiment",
+            "scope_root": str(scope_root),
+        },
+        "next_action": {
+            "recommended_command": str(recommended_next.get("command", "")).strip(),
+            "safe_command": str(safe_resume.get("command", "")).strip(),
+            "safe_status": str(safe_resume.get("status", "blocked")).strip()
+            or "blocked",
+            "preconditions": [
+                str(item).strip()
+                for item in _safe_list(safe_resume.get("preconditions"))
+                if str(item).strip()
+            ],
+            "reason": str(recommended_next.get("reason", "")).strip(),
+            "executable": bool(recommended_next.get("executable", False)),
+        },
+        "latest_good_checkpoint": {
+            "checkpoint_id": str(latest_checkpoint.get("checkpoint_id", "")).strip(),
+            "stage": str(latest_checkpoint.get("stage", "")).strip(),
+            "created_at": str(latest_checkpoint.get("created_at", "")).strip(),
+            "last_green_at": last_green_at,
+            "recommended_rewind_targets": [
+                str(item).strip()
+                for item in _safe_list(context_rot.get("recommended_rewind_targets"))
+                if str(item).strip()
+            ],
+        },
+        "policy_and_risk": {
+            "plan_approval_status": str(plan_approval.get("status", "")).strip(),
+            "plan_requires_approval": bool(
+                plan_approval.get("requires_approval", False)
+            ),
+            "plan_trigger_reasons": trigger_reasons,
+            "plan_hash": str(plan_approval.get("plan_hash", "")).strip(),
+            "risk_fingerprint": str(plan_approval.get("risk_fingerprint", "")).strip(),
+            "guardrail_breach": str(guardrail_breach.get("rule", "")).strip(),
+            "block_reason": str(block_reason.get("reason", "")).strip(),
+            "context_rot_flags": [
+                str(item).strip()
+                for item in _safe_list(context_rot.get("context_rot_flags"))
+                if str(item).strip()
+            ],
+            "effective_flags": _unique_list(effective_flags),
+        },
+        "run_status": run_status,
+        "uat_status": {
+            "required": bool(uat_summary.get("required", False)),
+            "required_by": str(uat_summary.get("required_by", "none")).strip()
+            or "none",
+            "status": str(uat_summary.get("status", "not_required")).strip()
+            or "not_required",
+            "artifact_path": str(uat_summary.get("artifact_path", "")).strip(),
+            "pending": bool(uat_summary.get("pending", False)),
+            "pending_message": str(uat_summary.get("pending_message", "")).strip(),
+            "suggested_init_command": str(
+                uat_summary.get("suggested_init_command", "")
+            ).strip(),
+        },
+        "top_blockers": _build_top_blockers(
+            blocking_failures=blocking_failures,
+            pending_decisions=pending_decisions,
+        ),
+        "artifact_pointers": _build_artifact_pointers(
+            repo_root=repo_root,
+            iteration_dir=iteration_dir,
+            stage=stage,
+            handoff_json_path=handoff_json_path,
+            handoff_md_path=handoff_md_path,
+            uat_summary=uat_summary,
+            plan_approval=plan_approval,
+            run_status=run_status,
+            review_blockers=review_blockers,
+        ),
+        "diagnostics": diagnostics,
+    }
+
+
 def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     current_scope = str(payload.get("current_scope", "experiment")).strip()
     current_stage = str(payload.get("current_stage", "")).strip()
@@ -428,6 +851,28 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     plan_approval = _safe_dict(payload.get("plan_approval"))
     wave_observability = _safe_dict(payload.get("wave_observability"))
     uat = _safe_dict(payload.get("uat"))
+    continuation = _safe_dict(payload.get("continuation_packet"))
+    active_stage = _safe_dict(continuation.get("active_stage"))
+    next_action = _safe_dict(continuation.get("next_action"))
+    latest_good_checkpoint = _safe_dict(continuation.get("latest_good_checkpoint"))
+    policy_and_risk = _safe_dict(continuation.get("policy_and_risk"))
+    run_status = _safe_dict(continuation.get("run_status"))
+    uat_status = _safe_dict(continuation.get("uat_status"))
+    top_blockers = [
+        str(item).strip()
+        for item in _safe_list(continuation.get("top_blockers"))
+        if str(item).strip()
+    ]
+    artifact_pointers = [
+        _safe_dict(item)
+        for item in _safe_list(continuation.get("artifact_pointers"))
+        if isinstance(item, dict)
+    ]
+    continuation_diagnostics = [
+        str(item).strip()
+        for item in _safe_list(continuation.get("diagnostics"))
+        if str(item).strip()
+    ]
     critical_path = _safe_dict(wave_observability.get("critical_path"))
     observability_waves = _safe_list(wave_observability.get("waves"))
     observability_conflicts = _safe_list(wave_observability.get("file_conflicts"))
@@ -448,6 +893,26 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         f"- scope_root: `{payload.get('scope_root', '')}`",
         f"- stage: `{current_stage}`",
         "",
+        "## Continuation Packet",
+        "",
+        f"- active_stage: `{active_stage.get('stage', current_stage)}`",
+        f"- active_attempt: `{active_stage.get('stage_attempt', '-')}`/`{active_stage.get('max_stage_attempts', '-')}`",
+        f"- active_scope_kind: `{active_stage.get('scope_kind', current_scope)}`",
+        f"- next_safe_status: `{next_action.get('safe_status', safe_resume.get('status', 'blocked'))}`",
+        f"- next_safe_command: `{next_action.get('safe_command', safe_resume.get('command', ''))}`",
+        f"- recommended_command: `{next_action.get('recommended_command', recommended.get('command', ''))}`",
+        f"- recommendation_reason: {next_action.get('reason', recommended.get('reason', ''))}",
+        f"- latest_good_checkpoint: `{latest_good_checkpoint.get('checkpoint_id', '')}`",
+        f"- latest_good_checkpoint_stage: `{latest_good_checkpoint.get('stage', '')}`",
+        f"- latest_good_checkpoint_at: `{latest_good_checkpoint.get('created_at', '')}`",
+        f"- last_green_at: `{latest_good_checkpoint.get('last_green_at', payload.get('last_green_at', ''))}`",
+        f"- run_id: `{run_status.get('run_id', '')}`",
+        f"- run_manifest_status: `{run_status.get('manifest_status', '')}`",
+        f"- run_metrics_status: `{run_status.get('metrics_status', '')}`",
+        f"- run_sync_status: `{run_status.get('sync_status', '')}`",
+        f"- uat_required: `{bool(uat_status.get('required', uat.get('required', False)))}`",
+        f"- uat_status: `{uat_status.get('status', uat.get('status', 'not_required'))}`",
+        "",
         "## Wave and Task Status",
         "",
         f"- wave.status: `{wave.get('status', 'unavailable')}`",
@@ -462,6 +927,40 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         f"- tasks.skipped: `{tasks.get('skipped', 0)}`",
         f"- tasks.deferred: `{tasks.get('deferred', 0)}`",
     ]
+    effective_flags = [
+        str(item).strip()
+        for item in _safe_list(policy_and_risk.get("effective_flags"))
+        if str(item).strip()
+    ]
+    if effective_flags:
+        lines.append("- effective_policy_risk_flags:")
+        lines.extend(f"  - {item}" for item in effective_flags)
+    plan_trigger_reasons = [
+        str(item).strip()
+        for item in _safe_list(policy_and_risk.get("plan_trigger_reasons"))
+        if str(item).strip()
+    ]
+    if plan_trigger_reasons:
+        lines.append("- plan_trigger_reasons:")
+        lines.extend(f"  - {item}" for item in plan_trigger_reasons)
+    if top_blockers:
+        lines.append("- top_blockers:")
+        lines.extend(f"  - {item}" for item in top_blockers)
+    if artifact_pointers:
+        lines.append("- artifact_pointers:")
+        for entry in artifact_pointers:
+            lines.append(
+                "  - "
+                + (
+                    f"{entry.get('role', 'artifact')}: "
+                    f"{entry.get('path', '')} "
+                    f"[{entry.get('status', 'unknown')}] "
+                    f"{entry.get('reason', '')}"
+                ).strip()
+            )
+    if continuation_diagnostics:
+        lines.append("- continuation_diagnostics:")
+        lines.extend(f"  - {item}" for item in continuation_diagnostics)
 
     if plan_approval:
         counts = _safe_dict(plan_approval.get("counts"))
@@ -802,7 +1301,8 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
 
     blocking_failures = []
     blocking_failures.extend(_verification_blockers(repo_root))
-    blocking_failures.extend(_review_blockers(iteration_dir))
+    review_blockers = _review_blockers(iteration_dir)
+    blocking_failures.extend(review_blockers)
     if plan_approval_error:
         blocking_failures.append(plan_approval_error)
     if block_reason:
@@ -928,6 +1428,30 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
     }
     if plan_approval:
         payload["plan_approval"] = plan_approval
+    payload["continuation_packet"] = _build_continuation_packet(
+        repo_root=repo_root,
+        scope_root=scope_root,
+        state=state,
+        stage=stage,
+        current_scope=current_scope,
+        handoff_json_path=handoff_json_path,
+        handoff_md_path=handoff_md_path,
+        iteration_dir=iteration_dir,
+        latest_verification_summary=latest_verification_summary,
+        blocking_failures=blocking_failures,
+        pending_decisions=pending_decisions,
+        recommended_next=recommended_next,
+        safe_resume=safe_resume,
+        plan_approval=plan_approval,
+        uat_summary=uat_summary,
+        context_rot=context_rot,
+        recent_checkpoints=recent_checkpoints,
+        last_green_at=last_green_at,
+        block_reason=block_reason,
+        guardrail_breach=guardrail_breach,
+        wave_observability=wave_observability,
+        review_blockers=review_blockers,
+    )
     _write_json(handoff_json_path, payload)
     handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_md_path.write_text(_render_handoff_markdown(payload), encoding="utf-8")

@@ -21,9 +21,10 @@ The cockpit is mode-based, not multi-pane focus-based.
 - **Home**: Stage summary, full rendered prompt preview ("what will run now") in a scrollable card, blockers, required artifacts, handoff/resume summary, recommended actions.
   - When stage is `human_review`, Home includes a guided `Resolve human review` action (`pass|retry|stop`) with the same unlock/confirm safety model as other mutating actions.
 - **Runs**: Run list plus quick open for manifest/metrics.
-- **Files**: Stage/common files plus quick open for rendered prompt, render context, rendered audit contract, implementation retry brief, and prompt template, all in a rich markdown viewer.
+- **Files**: Stage/common files plus quick open for rendered prompt, render context, rendered audit contract, rendered brief, rendered human packet, prompt template, state, and stage artifacts, all in a rich markdown viewer.
   - Advanced actions in Files include backlog steering flows (`focus`, `experiment create`, `experiment move`) via picker modals.
 - **Console**: Live output for the active command.
+- **Waves**: Current wave graph, critical path, retry reasons, blocked/deferred/skipped tasks, file conflicts, and per-task evidence rows.
 - **Help**: Keymap and safety model.
 
 Only one primary workspace is shown at a time to reduce UI overload for first-time users.
@@ -34,7 +35,8 @@ Only one primary workspace is shown at a time to reduce UI overload for first-ti
 - `2` Runs
 - `3` Files
 - `4` Console
-- `5` Help
+- `5` Waves
+- `6` Help
 - `?` Help
 - `Enter` Activate selection or focused button
 - `u` Unlock/lock mutating actions
@@ -104,6 +106,7 @@ Reveal them with `x` (Toggle Advanced).
 - `Verify current stage` remains mutating because it updates verification artifacts/logs.
 - Human review decisions (`pass|retry|stop`) can be applied from Home; TUI executes `autolab review --status=<...>` behind the same confirmation flow.
 - Handoff panel reads `.autolab/handoff.json` and surfaces scope, wave/task counters, blocker/decision counts, recommended next command, and safe resume status.
+- Home and Waves read the top-level handoff snapshot; the richer scope-root `oracle.md` export is generated separately via `autolab oracle` when you need the inlined continuation view.
 - Render preview uses the same internal prompt rendering path as `autolab render` with `write_outputs=False`.
 - Preview modals render content as markdown. Markdown files are rendered directly; JSON/YAML/TOML/log/text are rendered as fenced code blocks.
 - Backlog steering modals use backlog picker-first UX with editable IDs before submit.

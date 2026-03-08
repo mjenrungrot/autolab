@@ -804,6 +804,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     report.set_defaults(handler=_cmd_report)
 
+    oracle = subparsers.add_parser(
+        "oracle",
+        help="Generate an expert-review oracle document from the continuation packet",
+    )
+    oracle.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    oracle.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=240.0,
+        help="LLM command timeout in seconds (default: 240).",
+    )
+    oracle.add_argument(
+        "--output",
+        default="",
+        help="Optional output path for the oracle document (default: <scope-root>/oracle.md).",
+    )
+    oracle.set_defaults(handler=_cmd_oracle)
+
     handoff = subparsers.add_parser(
         "handoff",
         help="Write machine/human handoff artifacts for takeover",

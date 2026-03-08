@@ -25,7 +25,8 @@
     "baseline_snapshot",
     "handoff_json_path",
     "handoff_markdown_path",
-    "uat"
+    "uat",
+    "continuation_packet"
   ],
   "$defs": {
     "stringList": {
@@ -61,12 +62,25 @@
     },
     "uatSummary": {
       "type": "object",
-      "required": ["required", "required_by", "artifact_path", "status"],
+      "required": [
+        "required",
+        "required_by",
+        "artifact_path",
+        "status",
+        "pending",
+        "pending_message",
+        "suggested_init_command",
+        "suggested_check_titles"
+      ],
       "properties": {
         "required": {"type": "boolean"},
         "required_by": {"$ref": "#/$defs/uatRequiredBy"},
         "artifact_path": {"type": "string"},
-        "status": {"$ref": "#/$defs/uatStatus"}
+        "status": {"$ref": "#/$defs/uatStatus"},
+        "pending": {"type": "boolean"},
+        "pending_message": {"type": "string"},
+        "suggested_init_command": {"type": "string"},
+        "suggested_check_titles": {"$ref": "#/$defs/stringList"}
       },
       "additionalProperties": false
     },
@@ -217,6 +231,188 @@
         "preconditions": {
           "$ref": "#/$defs/stringList"
         }
+      },
+      "additionalProperties": false
+    },
+    "artifactPointer": {
+      "type": "object",
+      "required": ["role", "path", "status", "reason", "inline_in_oracle"],
+      "properties": {
+        "role": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "status": {
+          "type": "string",
+          "enum": ["present", "missing", "invalid", "unknown"]
+        },
+        "reason": {"type": "string", "minLength": 1},
+        "inline_in_oracle": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "activeStageSummary": {
+      "type": "object",
+      "required": [
+        "stage",
+        "stage_attempt",
+        "max_stage_attempts",
+        "scope_kind",
+        "scope_root"
+      ],
+      "properties": {
+        "stage": {"type": "string", "minLength": 1},
+        "stage_attempt": {"type": "integer", "minimum": 0},
+        "max_stage_attempts": {"type": "integer", "minimum": 0},
+        "scope_kind": {
+          "type": "string",
+          "enum": ["experiment", "project_wide"]
+        },
+        "scope_root": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "nextActionSummary": {
+      "type": "object",
+      "required": [
+        "recommended_command",
+        "safe_command",
+        "safe_status",
+        "preconditions",
+        "reason",
+        "executable"
+      ],
+      "properties": {
+        "recommended_command": {"type": "string", "minLength": 1},
+        "safe_command": {"type": "string", "minLength": 1},
+        "safe_status": {
+          "type": "string",
+          "enum": ["ready", "blocked"]
+        },
+        "preconditions": {"$ref": "#/$defs/stringList"},
+        "reason": {"type": "string", "minLength": 1},
+        "executable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "latestGoodCheckpointSummary": {
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "stage",
+        "created_at",
+        "last_green_at",
+        "recommended_rewind_targets"
+      ],
+      "properties": {
+        "checkpoint_id": {"type": "string"},
+        "stage": {"type": "string"},
+        "created_at": {"type": "string"},
+        "last_green_at": {"type": "string"},
+        "recommended_rewind_targets": {"$ref": "#/$defs/stringList"}
+      },
+      "additionalProperties": false
+    },
+    "policyAndRiskSummary": {
+      "type": "object",
+      "required": [
+        "plan_approval_status",
+        "plan_requires_approval",
+        "plan_trigger_reasons",
+        "plan_hash",
+        "risk_fingerprint",
+        "guardrail_breach",
+        "block_reason",
+        "context_rot_flags",
+        "effective_flags"
+      ],
+      "properties": {
+        "plan_approval_status": {"type": "string"},
+        "plan_requires_approval": {"type": "boolean"},
+        "plan_trigger_reasons": {"$ref": "#/$defs/stringList"},
+        "plan_hash": {"type": "string"},
+        "risk_fingerprint": {"type": "string"},
+        "guardrail_breach": {"type": "string"},
+        "block_reason": {"type": "string"},
+        "context_rot_flags": {"$ref": "#/$defs/stringList"},
+        "effective_flags": {"$ref": "#/$defs/stringList"}
+      },
+      "additionalProperties": false
+    },
+    "runStatusSummary": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "host_mode",
+        "manifest_status",
+        "sync_status",
+        "metrics_status",
+        "manifest_path",
+        "metrics_path"
+      ],
+      "properties": {
+        "run_id": {"type": "string"},
+        "host_mode": {"type": "string"},
+        "manifest_status": {"type": "string"},
+        "sync_status": {"type": "string"},
+        "metrics_status": {"type": "string"},
+        "manifest_path": {"type": "string"},
+        "metrics_path": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "uatStatusSummary": {
+      "type": "object",
+      "required": [
+        "required",
+        "required_by",
+        "status",
+        "artifact_path",
+        "pending",
+        "pending_message",
+        "suggested_init_command"
+      ],
+      "properties": {
+        "required": {"type": "boolean"},
+        "required_by": {"$ref": "#/$defs/uatRequiredBy"},
+        "status": {"$ref": "#/$defs/uatStatus"},
+        "artifact_path": {"type": "string"},
+        "pending": {"type": "boolean"},
+        "pending_message": {"type": "string"},
+        "suggested_init_command": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "continuationPacket": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "generated_at",
+        "active_stage",
+        "next_action",
+        "latest_good_checkpoint",
+        "policy_and_risk",
+        "run_status",
+        "uat_status",
+        "top_blockers",
+        "artifact_pointers",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema_version": {"type": "string", "const": "1.0"},
+        "generated_at": {"$ref": "#/$defs/timestamp"},
+        "active_stage": {"$ref": "#/$defs/activeStageSummary"},
+        "next_action": {"$ref": "#/$defs/nextActionSummary"},
+        "latest_good_checkpoint": {
+          "$ref": "#/$defs/latestGoodCheckpointSummary"
+        },
+        "policy_and_risk": {"$ref": "#/$defs/policyAndRiskSummary"},
+        "run_status": {"$ref": "#/$defs/runStatusSummary"},
+        "uat_status": {"$ref": "#/$defs/uatStatusSummary"},
+        "top_blockers": {"$ref": "#/$defs/stringList"},
+        "artifact_pointers": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/artifactPointer"}
+        },
+        "diagnostics": {"$ref": "#/$defs/stringList"}
       },
       "additionalProperties": false
     },
@@ -915,6 +1111,9 @@
         "missing": { "type": "array", "items": { "type": "string" } },
         "stale_sidecars": { "type": "array", "items": { "type": "string" } }
       }
+    },
+    "continuation_packet": {
+      "$ref": "#/$defs/continuationPacket"
     }
   },
   "additionalProperties": false
