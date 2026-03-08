@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.44] - 2026-03-08
+
+### Summary
+
+- Added campaign autonomy governance so unattended search now tracks active challengers, retries recoverable failures, restores the champion after crash-style outcomes, and escalates to `needs_rethink` with an oracle export on stagnation or crash-threshold breaches.
+- Added champion-relative timeout cancellation plus governance-aware campaign status and handoff surfacing, including new policy thresholds, candidate/governance state, remote `scancel` support, and regression coverage for retry, stagnation, and timeout flows.
+
+<!-- autolab:range v1.2.43..v1.2.44 -->
+
 ## [1.2.43] - 2026-03-08
 
 ### Summary

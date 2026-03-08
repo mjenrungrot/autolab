@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import autolab.commands as commands_module
 import pytest
@@ -22,6 +23,7 @@ from autolab.cli.handlers_campaign import (
     _cmd_campaign_start,
     _cmd_campaign_status,
     _cmd_campaign_stop,
+    _run_campaign_session,
 )
 from autolab.cli.parser import _build_parser
 from autolab.handoff import refresh_handoff
@@ -108,6 +110,8 @@ def _seed_baseline_run(
     sync_status: str = "completed",
     started_at: str | None = None,
     completed_at: str | None = None,
+    host_mode: str = "local",
+    job_id: str = "",
 ) -> Path:
     state = _write_state(state_path, last_run_id=run_id)
     iteration_id = str(state["iteration_id"])
@@ -159,7 +163,8 @@ def _seed_baseline_run(
                 "run_id": run_id,
                 "iteration_id": iteration_id,
                 "status": manifest_status,
-                "host_mode": "local",
+                "host_mode": host_mode,
+                **({"job_id": job_id} if job_id else {}),
                 "resource_request": {"memory": memory},
                 "artifact_sync_to_local": {"status": sync_status},
                 "timestamps": {
@@ -220,6 +225,10 @@ def _campaign_payload(
     scope_kind: str = "experiment",
     lock_mode: str = "none",
     lock_contract: dict[str, object] | None = None,
+    no_improvement_streak: int = 0,
+    crash_streak: int = 0,
+    active_candidate: dict[str, object] | None = None,
+    last_governance_event: dict[str, object] | None = None,
 ) -> dict[str, object]:
     state = _load_state(state_path)
     normalized_lock_mode = str(lock_mode).strip().lower() or "none"
@@ -238,10 +247,30 @@ def _campaign_payload(
         "lock_contract": dict(lock_contract or {}),
         "champion_run_id": str(state["last_run_id"]),
         "champion_revision_label": "unversioned-worktree",
-        "no_improvement_streak": 0,
-        "crash_streak": 0,
+        "no_improvement_streak": no_improvement_streak,
+        "crash_streak": crash_streak,
         "started_at": "2026-03-08T00:00:00Z",
         "last_oracle_at": "",
+        "oracle_feedback": [],
+        "active_candidate": dict(
+            active_candidate
+            or {
+                "decision": "",
+                "started_at": "",
+                "run_id": "",
+                "fix_attempts": 0,
+                "timeout_reference_seconds": 0.0,
+            }
+        ),
+        "last_governance_event": dict(
+            last_governance_event
+            or {
+                "at": "",
+                "category": "",
+                "run_id": "",
+                "reason": "",
+            }
+        ),
     }
 
 
@@ -307,6 +336,10 @@ def _update_campaign_policy(
     complexity_proxy: str | None = None,
     change_size_metric: str | None = None,
     project_wide_root: str | None = None,
+    max_fix_attempts_per_idea: int | None = None,
+    max_timeout_factor: float | None = None,
+    max_no_improvement_streak: int | None = None,
+    max_crash_streak_before_rethink: int | None = None,
 ) -> None:
     if yaml is None:  # pragma: no cover
         raise AssertionError("PyYAML is required for campaign policy tests")
@@ -321,6 +354,14 @@ def _update_campaign_policy(
         campaign["complexity_proxy"] = complexity_proxy
     if change_size_metric is not None:
         campaign["change_size_metric"] = change_size_metric
+    if max_fix_attempts_per_idea is not None:
+        campaign["max_fix_attempts_per_idea"] = max_fix_attempts_per_idea
+    if max_timeout_factor is not None:
+        campaign["max_timeout_factor"] = max_timeout_factor
+    if max_no_improvement_streak is not None:
+        campaign["max_no_improvement_streak"] = max_no_improvement_streak
+    if max_crash_streak_before_rethink is not None:
+        campaign["max_crash_streak_before_rethink"] = max_crash_streak_before_rethink
     if project_wide_root is not None:
         scope_roots = payload.setdefault("scope_roots", {})
         assert isinstance(scope_roots, dict)
@@ -601,7 +642,26 @@ def test_campaign_status_prints_campaign_summary(
     repo, state_path = _init_repo_state(tmp_path)
     _ = capsys.readouterr()
     _seed_baseline_run(repo, state_path)
-    _write_campaign(repo, _campaign_payload(state_path, status="stopped"))
+    _write_campaign(
+        repo,
+        _campaign_payload(
+            state_path,
+            status="stopped",
+            active_candidate={
+                "decision": "implementation",
+                "started_at": "2026-03-08T00:10:00Z",
+                "run_id": "run_trial",
+                "fix_attempts": 1,
+                "timeout_reference_seconds": 300.0,
+            },
+            last_governance_event={
+                "at": "2026-03-08T00:11:00Z",
+                "category": "retry_candidate",
+                "run_id": "run_trial",
+                "reason": "recoverable challenger failure; retrying same idea (1/2)",
+            },
+        ),
+    )
 
     exit_code = commands_module.main(
         ["campaign", "status", "--state-file", str(state_path)]
@@ -613,6 +673,10 @@ def test_campaign_status_prints_campaign_summary(
     assert "campaign_id: campaign_test" in output
     assert "objective_metric: primary_metric" in output
     assert "status: stopped" in output
+    assert "max_fix_attempts_per_idea: 2" in output
+    assert "max_no_improvement_streak: 3" in output
+    assert "active_candidate_run_id: run_trial" in output
+    assert "last_governance_event_category: retry_candidate" in output
     assert "resumable: True" in output
     assert "results_tsv:" in output
     assert "results_md:" in output
@@ -659,6 +723,7 @@ def test_status_command_surfaces_campaign_summary(
     assert "campaign:" in output
     assert "status: error" in output
     assert "champion_run_id: run_baseline" in output
+    assert "max_crash_streak_before_rethink: 2" in output
 
 
 def test_campaign_status_and_status_command_surface_lock_fields(
@@ -1358,7 +1423,7 @@ def test_campaign_continue_stops_on_harness_lock_evaluator_drift(
     assert updated_campaign["status"] == "needs_rethink"
 
 
-def test_locked_campaign_auto_decision_prefers_implementation_then_design(
+def test_locked_campaign_auto_decision_stays_on_implementation(
     tmp_path: Path,
 ) -> None:
     from autolab.run_standard import _run_once_standard
@@ -1396,7 +1461,7 @@ def test_locked_campaign_auto_decision_prefers_implementation_then_design(
     (
         repo / "experiments" / "plan" / "bootstrap_iteration" / "decision_result.json"
     ).unlink(missing_ok=True)
-    redesign_campaign = _campaign_backfill_lock_contract(
+    retry_campaign = _campaign_backfill_lock_contract(
         repo,
         _load_state(state_path),
         _campaign_payload(
@@ -1406,9 +1471,18 @@ def test_locked_campaign_auto_decision_prefers_implementation_then_design(
         )
         | {"no_improvement_streak": 1},
     )
-    _write_campaign(repo, redesign_campaign)
+    _write_campaign(repo, retry_campaign)
+    _write_state(
+        state_path,
+        repeat_guard={
+            "last_decision": "implementation",
+            "same_decision_streak": 99,
+            "last_open_task_count": 999,
+            "no_progress_decisions": 99,
+        },
+    )
 
-    redesign_outcome = _run_once_standard(
+    retry_outcome = _run_once_standard(
         state_path,
         decision=None,
         auto_decision=True,
@@ -1419,6 +1493,287 @@ def test_locked_campaign_auto_decision_prefers_implementation_then_design(
         (repo / ".autolab" / "auto_decision.json").read_text(encoding="utf-8")
     )
 
-    assert redesign_outcome.exit_code == 0
-    assert redesign_outcome.stage_after == "design"
-    assert auto_decision_payload["outputs"]["selected_decision"] == "design"
+    assert retry_outcome.exit_code == 0
+    assert retry_outcome.stage_after == "implementation"
+    assert auto_decision_payload["outputs"]["selected_decision"] == "implementation"
+
+
+def test_campaign_session_retries_candidate_before_discard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(
+        state_path,
+        status="running",
+    )
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_state(state_path, stage="implementation", last_run_id="run_baseline")
+    campaign["active_candidate"] = {
+        "decision": "implementation",
+        "started_at": "2026-03-08T00:10:00Z",
+        "run_id": "",
+        "fix_attempts": 0,
+        "timeout_reference_seconds": 300.0,
+    }
+    _write_campaign(repo, campaign)
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._safe_refresh_handoff",
+        lambda _state_path: ({}, ""),
+    )
+
+    calls = {"count": 0}
+
+    def _cmd_loop_stub(_args) -> int:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return 9
+        payload = _load_campaign_file(repo)
+        assert payload["active_candidate"]["fix_attempts"] == 1
+        payload["status"] = "stop_requested"
+        _write_campaign(repo, payload)
+        return 0
+
+    monkeypatch.setattr("autolab.cli.handlers_run._cmd_loop", _cmd_loop_stub)
+
+    exit_code = _run_campaign_session(state_path)
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code == 0
+    assert calls["count"] == 2
+    assert updated_campaign["status"] == "stopped"
+    assert updated_campaign["active_candidate"]["fix_attempts"] == 1
+    assert updated_campaign["last_governance_event"]["category"] == "retry_candidate"
+
+
+def test_campaign_session_exhausted_candidate_triggers_oracle_rethink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _update_campaign_policy(
+        repo,
+        max_fix_attempts_per_idea=0,
+        max_crash_streak_before_rethink=1,
+    )
+    _seed_baseline_run(repo, state_path)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(
+        state_path,
+        status="running",
+        active_candidate={
+            "decision": "implementation",
+            "started_at": "2026-03-08T00:10:00Z",
+            "run_id": "",
+            "fix_attempts": 0,
+            "timeout_reference_seconds": 300.0,
+        },
+    )
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_state(state_path, stage="implementation", last_run_id="run_baseline")
+    _write_campaign(repo, campaign)
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._safe_refresh_handoff",
+        lambda _state_path: ({}, ""),
+    )
+
+    def _export_oracle_document(*, repo_root: Path, **_kwargs):
+        payload = _load_campaign_file(repo_root)
+        payload["last_oracle_at"] = "2026-03-08T00:30:00Z"
+        _write_campaign(repo_root, payload)
+        output_path = repo_root / "oracle.md"
+        output_path.write_text("# Oracle\n", encoding="utf-8")
+        return (output_path, 0, "oracle test")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        _export_oracle_document,
+    )
+    monkeypatch.setattr("autolab.cli.handlers_run._cmd_loop", lambda _args: 9)
+
+    exit_code = _run_campaign_session(state_path)
+    updated_campaign = _load_campaign_file(repo)
+    restored_state = _load_state(state_path)
+
+    assert exit_code == 1
+    assert updated_campaign["status"] == "needs_rethink"
+    assert updated_campaign["no_improvement_streak"] == 1
+    assert updated_campaign["crash_streak"] == 1
+    assert updated_campaign["last_oracle_at"] == "2026-03-08T00:30:00Z"
+    assert updated_campaign["last_governance_event"]["category"] == "crash_rethink"
+    assert restored_state["stage"] == "decide_repeat"
+    assert restored_state["last_run_id"] == "run_baseline"
+
+
+def test_campaign_session_stagnation_exports_oracle_after_metric_discard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _update_campaign_policy(repo, max_no_improvement_streak=1)
+    _seed_baseline_run(repo, state_path, metric_value=1.0)
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(
+        state_path,
+        status="running",
+        lock_mode="design",
+    )
+    campaign = _campaign_backfill_lock_contract(repo, _load_state(state_path), campaign)
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_challenger",
+        metric_value=0.5,
+    )
+    _set_decide_repeat_state(state_path, run_id="run_challenger")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._safe_refresh_handoff",
+        lambda _state_path: ({}, ""),
+    )
+
+    def _export_oracle_document(*, repo_root: Path, **_kwargs):
+        payload = _load_campaign_file(repo_root)
+        payload["last_oracle_at"] = "2026-03-08T00:40:00Z"
+        _write_campaign(repo_root, payload)
+        output_path = repo_root / "oracle.md"
+        output_path.write_text("# Oracle\n", encoding="utf-8")
+        return (output_path, 0, "oracle test")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        _export_oracle_document,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_run._cmd_loop",
+        lambda _args: pytest.fail("campaign compare should not advance to a new loop"),
+    )
+
+    exit_code = _run_campaign_session(state_path)
+    updated_campaign = _load_campaign_file(repo)
+    restored_state = _load_state(state_path)
+
+    assert exit_code == 1
+    assert updated_campaign["status"] == "needs_rethink"
+    assert updated_campaign["no_improvement_streak"] == 1
+    assert updated_campaign["crash_streak"] == 0
+    assert updated_campaign["last_governance_event"]["category"] == "stagnation_rethink"
+    assert restored_state["stage"] == "decide_repeat"
+    assert restored_state["last_run_id"] == "run_baseline"
+
+
+def test_campaign_session_timeout_discards_slurm_candidate_and_exports_oracle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _update_campaign_policy(
+        repo,
+        max_timeout_factor=2.0,
+        max_crash_streak_before_rethink=1,
+    )
+    _seed_baseline_run(
+        repo,
+        state_path,
+        started_at="2026-03-08T00:00:00Z",
+        completed_at="2026-03-08T00:05:00Z",
+    )
+    _set_decide_repeat_state(state_path, run_id="run_baseline")
+    _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
+    campaign = _campaign_payload(
+        state_path,
+        status="running",
+        active_candidate={
+            "decision": "implementation",
+            "started_at": "2026-03-08T00:10:00Z",
+            "run_id": "run_timeout",
+            "fix_attempts": 0,
+            "timeout_reference_seconds": 300.0,
+        },
+    )
+    _campaign_seed_champion_snapshot(repo, state_path, campaign)
+    _write_campaign(repo, campaign)
+    _seed_baseline_run(
+        repo,
+        state_path,
+        run_id="run_timeout",
+        metric_value=1.0,
+        manifest_status="running",
+        metrics_status="running",
+        sync_status="pending",
+        host_mode="slurm",
+        job_id="12345",
+        started_at="2026-03-07T00:00:00Z",
+        completed_at=None,
+    )
+    _write_state(
+        state_path,
+        stage="slurm_monitor",
+        last_run_id="run_baseline",
+        pending_run_id="run_timeout",
+    )
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._safe_refresh_handoff",
+        lambda _state_path: ({}, ""),
+    )
+    monkeypatch.setattr(
+        "autolab.campaign.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+    def _export_oracle_document(*, repo_root: Path, **_kwargs):
+        payload = _load_campaign_file(repo_root)
+        payload["last_oracle_at"] = "2026-03-08T01:00:00Z"
+        _write_campaign(repo_root, payload)
+        output_path = repo_root / "oracle.md"
+        output_path.write_text("# Oracle\n", encoding="utf-8")
+        return (output_path, 0, "oracle test")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        _export_oracle_document,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_run._cmd_loop",
+        lambda _args: pytest.fail(
+            "timed-out challengers should be handled before loop"
+        ),
+    )
+
+    exit_code = _run_campaign_session(state_path)
+    updated_campaign = _load_campaign_file(repo)
+    restored_state = _load_state(state_path)
+    timeout_manifest = json.loads(
+        (
+            repo
+            / "experiments"
+            / "plan"
+            / str(restored_state["iteration_id"])
+            / "runs"
+            / "run_timeout"
+            / "run_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert exit_code == 1
+    assert updated_campaign["status"] == "needs_rethink"
+    assert updated_campaign["crash_streak"] == 1
+    assert updated_campaign["last_governance_event"]["category"] == "crash_rethink"
+    assert timeout_manifest["status"] == "failed"
+    assert timeout_manifest["campaign_timeout"]["cancel_command"] == "scancel 12345"
+    assert restored_state["stage"] == "decide_repeat"
+    assert restored_state["last_run_id"] == "run_baseline"

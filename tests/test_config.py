@@ -8,6 +8,7 @@ import yaml
 
 from autolab.config import (
     _load_agent_runner_config,
+    _load_campaign_governance_config,
     _load_extract_runtime_config,
     _load_guardrail_config,
     _load_launch_execute_policy,
@@ -62,6 +63,45 @@ def test_load_guardrail_config_reads_stalled_blocker_limit(tmp_path: Path) -> No
 
     guardrails = _load_guardrail_config(repo)
     assert guardrails.max_stalled_blocker_cycles == 7
+
+
+def test_load_campaign_governance_config_defaults(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    config = _load_campaign_governance_config(repo)
+
+    assert config.max_fix_attempts_per_idea == 2
+    assert config.max_timeout_factor == 2.0
+    assert config.max_no_improvement_streak == 3
+    assert config.max_crash_streak_before_rethink == 2
+
+
+def test_load_campaign_governance_config_reads_and_clamps_values(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy_path = repo / ".autolab" / "verifier_policy.yaml"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "autorun": {
+            "campaign": {
+                "max_fix_attempts_per_idea": -4,
+                "max_timeout_factor": 4.5,
+                "max_no_improvement_streak": 0,
+                "max_crash_streak_before_rethink": -1,
+            }
+        }
+    }
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+
+    config = _load_campaign_governance_config(repo)
+
+    assert config.max_fix_attempts_per_idea == 0
+    assert config.max_timeout_factor == 4.5
+    assert config.max_no_improvement_streak == 1
+    assert config.max_crash_streak_before_rethink == 1
 
 
 def test_load_meaningful_change_config_defaults_include_review_artifact_filter(
