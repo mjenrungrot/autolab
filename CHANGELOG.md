@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.48] - 2026-03-08
+
+### Summary
+
+- Added the new Oracle continuation-packet fields to the scaffold handoff schema so generated `handoff.json` artifacts validate cleanly during verify, golden-iteration, and brownfield canary flows.
+
+<!-- autolab:range v1.2.47..v1.2.48 -->
+
 ## [1.2.47] - 2026-03-08
 
 ### Summary
