@@ -664,6 +664,21 @@ def _load_handoff_summary(
     next_action = continuation.get("next_action")
     if not isinstance(next_action, dict):
         next_action = {}
+    oracle_auto_status = str(continuation.get("oracle_auto_status", "")).strip()
+    oracle_trigger_reason = str(continuation.get("oracle_trigger_reason", "")).strip()
+    oracle_failure_reason = str(continuation.get("oracle_failure_reason", "")).strip()
+    oracle_attempt_window = str(continuation.get("oracle_attempt_window", "")).strip()
+    oracle_verdict = str(continuation.get("oracle_verdict", "")).strip()
+    oracle_suggested_next_action = str(
+        continuation.get("oracle_suggested_next_action", "")
+    ).strip()
+    oracle_epoch_exhausted = bool(continuation.get("oracle_epoch_exhausted", False))
+    oracle_recommended_human_review = bool(
+        continuation.get("oracle_recommended_human_review", False)
+    )
+    oracle_disfavored_family = str(
+        continuation.get("oracle_disfavored_family", "")
+    ).strip()
     uat_status = continuation.get("uat_status")
     if not isinstance(uat_status, dict):
         uat_status = {}
@@ -768,6 +783,15 @@ def _load_handoff_summary(
         )
         if isinstance(uat.get("suggested_check_titles"), list)
         else (),
+        oracle_auto_status=oracle_auto_status,
+        oracle_trigger_reason=oracle_trigger_reason,
+        oracle_failure_reason=oracle_failure_reason,
+        oracle_attempt_window=oracle_attempt_window,
+        oracle_verdict=oracle_verdict,
+        oracle_suggested_next_action=oracle_suggested_next_action,
+        oracle_epoch_exhausted=oracle_epoch_exhausted,
+        oracle_recommended_human_review=oracle_recommended_human_review,
+        oracle_disfavored_family=oracle_disfavored_family,
         wave_observability=wave_observability,
     )
 

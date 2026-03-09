@@ -2207,6 +2207,105 @@ def test_loop_assistant_plan_only_forwards_flags_and_stops(
     assert "autolab loop: stop (plan-only requested)" in output
 
 
+def test_loop_reloads_stage_after_auto_oracle_roundtrip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["stage"] = "implementation_review"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    seen = {"oracle_calls": 0, "run_once_calls": 0}
+
+    def _run_once_stub(
+        _state_path: Path,
+        _decision: str | None,
+        *,
+        assistant: bool = False,
+        plan_only: bool = False,
+        execute_approved_plan: bool = False,
+        **_kwargs,
+    ) -> RunOutcome:
+        _ = (assistant, plan_only, execute_approved_plan)
+        seen["run_once_calls"] += 1
+        if seen["run_once_calls"] == 1:
+            return RunOutcome(
+                exit_code=0,
+                transitioned=True,
+                stage_before="implementation_review",
+                stage_after="human_review",
+                message="assistant review guardrail breach escalated to human_review",
+            )
+        return RunOutcome(
+            exit_code=0,
+            transitioned=False,
+            stage_before="implementation_review",
+            stage_after="implementation_review",
+            message="implementation review steady",
+        )
+
+    def _oracle_stub(**_kwargs):
+        seen["oracle_calls"] += 1
+        current = json.loads(state_path.read_text(encoding="utf-8"))
+        current["stage"] = "implementation_review"
+        state_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+        return {
+            "status": "succeeded",
+            "attempted": True,
+            "apply_status": "applied",
+        }
+
+    monkeypatch.setattr(commands_module, "_run_once", _run_once_stub)
+    monkeypatch.setattr(
+        commands_module, "_maybe_run_auto_oracle_roundtrip", _oracle_stub
+    )
+    monkeypatch.setattr(
+        commands_module, "_acquire_lock", lambda *_a, **_k: (True, "ok")
+    )
+    monkeypatch.setattr(commands_module, "_release_lock", lambda *_a, **_k: None)
+    monkeypatch.setattr(commands_module, "_append_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        commands_module, "_collect_change_snapshot", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_try_auto_commit",
+        lambda *_a, **_k: "auto-commit: skipped",
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_safe_refresh_handoff",
+        lambda *_a, **_k: ({}, ""),
+    )
+    monkeypatch.setattr(
+        commands_module,
+        "_write_overnight_summary",
+        lambda *_a, **_k: None,
+    )
+
+    exit_code = commands_module._cmd_loop(
+        argparse.Namespace(
+            state_file=str(state_path),
+            max_iterations=2,
+            max_hours=1.0,
+            auto=True,
+            run_agent_mode="policy",
+            assistant=False,
+            verify=False,
+            strict_implementation_progress=True,
+            plan_only=False,
+            execute_approved_plan=False,
+        )
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert seen["oracle_calls"] == 2
+    assert "effective_stage_after=implementation_review" in output
+    assert "autolab loop: stop (terminal stage): human_review" not in output
+
+
 def test_approve_plan_command_marks_plan_approved(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

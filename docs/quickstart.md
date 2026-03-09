@@ -179,8 +179,11 @@ autolab handoff
 # Export the richer scope-root oracle handoff with inlined artifact content
 autolab oracle
 
+# Run a browser-only Oracle roundtrip once and apply advisory feedback
+autolab oracle roundtrip --auto
+
 # Apply expert feedback back into sidecars / todos / campaign state
-autolab oracle apply --notes experiments/plan/bootstrap_iteration/oracle.md
+autolab oracle apply experiments/plan/bootstrap_iteration/oracle_reply.md
 
 # Preview safe resume command (or execute with --apply)
 autolab resume
@@ -190,8 +193,11 @@ autolab resume
 `continuation_packet` for richer continuation exports. `autolab handoff` also
 refreshes the concise scope-root `handoff.md`; `autolab oracle` is the on-demand
 expanded export that resolves that packet into `<scope-root>/oracle.md` with
-inlined artifact content from the active scope. `autolab oracle apply` ingests
-expert notes from a file or stdin and writes validated updates back into the
+inlined artifact content from the active scope. `autolab oracle roundtrip --auto`
+refreshes that bundle, runs a single browser-only Oracle session, records
+`.autolab/oracle_state.json` and `.autolab/oracle_last_response.md`, and applies
+the reply advisory-only on success. `autolab oracle apply` ingests a parsed
+Oracle reply from a file or stdin and writes validated updates back into the
 existing discuss/research sidecars, TODO queue, campaign feedback, and optional
 plan-approval notes.
 

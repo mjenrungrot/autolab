@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.47] - 2026-03-08
+
+### Summary
+
+- Added browser-only Oracle roundtrips with `autolab oracle roundtrip --auto`, persisted Oracle state/response artifacts, one-shot epoch limiting, advisory-only reply application, and Oracle status surfacing across progress, handoff, resume, docs views, and the TUI.
+- Reworked `autolab oracle` into a deterministic continuation-packet export and hardened Oracle governance around browser CLI invocation, apply-policy allowlists, graceful failure handling, stable Oracle epochs, and campaign/loop reactions to Oracle advice.
+
+<!-- autolab:range v1.2.46..v1.2.47 -->
+
 ## [1.2.46] - 2026-03-08
 
 ### Summary

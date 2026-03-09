@@ -252,33 +252,37 @@ def _campaign_export_oracle_and_stop(
     reason: str,
     run_id: str = "",
     context: str,
-) -> int:
-    from autolab.cli.handlers_admin import _export_oracle_document
+) -> int | None:
+    from autolab.cli.handlers_admin import _run_oracle_roundtrip_auto
+    from autolab.oracle_runtime import load_oracle_state
 
-    try:
-        output_path, source_count, command_display = _export_oracle_document(
-            state_path=state_path,
-            repo_root=repo_root,
-            timeout_seconds=240.0,
-            output_path=None,
-        )
-    except Exception as exc:
-        return _campaign_fail_control_plane(
-            repo_root,
-            campaign,
-            context=f"{context}_oracle_error",
-            message=f"autolab campaign: ERROR failed to export oracle packet: {exc}",
-        )
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo_root,
+        trigger_reason=reason,
+    )
 
     refreshed_campaign = _load_campaign(repo_root) or campaign
     updated = dict(_normalize_campaign(refreshed_campaign))
-    updated["status"] = "needs_rethink"
     updated = _campaign_set_last_governance_event(
         updated,
         category=category,
         run_id=run_id,
         reason=reason,
     )
+    oracle_state = load_oracle_state(repo_root)
+    oracle_verdict = str(oracle_state.get("verdict", "")).strip().lower()
+    keep_running = str(
+        result.get("status", "")
+    ).strip() == "succeeded" and oracle_verdict in {
+        "continue_search",
+        "switch_family",
+        "request_human_review",
+    }
+    if keep_running:
+        updated["status"] = "running"
+    elif str(updated.get("status", "")).strip() not in {"stopped", "stop_requested"}:
+        updated["status"] = "needs_rethink"
     _write_campaign(repo_root, updated)
     _campaign_refresh_results_best_effort(
         repo_root,
@@ -297,11 +301,20 @@ def _campaign_export_oracle_and_stop(
     _append_log(
         repo_root,
         (
-            "campaign oracle export: "
-            f"context={context} output={output_path} "
-            f"sources={source_count} llm_command={command_display}"
+            "campaign oracle roundtrip: "
+            f"context={context} "
+            f"status={str(result.get('status', '')).strip() or 'unknown'} "
+            f"verdict={oracle_verdict or 'none'} "
+            f"output={str(result.get('output_path', '')).strip() or '-'} "
+            f"reply={str(result.get('reply_path', '')).strip() or '-'} "
+            f"sources={int(result.get('source_count', 0) or 0)} "
+            f"export_command={str(result.get('export_command', '')).strip() or '-'} "
+            f"browser_command={str(result.get('browser_command', '')).strip() or '-'}"
         ),
     )
+    if keep_running:
+        print(f"autolab campaign: continue ({reason}; oracle_verdict={oracle_verdict})")
+        return None
     print(f"autolab campaign: stop ({reason})", file=sys.stderr)
     return 1
 
@@ -774,7 +787,7 @@ def _run_campaign_session(state_path: Path) -> int:
             elif stage_name == "design":
                 rethink_reason = "locked campaign requires redesign before continuing"
         if rethink_reason:
-            return _campaign_export_oracle_and_stop(
+            oracle_exit_code = _campaign_export_oracle_and_stop(
                 state_path,
                 repo_root,
                 campaign,
@@ -782,6 +795,9 @@ def _run_campaign_session(state_path: Path) -> int:
                 reason=rethink_reason,
                 context="needs_rethink",
             )
+            if oracle_exit_code is not None:
+                return oracle_exit_code
+            continue
 
         updated = _campaign_update_status(repo_root, campaign, status="running")
         _campaign_refresh_results_best_effort(

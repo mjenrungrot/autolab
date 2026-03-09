@@ -32,6 +32,7 @@ from autolab.config import (
     _load_meaningful_change_config,
 )
 from autolab.launch_runtime import _parse_memory_to_mb, _resolve_launch_mode
+from autolab.oracle_runtime import load_oracle_state, write_oracle_state
 from autolab.scope import _resolve_project_wide_root
 from autolab.state import _resolve_iteration_directory
 from autolab.utils import (
@@ -1628,9 +1629,18 @@ def _campaign_set_last_governance_event(
     return normalized
 
 
-def _campaign_reset_active_candidate(campaign: dict[str, Any]) -> dict[str, Any]:
+def _campaign_reset_active_candidate(
+    campaign: dict[str, Any],
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
     normalized = _normalize_campaign(campaign)
     normalized["active_candidate"] = _campaign_default_active_candidate()
+    if repo_root is not None:
+        oracle_state = load_oracle_state(repo_root)
+        if str(oracle_state.get("disfavored_family", "")).strip():
+            oracle_state["disfavored_family"] = ""
+            write_oracle_state(repo_root, oracle_state)
     return normalized
 
 
@@ -3915,7 +3925,7 @@ def _campaign_apply_crash_outcome(
         int(updated.get("no_improvement_streak", 0) or 0) + 1
     )
     updated["crash_streak"] = int(updated.get("crash_streak", 0) or 0) + 1
-    updated = _campaign_reset_active_candidate(updated)
+    updated = _campaign_reset_active_candidate(updated, repo_root=repo_root)
     updated = _campaign_set_last_governance_event(
         updated,
         category=category,
@@ -3969,7 +3979,7 @@ def _campaign_apply_challenger_outcome(
         updated["champion_revision_label"] = _resolve_revision_label(repo_root)
         updated["no_improvement_streak"] = 0
         updated["crash_streak"] = 0
-        updated = _campaign_reset_active_candidate(updated)
+        updated = _campaign_reset_active_candidate(updated, repo_root=repo_root)
         updated = _campaign_set_last_governance_event(
             updated,
             category="promotion",
@@ -4003,7 +4013,7 @@ def _campaign_apply_challenger_outcome(
         int(updated.get("no_improvement_streak", 0) or 0) + 1
     )
     updated["crash_streak"] = 0
-    updated = _campaign_reset_active_candidate(updated)
+    updated = _campaign_reset_active_candidate(updated, repo_root=repo_root)
     updated = _campaign_set_last_governance_event(
         updated,
         category="metric_discard",

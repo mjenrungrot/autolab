@@ -22,6 +22,7 @@ from autolab.plan_approval import (
     load_plan_approval,
     resolve_plan_approval_state,
 )
+from autolab.oracle_runtime import build_oracle_context
 from autolab.scope import _resolve_scope_context
 from autolab.state import (
     _normalize_state,
@@ -992,6 +993,23 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
         for item in _safe_list(continuation.get("diagnostics"))
         if str(item).strip()
     ]
+    oracle_auto_status = str(continuation.get("oracle_auto_status", "")).strip()
+    oracle_trigger_reason = str(continuation.get("oracle_trigger_reason", "")).strip()
+    oracle_failure_reason = str(continuation.get("oracle_failure_reason", "")).strip()
+    oracle_verdict = str(continuation.get("oracle_verdict", "")).strip()
+    oracle_suggested_next_action = str(
+        continuation.get("oracle_suggested_next_action", "")
+    ).strip()
+    oracle_attempt_window = (
+        str(continuation.get("oracle_attempt_window", "")).strip() or "0/1 this epoch"
+    )
+    oracle_epoch_exhausted = bool(continuation.get("oracle_epoch_exhausted", False))
+    oracle_disfavored_family = str(
+        continuation.get("oracle_disfavored_family", "")
+    ).strip()
+    oracle_recommended_human_review = bool(
+        continuation.get("oracle_recommended_human_review", False)
+    )
     critical_path = _safe_dict(wave_observability.get("critical_path"))
     observability_waves = _safe_list(wave_observability.get("waves"))
     observability_conflicts = _safe_list(wave_observability.get("file_conflicts"))
@@ -1086,6 +1104,28 @@ def _render_handoff_markdown(payload: dict[str, Any]) -> str:
     if continuation_diagnostics:
         lines.append("- continuation_diagnostics:")
         lines.extend(f"  - {item}" for item in continuation_diagnostics)
+    if oracle_auto_status or oracle_verdict or oracle_failure_reason:
+        lines.extend(
+            [
+                "- oracle:",
+                f"  - status: {oracle_auto_status or 'not_attempted'}",
+                f"  - epoch: {str(continuation.get('oracle_epoch', '')).strip() or '-'}",
+                f"  - attempt_window: {oracle_attempt_window}",
+                f"  - epoch_exhausted: {oracle_epoch_exhausted}",
+            ]
+        )
+        if oracle_trigger_reason:
+            lines.append(f"  - trigger_reason: {oracle_trigger_reason}")
+        if oracle_failure_reason:
+            lines.append(f"  - failure_reason: {oracle_failure_reason}")
+        if oracle_verdict:
+            lines.append(f"  - verdict: {oracle_verdict}")
+        if oracle_suggested_next_action:
+            lines.append(f"  - suggested_next_action: {oracle_suggested_next_action}")
+        if oracle_disfavored_family:
+            lines.append(f"  - disfavored_family: {oracle_disfavored_family}")
+        if oracle_recommended_human_review:
+            lines.append("  - recommends_human_review: true")
 
     if plan_approval:
         counts = _safe_dict(plan_approval.get("counts"))
@@ -1559,7 +1599,7 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         payload["campaign_diagnostics"] = campaign_diagnostics
     if plan_approval:
         payload["plan_approval"] = plan_approval
-    payload["continuation_packet"] = _build_continuation_packet(
+    continuation_packet = _build_continuation_packet(
         repo_root=repo_root,
         scope_root=scope_root,
         state=state,
@@ -1584,6 +1624,17 @@ def refresh_handoff(state_path: Path) -> HandoffArtifacts:
         wave_observability=wave_observability,
         review_blockers=review_blockers,
     )
+    continuation_packet.update(
+        build_oracle_context(
+            repo_root,
+            scope_kind=current_scope,
+            scope_root=str(scope_root),
+            current_stage=stage,
+            continuation_packet=continuation_packet,
+            campaign_summary=campaign_summary,
+        )
+    )
+    payload["continuation_packet"] = continuation_packet
     _write_json(handoff_json_path, payload)
     handoff_md_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_md_path.write_text(_render_handoff_markdown(payload), encoding="utf-8")

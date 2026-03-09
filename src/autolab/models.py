@@ -126,6 +126,40 @@ class CampaignGovernanceConfig:
 
 
 @dataclass(frozen=True)
+class OraclePolicyConfig:
+    auto_allowed: bool
+    mode: str
+    max_auto_attempts_per_epoch: int
+    timeout_minutes: int
+    browser_model_strategy: str
+    browser_manual_login_profile_required: bool
+    browser_auto_reattach_delay: str
+    browser_auto_reattach_interval: str
+    browser_auto_reattach_timeout: str
+    preview_before_send: bool
+    apply_on_success: bool
+    graceful_failure: bool
+
+
+@dataclass(frozen=True)
+class OracleTriggerConfig:
+    no_improvement_streak: int
+    crash_streak: int
+    contradictory_evidence: bool
+    blocked_review: bool
+    explicit_policy_request: bool
+
+
+@dataclass(frozen=True)
+class OracleApplyPolicyConfig:
+    allow_continue_search: bool
+    allow_switch_family: bool
+    allow_rewind_design: bool
+    allow_request_human_review: bool
+    allow_stop_campaign: bool
+
+
+@dataclass(frozen=True)
 class MeaningfulChangeConfig:
     require_verification: bool
     require_implementation_progress: bool

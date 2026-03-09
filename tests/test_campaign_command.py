@@ -21,6 +21,7 @@ from autolab.campaign import (
 )
 from autolab.checkpoint import list_checkpoints
 from autolab.cli.handlers_campaign import (
+    _campaign_export_oracle_and_stop,
     _cmd_campaign_continue,
     _cmd_campaign_start,
     _cmd_campaign_status,
@@ -356,6 +357,7 @@ def _update_campaign_policy(
     max_timeout_factor: float | None = None,
     max_no_improvement_streak: int | None = None,
     max_crash_streak_before_rethink: int | None = None,
+    oracle_auto_allowed: bool | None = None,
 ) -> None:
     if yaml is None:  # pragma: no cover
         raise AssertionError("PyYAML is required for campaign policy tests")
@@ -366,6 +368,8 @@ def _update_campaign_policy(
     assert isinstance(autorun, dict)
     campaign = autorun.setdefault("campaign", {})
     assert isinstance(campaign, dict)
+    oracle = payload.setdefault("oracle", {})
+    assert isinstance(oracle, dict)
     if complexity_proxy is not None:
         campaign["complexity_proxy"] = complexity_proxy
     if change_size_metric is not None:
@@ -378,6 +382,8 @@ def _update_campaign_policy(
         campaign["max_no_improvement_streak"] = max_no_improvement_streak
     if max_crash_streak_before_rethink is not None:
         campaign["max_crash_streak_before_rethink"] = max_crash_streak_before_rethink
+    if oracle_auto_allowed is not None:
+        oracle["auto_allowed"] = oracle_auto_allowed
     if project_wide_root is not None:
         scope_roots = payload.setdefault("scope_roots", {})
         assert isinstance(scope_roots, dict)
@@ -1832,6 +1838,7 @@ def test_campaign_session_exhausted_candidate_triggers_oracle_rethink(
         repo,
         max_fix_attempts_per_idea=0,
         max_crash_streak_before_rethink=1,
+        oracle_auto_allowed=True,
     )
     _seed_baseline_run(repo, state_path)
     _set_decide_repeat_state(state_path, run_id="run_baseline")
@@ -1889,7 +1896,7 @@ def test_campaign_session_stagnation_exports_oracle_after_metric_discard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state_path = _init_repo_state(tmp_path)
-    _update_campaign_policy(repo, max_no_improvement_streak=1)
+    _update_campaign_policy(repo, max_no_improvement_streak=1, oracle_auto_allowed=True)
     _seed_baseline_run(repo, state_path, metric_value=1.0)
     _set_decide_repeat_state(state_path, run_id="run_baseline")
     _write_source_file(repo, "src/model.py", "VALUE = 'baseline'\n")
@@ -1944,6 +1951,77 @@ def test_campaign_session_stagnation_exports_oracle_after_metric_discard(
     assert restored_state["last_run_id"] == "run_baseline"
 
 
+def test_campaign_export_oracle_and_stop_keeps_running_on_request_human_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path = _init_repo_state(tmp_path)
+    _seed_baseline_run(repo, state_path)
+    campaign = _campaign_payload(state_path, status="running")
+    _write_campaign(repo, campaign)
+    refresh_handoff(state_path)
+    (repo / ".autolab" / "oracle_state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "current_epoch": "",
+                "auto": {
+                    "eligible": True,
+                    "attempted": True,
+                    "status": "succeeded",
+                    "trigger_reason": "stagnation",
+                    "engine": "browser",
+                    "started_at": "2026-03-08T00:00:00Z",
+                    "completed_at": "2026-03-08T00:10:00Z",
+                    "failure_reason": "",
+                    "reply_path": ".autolab/oracle_last_response.md",
+                    "apply_status": "human_review_recommended",
+                },
+                "verdict": "request_human_review",
+                "suggested_next_action": "Collect a manual sanity check.",
+                "recommended_human_review": True,
+                "disfavored_family": "",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._run_oracle_roundtrip_auto",
+        lambda **_kwargs: {
+            "exit_code": 0,
+            "attempted": True,
+            "status": "succeeded",
+            "failure_reason": "",
+            "output_path": str(repo / "oracle.md"),
+            "reply_path": str(repo / ".autolab" / "oracle_last_response.md"),
+            "export_command": "autolab oracle",
+            "browser_command": "oracle --engine browser",
+            "source_count": 1,
+            "apply_status": "human_review_recommended",
+        },
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_campaign._campaign_refresh_handoff_required",
+        lambda *_args, **_kwargs: ({}, None),
+    )
+
+    exit_code = _campaign_export_oracle_and_stop(
+        state_path,
+        repo,
+        campaign,
+        category="stagnation_rethink",
+        reason="campaign no-improvement streak reached 1/1; exporting oracle packet for rethink",
+        context="test_context",
+    )
+    updated_campaign = _load_campaign_file(repo)
+
+    assert exit_code is None
+    assert updated_campaign["status"] == "running"
+    assert updated_campaign["last_governance_event"]["category"] == "stagnation_rethink"
+
+
 def test_campaign_session_timeout_discards_slurm_candidate_and_exports_oracle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1953,6 +2031,7 @@ def test_campaign_session_timeout_discards_slurm_candidate_and_exports_oracle(
         repo,
         max_timeout_factor=2.0,
         max_crash_streak_before_rethink=1,
+        oracle_auto_allowed=True,
     )
     _seed_baseline_run(
         repo,

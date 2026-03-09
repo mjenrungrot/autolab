@@ -59,6 +59,9 @@ from autolab.models import (
     GuardrailConfig,
     LaunchRuntimeConfig,
     MeaningfulChangeConfig,
+    OracleApplyPolicyConfig,
+    OraclePolicyConfig,
+    OracleTriggerConfig,
     OverlaySource,
     PlanApprovalPolicyConfig,
     PlanExecutionConfig,
@@ -382,6 +385,173 @@ def _load_campaign_governance_config(repo_root: Path) -> CampaignGovernanceConfi
         max_timeout_factor=max_timeout_factor,
         max_no_improvement_streak=max_no_improvement_streak,
         max_crash_streak_before_rethink=max_crash_streak_before_rethink,
+    )
+
+
+def _load_oracle_policy(
+    repo_root: Path,
+    *,
+    host_mode: str = "",
+    scope_kind: str = "",
+    stage: str = "",
+) -> OraclePolicyConfig:
+    result = _load_effective_policy(
+        repo_root,
+        host_mode=host_mode,
+        scope_kind=scope_kind,
+        stage=stage,
+    )
+    oracle = result.merged.get("oracle")
+    if not isinstance(oracle, dict):
+        oracle = {}
+
+    mode = str(oracle.get("mode", "browser_only")).strip().lower() or "browser_only"
+    if mode != "browser_only":
+        mode = "browser_only"
+
+    try:
+        max_auto_attempts_per_epoch = int(
+            oracle.get("max_auto_attempts_per_epoch", 1) or 1
+        )
+    except Exception:
+        max_auto_attempts_per_epoch = 1
+    if max_auto_attempts_per_epoch < 1:
+        max_auto_attempts_per_epoch = 1
+
+    try:
+        timeout_minutes = int(oracle.get("timeout_minutes", 60) or 60)
+    except Exception:
+        timeout_minutes = 60
+    if timeout_minutes < 1:
+        timeout_minutes = 60
+
+    return OraclePolicyConfig(
+        auto_allowed=_coerce_bool(oracle.get("auto_allowed", False), default=False),
+        mode=mode,
+        max_auto_attempts_per_epoch=max_auto_attempts_per_epoch,
+        timeout_minutes=timeout_minutes,
+        browser_model_strategy=str(
+            oracle.get("browser_model_strategy", "current")
+        ).strip()
+        or "current",
+        browser_manual_login_profile_required=_coerce_bool(
+            oracle.get("browser_manual_login_profile_required", True),
+            default=True,
+        ),
+        browser_auto_reattach_delay=str(
+            oracle.get("browser_auto_reattach_delay", "30s")
+        ).strip()
+        or "30s",
+        browser_auto_reattach_interval=str(
+            oracle.get("browser_auto_reattach_interval", "2m")
+        ).strip()
+        or "2m",
+        browser_auto_reattach_timeout=str(
+            oracle.get("browser_auto_reattach_timeout", "2m")
+        ).strip()
+        or "2m",
+        preview_before_send=_coerce_bool(
+            oracle.get("preview_before_send", True),
+            default=True,
+        ),
+        apply_on_success=_coerce_bool(
+            oracle.get("apply_on_success", True),
+            default=True,
+        ),
+        graceful_failure=_coerce_bool(
+            oracle.get("graceful_failure", True),
+            default=True,
+        ),
+    )
+
+
+def _load_oracle_trigger_config(
+    repo_root: Path,
+    *,
+    host_mode: str = "",
+    scope_kind: str = "",
+    stage: str = "",
+) -> OracleTriggerConfig:
+    result = _load_effective_policy(
+        repo_root,
+        host_mode=host_mode,
+        scope_kind=scope_kind,
+        stage=stage,
+    )
+    triggers = result.merged.get("oracle_triggers")
+    if not isinstance(triggers, dict):
+        triggers = {}
+
+    try:
+        no_improvement_streak = int(triggers.get("no_improvement_streak", 5) or 5)
+    except Exception:
+        no_improvement_streak = 5
+    if no_improvement_streak < 1:
+        no_improvement_streak = 5
+
+    try:
+        crash_streak = int(triggers.get("crash_streak", 3) or 3)
+    except Exception:
+        crash_streak = 3
+    if crash_streak < 1:
+        crash_streak = 3
+
+    return OracleTriggerConfig(
+        no_improvement_streak=no_improvement_streak,
+        crash_streak=crash_streak,
+        contradictory_evidence=_coerce_bool(
+            triggers.get("contradictory_evidence", True),
+            default=True,
+        ),
+        blocked_review=_coerce_bool(
+            triggers.get("blocked_review", True),
+            default=True,
+        ),
+        explicit_policy_request=_coerce_bool(
+            triggers.get("explicit_policy_request", True),
+            default=True,
+        ),
+    )
+
+
+def _load_oracle_apply_policy(
+    repo_root: Path,
+    *,
+    host_mode: str = "",
+    scope_kind: str = "",
+    stage: str = "",
+) -> OracleApplyPolicyConfig:
+    result = _load_effective_policy(
+        repo_root,
+        host_mode=host_mode,
+        scope_kind=scope_kind,
+        stage=stage,
+    )
+    apply_cfg = result.merged.get("oracle_apply")
+    if not isinstance(apply_cfg, dict):
+        apply_cfg = {}
+
+    return OracleApplyPolicyConfig(
+        allow_continue_search=_coerce_bool(
+            apply_cfg.get("allow_continue_search", True),
+            default=True,
+        ),
+        allow_switch_family=_coerce_bool(
+            apply_cfg.get("allow_switch_family", True),
+            default=True,
+        ),
+        allow_rewind_design=_coerce_bool(
+            apply_cfg.get("allow_rewind_design", False),
+            default=False,
+        ),
+        allow_request_human_review=_coerce_bool(
+            apply_cfg.get("allow_request_human_review", True),
+            default=True,
+        ),
+        allow_stop_campaign=_coerce_bool(
+            apply_cfg.get("allow_stop_campaign", True),
+            default=True,
+        ),
     )
 
 

@@ -2858,6 +2858,42 @@ def test_home_handoff_card_shows_resume_summary(tmp_path: Path) -> None:
     asyncio.run(_run())
 
 
+def test_home_handoff_card_renders_oracle_fields(tmp_path: Path) -> None:
+    async def _run() -> None:
+        repo_root = tmp_path / "repo"
+        state_path = _write_state_file(repo_root, stage="design")
+        _write_handoff_snapshot(repo_root, state_path)
+        handoff_path = repo_root / ".autolab" / "handoff.json"
+        payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+        continuation = payload.setdefault("continuation_packet", {})
+        assert isinstance(continuation, dict)
+        continuation.update(
+            {
+                "oracle_auto_status": "succeeded",
+                "oracle_attempt_window": "1/1 this epoch",
+                "oracle_trigger_reason": "decide_repeat guardrail breach: no_progress",
+                "oracle_verdict": "switch_family",
+                "oracle_suggested_next_action": "Try a different family on the next run.",
+                "oracle_disfavored_family": "warmup schedule",
+                "oracle_recommended_human_review": True,
+                "oracle_epoch_exhausted": True,
+            }
+        )
+        handoff_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        app = AutolabCockpitApp(state_path=state_path)
+        async with app.run_test(size=(220, 70)) as pilot:
+            await pilot.pause()
+            handoff = app.query_one("#home-handoff-card", app_module.Static)
+            rendered = str(handoff.render())
+            assert "oracle: succeeded (1/1 this epoch)" in rendered
+            assert "oracle_verdict: switch_family" in rendered
+            assert "oracle_disfavored_family: warmup schedule" in rendered
+            assert "oracle_recommends_human_review: true" in rendered
+            assert "oracle_epoch_exhausted: true" in rendered
+
+    asyncio.run(_run())
+
+
 def test_waves_view_renders_observability_and_updates_selection(
     tmp_path: Path,
 ) -> None:

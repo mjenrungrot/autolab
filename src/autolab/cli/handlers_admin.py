@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import math
 import re
 
@@ -14,6 +15,7 @@ from autolab.campaign import (
     _load_campaign,
     _mark_campaign_oracle_exported,
     _refresh_campaign_results,
+    _write_campaign,
 )
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
@@ -21,6 +23,20 @@ from autolab.agent_surface import (
     build_agent_surface_guidance,
     infer_agent_surface_provider,
     resolve_agent_surface,
+)
+from autolab.oracle_runtime import (
+    ORACLE_ALLOWED_VERDICTS,
+    build_oracle_roundtrip_request,
+    finish_oracle_attempt,
+    load_oracle_state,
+    oracle_default_suggested_next_action,
+    oracle_last_response_path,
+    oracle_profile_ready,
+    oracle_stage_auto_allowed,
+    parse_oracle_reply,
+    start_oracle_attempt,
+    write_oracle_last_response,
+    write_oracle_state,
 )
 from autolab.plan_approval import (
     append_plan_approval_note,
@@ -4554,29 +4570,6 @@ _ORACLE_APPLY_DISCUSS_COLLECTIONS = (
 _ORACLE_APPLY_FEEDBACK_SIGNALS = {"none", "stop", "rethink"}
 
 
-def _resolve_oracle_apply_agent_invocation(
-    repo_root: Path,
-) -> tuple[list[str], dict[str, str], str]:
-    return _resolve_local_agent_invocation(
-        repo_root,
-        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
-    )
-
-
-def _run_oracle_apply_agent(
-    repo_root: Path,
-    *,
-    prompt_text: str,
-    timeout_seconds: float,
-) -> tuple[int, str, str, str]:
-    return _run_local_agent(
-        repo_root,
-        prompt_text=prompt_text,
-        timeout_seconds=timeout_seconds,
-        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
-    )
-
-
 def _oracle_apply_input_source_label(repo_root: Path, path: Path) -> str:
     return _sidecar_relpath(repo_root, path)
 
@@ -4587,12 +4580,14 @@ def _read_oracle_apply_input(
     repo_root: Path,
 ) -> tuple[str, str]:
     notes_path_text = str(getattr(args, "notes", "") or "").strip()
+    reply_path_text = str(getattr(args, "reply_path", "") or "").strip()
     from_stdin = bool(getattr(args, "stdin", False))
-    if bool(notes_path_text) == from_stdin:
-        raise RuntimeError("choose exactly one of --notes or --stdin")
+    provided_file = notes_path_text or reply_path_text
+    if sum(1 for item in (provided_file, "stdin" if from_stdin else "") if item) != 1:
+        raise RuntimeError("choose exactly one of <reply.md>, --notes, or --stdin")
 
-    if notes_path_text:
-        notes_path = Path(notes_path_text).expanduser()
+    if provided_file:
+        notes_path = Path(provided_file).expanduser()
         if not notes_path.is_absolute():
             notes_path = (repo_root / notes_path).resolve(strict=False)
         else:
@@ -5070,6 +5065,146 @@ def _apply_oracle_todo_hints(
     return ([todo_path, *changed_files], inserted)
 
 
+def _oracle_reply_to_discuss_updates(
+    reply: Any,
+    *,
+    scope_kind: str,
+) -> dict[str, list[dict[str, Any]]]:
+    rationale = getattr(reply, "rationale", ())
+    risks = getattr(reply, "risks", ())
+    updates = {name: [] for name in _ORACLE_APPLY_DISCUSS_COLLECTIONS}
+
+    for index, item in enumerate(rationale):
+        entry = _normalize_discuss_entry(
+            "preferences",
+            {"summary": str(item).strip(), "detail": str(item).strip()},
+            index=index,
+            scope_kind=scope_kind,
+        )
+        if isinstance(entry, dict):
+            updates["preferences"].append(entry)
+
+    risk_offset = len(updates["preferences"])
+    for index, item in enumerate(risks):
+        collection_name = "open_questions" if "?" in str(item) else "constraints"
+        entry = _normalize_discuss_entry(
+            collection_name,
+            {"summary": str(item).strip(), "detail": str(item).strip()},
+            index=risk_offset + index,
+            scope_kind=scope_kind,
+        )
+        if isinstance(entry, dict):
+            updates[collection_name].append(entry)
+    return updates
+
+
+def _oracle_reply_to_research_questions(reply: Any) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    for index, item in enumerate(getattr(reply, "risks", ())):
+        text = _normalize_space(str(item))
+        if not text or "?" not in text:
+            continue
+        output.append(
+            {
+                "id": _slugify_sidecar_item_id("rq", text, index),
+                "summary": text,
+                "detail": text,
+            }
+        )
+    return output
+
+
+def _oracle_reply_to_todo_hints(
+    reply: Any,
+    *,
+    current_stage: str,
+    allow_rewind_design: bool = True,
+    allow_request_human_review: bool = True,
+    allow_stop_campaign: bool = True,
+) -> list[dict[str, Any]]:
+    default_stage = current_stage if current_stage in ALL_STAGES else "implementation"
+    if getattr(reply, "verdict", "") == "rethink_design" and allow_rewind_design:
+        default_stage = "design"
+    elif (
+        getattr(reply, "verdict", "") == "request_human_review"
+        and allow_request_human_review
+    ):
+        default_stage = "human_review"
+    elif getattr(reply, "verdict", "") == "stop_campaign" and allow_stop_campaign:
+        default_stage = "decide_repeat"
+    hints: list[dict[str, Any]] = []
+    for action in getattr(reply, "recommended_actions", ()):
+        text = _normalize_space(str(action))
+        if not text:
+            continue
+        hints.append(
+            {
+                "summary": text,
+                "detail": text,
+                "stage": default_stage,
+                "priority": "",
+                "owner": "",
+                "labels": ["oracle"],
+            }
+        )
+    return hints
+
+
+def _oracle_reply_to_campaign_feedback(reply: Any) -> list[dict[str, str]]:
+    verdict = str(getattr(reply, "verdict", "")).strip()
+    if verdict not in ORACLE_ALLOWED_VERDICTS:
+        return []
+    signal = "none"
+    if verdict == "rethink_design":
+        signal = "rethink"
+    elif verdict == "stop_campaign":
+        signal = "stop"
+    summary = oracle_default_suggested_next_action(verdict) or verdict
+    detail = "; ".join(getattr(reply, "rationale", ())) or summary
+    return [{"summary": summary, "detail": detail, "signal": signal}]
+
+
+def _oracle_reply_plan_note(reply: Any) -> str:
+    verdict = str(getattr(reply, "verdict", "")).strip()
+    if verdict not in ORACLE_ALLOWED_VERDICTS:
+        return ""
+    detail = "; ".join(getattr(reply, "rationale", ()))
+    if detail:
+        return f"Oracle verdict: {verdict}. {detail}"
+    return f"Oracle verdict: {verdict}."
+
+
+def _oracle_reply_disfavored_family(
+    campaign_summary: dict[str, Any], reply: Any
+) -> str:
+    if str(getattr(reply, "verdict", "")).strip() != "switch_family":
+        return ""
+    return str(campaign_summary.get("idea_journal_active_family", "")).strip()
+
+
+def _oracle_reply_apply_status(reply: Any) -> str:
+    return _oracle_reply_apply_status_with_effects(
+        reply,
+        campaign_stopped=str(getattr(reply, "verdict", "")).strip() == "stop_campaign",
+        recommended_human_review=bool(
+            getattr(reply, "recommended_human_review", False)
+        ),
+    )
+
+
+def _oracle_reply_apply_status_with_effects(
+    reply: Any,
+    *,
+    campaign_stopped: bool,
+    recommended_human_review: bool,
+) -> str:
+    if campaign_stopped:
+        return "campaign_stopped"
+    if recommended_human_review:
+        return "human_review_recommended"
+    return "applied"
+
+
 def _resolve_oracle_agent_invocation(
     repo_root: Path,
 ) -> tuple[list[str], dict[str, str], str]:
@@ -5285,6 +5420,78 @@ def _build_oracle_prompt(
     )
 
 
+def _oracle_table_cell(text: str) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _render_oracle_document(
+    *,
+    continuation_packet: dict[str, Any],
+    sources: list[dict[str, Any]],
+    diagnostics: list[str],
+) -> str:
+    artifact_guide = [
+        "| Path | Role | Status | Why it matters |",
+        "| --- | --- | --- | --- |",
+    ]
+    for source in sources:
+        artifact_guide.append(
+            "| "
+            f"{_oracle_table_cell(str(source.get('path', '')).strip())} | "
+            f"{_oracle_table_cell(str(source.get('role', '')).strip() or 'artifact')} | "
+            f"{_oracle_table_cell(str(source.get('status', '')).strip() or 'unknown')} | "
+            f"{_oracle_table_cell(str(source.get('reason', '')).strip() or 'Relevant continuation artifact.')} |"
+        )
+
+    appendix_blocks = "\n\n".join(
+        str(source.get("appendix_block", "")).rstrip()
+        for source in sources
+        if str(source.get("appendix_block", "")).strip()
+    ).strip()
+    expert_review_lines = [
+        "- This is the canonical Autolab escalation packet for the current scope.",
+        "- The continuation packet and selected inline artifacts are rendered directly from current repo state.",
+        "- Any downstream Oracle reply is advisory only and must be checked against repo state and tests before behavior changes.",
+    ]
+    if diagnostics:
+        expert_review_lines.append(
+            "- Export diagnostics: "
+            + "; ".join(str(item).strip() for item in diagnostics)
+        )
+    else:
+        expert_review_lines.append("- Export diagnostics: none.")
+    return "\n".join(
+        [
+            "# Autolab Oracle",
+            "",
+            "## Summary",
+            (
+                "Autolab packaged the current continuation packet and the minimum inline artifacts "
+                "needed for Oracle escalation."
+            ),
+            "",
+            "## Continuation Packet",
+            "```json",
+            json.dumps(continuation_packet, indent=2, sort_keys=True),
+            "```",
+            "",
+            "## Expert Review",
+            *expert_review_lines,
+            "",
+            "## Recommended Next Steps",
+            "- Use this packet as the canonical evidence bundle for Oracle escalation.",
+            "- Keep the attached file set tight and verify any Oracle advice against repo state and tests.",
+            "",
+            "## Artifact Guide",
+            *artifact_guide,
+            "",
+            "## Appendices",
+            "",
+            appendix_blocks,
+        ]
+    ).rstrip()
+
+
 def _oracle_output_includes_source(output_text: str, source: dict[str, Any]) -> bool:
     appendix_block = str(source.get("appendix_block", "")).strip()
     if appendix_block and appendix_block in output_text:
@@ -5324,53 +5531,36 @@ def _validate_oracle_output(
     return ""
 
 
-def _cmd_oracle_apply(args: argparse.Namespace) -> int:
-    state_path = Path(args.state_file).expanduser().resolve()
-    repo_root = _resolve_repo_root(state_path)
-    try:
-        state = _normalize_state(_load_state(state_path))
-    except StateError as exc:
-        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
-        return 1
+def _apply_oracle_reply_text(
+    *,
+    state_path: Path,
+    repo_root: Path,
+    state: dict[str, Any],
+    source_label: str,
+    raw_notes: str,
+) -> dict[str, Any]:
+    from autolab.config import _load_oracle_apply_policy
 
-    try:
-        timeout_seconds = float(getattr(args, "timeout_seconds", 240.0))
-    except Exception:
-        print(
-            "autolab oracle apply: ERROR --timeout-seconds must be a number",
-            file=sys.stderr,
-        )
-        return 1
-    if timeout_seconds <= 0:
-        print(
-            "autolab oracle apply: ERROR --timeout-seconds must be > 0",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        source_label, raw_notes = _read_oracle_apply_input(args, repo_root=repo_root)
-    except Exception as exc:
-        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
-        return 1
-
+    reply = parse_oracle_reply(raw_notes)
     iteration_id = str(state.get("iteration_id", "")).strip()
     experiment_id = str(state.get("experiment_id", "")).strip()
     current_stage = str(state.get("stage", "")).strip().lower()
     scope_kind = "experiment" if iteration_id and experiment_id else "project_wide"
+    current_oracle_epoch = _resolve_current_oracle_epoch(
+        state_path=state_path,
+        repo_root=repo_root,
+    )
+    apply_policy = _load_oracle_apply_policy(
+        repo_root,
+        scope_kind=scope_kind,
+        stage=current_stage,
+    )
     context_resolution = resolve_context_sidecars(
         repo_root,
         iteration_id=iteration_id,
         experiment_id=experiment_id,
         scope_kind=scope_kind,
     )
-    effective_discuss = context_resolution.get("effective_discuss")
-    if not isinstance(effective_discuss, dict):
-        effective_discuss = {name: [] for name in DISCUSS_COLLECTIONS}
-    effective_research = context_resolution.get("effective_research")
-    if not isinstance(effective_research, dict):
-        effective_research = {name: [] for name in RESEARCH_COLLECTIONS}
-
     discuss_paths = resolve_sidecar_output_paths(
         repo_root,
         scope_kind=scope_kind,
@@ -5394,86 +5584,7 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
 
     active_campaign = _load_campaign(repo_root)
     campaign_summary = _campaign_summary(active_campaign) if active_campaign else {}
-
-    iteration_dir: Path | None = None
-    plan_approval_summary: dict[str, Any] = {}
-    if scope_kind == "experiment":
-        iteration_dir, _iteration_type = _resolve_iteration_directory(
-            repo_root,
-            iteration_id=iteration_id,
-            experiment_id=experiment_id,
-            require_exists=False,
-        )
-        loaded_plan_approval = load_plan_approval(iteration_dir)
-        if loaded_plan_approval:
-            plan_approval_summary = {
-                "status": str(loaded_plan_approval.get("status", "")).strip(),
-                "requires_approval": bool(
-                    loaded_plan_approval.get("requires_approval", False)
-                ),
-                "trigger_reasons": list(loaded_plan_approval.get("trigger_reasons", []))
-                if isinstance(loaded_plan_approval.get("trigger_reasons"), list)
-                else [],
-                "notes": str(loaded_plan_approval.get("notes", "")).strip(),
-            }
-
-    prepared_notes = _prepare_oracle_apply_notes(raw_notes)
-    prompt_text = _build_oracle_apply_prompt(
-        state=state,
-        scope_kind=scope_kind,
-        context_resolution=context_resolution,
-        effective_discuss=effective_discuss,
-        effective_research=effective_research,
-        campaign_summary=campaign_summary,
-        plan_approval_summary=plan_approval_summary,
-        prepared_notes=prepared_notes,
-        source_label=source_label,
-    )
-    (
-        agent_returncode,
-        agent_stdout,
-        agent_stderr,
-        command_display,
-    ) = _run_oracle_apply_agent(
-        repo_root,
-        prompt_text=prompt_text,
-        timeout_seconds=timeout_seconds,
-    )
-    if agent_returncode != 0:
-        detail = (
-            agent_stderr.strip() or agent_stdout.strip() or "agent returned no output"
-        )
-        print(
-            f"autolab oracle apply: ERROR agent failed with exit_code={agent_returncode}: {detail}",
-            file=sys.stderr,
-        )
-        return 1
-
-    classifier_payload = _extract_json_object(agent_stdout)
-    if not isinstance(classifier_payload, dict):
-        print(
-            "autolab oracle apply: ERROR classifier output was not valid JSON",
-            file=sys.stderr,
-        )
-        return 1
-    try:
-        normalized_payload = _normalize_oracle_apply_payload(
-            classifier_payload,
-            scope_kind=scope_kind,
-            current_stage=current_stage,
-        )
-    except StageCheckError as exc:
-        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
-        return 1
-
-    changed_files: list[Path] = []
-    discuss_counts = {name: 0 for name in _ORACLE_APPLY_DISCUSS_COLLECTIONS}
-    research_questions_added = 0
-    todo_added = 0
-    campaign_feedback_added = 0
-    ignored_campaign_feedback = 0
-    plan_approval_updated = False
-    campaign_status = str(campaign_summary.get("status", "")).strip()
+    disfavored_family = _oracle_reply_disfavored_family(campaign_summary, reply)
 
     discuss_dependency_refs = build_sidecar_dependency_refs(
         repo_root,
@@ -5486,10 +5597,21 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
         exclude_paths={_sidecar_relpath(repo_root, research_paths["json_path"])},
     )
 
-    mirrored_open_questions = _oracle_apply_mirrored_open_questions(
-        normalized_payload["research_questions"],
-        scope_kind=scope_kind,
+    discuss_updates = _oracle_reply_to_discuss_updates(reply, scope_kind=scope_kind)
+    research_questions = _oracle_reply_to_research_questions(reply)
+    campaign_feedback = _oracle_reply_to_campaign_feedback(reply)
+    plan_note = _oracle_reply_plan_note(reply)
+    todo_hints = _oracle_reply_to_todo_hints(
+        reply,
+        current_stage=current_stage,
+        allow_rewind_design=apply_policy.allow_rewind_design,
+        allow_request_human_review=apply_policy.allow_request_human_review,
+        allow_stop_campaign=apply_policy.allow_stop_campaign,
     )
+    if reply.verdict == "stop_campaign" and not apply_policy.allow_stop_campaign:
+        campaign_feedback = [{**item, "signal": "none"} for item in campaign_feedback]
+
+    changed_files: list[Path] = []
     discuss_payload = _build_oracle_apply_sidecar_payload(
         sidecar_kind="discuss",
         scope_kind=scope_kind,
@@ -5501,15 +5623,12 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
     )
     discuss_added_total = 0
     for collection_name in _ORACLE_APPLY_DISCUSS_COLLECTIONS:
-        additions = list(normalized_payload["discuss_updates"].get(collection_name, []))
-        if collection_name == "open_questions":
-            additions.extend(mirrored_open_questions)
+        additions = list(discuss_updates.get(collection_name, []))
         merged_entries, added_count = _merge_oracle_sidecar_entries(
             discuss_payload.get(collection_name, []),
             additions,
         )
         discuss_payload[collection_name] = merged_entries
-        discuss_counts[collection_name] = added_count
         discuss_added_total += added_count
     if discuss_added_total > 0:
         _write_sidecar_outputs(
@@ -5521,7 +5640,8 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
             [discuss_paths["json_path"], discuss_paths["markdown_path"]]
         )
 
-    if normalized_payload["research_questions"]:
+    research_questions_added = 0
+    if research_questions:
         research_payload = _build_oracle_apply_sidecar_payload(
             sidecar_kind="research",
             scope_kind=scope_kind,
@@ -5533,7 +5653,7 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
         )
         merged_questions, research_questions_added = _merge_oracle_sidecar_entries(
             research_payload.get("questions", []),
-            normalized_payload["research_questions"],
+            research_questions,
         )
         research_payload["questions"] = merged_questions
         if research_questions_added > 0:
@@ -5549,15 +5669,19 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
     todo_changed_files, todo_added = _apply_oracle_todo_hints(
         repo_root,
         state=state,
-        todo_hints=normalized_payload["todo_hints"],
+        todo_hints=todo_hints,
     )
     changed_files.extend(todo_changed_files)
 
+    campaign_feedback_added = 0
+    ignored_campaign_feedback = 0
+    campaign_stopped = False
+    campaign_status = str(campaign_summary.get("status", "")).strip()
     if active_campaign is not None:
         before_feedback_count = len(active_campaign.get("oracle_feedback", []))
         before_status = str(active_campaign.get("status", "")).strip()
         updated_campaign = active_campaign
-        for feedback in normalized_payload["campaign_feedback"]:
+        for feedback in campaign_feedback:
             maybe_updated = _append_campaign_oracle_feedback(
                 repo_root,
                 source=source_label,
@@ -5567,6 +5691,14 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
             )
             if isinstance(maybe_updated, dict):
                 updated_campaign = maybe_updated
+        if (
+            isinstance(updated_campaign, dict)
+            and reply.verdict == "stop_campaign"
+            and apply_policy.allow_stop_campaign
+        ):
+            updated_campaign["status"] = "stopped"
+            _write_campaign(repo_root, updated_campaign)
+            campaign_stopped = True
         if isinstance(updated_campaign, dict):
             campaign_status = str(updated_campaign.get("status", "")).strip()
             after_feedback_count = len(updated_campaign.get("oracle_feedback", []))
@@ -5576,9 +5708,18 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
             if campaign_feedback_added > 0 or campaign_status != before_status:
                 changed_files.append(repo_root / ".autolab" / "campaign.json")
     else:
-        ignored_campaign_feedback = len(normalized_payload["campaign_feedback"])
+        ignored_campaign_feedback = len(campaign_feedback)
 
-    plan_note = normalized_payload["plan_approval_note"]
+    plan_approval_updated = False
+    if scope_kind == "experiment":
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+    else:
+        iteration_dir = None
     if (
         plan_note
         and iteration_dir is not None
@@ -5601,6 +5742,22 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
                 ]
             )
 
+    oracle_state = load_oracle_state(repo_root)
+    if current_oracle_epoch:
+        oracle_state["current_epoch"] = current_oracle_epoch
+    oracle_state["verdict"] = reply.verdict
+    oracle_state["suggested_next_action"] = (
+        reply.suggested_next_action
+        or oracle_default_suggested_next_action(reply.verdict)
+    )
+    oracle_state["recommended_human_review"] = (
+        reply.recommended_human_review and apply_policy.allow_request_human_review
+    )
+    oracle_state["disfavored_family"] = (
+        disfavored_family if apply_policy.allow_switch_family else ""
+    )
+    changed_files.append(write_oracle_state(repo_root, oracle_state))
+
     handoff_warning = ""
     try:
         handoff_artifacts = refresh_handoff(state_path)
@@ -5615,15 +5772,7 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
         )
 
     changed_files = list(dict.fromkeys(changed_files))
-    summary = normalized_payload["summary"]
-    if not summary:
-        summary = (
-            "oracle apply updated "
-            f"discuss={discuss_added_total} "
-            f"research_questions={research_questions_added} "
-            f"todo={todo_added} "
-            f"campaign_feedback={campaign_feedback_added}"
-        )
+    summary = f"Applied Oracle verdict: {reply.verdict}"
     _persist_agent_result(
         repo_root,
         status="complete",
@@ -5635,6 +5784,7 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
         (
             "oracle apply: "
             f"source={source_label} "
+            f"verdict={reply.verdict} "
             f"discuss={discuss_added_total} "
             f"research_questions={research_questions_added} "
             f"todo={todo_added} "
@@ -5643,26 +5793,72 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
             f"plan_approval_note={plan_approval_updated}"
         ),
     )
-    if handoff_warning:
+    return {
+        "reply": reply,
+        "summary": summary,
+        "changed_files": changed_files,
+        "discuss_updates": discuss_added_total,
+        "research_questions_added": research_questions_added,
+        "todo_added": todo_added,
+        "campaign_feedback_added": campaign_feedback_added,
+        "ignored_campaign_feedback": ignored_campaign_feedback,
+        "campaign_stopped": campaign_stopped,
+        "plan_approval_updated": plan_approval_updated,
+        "campaign_status": campaign_status,
+        "handoff_warning": handoff_warning,
+        "recommended_human_review": oracle_state["recommended_human_review"],
+    }
+
+
+def _cmd_oracle_apply(args: argparse.Namespace) -> int:
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    try:
+        state = _normalize_state(_load_state(state_path))
+    except StateError as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        source_label, raw_notes = _read_oracle_apply_input(args, repo_root=repo_root)
+    except Exception as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        result = _apply_oracle_reply_text(
+            state_path=state_path,
+            repo_root=repo_root,
+            state=state,
+            source_label=source_label,
+            raw_notes=raw_notes,
+        )
+    except Exception as exc:
+        print(f"autolab oracle apply: ERROR {exc}", file=sys.stderr)
+        return 1
+
+    if result["handoff_warning"]:
         print(
-            f"autolab oracle apply: WARN failed to refresh handoff snapshot: {handoff_warning}",
+            "autolab oracle apply: WARN failed to refresh handoff snapshot: "
+            f"{result['handoff_warning']}",
             file=sys.stderr,
         )
 
     print("autolab oracle apply")
     print(f"state_file: {state_path}")
     print(f"input_source: {source_label}")
-    print(f"summary: {summary}")
-    print(f"discuss_updates: {discuss_added_total}")
-    print(f"research_questions_added: {research_questions_added}")
-    print(f"todo_added: {todo_added}")
-    print(f"campaign_feedback_added: {campaign_feedback_added}")
-    print(f"ignored_campaign_feedback: {ignored_campaign_feedback}")
-    print(f"plan_approval_updated: {plan_approval_updated}")
-    if campaign_status:
-        print(f"campaign_status: {campaign_status}")
-    print(f"changed_files: {len(changed_files)}")
-    print(f"llm_command: {command_display}")
+    print(f"summary: {result['summary']}")
+    print(f"oracle_verdict: {result['reply'].verdict}")
+    print(f"oracle_recommended_action: {result['reply'].suggested_next_action}")
+    print(f"discuss_updates: {result['discuss_updates']}")
+    print(f"research_questions_added: {result['research_questions_added']}")
+    print(f"todo_added: {result['todo_added']}")
+    print(f"campaign_feedback_added: {result['campaign_feedback_added']}")
+    print(f"ignored_campaign_feedback: {result['ignored_campaign_feedback']}")
+    print(f"plan_approval_updated: {result['plan_approval_updated']}")
+    if result["campaign_status"]:
+        print(f"campaign_status: {result['campaign_status']}")
+    print(f"changed_files: {len(result['changed_files'])}")
     return 0
 
 
@@ -5672,13 +5868,14 @@ def _export_oracle_document(
     repo_root: Path,
     timeout_seconds: float,
     output_path: Path | None = None,
+    handoff_payload: dict[str, Any] | None = None,
 ) -> tuple[Path, int, str]:
-    try:
-        artifacts = refresh_handoff(state_path)
-    except Exception as exc:
-        raise RuntimeError(f"failed to refresh handoff: {exc}") from exc
-
-    handoff_payload = artifacts.payload
+    if handoff_payload is None:
+        try:
+            artifacts = refresh_handoff(state_path)
+        except Exception as exc:
+            raise RuntimeError(f"failed to refresh handoff: {exc}") from exc
+        handoff_payload = artifacts.payload
     continuation_packet = handoff_payload.get("continuation_packet")
     if not isinstance(continuation_packet, dict):
         raise RuntimeError("handoff continuation_packet is missing")
@@ -5687,28 +5884,13 @@ def _export_oracle_document(
         repo_root=repo_root,
         handoff_payload=handoff_payload,
     )
-    prompt_text = _build_oracle_prompt(
+    _ = timeout_seconds
+    rendered_document = _render_oracle_document(
         continuation_packet=continuation_packet,
         sources=sources,
         diagnostics=diagnostics,
     )
-    (
-        agent_returncode,
-        agent_stdout,
-        agent_stderr,
-        command_display,
-    ) = _run_oracle_agent(
-        repo_root,
-        prompt_text=prompt_text,
-        timeout_seconds=timeout_seconds,
-    )
-    if agent_returncode != 0:
-        detail = (
-            agent_stderr.strip() or agent_stdout.strip() or "agent returned no output"
-        )
-        raise RuntimeError(f"agent failed with exit_code={agent_returncode}: {detail}")
-
-    validation_error = _validate_oracle_output(agent_stdout, sources=sources)
+    validation_error = _validate_oracle_output(rendered_document, sources=sources)
     if validation_error:
         raise RuntimeError(validation_error)
 
@@ -5737,15 +5919,719 @@ def _export_oracle_document(
 
     try:
         resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
-        resolved_output_path.write_text(agent_stdout.rstrip() + "\n", encoding="utf-8")
+        resolved_output_path.write_text(
+            rendered_document.rstrip() + "\n",
+            encoding="utf-8",
+        )
     except Exception as exc:
         raise RuntimeError(f"failed writing oracle document: {exc}") from exc
 
     _mark_campaign_oracle_exported(repo_root)
-    return (resolved_output_path, len(sources), command_display)
+    return (resolved_output_path, len(sources), "internal-render")
+
+
+def _oracle_epoch_from_handoff_payload(handoff_payload: dict[str, Any]) -> str:
+    continuation_packet = handoff_payload.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        return ""
+    return str(continuation_packet.get("oracle_epoch", "")).strip()
+
+
+def _load_existing_handoff_payload(repo_root: Path) -> dict[str, Any]:
+    payload = _load_json_if_exists(repo_root / ".autolab" / "handoff.json")
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _resolve_current_oracle_epoch(
+    *,
+    state_path: Path,
+    repo_root: Path,
+) -> str:
+    try:
+        handoff_payload = refresh_handoff(state_path).payload
+    except Exception:
+        handoff_payload = _load_existing_handoff_payload(repo_root)
+    return _oracle_epoch_from_handoff_payload(handoff_payload)
+
+
+@lru_cache(maxsize=1)
+def _oracle_cli_help_text() -> str:
+    if not shutil.which("oracle"):
+        return ""
+    outputs: list[str] = []
+    for argv in (["oracle", "--help"], ["oracle", "--debug-help"]):
+        try:
+            process = subprocess.run(
+                argv,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        except Exception:
+            continue
+        for part in (process.stdout or "", process.stderr or ""):
+            text = str(part).strip()
+            if text:
+                outputs.append(text)
+    return "\n\n".join(outputs)
+
+
+def _oracle_cli_supports_flag(flag: str) -> bool:
+    return flag in _oracle_cli_help_text()
+
+
+def _build_oracle_browser_argv(
+    *,
+    prompt_text: str,
+    oracle_bundle_path: Path,
+    preview: bool,
+    reply_output_path: Path | None,
+    timeout_seconds: float,
+    browser_model_strategy: str,
+    browser_auto_reattach_delay: str,
+    browser_auto_reattach_interval: str,
+    browser_auto_reattach_timeout: str,
+) -> tuple[list[str], str]:
+    argv = ["oracle"]
+    if preview:
+        argv.extend(["--dry-run", "summary", "--files-report"])
+    else:
+        argv.extend(["--engine", "browser"])
+        if _oracle_cli_supports_flag("--browser-model-strategy"):
+            argv.extend(["--browser-model-strategy", browser_model_strategy])
+        if _oracle_cli_supports_flag("--browser-manual-login"):
+            argv.append("--browser-manual-login")
+        if _oracle_cli_supports_flag("--browser-auto-reattach-delay"):
+            argv.extend(["--browser-auto-reattach-delay", browser_auto_reattach_delay])
+        if _oracle_cli_supports_flag("--browser-auto-reattach-interval"):
+            argv.extend(
+                ["--browser-auto-reattach-interval", browser_auto_reattach_interval]
+            )
+        if _oracle_cli_supports_flag("--browser-auto-reattach-timeout"):
+            argv.extend(
+                ["--browser-auto-reattach-timeout", browser_auto_reattach_timeout]
+            )
+        if _oracle_cli_supports_flag("--timeout"):
+            argv.extend(["--timeout", f"{max(1, int(timeout_seconds))}"])
+        if _oracle_cli_supports_flag("--wait"):
+            argv.append("--wait")
+        if reply_output_path is not None and _oracle_cli_supports_flag(
+            "--write-output"
+        ):
+            argv.extend(["--write-output", str(reply_output_path)])
+    argv.extend(
+        [
+            "--prompt",
+            prompt_text,
+            "--file",
+            str(oracle_bundle_path),
+        ]
+    )
+    return (argv, " ".join(shlex.quote(token) for token in argv))
+
+
+def _run_oracle_browser_cli(
+    *,
+    repo_root: Path,
+    argv: list[str],
+    timeout_seconds: float,
+) -> tuple[int, str, str, str]:
+    command_display = " ".join(shlex.quote(token) for token in argv)
+    try:
+        process = subprocess.run(
+            argv,
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return (127, "", str(exc), command_display)
+    except subprocess.TimeoutExpired as exc:
+        return (
+            124,
+            str(getattr(exc, "stdout", "") or "").strip(),
+            f"timed out after {timeout_seconds:.0f}s",
+            command_display,
+        )
+    except Exception as exc:
+        return (1, "", str(exc), command_display)
+    return (
+        int(process.returncode),
+        str(process.stdout or "").strip(),
+        str(process.stderr or "").strip(),
+        command_display,
+    )
+
+
+def _run_oracle_roundtrip_auto(
+    *,
+    state_path: Path,
+    repo_root: Path,
+    trigger_reason: str,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    def _result(
+        *,
+        exit_code: int,
+        attempted: bool,
+        status: str,
+        failure_reason: str,
+        output_path_text: str,
+        reply_path_text: str,
+        export_command_text: str,
+        browser_command_text: str,
+        source_count_value: int,
+        apply_status: str,
+    ) -> dict[str, Any]:
+        return {
+            "exit_code": exit_code,
+            "attempted": attempted,
+            "status": status,
+            "failure_reason": failure_reason,
+            "output_path": output_path_text,
+            "reply_path": reply_path_text,
+            "export_command": export_command_text,
+            "browser_command": browser_command_text,
+            "source_count": source_count_value,
+            "apply_status": apply_status,
+        }
+
+    handoff_payload: dict[str, Any]
+    try:
+        handoff_payload = refresh_handoff(state_path).payload
+    except Exception as exc:
+        fallback_handoff_payload = _load_existing_handoff_payload(repo_root)
+        fallback_epoch = _oracle_epoch_from_handoff_payload(fallback_handoff_payload)
+        if fallback_epoch:
+            finish_oracle_attempt(
+                repo_root,
+                epoch=fallback_epoch,
+                eligible=True,
+                status="preview_failed",
+                trigger_reason=trigger_reason,
+                failure_reason=f"failed to refresh handoff before oracle export: {exc}",
+            )
+        return _result(
+            exit_code=1,
+            attempted=bool(fallback_epoch),
+            status="preview_failed",
+            failure_reason=f"failed to refresh handoff before oracle export: {exc}",
+            output_path_text="",
+            reply_path_text="",
+            export_command_text="",
+            browser_command_text="",
+            source_count_value=0,
+            apply_status="",
+        )
+
+    continuation_packet = handoff_payload.get("continuation_packet")
+    epoch = _oracle_epoch_from_handoff_payload(handoff_payload)
+    if not isinstance(continuation_packet, dict):
+        if epoch:
+            finish_oracle_attempt(
+                repo_root,
+                epoch=epoch,
+                eligible=True,
+                status="preview_failed",
+                trigger_reason=trigger_reason,
+                failure_reason="handoff continuation_packet is missing",
+            )
+        return _result(
+            exit_code=1,
+            attempted=bool(epoch),
+            status="preview_failed",
+            failure_reason="handoff continuation_packet is missing",
+            output_path_text="",
+            reply_path_text="",
+            export_command_text="",
+            browser_command_text="",
+            source_count_value=0,
+            apply_status="",
+        )
+
+    active_stage = continuation_packet.get("active_stage")
+    if not isinstance(active_stage, dict):
+        active_stage = {}
+    stage_name = str(active_stage.get("stage", "")).strip()
+    scope_kind = str(active_stage.get("scope_kind", "")).strip() or "experiment"
+    allowed, oracle_policy = oracle_stage_auto_allowed(
+        repo_root,
+        stage=stage_name,
+        scope_kind=scope_kind,
+    )
+    epoch_exhausted = bool(continuation_packet.get("oracle_epoch_exhausted", False))
+
+    output_oracle_path = ""
+    export_command = ""
+    source_count = 0
+    if not allowed or epoch_exhausted:
+        return _result(
+            exit_code=0,
+            attempted=False,
+            status="not_attempted",
+            failure_reason=(
+                "oracle auto is disabled by policy"
+                if not allowed
+                else "automatic oracle already attempted for this oracle epoch"
+            ),
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text="",
+            source_count_value=source_count,
+            apply_status="",
+        )
+
+    try:
+        output_oracle_resolved, source_count, export_command = _export_oracle_document(
+            state_path=state_path,
+            repo_root=repo_root,
+            timeout_seconds=240.0,
+            output_path=output_path,
+            handoff_payload=handoff_payload,
+        )
+        output_oracle_path = str(output_oracle_resolved)
+    except Exception as exc:
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="preview_failed",
+            trigger_reason=trigger_reason,
+            failure_reason=str(exc),
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="preview_failed",
+            failure_reason=str(exc),
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text="",
+            source_count_value=source_count,
+            apply_status="",
+        )
+
+    if not shutil.which("oracle"):
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="unavailable",
+            trigger_reason=trigger_reason,
+            failure_reason="oracle executable is not available on PATH",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="unavailable",
+            failure_reason="oracle executable is not available on PATH",
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text="",
+            source_count_value=source_count,
+            apply_status="",
+        )
+    if (
+        oracle_policy.browser_manual_login_profile_required
+        and not oracle_profile_ready()
+    ):
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="unavailable",
+            trigger_reason=trigger_reason,
+            failure_reason="oracle browser profile is not available",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="unavailable",
+            failure_reason="oracle browser profile is not available",
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text="",
+            source_count_value=source_count,
+            apply_status="",
+        )
+
+    start_oracle_attempt(
+        repo_root,
+        epoch=epoch,
+        eligible=True,
+        trigger_reason=trigger_reason,
+    )
+    request_text = build_oracle_roundtrip_request(
+        handoff_payload=handoff_payload,
+        trigger_reason=trigger_reason,
+    )
+    browser_command = ""
+    timeout_seconds = float(oracle_policy.timeout_minutes) * 60.0
+    reply_capture_path: Path | None = None
+    try:
+        if oracle_policy.preview_before_send:
+            preview_argv, preview_display = _build_oracle_browser_argv(
+                prompt_text=request_text,
+                oracle_bundle_path=Path(output_oracle_path),
+                preview=True,
+                reply_output_path=None,
+                timeout_seconds=min(timeout_seconds, 300.0),
+                browser_model_strategy=oracle_policy.browser_model_strategy,
+                browser_auto_reattach_delay=oracle_policy.browser_auto_reattach_delay,
+                browser_auto_reattach_interval=oracle_policy.browser_auto_reattach_interval,
+                browser_auto_reattach_timeout=oracle_policy.browser_auto_reattach_timeout,
+            )
+            preview_code, preview_stdout, preview_stderr, browser_command = (
+                _run_oracle_browser_cli(
+                    repo_root=repo_root,
+                    argv=preview_argv,
+                    timeout_seconds=min(timeout_seconds, 300.0),
+                )
+            )
+            if preview_code != 0:
+                detail = (
+                    preview_stderr.strip() or preview_stdout.strip() or "preview failed"
+                )
+                finish_oracle_attempt(
+                    repo_root,
+                    epoch=epoch,
+                    eligible=True,
+                    status="preview_failed",
+                    trigger_reason=trigger_reason,
+                    failure_reason=detail,
+                )
+                _safe_refresh_handoff(state_path)
+                return _result(
+                    exit_code=1,
+                    attempted=True,
+                    status="preview_failed",
+                    failure_reason=detail,
+                    output_path_text=output_oracle_path,
+                    reply_path_text="",
+                    export_command_text=export_command,
+                    browser_command_text=preview_display,
+                    source_count_value=source_count,
+                    apply_status="",
+                )
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".md",
+            prefix="autolab_oracle_response_",
+            delete=False,
+        ) as handle:
+            reply_capture_path = Path(handle.name)
+        browser_argv, browser_command = _build_oracle_browser_argv(
+            prompt_text=request_text,
+            oracle_bundle_path=Path(output_oracle_path),
+            preview=False,
+            reply_output_path=reply_capture_path,
+            timeout_seconds=timeout_seconds,
+            browser_model_strategy=oracle_policy.browser_model_strategy,
+            browser_auto_reattach_delay=oracle_policy.browser_auto_reattach_delay,
+            browser_auto_reattach_interval=oracle_policy.browser_auto_reattach_interval,
+            browser_auto_reattach_timeout=oracle_policy.browser_auto_reattach_timeout,
+        )
+        run_code, run_stdout, run_stderr, browser_command = _run_oracle_browser_cli(
+            repo_root=repo_root,
+            argv=browser_argv,
+            timeout_seconds=timeout_seconds,
+        )
+        reply_text = ""
+        if reply_capture_path.exists():
+            try:
+                reply_text = reply_capture_path.read_text(encoding="utf-8").strip()
+            except UnicodeDecodeError:
+                reply_text = reply_capture_path.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                ).strip()
+        if not reply_text:
+            reply_text = run_stdout.strip()
+    finally:
+        if reply_capture_path is not None:
+            try:
+                reply_capture_path.unlink()
+            except Exception:
+                pass
+
+    if run_code == 124:
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="timeout",
+            trigger_reason=trigger_reason,
+            failure_reason=run_stderr or "timed out",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="timeout",
+            failure_reason=run_stderr or "timed out",
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="",
+        )
+    if run_code != 0:
+        detail = (
+            run_stderr.strip() or run_stdout.strip() or "oracle browser launch failed"
+        )
+        failure_status = (
+            "session_lost"
+            if any(
+                token in detail.lower() for token in ("session", "reattach", "detached")
+            )
+            else "launch_failed"
+        )
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status=failure_status,
+            trigger_reason=trigger_reason,
+            failure_reason=detail,
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status=failure_status,
+            failure_reason=detail,
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="",
+        )
+    if not reply_text.strip():
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="capture_failed",
+            trigger_reason=trigger_reason,
+            failure_reason="oracle browser run completed without a captured reply",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="capture_failed",
+            failure_reason="oracle browser run completed without a captured reply",
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="",
+        )
+
+    reply_path = write_oracle_last_response(repo_root, reply_text)
+    reply_relpath = _sidecar_relpath(repo_root, reply_path)
+
+    if not oracle_policy.apply_on_success:
+        try:
+            parsed_reply = parse_oracle_reply(reply_text)
+        except ValueError as exc:
+            finish_oracle_attempt(
+                repo_root,
+                epoch=epoch,
+                eligible=True,
+                status="parse_failed",
+                trigger_reason=trigger_reason,
+                failure_reason=str(exc),
+                reply_path=reply_relpath,
+                apply_status="not_applied",
+            )
+            _safe_refresh_handoff(state_path)
+            return _result(
+                exit_code=1,
+                attempted=True,
+                status="parse_failed",
+                failure_reason=str(exc),
+                output_path_text=output_oracle_path,
+                reply_path_text=str(reply_path),
+                export_command_text=export_command,
+                browser_command_text=browser_command,
+                source_count_value=source_count,
+                apply_status="not_applied",
+            )
+        current_campaign = _load_campaign(repo_root)
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="succeeded",
+            trigger_reason=trigger_reason,
+            reply_path=reply_relpath,
+            apply_status="not_applied",
+            verdict=parsed_reply.verdict,
+            suggested_next_action=parsed_reply.suggested_next_action,
+            recommended_human_review=parsed_reply.recommended_human_review,
+            disfavored_family=_oracle_reply_disfavored_family(
+                _campaign_summary(current_campaign) if current_campaign else {},
+                parsed_reply,
+            ),
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=0,
+            attempted=True,
+            status="succeeded",
+            failure_reason="",
+            output_path_text=output_oracle_path,
+            reply_path_text=str(reply_path),
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="not_applied",
+        )
+
+    try:
+        apply_result = _apply_oracle_reply_text(
+            state_path=state_path,
+            repo_root=repo_root,
+            state=_normalize_state(_load_state(state_path)),
+            source_label=reply_relpath,
+            raw_notes=reply_text,
+        )
+    except ValueError as exc:
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="parse_failed",
+            trigger_reason=trigger_reason,
+            failure_reason=str(exc),
+            reply_path=reply_relpath,
+            apply_status="not_applied",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="parse_failed",
+            failure_reason=str(exc),
+            output_path_text=output_oracle_path,
+            reply_path_text=str(reply_path),
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="not_applied",
+        )
+    except Exception as exc:
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="apply_failed",
+            trigger_reason=trigger_reason,
+            failure_reason=str(exc),
+            reply_path=reply_relpath,
+            apply_status="failed",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="apply_failed",
+            failure_reason=str(exc),
+            output_path_text=output_oracle_path,
+            reply_path_text=str(reply_path),
+            export_command_text=export_command,
+            browser_command_text=browser_command,
+            source_count_value=source_count,
+            apply_status="failed",
+        )
+
+    apply_status = _oracle_reply_apply_status_with_effects(
+        apply_result["reply"],
+        campaign_stopped=bool(apply_result["campaign_stopped"]),
+        recommended_human_review=bool(apply_result["recommended_human_review"]),
+    )
+    finish_oracle_attempt(
+        repo_root,
+        epoch=epoch,
+        eligible=True,
+        status="succeeded",
+        trigger_reason=trigger_reason,
+        reply_path=reply_relpath,
+        apply_status=apply_status,
+        verdict=apply_result["reply"].verdict,
+        suggested_next_action=apply_result["reply"].suggested_next_action,
+        recommended_human_review=bool(apply_result["recommended_human_review"]),
+        disfavored_family=str(
+            load_oracle_state(repo_root).get("disfavored_family", "")
+        ).strip(),
+    )
+    _safe_refresh_handoff(state_path)
+    return _result(
+        exit_code=0,
+        attempted=True,
+        status="succeeded",
+        failure_reason="",
+        output_path_text=output_oracle_path,
+        reply_path_text=str(reply_path),
+        export_command_text=export_command,
+        browser_command_text=browser_command,
+        source_count_value=source_count,
+        apply_status=apply_status,
+    )
+
+
+def _cmd_oracle_roundtrip(args: argparse.Namespace) -> int:
+    if not bool(getattr(args, "auto", False)):
+        print(
+            "autolab oracle roundtrip: ERROR --auto is required for this command",
+            file=sys.stderr,
+        )
+        return 1
+    state_path = Path(args.state_file).expanduser().resolve()
+    repo_root = _resolve_repo_root(state_path)
+    output_text = str(getattr(args, "output", "") or "").strip()
+    requested_output_path = Path(output_text).expanduser() if output_text else None
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo_root,
+        trigger_reason="manual automation request",
+        output_path=requested_output_path,
+    )
+    print("autolab oracle roundtrip")
+    print(f"state_file: {state_path}")
+    print(f"status: {result['status']}")
+    print(f"attempted: {result['attempted']}")
+    print(f"output_path: {result['output_path']}")
+    print(f"reply_path: {result['reply_path'] or 'none'}")
+    print(f"artifacts_inlined: {result['source_count']}")
+    print(f"apply_status: {result['apply_status'] or 'not_applied'}")
+    print(f"oracle_export_command: {result['export_command'] or '-'}")
+    print(f"oracle_browser_command: {result['browser_command'] or '-'}")
+    if result["failure_reason"]:
+        print(f"failure_reason: {result['failure_reason']}")
+    return int(result["exit_code"])
 
 
 def _cmd_oracle(args: argparse.Namespace) -> int:
+    oracle_command = str(getattr(args, "oracle_command", "") or "").strip().lower()
+    if oracle_command == "roundtrip":
+        return _cmd_oracle_roundtrip(args)
     state_path = Path(args.state_file).expanduser().resolve()
     repo_root = _resolve_repo_root(state_path)
 

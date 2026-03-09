@@ -607,6 +607,27 @@ def _cmd_progress(args: argparse.Namespace) -> int:
         recommended=recommended,
         safe_resume=safe_resume,
     )
+    continuation_packet = _observe_continuation_packet(payload)
+    oracle_auto_status = str(continuation_packet.get("oracle_auto_status", "")).strip()
+    oracle_trigger_reason = str(
+        continuation_packet.get("oracle_trigger_reason", "")
+    ).strip()
+    oracle_failure_reason = str(
+        continuation_packet.get("oracle_failure_reason", "")
+    ).strip()
+    oracle_verdict = str(continuation_packet.get("oracle_verdict", "")).strip()
+    oracle_suggested_next_action = str(
+        continuation_packet.get("oracle_suggested_next_action", "")
+    ).strip()
+    oracle_attempt_window = str(
+        continuation_packet.get("oracle_attempt_window", "")
+    ).strip()
+    oracle_epoch_exhausted = bool(
+        continuation_packet.get("oracle_epoch_exhausted", False)
+    )
+    oracle_recommended_human_review = bool(
+        continuation_packet.get("oracle_recommended_human_review", False)
+    )
     uat = _observe_uat_status(payload, uat=uat)
 
     print("autolab progress")
@@ -635,6 +656,15 @@ def _cmd_progress(args: argparse.Namespace) -> int:
     )
     print(f"recommended_executable: {executable}")
     print(f"recommendation_reason: {reason}")
+    if oracle_auto_status:
+        print(f"oracle_auto_status: {oracle_auto_status}")
+        print(f"oracle_attempt_window: {oracle_attempt_window or '0/1 this epoch'}")
+        print(f"oracle_epoch_exhausted: {oracle_epoch_exhausted}")
+        print(f"oracle_trigger_reason: {oracle_trigger_reason}")
+        print(f"oracle_failure_reason: {oracle_failure_reason}")
+        print(f"oracle_verdict: {oracle_verdict}")
+        print(f"oracle_recommended_action: {oracle_suggested_next_action}")
+        print(f"oracle_recommended_human_review: {oracle_recommended_human_review}")
     if uat:
         print(f"uat_required_by: {uat.get('required_by', 'none')}")
         print(f"uat_artifact: {uat.get('artifact_path', '')}")

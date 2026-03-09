@@ -3816,6 +3816,32 @@ class AutolabCockpitApp(App[None]):
                 f"- safe_resume: {handoff.safe_resume_status}",
                 f"- next_command: {handoff.recommended_command or '-'}",
             ]
+            if handoff.oracle_auto_status:
+                handoff_lines.append(
+                    f"- oracle: {handoff.oracle_auto_status} ({handoff.oracle_attempt_window or '0/1 this epoch'})"
+                )
+            if handoff.oracle_trigger_reason:
+                handoff_lines.append(
+                    f"- oracle_trigger: {handoff.oracle_trigger_reason}"
+                )
+            if handoff.oracle_failure_reason:
+                handoff_lines.append(
+                    f"- oracle_failure: {handoff.oracle_failure_reason}"
+                )
+            if handoff.oracle_verdict:
+                handoff_lines.append(f"- oracle_verdict: {handoff.oracle_verdict}")
+            if handoff.oracle_suggested_next_action:
+                handoff_lines.append(
+                    f"- oracle_next: {handoff.oracle_suggested_next_action}"
+                )
+            if handoff.oracle_disfavored_family:
+                handoff_lines.append(
+                    f"- oracle_disfavored_family: {handoff.oracle_disfavored_family}"
+                )
+            if handoff.oracle_recommended_human_review:
+                handoff_lines.append("- oracle_recommends_human_review: true")
+            if handoff.oracle_epoch_exhausted:
+                handoff_lines.append("- oracle_epoch_exhausted: true")
             if handoff.uat_pending_message:
                 handoff_lines.append(f"- uat_pending: {handoff.uat_pending_message}")
             if handoff.uat_suggested_init_command:

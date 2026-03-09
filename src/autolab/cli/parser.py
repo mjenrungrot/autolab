@@ -908,24 +908,46 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".autolab/state.json",
         help="Path to autolab state JSON (default: .autolab/state.json).",
     )
-    oracle_apply_input = oracle_apply.add_mutually_exclusive_group(required=True)
+    oracle_apply_input = oracle_apply.add_mutually_exclusive_group(required=False)
+    oracle_apply.add_argument(
+        "reply_path",
+        nargs="?",
+        default="",
+        help="Path to an Oracle reply markdown file to parse and apply.",
+    )
     oracle_apply_input.add_argument(
         "--notes",
         default="",
-        help="Path to a notes file or oracle export to ingest.",
+        help="Path to a notes file or oracle export to ingest (legacy alias).",
     )
     oracle_apply_input.add_argument(
         "--stdin",
         action="store_true",
         help="Read notes to ingest from stdin.",
     )
-    oracle_apply.add_argument(
-        "--timeout-seconds",
-        type=float,
-        default=240.0,
-        help="LLM command timeout in seconds (default: 240).",
-    )
     oracle_apply.set_defaults(handler=_cmd_oracle_apply)
+
+    oracle_roundtrip = oracle_subparsers.add_parser(
+        "roundtrip",
+        help="Run a browser-only Oracle roundtrip and apply advisory feedback",
+    )
+    oracle_roundtrip.add_argument(
+        "--state-file",
+        default=".autolab/state.json",
+        help="Path to autolab state JSON (default: .autolab/state.json).",
+    )
+    oracle_roundtrip.add_argument(
+        "--output",
+        default="",
+        help="Optional output path for the oracle document (default: <scope-root>/oracle.md).",
+    )
+    oracle_roundtrip.add_argument(
+        "--auto",
+        action="store_true",
+        default=False,
+        help="Run the unattended browser-only Oracle automation path.",
+    )
+    oracle_roundtrip.set_defaults(handler=_cmd_oracle_roundtrip)
 
     handoff = subparsers.add_parser(
         "handoff",

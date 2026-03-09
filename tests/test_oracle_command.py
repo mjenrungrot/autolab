@@ -4,9 +4,19 @@ import io
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
+import autolab.cli.handlers_admin as handlers_admin
 import autolab.commands as commands_module
+import pytest
 from autolab.campaign import _refresh_campaign_results
+from autolab.cli.handlers_admin import (
+    _build_oracle_browser_argv,
+    _run_oracle_roundtrip_auto,
+)
+from autolab.cli.handlers_run import _auto_oracle_trigger_reason
+from autolab.models import OracleApplyPolicyConfig, OraclePolicyConfig, RunOutcome
+from autolab.oracle_runtime import oracle_packet_fingerprint
 from autolab.plan_approval import load_plan_approval
 from autolab.todo_sync import list_open_tasks
 
@@ -119,8 +129,97 @@ def _init_oracle_apply_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     return (repo, state_path, iteration_dir)
 
 
+def _write_oracle_reply(
+    path: Path,
+    *,
+    verdict: str,
+    rationale: list[str] | tuple[str, ...] = (),
+    actions: list[str] | tuple[str, ...] = (),
+    risks: list[str] | tuple[str, ...] = (),
+) -> None:
+    lines = [
+        "# Autolab Oracle Reply",
+        "",
+        f"OracleVerdict: {verdict}",
+        "",
+        "## Rationale",
+    ]
+    if rationale:
+        lines.extend(f"- {item}" for item in rationale)
+    else:
+        lines.append("- no rationale provided")
+    lines.extend(["", "## Recommended Actions"])
+    if actions:
+        lines.extend(f"1. {item}" for item in actions)
+    else:
+        lines.append("1. no action provided")
+    lines.extend(["", "## Risks"])
+    if risks:
+        lines.extend(f"- {item}" for item in risks)
+    else:
+        lines.append("- no risks recorded")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _oracle_policy(
+    *,
+    auto_allowed: bool = True,
+    apply_on_success: bool = True,
+    preview_before_send: bool = True,
+) -> OraclePolicyConfig:
+    return OraclePolicyConfig(
+        auto_allowed=auto_allowed,
+        mode="browser_only",
+        max_auto_attempts_per_epoch=1,
+        timeout_minutes=60,
+        browser_model_strategy="current",
+        browser_manual_login_profile_required=True,
+        browser_auto_reattach_delay="30s",
+        browser_auto_reattach_interval="2m",
+        browser_auto_reattach_timeout="2m",
+        preview_before_send=preview_before_send,
+        apply_on_success=apply_on_success,
+        graceful_failure=True,
+    )
+
+
+def test_oracle_packet_fingerprint_ignores_generated_at_and_oracle_fields() -> None:
+    base_packet = {
+        "schema_version": "1.0",
+        "generated_at": "2026-03-08T00:00:00Z",
+        "active_stage": {
+            "stage": "design",
+            "scope_kind": "experiment",
+            "scope_root": "/tmp/repo/experiments/plan/bootstrap_iteration",
+        },
+        "next_action": {
+            "recommended_command": "autolab run",
+            "safe_status": "ready",
+        },
+        "diagnostics": ["plan_graph.json unavailable"],
+        "oracle_epoch": "epoch-a",
+        "oracle_auto_status": "succeeded",
+        "oracle_verdict": "rethink_design",
+        "oracle_suggested_next_action": "return to design",
+        "oracle_attempt_window": "1/1 this epoch",
+    }
+    variant_packet = {
+        **base_packet,
+        "generated_at": "2026-03-08T23:38:12Z",
+        "oracle_epoch": "epoch-b",
+        "oracle_auto_status": "not_attempted",
+        "oracle_verdict": "",
+        "oracle_suggested_next_action": "",
+        "oracle_attempt_window": "0/1 this epoch",
+    }
+
+    assert oracle_packet_fingerprint(base_packet) == oracle_packet_fingerprint(
+        variant_packet
+    )
+
+
 def test_oracle_writes_scope_root_document_with_inlined_artifacts(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -133,44 +232,6 @@ def test_oracle_writes_scope_root_document_with_inlined_artifacts(
         == 0
     )
     assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
-
-    def _fake_run_oracle_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        appendices = _extract_appendix_blocks(prompt_text)
-        return (
-            0,
-            "\n".join(
-                [
-                    "# Autolab Oracle",
-                    "",
-                    "## Summary",
-                    "Oracle review generated from the continuation packet.",
-                    "",
-                    "## Continuation Packet",
-                    "```json",
-                    "{}",
-                    "```",
-                    "",
-                    "## Expert Review",
-                    "The handoff packet is coherent and ready for expert review.",
-                    "",
-                    "## Recommended Next Steps",
-                    "- Run the recommended next command after reviewing blockers.",
-                    "",
-                    "## Artifact Guide",
-                    "| Path | Role | Status | Why it matters |",
-                    "| --- | --- | --- | --- |",
-                    "| .autolab/handoff.json | machine_packet | present | Compact continuation source. |",
-                    "",
-                    "## Appendices",
-                    "",
-                    appendices,
-                ]
-            ),
-            "",
-            "fake-oracle",
-        )
-
-    monkeypatch.setattr(commands_module, "_run_oracle_agent", _fake_run_oracle_agent)
 
     before_files = _repo_files(repo)
     exit_code = commands_module.main(["oracle", "--state-file", str(state_path)])
@@ -182,14 +243,17 @@ def test_oracle_writes_scope_root_document_with_inlined_artifacts(
     oracle_path = repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
     oracle_text = oracle_path.read_text(encoding="utf-8")
     assert "# Autolab Oracle" in oracle_text
+    assert "## Artifact Guide" in oracle_text
     assert "### Artifact: .autolab/handoff.json" in oracle_text
     assert (
         "### Artifact: experiments/plan/bootstrap_iteration/handoff.md" in oracle_text
     )
 
 
-def test_oracle_fails_when_agent_omits_required_appendix(
-    tmp_path: Path, monkeypatch
+def test_oracle_fails_when_source_collection_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -202,54 +266,24 @@ def test_oracle_fails_when_agent_omits_required_appendix(
         == 0
     )
     assert commands_module.main(["progress", "--state-file", str(state_path)]) == 0
-
-    def _fake_run_oracle_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        _ = prompt_text
-        return (
-            0,
-            "\n".join(
-                [
-                    "# Autolab Oracle",
-                    "",
-                    "## Summary",
-                    "Incomplete oracle output.",
-                    "",
-                    "## Continuation Packet",
-                    "```json",
-                    "{}",
-                    "```",
-                    "",
-                    "## Expert Review",
-                    "Missing appendices on purpose.",
-                    "",
-                    "## Recommended Next Steps",
-                    "- Retry oracle generation.",
-                    "",
-                    "## Artifact Guide",
-                    "| Path | Role | Status | Why it matters |",
-                    "| --- | --- | --- | --- |",
-                    "| .autolab/handoff.json | machine_packet | present | Compact continuation source. |",
-                    "",
-                    "## Appendices",
-                    "",
-                    "### Artifact: .autolab/handoff.json",
-                ]
-            ),
-            "",
-            "fake-oracle",
-        )
-
-    monkeypatch.setattr(commands_module, "_run_oracle_agent", _fake_run_oracle_agent)
+    monkeypatch.setattr(
+        commands_module,
+        "_oracle_collect_sources",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("inline sources unavailable")
+        ),
+    )
 
     exit_code = commands_module.main(["oracle", "--state-file", str(state_path)])
 
     assert exit_code == 1
+    assert "inline sources unavailable" in capsys.readouterr().err
     assert not (
         repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
     ).exists()
 
 
-def test_oracle_updates_campaign_last_oracle_at(tmp_path: Path, monkeypatch) -> None:
+def test_oracle_updates_campaign_last_oracle_at(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     state_path = repo / ".autolab" / "state.json"
@@ -286,44 +320,6 @@ def test_oracle_updates_campaign_last_oracle_at(tmp_path: Path, monkeypatch) -> 
         encoding="utf-8",
     )
 
-    def _fake_run_oracle_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        appendices = _extract_appendix_blocks(prompt_text)
-        return (
-            0,
-            "\n".join(
-                [
-                    "# Autolab Oracle",
-                    "",
-                    "## Summary",
-                    "Oracle review generated from the continuation packet.",
-                    "",
-                    "## Continuation Packet",
-                    "```json",
-                    "{}",
-                    "```",
-                    "",
-                    "## Expert Review",
-                    "The handoff packet is coherent and ready for expert review.",
-                    "",
-                    "## Recommended Next Steps",
-                    "- Continue the campaign when ready.",
-                    "",
-                    "## Artifact Guide",
-                    "| Path | Role | Status | Why it matters |",
-                    "| --- | --- | --- | --- |",
-                    "| .autolab/handoff.json | machine_packet | present | Compact continuation source. |",
-                    "",
-                    "## Appendices",
-                    "",
-                    appendices,
-                ]
-            ),
-            "",
-            "fake-oracle",
-        )
-
-    monkeypatch.setattr(commands_module, "_run_oracle_agent", _fake_run_oracle_agent)
-
     exit_code = commands_module.main(["oracle", "--state-file", str(state_path)])
     campaign_payload = json.loads(
         (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
@@ -333,9 +329,7 @@ def test_oracle_updates_campaign_last_oracle_at(tmp_path: Path, monkeypatch) -> 
     assert campaign_payload["last_oracle_at"]
 
 
-def test_oracle_includes_campaign_results_markdown_but_not_tsv(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_oracle_includes_campaign_results_markdown_but_not_tsv(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     state_path = repo / ".autolab" / "state.json"
@@ -412,44 +406,6 @@ def test_oracle_includes_campaign_results_markdown_but_not_tsv(
     )
     _refresh_campaign_results(repo, campaign_payload)
 
-    def _fake_run_oracle_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        appendices = _extract_appendix_blocks(prompt_text)
-        return (
-            0,
-            "\n".join(
-                [
-                    "# Autolab Oracle",
-                    "",
-                    "## Summary",
-                    "Oracle review generated from the continuation packet.",
-                    "",
-                    "## Continuation Packet",
-                    "```json",
-                    "{}",
-                    "```",
-                    "",
-                    "## Expert Review",
-                    "Campaign results markdown was included.",
-                    "",
-                    "## Recommended Next Steps",
-                    "- Review the results appendix.",
-                    "",
-                    "## Artifact Guide",
-                    "| Path | Role | Status | Why it matters |",
-                    "| --- | --- | --- | --- |",
-                    "| .autolab/handoff.json | machine_packet | present | Compact continuation source. |",
-                    "",
-                    "## Appendices",
-                    "",
-                    appendices,
-                ]
-            ),
-            "",
-            "fake-oracle",
-        )
-
-    monkeypatch.setattr(commands_module, "_run_oracle_agent", _fake_run_oracle_agent)
-
     exit_code = commands_module.main(["oracle", "--state-file", str(state_path)])
     oracle_path = repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
     oracle_text = oracle_path.read_text(encoding="utf-8")
@@ -464,100 +420,28 @@ def test_oracle_includes_campaign_results_markdown_but_not_tsv(
     )
 
 
-def test_oracle_apply_updates_scope_artifacts(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
     repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
-    notes_path = iteration_dir / "expert_notes.md"
-    notes_path.write_text(
-        "\n".join(
-            [
-                "# Autolab Oracle",
-                "",
-                "## Summary",
-                "Need tighter steering.",
-                "",
-                "## Expert Review",
-                "Keep the patch narrow and avoid remote harness edits.",
-                "",
-                "## Recommended Next Steps",
-                "- Compare warmup variants on the active benchmark.",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    def _fake_run_oracle_apply_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        assert "Keep the patch narrow" in prompt_text
-        return (
-            0,
-            json.dumps(
-                {
-                    "summary": "Applied oracle steering.",
-                    "discuss_updates": {
-                        "preferences": [
-                            {
-                                "summary": "Keep experiment edits narrow",
-                                "detail": "Prefer iteration-local changes only.",
-                            }
-                        ],
-                        "constraints": [
-                            {
-                                "summary": "Do not edit the remote harness",
-                                "detail": "Hold the SLURM profile and evaluator contract fixed.",
-                            }
-                        ],
-                        "open_questions": [
-                            {
-                                "summary": "Should the warmup schedule change?",
-                                "detail": "Verify whether warmup is causing the plateau.",
-                            }
-                        ],
-                    },
-                    "research_questions": [
-                        {
-                            "summary": "Which training window causes the plateau?",
-                            "detail": "Analyze the metric drop after epoch three.",
-                        }
-                    ],
-                    "todo_hints": [
-                        {
-                            "summary": "Compare warmup variants on the active benchmark",
-                            "stage": "implementation",
-                            "labels": ["nightly"],
-                        }
-                    ],
-                    "campaign_feedback": [
-                        {
-                            "summary": "Rethink if the next batch still stalls",
-                            "detail": "Stop implementation-level search if the metric remains flat.",
-                            "signal": "rethink",
-                        }
-                    ],
-                    "plan_approval_note": "Oracle recommends a narrow patch before broader rollout.",
-                }
-            ),
-            "",
-            "fake-oracle-apply",
-        )
-
-    monkeypatch.setattr(
-        commands_module,
-        "_run_oracle_apply_agent",
-        _fake_run_oracle_apply_agent,
+    reply_path = iteration_dir / "oracle_reply.md"
+    _write_oracle_reply(
+        reply_path,
+        verdict="rethink_design",
+        rationale=[
+            "Keep experiment edits narrow and iteration-local.",
+            "Prefer design changes before another implementation wave.",
+        ],
+        actions=[
+            "Compare warmup variants on the active benchmark.",
+            "Add a narrower design note before the next run.",
+        ],
+        risks=[
+            "Could the warmup schedule still be masking regressions?",
+            "Remote harness edits would make comparisons invalid.",
+        ],
     )
 
     exit_code = commands_module.main(
-        [
-            "oracle",
-            "apply",
-            "--state-file",
-            str(state_path),
-            "--notes",
-            str(notes_path),
-        ]
+        ["oracle", "apply", "--state-file", str(state_path), str(reply_path)]
     )
 
     discuss_payload = json.loads(
@@ -573,85 +457,132 @@ def test_oracle_apply_updates_scope_artifacts(
     campaign_payload = json.loads(
         (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
     )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
     approval_payload = load_plan_approval(iteration_dir)
     open_tasks = list_open_tasks(repo)
 
     assert exit_code == 0
     assert any(
-        entry.get("summary") == "Keep experiment edits narrow"
+        entry.get("summary") == "Keep experiment edits narrow and iteration-local."
         for entry in discuss_payload["preferences"]
     )
     assert any(
-        entry.get("summary") == "Do not edit the remote harness"
+        entry.get("summary")
+        == "Prefer design changes before another implementation wave."
+        for entry in discuss_payload["preferences"]
+    )
+    assert any(
+        entry.get("summary")
+        == "Could the warmup schedule still be masking regressions?"
+        for entry in discuss_payload["open_questions"]
+    )
+    assert any(
+        entry.get("summary") == "Remote harness edits would make comparisons invalid."
         for entry in discuss_payload["constraints"]
     )
     assert any(
-        entry.get("summary") == "Should the warmup schedule change?"
-        for entry in discuss_payload["open_questions"]
-    )
-    assert any(
-        entry.get("summary") == "Which training window causes the plateau?"
-        for entry in discuss_payload["open_questions"]
-    )
-    assert any(
-        entry.get("summary") == "Which training window causes the plateau?"
+        entry.get("summary")
+        == "Could the warmup schedule still be masking regressions?"
         for entry in research_payload["questions"]
     )
     assert any(
-        task.get("text") == "Compare warmup variants on the active benchmark"
+        task.get("text") == "Compare warmup variants on the active benchmark."
         and "oracle" in task.get("labels", [])
         for task in open_tasks
     )
     assert campaign_payload["status"] == "needs_rethink"
     assert len(campaign_payload["oracle_feedback"]) == 1
-    assert "Oracle recommends a narrow patch" in approval_payload["notes"]
+    assert "Oracle verdict: rethink_design." in approval_payload["notes"]
+    assert oracle_state["verdict"] == "rethink_design"
+    assert (
+        oracle_state["suggested_next_action"]
+        == "Compare warmup variants on the active benchmark."
+    )
     assert (repo / ".autolab" / "handoff.json").exists()
 
 
-def test_oracle_apply_is_idempotent_for_duplicate_feedback(
+def test_oracle_apply_request_human_review_is_advisory_only(tmp_path: Path) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    reply_path = iteration_dir / "oracle_reply.md"
+    _write_oracle_reply(
+        reply_path,
+        verdict="request_human_review",
+        rationale=["The benchmark evidence is internally contradictory."],
+        actions=["Collect one manual sanity check before the next run."],
+        risks=["Could the current evaluator be masking a regression?"],
+    )
+
+    exit_code = commands_module.main(
+        ["oracle", "apply", "--state-file", str(state_path), str(reply_path)]
+    )
+
+    campaign_payload = json.loads(
+        (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert exit_code == 0
+    assert campaign_payload["status"] == "running"
+    assert len(campaign_payload["oracle_feedback"]) == 1
+    assert oracle_state["verdict"] == "request_human_review"
+    assert oracle_state["recommended_human_review"] is True
+    assert oracle_state["current_epoch"]
+
+
+def test_oracle_apply_disallowed_stop_campaign_keeps_campaign_running(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
-    notes_path = iteration_dir / "expert_notes.md"
-    notes_path.write_text("Keep the patch narrow.\n", encoding="utf-8")
-
-    payload = {
-        "summary": "Applied oracle steering.",
-        "discuss_updates": {
-            "preferences": [
-                {
-                    "summary": "Keep experiment edits narrow",
-                    "detail": "Prefer iteration-local changes only.",
-                }
-            ]
-        },
-        "research_questions": [
-            {
-                "summary": "Which training window causes the plateau?",
-                "detail": "Analyze the metric drop after epoch three.",
-            }
-        ],
-        "todo_hints": [
-            {
-                "summary": "Compare warmup variants on the active benchmark",
-                "stage": "implementation",
-            }
-        ],
-        "campaign_feedback": [
-            {
-                "summary": "Rethink if the next batch still stalls",
-                "detail": "Stop implementation-level search if the metric remains flat.",
-                "signal": "rethink",
-            }
-        ],
-        "plan_approval_note": "Oracle recommends a narrow patch before broader rollout.",
-    }
-
+    reply_path = iteration_dir / "oracle_reply.md"
+    _write_oracle_reply(
+        reply_path,
+        verdict="stop_campaign",
+        rationale=["The current family has exhausted its useful search space."],
+        actions=["Stop the current campaign and revisit the search framing."],
+        risks=["Could the baseline comparison still be noisy?"],
+    )
     monkeypatch.setattr(
-        commands_module,
-        "_run_oracle_apply_agent",
-        lambda _repo_root, **_kwargs: (0, json.dumps(payload), "", "fake-oracle-apply"),
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: OracleApplyPolicyConfig(
+            allow_continue_search=True,
+            allow_switch_family=True,
+            allow_rewind_design=False,
+            allow_request_human_review=True,
+            allow_stop_campaign=False,
+        ),
+    )
+
+    exit_code = commands_module.main(
+        ["oracle", "apply", "--state-file", str(state_path), str(reply_path)]
+    )
+
+    campaign_payload = json.loads(
+        (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert exit_code == 0
+    assert campaign_payload["status"] == "running"
+    assert len(campaign_payload["oracle_feedback"]) == 1
+    assert oracle_state["verdict"] == "stop_campaign"
+
+
+def test_oracle_apply_is_idempotent_for_duplicate_feedback(tmp_path: Path) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    notes_path = iteration_dir / "oracle_reply.md"
+    _write_oracle_reply(
+        notes_path,
+        verdict="rethink_design",
+        rationale=["Keep experiment edits narrow and iteration-local."],
+        actions=["Compare warmup variants on the active benchmark."],
+        risks=["Which training window causes the plateau?"],
     )
 
     for _ in range(2):
@@ -690,7 +621,8 @@ def test_oracle_apply_is_idempotent_for_duplicate_feedback(
             [
                 entry
                 for entry in discuss_payload["preferences"]
-                if entry.get("summary") == "Keep experiment edits narrow"
+                if entry.get("summary")
+                == "Keep experiment edits narrow and iteration-local."
             ]
         )
         == 1
@@ -710,53 +642,29 @@ def test_oracle_apply_is_idempotent_for_duplicate_feedback(
             [
                 task
                 for task in open_tasks
-                if task.get("text") == "Compare warmup variants on the active benchmark"
+                if task.get("text")
+                == "Compare warmup variants on the active benchmark."
             ]
         )
         == 1
     )
     assert len(campaign_payload["oracle_feedback"]) == 1
-    assert (
-        approval_payload["notes"].count(
-            "Oracle recommends a narrow patch before broader rollout."
-        )
-        == 1
-    )
+    assert approval_payload["notes"].count("Oracle verdict: rethink_design.") == 1
 
 
-def test_oracle_apply_rejects_invalid_classifier_output_without_writes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_oracle_apply_rejects_missing_verdict_without_writes(tmp_path: Path) -> None:
     repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
-    notes_path = iteration_dir / "expert_notes.md"
-    notes_path.write_text("Keep the patch narrow.\n", encoding="utf-8")
+    notes_path = iteration_dir / "oracle_reply.md"
+    notes_path.write_text(
+        "# Autolab Oracle Reply\n\n## Rationale\n- Missing required verdict.\n",
+        encoding="utf-8",
+    )
     campaign_before = (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
     approval_before = load_plan_approval(iteration_dir)
     open_tasks_before = list_open_tasks(repo)
 
-    monkeypatch.setattr(
-        commands_module,
-        "_run_oracle_apply_agent",
-        lambda _repo_root, **_kwargs: (
-            0,
-            json.dumps(
-                {"campaign_feedback": [{"summary": "stop now", "signal": "halt"}]}
-            ),
-            "",
-            "fake-oracle-apply",
-        ),
-    )
-
     exit_code = commands_module.main(
-        [
-            "oracle",
-            "apply",
-            "--state-file",
-            str(state_path),
-            "--notes",
-            str(notes_path),
-        ]
+        ["oracle", "apply", "--state-file", str(state_path), str(notes_path)]
     )
 
     assert exit_code == 1
@@ -767,11 +675,11 @@ def test_oracle_apply_rejects_invalid_classifier_output_without_writes(
     ) == campaign_before
     assert load_plan_approval(iteration_dir) == approval_before
     assert list_open_tasks(repo) == open_tasks_before
+    assert not (repo / ".autolab" / "oracle_state.json").exists()
 
 
 def test_oracle_apply_extracts_review_sections_from_export_markdown(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
     notes_path = iteration_dir / "oracle.md"
@@ -783,11 +691,16 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
                 "## Summary",
                 "Dense export.",
                 "",
-                "## Expert Review",
-                "Need a narrower patch before retrying the campaign.",
+                "OracleVerdict: continue_search",
                 "",
-                "## Recommended Next Steps",
-                "- Run one more comparison from the current champion.",
+                "## Rationale",
+                "- Need a narrower patch before retrying the campaign.",
+                "",
+                "## Recommended Actions",
+                "1. Run one more comparison from the current champion.",
+                "",
+                "## Risks",
+                "- Could the current baseline still be noisy?",
                 "",
                 "## Appendices",
                 "",
@@ -800,32 +713,6 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
         )
         + "\n",
         encoding="utf-8",
-    )
-
-    def _fake_run_oracle_apply_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        assert "Need a narrower patch before retrying the campaign." in prompt_text
-        assert "Run one more comparison from the current champion." in prompt_text
-        assert "### Artifact: .autolab/handoff.json" not in prompt_text
-        return (
-            0,
-            json.dumps(
-                {
-                    "summary": "No changes applied.",
-                    "discuss_updates": {},
-                    "research_questions": [],
-                    "todo_hints": [],
-                    "campaign_feedback": [],
-                    "plan_approval_note": "",
-                }
-            ),
-            "",
-            "fake-oracle-apply",
-        )
-
-    monkeypatch.setattr(
-        commands_module,
-        "_run_oracle_apply_agent",
-        _fake_run_oracle_apply_agent,
     )
 
     assert (
@@ -848,30 +735,26 @@ def test_oracle_apply_can_read_notes_from_stdin(
     monkeypatch,
 ) -> None:
     repo, state_path, _iteration_dir = _init_oracle_apply_repo(tmp_path)
-    monkeypatch.setattr(sys, "stdin", io.StringIO("stdin oracle notes\n"))
-
-    def _fake_run_oracle_apply_agent(_repo_root: Path, *, prompt_text: str, **_kwargs):
-        assert "stdin oracle notes" in prompt_text
-        return (
-            0,
-            json.dumps(
-                {
-                    "summary": "No changes applied.",
-                    "discuss_updates": {},
-                    "research_questions": [],
-                    "todo_hints": [],
-                    "campaign_feedback": [],
-                    "plan_approval_note": "",
-                }
-            ),
-            "",
-            "fake-oracle-apply",
-        )
-
     monkeypatch.setattr(
-        commands_module,
-        "_run_oracle_apply_agent",
-        _fake_run_oracle_apply_agent,
+        sys,
+        "stdin",
+        io.StringIO(
+            "\n".join(
+                [
+                    "OracleVerdict: continue_search",
+                    "",
+                    "## Rationale",
+                    "- stdin rationale",
+                    "",
+                    "## Recommended Actions",
+                    "1. Keep iterating from the current family.",
+                    "",
+                    "## Risks",
+                    "- Could the verifier still be too loose?",
+                ]
+            )
+            + "\n"
+        ),
     )
 
     assert (
@@ -886,3 +769,446 @@ def test_oracle_apply_can_read_notes_from_stdin(
         )
         == 0
     )
+
+
+def test_oracle_roundtrip_requires_auto(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    assert (
+        commands_module.main(["oracle", "roundtrip", "--state-file", str(state_path)])
+        == 1
+    )
+
+
+def test_oracle_roundtrip_runs_auto_path_when_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    captured: dict[str, str] = {}
+
+    def _fake_run_oracle_roundtrip_auto(
+        *,
+        state_path: Path,
+        repo_root: Path,
+        trigger_reason: str,
+        output_path: Path | None = None,
+    ) -> dict[str, object]:
+        captured["state_path"] = str(state_path)
+        captured["repo_root"] = str(repo_root)
+        captured["trigger_reason"] = trigger_reason
+        captured["output_path"] = str(output_path) if output_path is not None else ""
+        return {
+            "exit_code": 0,
+            "attempted": True,
+            "status": "succeeded",
+            "failure_reason": "",
+            "output_path": str(
+                repo_root / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+            ),
+            "reply_path": str(repo_root / ".autolab" / "oracle_last_response.md"),
+            "export_command": "autolab oracle",
+            "browser_command": "oracle --engine browser",
+            "source_count": 3,
+            "apply_status": "applied",
+        }
+
+    monkeypatch.setattr(
+        commands_module,
+        "_run_oracle_roundtrip_auto",
+        _fake_run_oracle_roundtrip_auto,
+    )
+
+    output_path = repo / "custom_oracle.md"
+    assert (
+        commands_module.main(
+            [
+                "oracle",
+                "roundtrip",
+                "--state-file",
+                str(state_path),
+                "--auto",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+    assert captured["state_path"] == str(state_path.resolve())
+    assert captured["repo_root"] == str(repo.resolve())
+    assert captured["trigger_reason"] == "manual automation request"
+    assert captured["output_path"] == str(output_path)
+
+
+def test_build_oracle_browser_argv_uses_prompt_and_output_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "oracle.md"
+    bundle_path.write_text("# Oracle\n", encoding="utf-8")
+    reply_path = tmp_path / "reply.md"
+    supported_flags = {
+        "--browser-model-strategy",
+        "--browser-manual-login",
+        "--browser-auto-reattach-delay",
+        "--browser-auto-reattach-interval",
+        "--browser-auto-reattach-timeout",
+        "--timeout",
+        "--wait",
+        "--write-output",
+    }
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: flag in supported_flags,
+    )
+
+    argv, _display = _build_oracle_browser_argv(
+        prompt_text="Review the attached oracle packet.",
+        oracle_bundle_path=bundle_path,
+        preview=False,
+        reply_output_path=reply_path,
+        timeout_seconds=3600.0,
+        browser_model_strategy="current",
+        browser_auto_reattach_delay="30s",
+        browser_auto_reattach_interval="2m",
+        browser_auto_reattach_timeout="2m",
+    )
+
+    assert "--prompt" in argv
+    assert "--prompt-file" not in argv
+    assert "--browser-manual-login" in argv
+    assert "--browser-auto-reattach-delay" in argv
+    assert "--browser-auto-reattach-interval" in argv
+    assert "--browser-auto-reattach-timeout" in argv
+    assert "--write-output" in argv
+    assert "--wait" in argv
+
+
+def test_oracle_cli_supports_hidden_browser_flags_from_debug_help(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handlers_admin._oracle_cli_help_text.cache_clear()
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.shutil.which",
+        lambda _name: "/usr/local/bin/oracle",
+    )
+
+    calls: list[tuple[str, ...]] = []
+
+    def _fake_run(
+        argv: list[str],
+        *,
+        text: bool,
+        capture_output: bool,
+        check: bool,
+        timeout: int,
+    ) -> SimpleNamespace:
+        calls.append(tuple(argv))
+        if argv == ["oracle", "--help"]:
+            return SimpleNamespace(
+                stdout="--timeout\n--write-output\n",
+                stderr="",
+                returncode=0,
+            )
+        if argv == ["oracle", "--debug-help"]:
+            return SimpleNamespace(
+                stdout="--browser-manual-login\n--browser-auto-reattach-delay\n",
+                stderr="",
+                returncode=0,
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    monkeypatch.setattr("autolab.cli.handlers_admin.subprocess.run", _fake_run)
+    try:
+        assert (
+            handlers_admin._oracle_cli_supports_flag("--browser-manual-login") is True
+        )
+        assert (
+            handlers_admin._oracle_cli_supports_flag("--browser-auto-reattach-delay")
+            is True
+        )
+        assert handlers_admin._oracle_cli_supports_flag("--timeout") is True
+        assert calls == [("oracle", "--help"), ("oracle", "--debug-help")]
+    finally:
+        handlers_admin._oracle_cli_help_text.cache_clear()
+
+
+def test_oracle_roundtrip_persists_epoch_on_export_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_stage_auto_allowed",
+        lambda *_args, **_kwargs: (True, _oracle_policy()),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("oracle export failed")),
+    )
+
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo,
+        trigger_reason="manual automation request",
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "preview_failed"
+    assert result["attempted"] is True
+    assert oracle_state["current_epoch"]
+    assert oracle_state["auto"]["attempted"] is True
+    assert oracle_state["auto"]["status"] == "preview_failed"
+
+
+def test_oracle_roundtrip_respects_apply_on_success_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    oracle_output_path = (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+    )
+    oracle_output_path.parent.mkdir(parents=True, exist_ok=True)
+    oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
+    reply_text = "\n".join(
+        [
+            "OracleVerdict: continue_search",
+            "",
+            "## Rationale",
+            "- Keep iterating from the current family.",
+            "",
+            "## Recommended Actions",
+            "1. Run one more benchmark comparison.",
+            "",
+            "## Risks",
+            "- Could the current verifier still be too noisy?",
+        ]
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_stage_auto_allowed",
+        lambda *_args, **_kwargs: (
+            True,
+            _oracle_policy(apply_on_success=False),
+        ),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        lambda **_kwargs: (oracle_output_path, 1, "autolab oracle"),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.shutil.which",
+        lambda _name: "/usr/local/bin/oracle",
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_profile_ready",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: (
+            flag
+            in {"--browser-model-strategy", "--timeout", "--wait", "--write-output"}
+        ),
+    )
+
+    def _fake_run_oracle_browser_cli(*, argv: list[str], **_kwargs):
+        if "--dry-run" in argv:
+            return (0, "preview ok", "", "oracle --dry-run")
+        output_index = argv.index("--write-output") + 1
+        Path(argv[output_index]).write_text(reply_text + "\n", encoding="utf-8")
+        return (0, "", "", "oracle --engine browser")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._run_oracle_browser_cli",
+        _fake_run_oracle_browser_cli,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._apply_oracle_reply_text",
+        lambda **_kwargs: pytest.fail("roundtrip should not auto-apply when disabled"),
+    )
+
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo,
+        trigger_reason="manual automation request",
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["apply_status"] == "not_applied"
+    assert oracle_state["verdict"] == "continue_search"
+    assert oracle_state["auto"]["apply_status"] == "not_applied"
+    assert not (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "context"
+    ).exists()
+
+
+def test_oracle_roundtrip_refreshes_handoff_with_stable_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    oracle_output_path = (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+    )
+    oracle_output_path.parent.mkdir(parents=True, exist_ok=True)
+    oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
+    reply_text = "\n".join(
+        [
+            "OracleVerdict: continue_search",
+            "",
+            "## Rationale",
+            "- Keep the search moving.",
+            "",
+            "## Recommended Actions",
+            "1. Run the next iteration.",
+            "",
+            "## Risks",
+            "- Could the current evidence still be incomplete?",
+        ]
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_stage_auto_allowed",
+        lambda *_args, **_kwargs: (
+            True,
+            _oracle_policy(apply_on_success=False),
+        ),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        lambda **_kwargs: (oracle_output_path, 1, "internal-render"),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.shutil.which",
+        lambda _name: "/usr/local/bin/oracle",
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_profile_ready",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: (
+            flag
+            in {"--browser-model-strategy", "--timeout", "--wait", "--write-output"}
+        ),
+    )
+
+    def _fake_run_oracle_browser_cli(*, argv: list[str], **_kwargs):
+        if "--dry-run" in argv:
+            return (0, "preview ok", "", "oracle --dry-run")
+        output_index = argv.index("--write-output") + 1
+        Path(argv[output_index]).write_text(reply_text + "\n", encoding="utf-8")
+        return (0, "", "", "oracle --engine browser")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._run_oracle_browser_cli",
+        _fake_run_oracle_browser_cli,
+    )
+
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo,
+        trigger_reason="manual automation request",
+    )
+    handoff_payload = json.loads(
+        (repo / ".autolab" / "handoff.json").read_text(encoding="utf-8")
+    )
+    continuation = handoff_payload["continuation_packet"]
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "succeeded"
+    assert continuation["oracle_auto_status"] == "succeeded"
+    assert continuation["oracle_verdict"] == "continue_search"
+    assert continuation["oracle_epoch"] == oracle_state["current_epoch"]
+
+
+def test_auto_oracle_trigger_ignores_stale_guardrail_breach(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".autolab").mkdir(parents=True)
+    (repo / ".autolab" / "guardrail_breach.json").write_text(
+        json.dumps(
+            {
+                "breached_at": "2026-03-08T00:00:00Z",
+                "rule": "no_progress",
+                "counters": {"no_progress_decisions": 2},
+                "stage": "decide_repeat",
+                "remediation": "Escalated to 'human_review'.",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_run._load_guardrail_config",
+        lambda _repo_root: SimpleNamespace(on_breach="human_review"),
+    )
+
+    trigger_reason = _auto_oracle_trigger_reason(
+        repo_root=repo,
+        outcome=RunOutcome(
+            exit_code=1,
+            transitioned=True,
+            stage_before="decide_repeat",
+            stage_after="human_review",
+            message="decision applied: decide_repeat -> human_review",
+        ),
+        assistant_mode=False,
+        iteration_started_at="2026-03-08T00:10:00Z",
+    )
+
+    assert trigger_reason == ""

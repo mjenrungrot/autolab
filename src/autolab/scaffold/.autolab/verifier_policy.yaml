@@ -365,6 +365,36 @@ autorun:
         context. Define a new experiment or analysis direction first, then plan implementation
         improvements only after that experiment/analysis path is explicit.
 # ---------------------------------------------------------------------------
+# Oracle escalation
+# ---------------------------------------------------------------------------
+oracle:
+  auto_allowed: false
+  mode: browser_only
+  max_auto_attempts_per_epoch: 1
+  timeout_minutes: 60
+  browser_model_strategy: current
+  browser_manual_login_profile_required: true
+  browser_auto_reattach_delay: 30s
+  browser_auto_reattach_interval: 2m
+  browser_auto_reattach_timeout: 2m
+  preview_before_send: true
+  apply_on_success: true
+  graceful_failure: true
+
+oracle_triggers:
+  no_improvement_streak: 5
+  crash_streak: 3
+  contradictory_evidence: true
+  blocked_review: true
+  explicit_policy_request: true
+
+oracle_apply:
+  allow_continue_search: true
+  allow_switch_family: true
+  allow_rewind_design: false
+  allow_request_human_review: true
+  allow_stop_campaign: true
+# ---------------------------------------------------------------------------
 # Protected files denylist
 # ---------------------------------------------------------------------------
 # Paths listed here are forbidden from modification by the agent runner.

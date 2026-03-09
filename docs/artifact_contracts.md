@@ -355,9 +355,25 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
-- **Produced by**: `autolab oracle` (on demand only; not auto-refreshed by run/verify/handoff)
+- **Produced by**: `autolab oracle` and `autolab oracle roundtrip --auto` (on demand only; not auto-refreshed by run/verify/handoff)
 - **Consumed by**: rich human/agent takeover workflows that need a single inlined scope-root export
 - **Relationship to `handoff.md`**: `oracle.md` is the dense, inlined companion to the concise `handoff.md` summary.
+
+## oracle_state.json
+
+- **Path**: `.autolab/oracle_state.json`
+- **Format**: JSON
+- **Content**: Canonical Oracle automation state for the current Oracle epoch, including browser-only auto eligibility, attempt status, failure reason, reply path, advisory verdict, suggested next action, human-review recommendation flag, and any temporarily disfavored family.
+- **Produced by**: `autolab oracle roundtrip --auto` and `autolab oracle apply`
+- **Consumed by**: `autolab progress`, `autolab handoff`, `autolab resume`, `autolab tui`, and unattended campaign/run governance
+
+## oracle_last_response.md
+
+- **Path**: `.autolab/oracle_last_response.md`
+- **Format**: Markdown
+- **Content**: Last captured Oracle browser reply, whether or not apply succeeded
+- **Produced by**: `autolab oracle roundtrip --auto`
+- **Consumed by**: manual inspection and follow-up `autolab oracle apply` retries
 
 ## results.tsv
 
@@ -389,7 +405,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 - **Path**: `.autolab/campaign.json`
 - **Format**: JSON
 - **Content**: Canonical campaign control-plane state for unattended experiment search, including objective binding, champion metadata, lock contract, crash/improvement streaks, oracle export timestamp, optional oracle feedback history, and bounded novelty memory in `idea_journal`.
-- **Produced by**: campaign start/continue/stop flows, challenger promotion-discard decisions, `autolab oracle`, and `autolab oracle apply`
+- **Produced by**: campaign start/continue/stop flows, challenger promotion-discard decisions, `autolab oracle`, `autolab oracle roundtrip --auto`, and `autolab oracle apply`
 - **Consumed by**: campaign runtime, status/handoff surfaces, and oracle round-trip tooling
 - **Idea journal extension**:
   - `idea_journal.active_entry_id` points to the current challenger idea span when present
@@ -399,7 +415,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `oracle_feedback[]` is optional and append-only
   - each entry records `applied_at`, `source`, `summary`, `detail`, and `signal`
   - `signal` vocabulary: `none`, `stop`, `rethink`
-  - `autolab oracle apply` may also update campaign `status` to `stop_requested` or `needs_rethink` when feedback carries those signals
+  - `autolab oracle apply` may also update campaign `status` to `stopped` or `needs_rethink` when verdict mapping carries those signals
 
 ## context sidecars (`discuss.json` / `research.json`)
 

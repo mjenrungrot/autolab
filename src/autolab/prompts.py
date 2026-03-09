@@ -44,6 +44,7 @@ from autolab.config import (
 )
 from autolab.dataset_discovery import discover_media_inputs, summarize_root_counts
 from autolab.models import RenderedPromptBundle, StageCheckError
+from autolab.oracle_runtime import load_oracle_state
 from autolab.registry import (
     StageSpec,
     registry_brief_prompt_files,
@@ -631,6 +632,7 @@ def _build_prompt_context(
     campaign_recent_failed_families: list[str] = []
     campaign_recent_near_miss_families: list[str] = []
     campaign_same_family_streak = 0
+    campaign_oracle_disfavored_family = ""
     try:
         active_campaign = _load_campaign(repo_root)
     except Exception:
@@ -653,6 +655,7 @@ def _build_prompt_context(
         )
 
     if active_campaign is not None:
+        oracle_state = load_oracle_state(repo_root)
         campaign_no_improvement_streak = int(
             active_campaign.get("no_improvement_streak", 0) or 0
         )
@@ -678,6 +681,20 @@ def _build_prompt_context(
         campaign_same_family_streak = int(
             novelty_summary.get("same_family_streak", 0) or 0
         )
+        campaign_oracle_disfavored_family = str(
+            oracle_state.get("disfavored_family", "")
+        ).strip()
+        if campaign_oracle_disfavored_family:
+            campaign_novelty_summary = (
+                f"{campaign_novelty_summary}; "
+                f"oracle recommends avoiding family '{campaign_oracle_disfavored_family}' "
+                "for the next candidate"
+            )
+            decision_suggestion = (
+                f"Prefer a fresh family different from "
+                f"'{campaign_oracle_disfavored_family}' on the next candidate. "
+                f"{decision_suggestion}"
+            )
         if iteration_id:
             try:
                 lock_overview = _campaign_lock_overview(
@@ -1002,6 +1019,7 @@ def _build_prompt_context(
         "campaign_recent_failed_families": campaign_recent_failed_families,
         "campaign_recent_near_miss_families": campaign_recent_near_miss_families,
         "campaign_same_family_streak": campaign_same_family_streak,
+        "campaign_oracle_disfavored_family": campaign_oracle_disfavored_family,
         "diff_summary": diff_summary,
         "git_changed_paths": git_paths,
         "runner_scope": scope_payload,
@@ -1364,6 +1382,10 @@ def _context_token_values(context: dict[str, Any]) -> dict[str, str]:
         ),
         "campaign_active_family": _to_text(
             context.get("campaign_active_family"), "campaign_active_family"
+        ),
+        "campaign_oracle_disfavored_family": _to_text(
+            context.get("campaign_oracle_disfavored_family"),
+            "campaign_oracle_disfavored_family",
         ),
         "campaign_recent_failed_families": _to_text(
             context.get("campaign_recent_failed_families"),

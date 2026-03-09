@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from autolab.cli.support import *
 from autolab.cli.handlers_observe import _safe_refresh_handoff
-from autolab.config import _load_agent_runner_config
+from autolab.config import _load_agent_runner_config, _load_guardrail_config
 from autolab.plan_approval import (
     load_plan_approval,
     record_manual_uat_request,
@@ -17,6 +17,7 @@ from autolab.uat import (
     resolve_uat_requirement,
     resolve_uat_template_context,
 )
+from autolab.utils import _parse_utc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,6 +25,103 @@ def main(argv: list[str] | None = None) -> int:
     from autolab.commands import main as commands_main
 
     return int(commands_main(argv))
+
+
+def _load_guardrail_breach_payload(repo_root: Path) -> dict[str, Any]:
+    payload = _load_json_if_exists(repo_root / ".autolab" / "guardrail_breach.json")
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _auto_oracle_trigger_reason(
+    *,
+    repo_root: Path,
+    outcome: RunOutcome,
+    assistant_mode: bool,
+    iteration_started_at: str,
+) -> str:
+    guardrail_breach = _load_guardrail_breach_payload(repo_root)
+    breach_timestamp = _parse_utc(str(guardrail_breach.get("breached_at", "")).strip())
+    iteration_timestamp = _parse_utc(iteration_started_at)
+    if (
+        breach_timestamp is None
+        or iteration_timestamp is None
+        or breach_timestamp < iteration_timestamp
+    ):
+        return ""
+    breach_stage = str(guardrail_breach.get("stage", "")).strip().lower()
+    breach_rule = str(guardrail_breach.get("rule", "")).strip().lower()
+    if (
+        breach_stage == "decide_repeat"
+        and outcome.stage_before == "decide_repeat"
+        and breach_rule in {"same_decision_streak", "no_progress"}
+    ):
+        guardrails = _load_guardrail_config(repo_root)
+        if outcome.stage_after == str(guardrails.on_breach).strip().lower():
+            return f"decide_repeat guardrail breach: {breach_rule}"
+    if (
+        assistant_mode
+        and breach_stage == "implementation_review"
+        and outcome.stage_before == "implementation_review"
+        and breach_rule in {"stalled_blockers", "no_progress"}
+    ):
+        message = str(outcome.message or "").strip().lower()
+        if (
+            breach_rule == "stalled_blockers"
+            and "assistant stalled blockers guardrail breach" in message
+        ):
+            return "implementation_review guardrail breach: stalled_blockers"
+        if (
+            breach_rule == "no_progress"
+            and "assistant review guardrail breach" in message
+        ):
+            return "implementation_review guardrail breach: no_progress"
+    return ""
+
+
+def _maybe_run_auto_oracle_roundtrip(
+    *,
+    state_path: Path,
+    repo_root: Path,
+    outcome: RunOutcome,
+    assistant_mode: bool,
+    iteration_started_at: str,
+) -> dict[str, Any] | None:
+    trigger_reason = _auto_oracle_trigger_reason(
+        repo_root=repo_root,
+        outcome=outcome,
+        assistant_mode=assistant_mode,
+        iteration_started_at=iteration_started_at,
+    )
+    if not trigger_reason:
+        return None
+    from autolab.cli.handlers_admin import _run_oracle_roundtrip_auto
+
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo_root,
+        trigger_reason=trigger_reason,
+    )
+    _append_log(
+        repo_root,
+        (
+            "loop oracle roundtrip: "
+            f"trigger={trigger_reason} "
+            f"status={str(result.get('status', '')).strip() or 'unknown'} "
+            f"attempted={bool(result.get('attempted', False))} "
+            f"apply_status={str(result.get('apply_status', '')).strip() or 'not_applied'}"
+        ),
+    )
+    print(
+        "autolab loop: oracle "
+        f"({str(result.get('status', '')).strip() or 'unknown'}) "
+        f"trigger={trigger_reason}"
+    )
+    failure_reason = str(result.get("failure_reason", "")).strip()
+    if failure_reason:
+        print(f"autolab loop: oracle detail: {failure_reason}")
+    return result
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
@@ -413,6 +511,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 _heartbeat_lock(lock_path)
 
             baseline_snapshot = _collect_change_snapshot(repo_root)
+            iteration_started_at = _utc_now()
             outcome = _run_once(
                 state_path,
                 decision if args.auto else None,
@@ -441,16 +540,39 @@ def _cmd_loop(args: argparse.Namespace) -> int:
             commit_summary = _try_auto_commit(repo_root, outcome=commit_outcome)
             if "escalating to human_review" in outcome.message:
                 retry_escalation_count += 1
+            effective_stage_after = outcome.stage_after
+            oracle_result: dict[str, Any] | None = None
+            _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
+            if _handoff_payload is None:
+                print(
+                    f"autolab loop: WARN failed to refresh handoff snapshot: {_handoff_error}",
+                    file=sys.stderr,
+                )
+            elif args.auto:
+                oracle_result = _maybe_run_auto_oracle_roundtrip(
+                    state_path=state_path,
+                    repo_root=repo_root,
+                    outcome=outcome,
+                    assistant_mode=assistant_mode,
+                    iteration_started_at=iteration_started_at,
+                )
+                if oracle_result is not None:
+                    try:
+                        effective_stage_after = str(
+                            _normalize_state(_load_state(state_path))["stage"]
+                        )
+                    except StateError:
+                        effective_stage_after = outcome.stage_after
             _is_recoverable = (
                 outcome.exit_code != 0
                 and args.auto
-                and outcome.stage_after not in TERMINAL_STAGES
+                and effective_stage_after not in TERMINAL_STAGES
             )
             loop_rows.append(
                 {
                     "index": index,
                     "stage_before": outcome.stage_before,
-                    "stage_after": outcome.stage_after,
+                    "stage_after": effective_stage_after,
                     "transitioned": outcome.transitioned,
                     "exit_code": outcome.exit_code,
                     "decision": "auto"
@@ -461,18 +583,17 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 }
             )
             print(
-                f"iteration {index}: {outcome.stage_before} -> {outcome.stage_after} "
+                f"iteration {index}: {outcome.stage_before} -> {effective_stage_after} "
                 f"(transitioned={outcome.transitioned}, exit={outcome.exit_code})"
             )
+            if effective_stage_after != outcome.stage_after:
+                print(
+                    f"iteration {index}: effective_stage_after={effective_stage_after} "
+                    f"(post-oracle; outcome.stage_after={outcome.stage_after})"
+                )
             if outcome.pause_reason:
                 print(f"iteration {index}: pause_reason={outcome.pause_reason}")
             print(f"iteration {index}: {commit_summary}")
-            _handoff_payload, _handoff_error = _safe_refresh_handoff(state_path)
-            if _handoff_payload is None:
-                print(
-                    f"autolab loop: WARN failed to refresh handoff snapshot: {_handoff_error}",
-                    file=sys.stderr,
-                )
             if outcome.exit_code == 0:
                 consecutive_errors = 0
 
@@ -482,7 +603,7 @@ def _cmd_loop(args: argparse.Namespace) -> int:
                 consecutive_errors += 1
 
                 # Auto mode: recoverable errors continue the loop
-                if args.auto and outcome.stage_after not in TERMINAL_STAGES:
+                if args.auto and effective_stage_after not in TERMINAL_STAGES:
                     recoverable_error_count += 1
                     if consecutive_errors >= _max_consecutive_errors:
                         terminal_reason = "consecutive_error_limit"
@@ -505,13 +626,13 @@ def _cmd_loop(args: argparse.Namespace) -> int:
 
                 # Fatal or interactive: break as before
                 terminal_reason = "error"
-                if outcome.stage_after == "human_review":
+                if effective_stage_after == "human_review":
                     terminal_reason = "human_review"
                 break
-            if outcome.stage_after in TERMINAL_STAGES:
-                terminal_reason = outcome.stage_after
-                print(f"autolab loop: stop (terminal stage): {outcome.stage_after}")
-                if args.auto and outcome.stage_after == "human_review":
+            if effective_stage_after in TERMINAL_STAGES:
+                terminal_reason = effective_stage_after
+                print(f"autolab loop: stop (terminal stage): {effective_stage_after}")
+                if args.auto and effective_stage_after == "human_review":
                     overall_exit_code = 1
                 break
             if outcome.pause_reason == "plan_approval_required":

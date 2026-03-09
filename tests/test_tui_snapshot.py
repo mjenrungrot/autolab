@@ -156,6 +156,15 @@ def test_snapshot_loads_handoff_summary_when_available(
                 "suggested_init_command": "",
             },
             "top_blockers": ["schema_checks failed"],
+            "oracle_auto_status": "succeeded",
+            "oracle_trigger_reason": "decide_repeat guardrail breach: no_progress",
+            "oracle_failure_reason": "",
+            "oracle_attempt_window": "1/1 this epoch",
+            "oracle_verdict": "switch_family",
+            "oracle_suggested_next_action": "Avoid the current family on the next candidate.",
+            "oracle_epoch_exhausted": True,
+            "oracle_recommended_human_review": False,
+            "oracle_disfavored_family": "warmup schedule",
             "artifact_pointers": [
                 {
                     "role": "machine_packet",
@@ -218,6 +227,15 @@ def test_snapshot_loads_handoff_summary_when_available(
     assert snapshot.handoff.task_total == 5
     assert snapshot.handoff.task_failed == 1
     assert snapshot.handoff.blocker_count == 1
+    assert snapshot.handoff.oracle_auto_status == "succeeded"
+    assert (
+        snapshot.handoff.oracle_trigger_reason
+        == "decide_repeat guardrail breach: no_progress"
+    )
+    assert snapshot.handoff.oracle_attempt_window == "1/1 this epoch"
+    assert snapshot.handoff.oracle_verdict == "switch_family"
+    assert snapshot.handoff.oracle_epoch_exhausted is True
+    assert snapshot.handoff.oracle_disfavored_family == "warmup schedule"
     assert snapshot.handoff.recommended_command == "autolab oracle"
     assert snapshot.handoff.safe_resume_status == "blocked"
     common_paths = {item.path for item in snapshot.common_artifacts}

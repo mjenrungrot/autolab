@@ -199,6 +199,15 @@ class HandoffSummary:
     uat_pending_message: str = ""
     uat_suggested_init_command: str = ""
     uat_suggested_check_titles: tuple[str, ...] = ()
+    oracle_auto_status: str = ""
+    oracle_trigger_reason: str = ""
+    oracle_failure_reason: str = ""
+    oracle_attempt_window: str = ""
+    oracle_verdict: str = ""
+    oracle_suggested_next_action: str = ""
+    oracle_epoch_exhausted: bool = False
+    oracle_recommended_human_review: bool = False
+    oracle_disfavored_family: str = ""
     wave_observability: dict[str, Any] = field(default_factory=dict)
 
 
