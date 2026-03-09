@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.52] - 2026-03-09
+
+### Summary
+
+- Added a pytest-wide Oracle CLI guard so unmocked `oracle` subprocess launches fail immediately during tests unless an explicit live-debug override is set.
+- Tightened Oracle roundtrip regression coverage so the test suite verifies the guard itself and no longer depends on live Oracle CLI flag probing.
+
+<!-- autolab:range v1.2.51..v1.2.52 -->
+
 ## [1.2.51] - 2026-03-09
 
 ### Summary

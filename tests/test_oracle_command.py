@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -1399,6 +1400,10 @@ def test_oracle_roundtrip_dry_run_full_runs_preview_without_reply_capture(
         "autolab.cli.handlers_admin.shutil.which",
         lambda _name: "/usr/local/bin/oracle",
     )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: flag in {"--write-output", "--browser-manual-login"},
+    )
 
     captured: dict[str, list[str]] = {}
 
@@ -1532,6 +1537,13 @@ def test_build_oracle_browser_argv_supports_dry_run_full_preview(
     assert "full" in argv
     assert "--files-report" not in argv
     assert "--engine" in argv
+
+
+def test_pytest_guard_blocks_unmocked_oracle_cli_execution() -> None:
+    with pytest.raises(
+        AssertionError, match="pytest blocked an unmocked Oracle CLI execution"
+    ):
+        subprocess.run(["oracle", "--help"], check=False)
 
 
 def test_oracle_cli_supports_hidden_browser_flags_from_debug_help(
