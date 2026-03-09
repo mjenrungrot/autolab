@@ -389,6 +389,9 @@ oracle_triggers:
   explicit_policy_request: true
 
 oracle_apply:
+  ingestion_mode: hybrid
+  llm_command: ""
+  llm_timeout_seconds: 300
   allow_continue_search: true
   allow_switch_family: true
   allow_rewind_design: false

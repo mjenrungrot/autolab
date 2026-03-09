@@ -913,17 +913,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "reply_path",
         nargs="?",
         default="",
-        help="Path to an Oracle reply markdown file to parse and apply.",
+        help="Path to an expert reply markdown file to ingest and apply. Structured ReviewerVerdict replies are preferred; free-form replies are accepted when oracle_apply ingestion is configured.",
     )
     oracle_apply_input.add_argument(
         "--notes",
         default="",
-        help="Path to a notes file or oracle export to ingest (legacy alias).",
+        help="Path to a notes file or expert handoff reply to ingest (legacy alias). Structured ReviewerVerdict replies are preferred; free-form replies require oracle_apply ingestion.",
     )
     oracle_apply_input.add_argument(
         "--stdin",
         action="store_true",
-        help="Read notes to ingest from stdin.",
+        help="Read expert notes to ingest from stdin. Free-form replies require oracle_apply ingestion to be configured.",
     )
     oracle_apply.set_defaults(handler=_cmd_oracle_apply)
 

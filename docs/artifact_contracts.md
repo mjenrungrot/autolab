@@ -333,7 +333,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: `autolab oracle`, `autolab oracle apply`, and continuation-oriented takeover tooling
-- **Export note**: `autolab oracle` resolves `continuation_packet` into `<scope-root>/oracle.md`, inlining current artifact content at export time. `autolab oracle apply` consumes expert notes separately and does not mutate the export artifact.
+- **Export note**: `autolab oracle` resolves `continuation_packet` into `<scope-root>/oracle.md`, a neutral expert-review handoff that rewrites repo-local paths to logical scope paths and inlines the minimum current evidence needed at export time. `autolab oracle apply` consumes expert notes separately and does not mutate the export artifact.
 
 ## handoff.md
 
@@ -345,19 +345,20 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab progress`, `autolab handoff`, auto-refresh on verifier/run-loop/stage-steering exits
 - **Consumed by**: human takeover workflows and incident handoff review
-- **Relationship to `oracle.md`**: `handoff.md` stays pointer-oriented and concise; use `autolab oracle` when you want the expanded inlined continuation export.
+- **Relationship to `oracle.md`**: `handoff.md` stays pointer-oriented and concise; use `autolab oracle` when you want the expanded self-contained external-review handoff.
 
 ## oracle.md
 
 - **Path**: `<scope-root>/oracle.md`
 - **Format**: Markdown
-- **Content**: On-demand expanded continuation export derived from `handoff.json.continuation_packet`, combining the current handoff state with inlined artifact content from the active scope root.
+- **Content**: On-demand expert-review handoff derived from `handoff.json.continuation_packet`, combining the current state with plain-English problem context, explicit reviewer instructions, repo-relative logical paths, and focused inlined excerpts from the active scope root.
 - **Scope-root resolution**:
   - `project_wide` -> configured `scope_roots.project_wide_root` (default `.`)
   - `experiment` -> active iteration directory (`experiments/<type>/<iteration_id>/`)
 - **Produced by**: `autolab oracle` and `autolab oracle roundtrip --auto` (on demand only; not auto-refreshed by run/verify/handoff)
-- **Consumed by**: rich human/agent takeover workflows that need a single inlined scope-root export
-- **Relationship to `handoff.md`**: `oracle.md` is the dense, inlined companion to the concise `handoff.md` summary.
+- **Consumed by**: browser Oracle roundtrips and rich human/agent takeover workflows that need a single external-review packet
+- **Reply contract**: prefers the structured schema `ReviewerVerdict: continue_search | switch_family | rethink_design | request_human_review | stop_campaign` plus `## Rationale`, `## Recommended Actions`, and `## Risks`; when `oracle_apply` ingestion is configured, free-form expert replies are also accepted and normalized into the same advisory verdict family
+- **Relationship to `handoff.md`**: `oracle.md` is the dense, self-contained companion to the concise `handoff.md` summary.
 
 ## oracle_state.json
 
@@ -371,7 +372,7 @@ See `src/autolab/example_golden_iterations/` for canonical examples of all artif
 
 - **Path**: `.autolab/oracle_last_response.md`
 - **Format**: Markdown
-- **Content**: Last captured Oracle browser reply, whether or not apply succeeded
+- **Content**: Last captured browser reply from the external reviewer flow, whether or not apply succeeded
 - **Produced by**: `autolab oracle roundtrip --auto`
 - **Consumed by**: manual inspection and follow-up `autolab oracle apply` retries
 

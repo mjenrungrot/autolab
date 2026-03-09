@@ -26,11 +26,11 @@ from autolab.agent_surface import (
 )
 from autolab.oracle_runtime import (
     ORACLE_ALLOWED_VERDICTS,
+    OracleReply,
     build_oracle_roundtrip_request,
     finish_oracle_attempt,
     load_oracle_state,
     oracle_default_suggested_next_action,
-    oracle_last_response_path,
     oracle_profile_ready,
     oracle_stage_auto_allowed,
     parse_oracle_reply,
@@ -46,11 +46,9 @@ from autolab.plan_approval import (
 from autolab.sidecar_context import resolve_context_sidecars
 from autolab.sidecar_tools import (
     DISCUSS_COLLECTIONS,
-    RESEARCH_COLLECTIONS,
     SIDECAR_COLLECTIONS_BY_KIND,
     build_sidecar_dependency_refs,
     build_sidecar_markdown,
-    parse_context_ref,
     resolve_sidecar_output_paths,
 )
 from autolab.scope import _resolve_project_wide_root, _resolve_scope_context
@@ -3461,6 +3459,8 @@ def _resolve_local_agent_invocation(
     repo_root: Path,
     *,
     override_env_var: str,
+    command_override: str = "",
+    allow_auto_discovery: bool = True,
     require_executable: bool = True,
 ) -> tuple[list[str], dict[str, str], str]:
     override = str(os.environ.get(override_env_var, "")).strip()
@@ -3475,7 +3475,23 @@ def _resolve_local_agent_invocation(
             raise RuntimeError(f"{override_env_var} is empty")
         return (parsed, dict(os.environ), override)
 
-    if shutil.which("claude"):
+    configured_command = str(command_override or "").strip()
+    if configured_command:
+        try:
+            parsed = shlex.split(configured_command)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"configured local LLM command could not be parsed: {exc}"
+            ) from exc
+        if not parsed:
+            raise RuntimeError("configured local LLM command is empty")
+        return (
+            parsed,
+            dict(os.environ),
+            " ".join(shlex.quote(token) for token in parsed),
+        )
+
+    if allow_auto_discovery and shutil.which("claude"):
         env = dict(os.environ)
         env.pop("CLAUDECODE", None)
         argv = [
@@ -3489,7 +3505,7 @@ def _resolve_local_agent_invocation(
         ]
         return (argv, env, " ".join(shlex.quote(token) for token in argv))
 
-    if shutil.which("codex"):
+    if allow_auto_discovery and shutil.which("codex"):
         argv = [
             "codex",
             "exec",
@@ -3502,6 +3518,10 @@ def _resolve_local_agent_invocation(
         return (argv, dict(os.environ), " ".join(shlex.quote(token) for token in argv))
 
     if require_executable:
+        if not allow_auto_discovery:
+            raise RuntimeError(
+                f"no oracle apply ingestion LLM command configured; set {override_env_var} or oracle_apply.llm_command"
+            )
         raise RuntimeError(
             f"no supported local LLM CLI found; install 'claude' or 'codex', or set {override_env_var}"
         )
@@ -3519,11 +3539,15 @@ def _run_local_agent(
     prompt_text: str,
     timeout_seconds: float,
     override_env_var: str,
+    command_override: str = "",
+    allow_auto_discovery: bool = True,
 ) -> tuple[int, str, str, str]:
     try:
         command_argv, command_env, command_display = _resolve_local_agent_invocation(
             repo_root,
             override_env_var=override_env_var,
+            command_override=command_override,
+            allow_auto_discovery=allow_auto_discovery,
         )
         process = subprocess.run(
             command_argv,
@@ -4620,17 +4644,7 @@ def _extract_markdown_section(markdown_text: str, heading: str) -> str:
 
 
 def _prepare_oracle_apply_notes(note_text: str) -> str:
-    normalized = str(note_text or "").strip()
-    if "# Autolab Oracle" not in normalized:
-        return normalized
-    expert_review = _extract_markdown_section(normalized, "Expert Review")
-    next_steps = _extract_markdown_section(normalized, "Recommended Next Steps")
-    extracted_sections: list[str] = []
-    if expert_review:
-        extracted_sections.extend(["## Expert Review", expert_review])
-    if next_steps:
-        extracted_sections.extend(["", "## Recommended Next Steps", next_steps])
-    return "\n".join(extracted_sections).strip() or normalized
+    return str(note_text or "").strip()
 
 
 def _normalize_oracle_apply_discuss_updates(
@@ -4817,6 +4831,18 @@ def _normalize_oracle_apply_campaign_feedback(
     return output
 
 
+def _normalize_oracle_apply_recommended_human_review(
+    raw_value: Any,
+    *,
+    verdict: str,
+) -> bool:
+    if raw_value in ("", None):
+        return verdict == "request_human_review"
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise StageCheckError("oracle apply recommended_human_review must be a boolean")
+
+
 def _normalize_oracle_apply_payload(
     raw_payload: dict[str, Any],
     *,
@@ -4824,14 +4850,28 @@ def _normalize_oracle_apply_payload(
     current_stage: str,
 ) -> dict[str, Any]:
     if not isinstance(raw_payload, dict):
-        raise StageCheckError("oracle apply classifier must return a JSON object")
+        raise StageCheckError("oracle apply ingestion must return a JSON object")
+    verdict = _normalize_space(str(raw_payload.get("verdict", ""))).lower()
+    if verdict not in ORACLE_ALLOWED_VERDICTS:
+        raise StageCheckError("oracle apply ingestion must return a supported verdict")
     summary = raw_payload.get("summary", "")
     if summary not in ("", None) and not isinstance(summary, str):
         raise StageCheckError("oracle apply summary must be a string")
+    suggested_next_action = raw_payload.get("suggested_next_action", "")
+    if suggested_next_action not in ("", None) and not isinstance(
+        suggested_next_action, str
+    ):
+        raise StageCheckError("oracle apply suggested_next_action must be a string")
     plan_approval_note = raw_payload.get("plan_approval_note", "")
     if plan_approval_note not in ("", None) and not isinstance(plan_approval_note, str):
         raise StageCheckError("oracle apply plan_approval_note must be a string")
     return {
+        "verdict": verdict,
+        "suggested_next_action": _normalize_space(str(suggested_next_action or "")),
+        "recommended_human_review": _normalize_oracle_apply_recommended_human_review(
+            raw_payload.get("recommended_human_review", ""),
+            verdict=verdict,
+        ),
         "summary": _normalize_space(str(summary or "")),
         "discuss_updates": _normalize_oracle_apply_discuss_updates(
             raw_payload.get("discuss_updates", {}),
@@ -4905,6 +4945,7 @@ def _build_oracle_apply_prompt(
         "stage": str(state.get("stage", "")).strip(),
         "iteration_id": str(state.get("iteration_id", "")).strip(),
         "experiment_id": str(state.get("experiment_id", "")).strip(),
+        "allowed_verdicts": list(ORACLE_ALLOWED_VERDICTS),
         "context_resolution": {
             "compact_render": str(context_resolution.get("compact_render", "")).strip(),
             "diagnostics": list(context_resolution.get("diagnostics", []))
@@ -4919,10 +4960,13 @@ def _build_oracle_apply_prompt(
     return "\n".join(
         [
             "You are an Autolab oracle-ingestion assistant.",
-            "Classify the expert feedback into steering updates for the current repository state.",
+            "Map the expert feedback into a conservative advisory decision for the current repository state.",
             "Use only the provided repo-local context. Do not browse the web or invent files or statuses.",
             "",
             "Return only a single JSON object with these keys:",
+            f"- verdict: one of {', '.join(ORACLE_ALLOWED_VERDICTS)}",
+            "- suggested_next_action: short sentence",
+            "- recommended_human_review: boolean",
             "- summary: short sentence",
             "- discuss_updates: object with optional arrays locked_decisions, preferences, constraints, open_questions",
             "- research_questions: array of unresolved research questions",
@@ -4931,9 +4975,12 @@ def _build_oracle_apply_prompt(
             "- plan_approval_note: string",
             "",
             "Constraints:",
+            "- Choose the single best verdict from the reviewer text even when the review is free-form prose.",
+            "- If the review does not support a reliable verdict, return verdict as an empty string and keep the rest minimal.",
             f"- Allowed todo_hints.stage values: {', '.join(sorted(ALL_STAGES))}",
             "- campaign_feedback.signal must be one of: none, stop, rethink",
             "- Prefer empty arrays or empty strings when a bucket does not apply",
+            "- Keep all outputs advisory and repo-local. Do not propose code edits or irreversible state changes directly.",
             "- Do not include markdown fences or commentary outside the JSON object",
             "",
             "Current context (JSON):",
@@ -5114,6 +5161,24 @@ def _oracle_reply_to_research_questions(reply: Any) -> list[dict[str, str]]:
     return output
 
 
+def _oracle_apply_default_todo_stage(
+    *,
+    verdict: str,
+    current_stage: str,
+    allow_rewind_design: bool = True,
+    allow_request_human_review: bool = True,
+    allow_stop_campaign: bool = True,
+) -> str:
+    default_stage = current_stage if current_stage in ALL_STAGES else "implementation"
+    if verdict == "rethink_design" and allow_rewind_design:
+        return "design"
+    if verdict == "request_human_review" and allow_request_human_review:
+        return "human_review"
+    if verdict == "stop_campaign" and allow_stop_campaign:
+        return "decide_repeat"
+    return default_stage
+
+
 def _oracle_reply_to_todo_hints(
     reply: Any,
     *,
@@ -5122,16 +5187,13 @@ def _oracle_reply_to_todo_hints(
     allow_request_human_review: bool = True,
     allow_stop_campaign: bool = True,
 ) -> list[dict[str, Any]]:
-    default_stage = current_stage if current_stage in ALL_STAGES else "implementation"
-    if getattr(reply, "verdict", "") == "rethink_design" and allow_rewind_design:
-        default_stage = "design"
-    elif (
-        getattr(reply, "verdict", "") == "request_human_review"
-        and allow_request_human_review
-    ):
-        default_stage = "human_review"
-    elif getattr(reply, "verdict", "") == "stop_campaign" and allow_stop_campaign:
-        default_stage = "decide_repeat"
+    default_stage = _oracle_apply_default_todo_stage(
+        verdict=str(getattr(reply, "verdict", "")).strip(),
+        current_stage=current_stage,
+        allow_rewind_design=allow_rewind_design,
+        allow_request_human_review=allow_request_human_review,
+        allow_stop_campaign=allow_stop_campaign,
+    )
     hints: list[dict[str, Any]] = []
     for action in getattr(reply, "recommended_actions", ()):
         text = _normalize_space(str(action))
@@ -5205,6 +5267,297 @@ def _oracle_reply_apply_status_with_effects(
     return "applied"
 
 
+def _oracle_apply_payload_to_reply(payload: dict[str, Any]) -> OracleReply:
+    discuss_updates = payload.get("discuss_updates", {})
+    if not isinstance(discuss_updates, dict):
+        discuss_updates = {}
+    preferences = discuss_updates.get("preferences", [])
+    constraints = discuss_updates.get("constraints", [])
+    open_questions = discuss_updates.get("open_questions", [])
+    if not isinstance(preferences, list):
+        preferences = []
+    if not isinstance(constraints, list):
+        constraints = []
+    if not isinstance(open_questions, list):
+        open_questions = []
+    research_questions = payload.get("research_questions", [])
+    if not isinstance(research_questions, list):
+        research_questions = []
+    todo_hints = payload.get("todo_hints", [])
+    if not isinstance(todo_hints, list):
+        todo_hints = []
+    verdict = str(payload.get("verdict", "")).strip().lower()
+    suggested_next_action = (
+        _normalize_space(str(payload.get("suggested_next_action", "")))
+        or next(
+            (
+                _normalize_space(str(item.get("summary", "")))
+                for item in todo_hints
+                if isinstance(item, dict)
+                and _normalize_space(str(item.get("summary", "")))
+            ),
+            "",
+        )
+        or oracle_default_suggested_next_action(verdict)
+    )
+    return OracleReply(
+        verdict=verdict,
+        rationale=tuple(
+            _normalize_space(str(item.get("summary", "")))
+            for item in preferences
+            if isinstance(item, dict) and _normalize_space(str(item.get("summary", "")))
+        ),
+        recommended_actions=tuple(
+            _normalize_space(str(item.get("summary", "")))
+            for item in todo_hints
+            if isinstance(item, dict) and _normalize_space(str(item.get("summary", "")))
+        ),
+        risks=tuple(
+            item
+            for item in [
+                *[
+                    _normalize_space(str(entry.get("summary", "")))
+                    for entry in constraints
+                    if isinstance(entry, dict)
+                ],
+                *[
+                    _normalize_space(str(entry.get("summary", "")))
+                    for entry in open_questions
+                    if isinstance(entry, dict)
+                ],
+                *[
+                    _normalize_space(str(entry.get("summary", "")))
+                    for entry in research_questions
+                    if isinstance(entry, dict)
+                ],
+            ]
+            if item
+        ),
+        suggested_next_action=suggested_next_action,
+        recommended_human_review=bool(payload.get("recommended_human_review", False))
+        or verdict == "request_human_review",
+    )
+
+
+def _sanitize_oracle_apply_todo_hints(
+    todo_hints: list[dict[str, Any]],
+    *,
+    verdict: str,
+    current_stage: str,
+    allow_rewind_design: bool,
+    allow_request_human_review: bool,
+    allow_stop_campaign: bool,
+) -> list[dict[str, Any]]:
+    default_stage = _oracle_apply_default_todo_stage(
+        verdict="",
+        current_stage=current_stage,
+        allow_rewind_design=allow_rewind_design,
+        allow_request_human_review=allow_request_human_review,
+        allow_stop_campaign=allow_stop_campaign,
+    )
+    verdict_stage = _oracle_apply_default_todo_stage(
+        verdict=verdict,
+        current_stage=current_stage,
+        allow_rewind_design=allow_rewind_design,
+        allow_request_human_review=allow_request_human_review,
+        allow_stop_campaign=allow_stop_campaign,
+    )
+    disallowed_stage_by_verdict = {
+        "rethink_design": "design",
+        "request_human_review": "human_review",
+        "stop_campaign": "decide_repeat",
+    }
+    sanitized: list[dict[str, Any]] = []
+    for hint in todo_hints:
+        if not isinstance(hint, dict):
+            continue
+        normalized_hint = dict(hint)
+        stage = _normalize_space(str(normalized_hint.get("stage", ""))).lower()
+        if stage not in ALL_STAGES:
+            stage = verdict_stage
+        disallowed_stage = disallowed_stage_by_verdict.get(verdict, "")
+        if disallowed_stage and stage == disallowed_stage and verdict_stage != stage:
+            stage = default_stage
+        normalized_hint["stage"] = stage
+        sanitized.append(normalized_hint)
+    return sanitized
+
+
+def _build_oracle_apply_context(
+    *,
+    repo_root: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    iteration_id = str(state.get("iteration_id", "")).strip()
+    experiment_id = str(state.get("experiment_id", "")).strip()
+    current_stage = str(state.get("stage", "")).strip().lower()
+    scope_kind = "experiment" if iteration_id and experiment_id else "project_wide"
+    context_resolution = resolve_context_sidecars(
+        repo_root,
+        iteration_id=iteration_id,
+        experiment_id=experiment_id,
+        scope_kind=scope_kind,
+    )
+    effective_discuss = context_resolution.get("effective_discuss")
+    if not isinstance(effective_discuss, dict):
+        effective_discuss = {}
+    effective_research = context_resolution.get("effective_research")
+    if not isinstance(effective_research, dict):
+        effective_research = {}
+    active_campaign = _load_campaign(repo_root)
+    campaign_summary = _campaign_summary(active_campaign) if active_campaign else {}
+    iteration_dir: Path | None = None
+    plan_approval_summary: dict[str, Any] = {}
+    if scope_kind == "experiment":
+        iteration_dir, _iteration_type = _resolve_iteration_directory(
+            repo_root,
+            iteration_id=iteration_id,
+            experiment_id=experiment_id,
+            require_exists=False,
+        )
+        plan_approval_path = iteration_dir / "plan_approval.json"
+        if plan_approval_path.exists():
+            plan_approval_summary = load_plan_approval(iteration_dir)
+    return {
+        "iteration_id": iteration_id,
+        "experiment_id": experiment_id,
+        "current_stage": current_stage,
+        "scope_kind": scope_kind,
+        "context_resolution": context_resolution,
+        "effective_discuss": effective_discuss,
+        "effective_research": effective_research,
+        "active_campaign": active_campaign,
+        "campaign_summary": campaign_summary,
+        "iteration_dir": iteration_dir,
+        "plan_approval_summary": plan_approval_summary,
+    }
+
+
+def _oracle_apply_decision_from_reply(
+    reply: OracleReply,
+    *,
+    scope_kind: str,
+    current_stage: str,
+    apply_policy: Any,
+) -> dict[str, Any]:
+    campaign_feedback = _oracle_reply_to_campaign_feedback(reply)
+    if reply.verdict == "stop_campaign" and not apply_policy.allow_stop_campaign:
+        campaign_feedback = [{**item, "signal": "none"} for item in campaign_feedback]
+    return {
+        "reply": reply,
+        "summary": f"Applied Oracle verdict: {reply.verdict}",
+        "discuss_updates": _oracle_reply_to_discuss_updates(
+            reply,
+            scope_kind=scope_kind,
+        ),
+        "research_questions": _oracle_reply_to_research_questions(reply),
+        "todo_hints": _oracle_reply_to_todo_hints(
+            reply,
+            current_stage=current_stage,
+            allow_rewind_design=apply_policy.allow_rewind_design,
+            allow_request_human_review=apply_policy.allow_request_human_review,
+            allow_stop_campaign=apply_policy.allow_stop_campaign,
+        ),
+        "campaign_feedback": campaign_feedback,
+        "plan_note": _oracle_reply_plan_note(reply),
+        "ingestion_path": "strict",
+        "ingestion_command": "",
+    }
+
+
+def _ingest_oracle_reply_text(
+    *,
+    repo_root: Path,
+    state: dict[str, Any],
+    source_label: str,
+    raw_notes: str,
+    apply_policy: Any,
+) -> dict[str, Any]:
+    context = _build_oracle_apply_context(repo_root=repo_root, state=state)
+    prepared_notes = _prepare_oracle_apply_notes(raw_notes)
+    strict_error = ""
+    if apply_policy.ingestion_mode in {"hybrid", "strict_only"}:
+        try:
+            structured_reply = parse_oracle_reply(prepared_notes)
+        except ValueError as exc:
+            strict_error = str(exc)
+            if apply_policy.ingestion_mode == "strict_only":
+                raise
+        else:
+            return {
+                **context,
+                **_oracle_apply_decision_from_reply(
+                    structured_reply,
+                    scope_kind=context["scope_kind"],
+                    current_stage=context["current_stage"],
+                    apply_policy=apply_policy,
+                ),
+            }
+
+    prompt_text = _build_oracle_apply_prompt(
+        state=state,
+        scope_kind=context["scope_kind"],
+        context_resolution=context["context_resolution"],
+        effective_discuss=context["effective_discuss"],
+        effective_research=context["effective_research"],
+        campaign_summary=context["campaign_summary"],
+        plan_approval_summary=context["plan_approval_summary"],
+        prepared_notes=prepared_notes,
+        source_label=source_label,
+    )
+    exit_code, stdout, stderr, command_display = _run_oracle_apply_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=apply_policy.llm_timeout_seconds,
+        command_override=apply_policy.llm_command,
+    )
+    if exit_code != 0:
+        detail = stderr or stdout or "oracle apply ingestion produced no output"
+        if strict_error:
+            raise ValueError(f"{strict_error}; free-form ingestion failed: {detail}")
+        raise ValueError(f"free-form ingestion failed: {detail}")
+    agent_payload = _extract_json_object(stdout)
+    if not isinstance(agent_payload, dict):
+        if strict_error:
+            raise ValueError(
+                f"{strict_error}; free-form ingestion output was not valid JSON"
+            )
+        raise ValueError("free-form ingestion output was not valid JSON")
+    normalized_payload = _normalize_oracle_apply_payload(
+        agent_payload,
+        scope_kind=context["scope_kind"],
+        current_stage=context["current_stage"],
+    )
+    normalized_payload["todo_hints"] = _sanitize_oracle_apply_todo_hints(
+        normalized_payload["todo_hints"],
+        verdict=normalized_payload["verdict"],
+        current_stage=context["current_stage"],
+        allow_rewind_design=apply_policy.allow_rewind_design,
+        allow_request_human_review=apply_policy.allow_request_human_review,
+        allow_stop_campaign=apply_policy.allow_stop_campaign,
+    )
+    reply = _oracle_apply_payload_to_reply(normalized_payload)
+    campaign_feedback = list(normalized_payload["campaign_feedback"])
+    if not campaign_feedback:
+        campaign_feedback = _oracle_reply_to_campaign_feedback(reply)
+    if reply.verdict == "stop_campaign" and not apply_policy.allow_stop_campaign:
+        campaign_feedback = [{**item, "signal": "none"} for item in campaign_feedback]
+    return {
+        **context,
+        "reply": reply,
+        "summary": normalized_payload["summary"]
+        or f"Applied Oracle verdict: {reply.verdict}",
+        "discuss_updates": normalized_payload["discuss_updates"],
+        "research_questions": normalized_payload["research_questions"],
+        "todo_hints": normalized_payload["todo_hints"],
+        "campaign_feedback": campaign_feedback,
+        "plan_note": normalized_payload["plan_approval_note"]
+        or _oracle_reply_plan_note(reply),
+        "ingestion_path": "llm",
+        "ingestion_command": command_display,
+    }
+
+
 def _resolve_oracle_agent_invocation(
     repo_root: Path,
 ) -> tuple[list[str], dict[str, str], str]:
@@ -5228,6 +5581,59 @@ def _run_oracle_agent(
     )
 
 
+def _resolve_oracle_apply_agent_invocation(
+    repo_root: Path,
+    *,
+    command_override: str,
+) -> tuple[list[str], dict[str, str], str]:
+    return _resolve_local_agent_invocation(
+        repo_root,
+        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
+        command_override=command_override,
+        allow_auto_discovery=False,
+    )
+
+
+def _run_oracle_apply_agent(
+    repo_root: Path,
+    *,
+    prompt_text: str,
+    timeout_seconds: float,
+    command_override: str,
+) -> tuple[int, str, str, str]:
+    return _run_local_agent(
+        repo_root,
+        prompt_text=prompt_text,
+        timeout_seconds=timeout_seconds,
+        override_env_var="AUTOLAB_ORACLE_APPLY_AGENT_COMMAND",
+        command_override=command_override,
+        allow_auto_discovery=False,
+    )
+
+
+_ORACLE_EXTERNAL_PACKET_EXCLUDED_ROLES = frozenset({"machine_packet", "human_handoff"})
+_ORACLE_EXCERPT_KEYWORDS = (
+    "todo",
+    "fixme",
+    "error",
+    "warning",
+    "fail",
+    "block",
+    "missing",
+    "constraint",
+    "review",
+    "risk",
+    "design",
+    "entrypoint",
+    "parser",
+    "metric",
+    "baseline",
+)
+_ORACLE_REFERENCED_FILE_PATTERN = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|md|json|yaml|yml|toml|sh|bash|txt|ts|tsx|js|jsx|sql))"
+)
+
+
 def _oracle_language_for_path(path_text: str) -> str:
     suffix = Path(path_text).suffix.lower()
     if suffix == ".md":
@@ -5247,32 +5653,262 @@ def _oracle_language_for_path(path_text: str) -> str:
     return "text"
 
 
-def _oracle_build_appendix_block(
+def _oracle_logical_path(
+    repo_root: Path,
+    path_text: str,
     *,
+    resolved_path: Path | None = None,
+) -> str:
+    raw_text = str(path_text or "").strip()
+    if resolved_path is None and raw_text:
+        resolved_path, resolution_error = _docs_resolve_pointer_path(
+            repo_root, raw_text
+        )
+        if resolution_error:
+            resolved_path = None
+    if resolved_path is not None:
+        return _docs_relpath(repo_root, resolved_path)
+    repo_root_text = str(repo_root.resolve(strict=False))
+    if raw_text.startswith(repo_root_text.rstrip("/") + "/"):
+        return raw_text[len(repo_root_text.rstrip("/") + "/") :]
+    return raw_text
+
+
+def _oracle_sanitize_repo_paths(repo_root: Path, text: str) -> str:
+    sanitized = str(text or "")
+    repo_root_variants = {
+        str(repo_root.resolve(strict=False)),
+        repo_root.as_posix(),
+    }
+    for root_text in sorted(
+        (item for item in repo_root_variants if item),
+        key=len,
+        reverse=True,
+    ):
+        sanitized = sanitized.replace(f"{root_text}/", "")
+        sanitized = sanitized.replace(root_text, ".")
+    return sanitized
+
+
+def _oracle_is_large_source(path_text: str, content: str) -> bool:
+    suffix = Path(path_text).suffix.lower()
+    lines = str(content or "").splitlines()
+    if len(lines) > 100 or len(str(content or "")) > 5000:
+        return True
+    if suffix in {".py", ".sh", ".bash", ".toml", ".json", ".yaml", ".yml"}:
+        return len(lines) > 70 or len(str(content or "")) > 3200
+    return False
+
+
+def _oracle_excerpt_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    if not lines:
+        return []
+    last_index = len(lines) - 1
+    ranges: list[tuple[int, int]] = [(0, min(last_index, 17))]
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if any(keyword in lowered for keyword in _ORACLE_EXCERPT_KEYWORDS):
+            ranges.append((max(0, index - 4), min(last_index, index + 4)))
+        if len(ranges) >= 6:
+            break
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1] + 1:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged[:3]
+
+
+def _oracle_render_excerpt_text(content: str) -> str:
+    lines = str(content or "").splitlines()
+    ranges = _oracle_excerpt_ranges(lines)
+    if not ranges:
+        return "Artifact content is empty."
+    blocks: list[str] = []
+    for start, end in ranges:
+        blocks.append(f"[lines {start + 1}-{end + 1}]")
+        blocks.extend(
+            f"{line_number + 1:>4} | {lines[line_number]}"
+            for line_number in range(start, end + 1)
+        )
+    return "\n".join(blocks).rstrip()
+
+
+def _oracle_render_source_body(source: dict[str, Any]) -> tuple[str, str]:
+    content = str(source.get("content", "") or "")
+    path_text = str(source.get("rendered_path", "")).strip()
+    if str(source.get("status", "")).strip() != "present":
+        return ("status note", content.rstrip("\n") or "Artifact content is empty.")
+    if not _oracle_is_large_source(path_text, content):
+        return ("full file", content.rstrip("\n") or "Artifact content is empty.")
+    return (
+        "focused excerpts from a larger file",
+        _oracle_render_excerpt_text(content),
+    )
+
+
+def _oracle_render_source_block(source: dict[str, Any]) -> str:
+    path_text = str(source.get("rendered_path", "")).strip()
+    role = str(source.get("role", "")).strip() or "artifact"
+    status = str(source.get("status", "")).strip() or "unknown"
+    reason = str(source.get("reason", "")).strip() or "Relevant project evidence."
+    include_mode, rendered_body = _oracle_render_source_body(source)
+    language = _oracle_language_for_path(path_text)
+    return "\n".join(
+        [
+            f"### `{path_text}`",
+            "",
+            f"- role: `{role}`",
+            f"- status: `{status}`",
+            f"- why this matters: {reason}",
+            f"- included form: {include_mode}",
+            "",
+            f"```{language}",
+            rendered_body,
+            "```",
+            "",
+        ]
+    ).rstrip()
+
+
+def _oracle_extract_referenced_paths(
+    repo_root: Path,
+    text: str,
+) -> list[tuple[str, Path]]:
+    matches: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for match in _ORACLE_REFERENCED_FILE_PATTERN.finditer(str(text or "")):
+        candidate = str(match.group("path") or "").strip().strip("`\"'()[]{}.,:;")
+        if not candidate or "://" in candidate:
+            continue
+        resolved_path, resolution_error = _docs_resolve_pointer_path(
+            repo_root, candidate
+        )
+        if resolution_error or resolved_path is None or not resolved_path.exists():
+            continue
+        logical_path = _docs_relpath(repo_root, resolved_path)
+        if logical_path in seen:
+            continue
+        if logical_path.endswith("/oracle.md") or logical_path.endswith("/handoff.md"):
+            continue
+        if logical_path == ".autolab/handoff.json":
+            continue
+        seen.add(logical_path)
+        matches.append((logical_path, resolved_path))
+    return matches
+
+
+def _oracle_build_source_entry(
+    *,
+    repo_root: Path,
     path_text: str,
     role: str,
     status: str,
     reason: str,
     content: str,
+    resolved_path: Path | None = None,
+) -> dict[str, Any]:
+    rendered_path = _oracle_logical_path(
+        repo_root,
+        path_text,
+        resolved_path=resolved_path,
+    )
+    sanitized_content = _oracle_sanitize_repo_paths(repo_root, content)
+    return {
+        "role": role,
+        "path": path_text,
+        "rendered_path": rendered_path,
+        "status": status,
+        "reason": reason,
+        "content": sanitized_content,
+    }
+
+
+def _oracle_add_source_from_pointer(
+    *,
+    repo_root: Path,
+    diagnostics: list[str],
+    sources: list[dict[str, Any]],
+    seen_paths: set[str],
+    path_text: str,
+    role: str,
+    reason: str,
+) -> None:
+    resolved_path, pointer_error = _docs_resolve_pointer_path(repo_root, path_text)
+    rendered_path = _oracle_logical_path(
+        repo_root,
+        path_text,
+        resolved_path=resolved_path,
+    )
+    if not rendered_path or rendered_path in seen_paths:
+        return
+    status = "unknown"
+    content = ""
+    if pointer_error:
+        diagnostics.append(pointer_error)
+        status = "invalid"
+        content = f"Artifact resolution error: {pointer_error}"
+    elif resolved_path is None or not resolved_path.exists():
+        status = "missing"
+        content = f"Artifact unavailable at {rendered_path}."
+    else:
+        read_content, read_error = _docs_read_text_limited(repo_root, resolved_path)
+        if read_content is None:
+            diagnostics.append(read_error)
+            status = "invalid"
+            content = f"Artifact read error for {rendered_path}: {read_error}"
+        else:
+            status = "present"
+            content = read_content
+    seen_paths.add(rendered_path)
+    sources.append(
+        _oracle_build_source_entry(
+            repo_root=repo_root,
+            path_text=rendered_path,
+            role=role,
+            status=status,
+            reason=reason,
+            content=content,
+            resolved_path=resolved_path,
+        )
+    )
+
+
+def _oracle_packet_request_reason(
+    handoff_payload: dict[str, Any],
+    continuation_packet: dict[str, Any],
+    diagnostics: list[str],
 ) -> str:
-    language = _oracle_language_for_path(path_text)
-    body = content.rstrip("\n")
-    if not body:
-        body = "Artifact content is empty."
-    return "\n".join(
-        [
-            f"### Artifact: {path_text}",
-            "",
-            f"- role: `{role}`",
-            f"- status: `{status}`",
-            f"- reason: {reason}",
-            "",
-            f"```{language}",
-            body,
-            "```",
-            "",
-        ]
-    ).rstrip()
+    trigger_reason = str(continuation_packet.get("oracle_trigger_reason", "")).strip()
+    if trigger_reason:
+        return trigger_reason
+    blockers = continuation_packet.get("top_blockers")
+    if isinstance(blockers, list):
+        for item in blockers:
+            text = str(item).strip()
+            if text:
+                return text
+    if diagnostics:
+        return diagnostics[0]
+    recommended_next = handoff_payload.get("recommended_next_command")
+    if isinstance(recommended_next, dict):
+        reason = str(recommended_next.get("reason", "")).strip()
+        if reason:
+            return reason
+    return (
+        "The current state needs outside technical judgment before the next decision."
+    )
+
+
+def _oracle_packet_scope_root(
+    repo_root: Path,
+    handoff_payload: dict[str, Any],
+) -> str:
+    return _oracle_logical_path(
+        repo_root,
+        str(handoff_payload.get("scope_root", "")).strip(),
+    )
 
 
 def _oracle_collect_sources(
@@ -5295,6 +5931,8 @@ def _oracle_collect_sources(
         )
 
     sources: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    deferred_pointers: list[dict[str, Any]] = []
     for raw_pointer in raw_pointers:
         if not isinstance(raw_pointer, dict):
             continue
@@ -5304,56 +5942,81 @@ def _oracle_collect_sources(
         if not path_text:
             continue
         role = str(raw_pointer.get("role", "artifact")).strip() or "artifact"
-        status = str(raw_pointer.get("status", "")).strip() or "unknown"
         reason = (
             str(raw_pointer.get("reason", "")).strip()
             or "Relevant continuation artifact."
         )
-        content = ""
-
-        resolved_path, pointer_error = _docs_resolve_pointer_path(repo_root, path_text)
-        if pointer_error:
-            diagnostics.append(pointer_error)
-            status = "invalid"
-            content = f"Artifact resolution error: {pointer_error}"
-        elif resolved_path is None or not resolved_path.exists():
-            status = "missing"
-            content = f"Artifact unavailable at {path_text}."
-        else:
-            try:
-                content = resolved_path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                content = resolved_path.read_text(encoding="utf-8", errors="replace")
-            except Exception as exc:
-                diagnostics.append(f"failed reading {path_text}: {exc}")
-                status = "invalid"
-                content = f"Artifact read error for {path_text}: {exc}"
-            else:
-                status = "present"
-
-        appendix_block = _oracle_build_appendix_block(
+        if role in _ORACLE_EXTERNAL_PACKET_EXCLUDED_ROLES:
+            deferred_pointers.append(raw_pointer)
+            continue
+        _oracle_add_source_from_pointer(
+            repo_root=repo_root,
+            diagnostics=diagnostics,
+            sources=sources,
+            seen_paths=seen_paths,
             path_text=path_text,
             role=role,
-            status=status,
             reason=reason,
-            content=content,
-        )
-        sources.append(
-            {
-                "role": role,
-                "path": path_text,
-                "status": status,
-                "reason": reason,
-                "content": content,
-                "appendix_block": appendix_block,
-                "appendix_heading": f"### Artifact: {path_text}",
-                "appendix_snippet": content.strip()[:120],
-            }
         )
 
     if not sources:
+        for raw_pointer in deferred_pointers:
+            path_text = str(raw_pointer.get("path", "")).strip()
+            if not path_text:
+                continue
+            _oracle_add_source_from_pointer(
+                repo_root=repo_root,
+                diagnostics=diagnostics,
+                sources=sources,
+                seen_paths=seen_paths,
+                path_text=path_text,
+                role=str(raw_pointer.get("role", "artifact")).strip() or "artifact",
+                reason=(
+                    str(raw_pointer.get("reason", "")).strip()
+                    or "Relevant continuation artifact."
+                ),
+            )
+
+    changed_paths = handoff_payload.get("files_changed_since_last_green_point")
+    if isinstance(changed_paths, list):
+        for raw_path in changed_paths[:4]:
+            path_text = str(raw_path).strip()
+            if not path_text:
+                continue
+            _oracle_add_source_from_pointer(
+                repo_root=repo_root,
+                diagnostics=diagnostics,
+                sources=sources,
+                seen_paths=seen_paths,
+                path_text=path_text,
+                role="changed_file",
+                reason="Changed since the last known-good checkpoint and may explain the current issue.",
+            )
+
+    supplemental_count = 0
+    for source in list(sources):
+        if supplemental_count >= 6:
+            break
+        for referenced_path, resolved_path in _oracle_extract_referenced_paths(
+            repo_root,
+            str(source.get("content", "")),
+        ):
+            if supplemental_count >= 6 or referenced_path in seen_paths:
+                continue
+            _oracle_add_source_from_pointer(
+                repo_root=repo_root,
+                diagnostics=diagnostics,
+                sources=sources,
+                seen_paths=seen_paths,
+                path_text=referenced_path,
+                role="referenced_source",
+                reason="Referenced by the evidence bundle and included to keep this handoff self-contained.",
+            )
+            supplemental_count += 1
+
+    if not sources:
         raise RuntimeError(
-            "handoff continuation_packet produced no oracle-inline sources"
+            "handoff continuation_packet produced no reviewer-inline sources"
         )
     return (sources, diagnostics)
 
@@ -5364,170 +6027,301 @@ def _build_oracle_prompt(
     sources: list[dict[str, Any]],
     diagnostics: list[str],
 ) -> str:
+    _ = continuation_packet
     source_catalog = [
-        {
-            "role": str(item.get("role", "")).strip(),
-            "path": str(item.get("path", "")).strip(),
-            "status": str(item.get("status", "")).strip(),
-            "reason": str(item.get("reason", "")).strip(),
-        }
+        (
+            f"- {str(item.get('rendered_path', '')).strip()} "
+            f"[{str(item.get('status', '')).strip() or 'unknown'}]: "
+            f"{str(item.get('reason', '')).strip() or 'Relevant project evidence.'}"
+        ).rstrip()
         for item in sources
     ]
-    appendix_blocks = "\n\n".join(
-        str(item.get("appendix_block", "")).rstrip() for item in sources
-    ).strip()
-    return "\n".join(
-        [
-            "You are an Autolab oracle assistant.",
-            "Use only the provided continuation packet and artifact contents.",
-            "Do not browse the web. Do not invent facts or sources.",
-            "",
-            "Return Markdown with these sections in order:",
-            "# Autolab Oracle",
-            "## Summary",
-            "## Continuation Packet",
-            "## Expert Review",
-            "## Recommended Next Steps",
-            "## Artifact Guide",
-            "## Appendices",
-            "",
-            "Requirements:",
-            "- In `## Continuation Packet`, include a fenced `json` block containing the exact continuation packet JSON.",
-            "- In `## Artifact Guide`, include a short markdown table with columns Path | Role | Status | Why it matters.",
-            "- Under `## Appendices`, paste every appendix block provided below exactly as-is and in the same order.",
-            "- Do not replace appendices with links, summaries, or references.",
-            "",
-            "Continuation packet (JSON):",
-            "```json",
-            json.dumps(continuation_packet, indent=2, sort_keys=True),
-            "```",
-            "",
-            "Artifact catalog (JSON):",
-            "```json",
-            json.dumps(source_catalog, indent=2, sort_keys=True),
-            "```",
-            "",
-            "Diagnostics:",
-            "```json",
-            json.dumps(diagnostics, indent=2),
-            "```",
-            "",
-            "Required appendix blocks (paste exactly):",
-            appendix_blocks,
-            "",
-            "Now produce the oracle document.",
-        ]
-    )
+    lines = [
+        "Prepare a self-contained expert review handoff from the supplied evidence.",
+        "Keep the framing neutral and assume the reviewer has no repository access.",
+        "",
+        "Included evidence:",
+        *(source_catalog or ["- none"]),
+    ]
+    if diagnostics:
+        lines.extend(["", "Diagnostics:", *[f"- {item}" for item in diagnostics]])
+    return "\n".join(lines)
 
 
-def _oracle_table_cell(text: str) -> str:
-    return str(text).replace("|", "\\|").replace("\n", " ").strip()
+def _oracle_render_bullets(items: list[str], *, fallback: str) -> list[str]:
+    cleaned = [
+        _normalize_space(str(item)) for item in items if _normalize_space(str(item))
+    ]
+    if not cleaned:
+        return [f"- {fallback}"]
+    return [f"- {item}" for item in cleaned]
 
 
 def _render_oracle_document(
     *,
+    repo_root: Path,
+    handoff_payload: dict[str, Any],
     continuation_packet: dict[str, Any],
     sources: list[dict[str, Any]],
     diagnostics: list[str],
 ) -> str:
-    artifact_guide = [
-        "| Path | Role | Status | Why it matters |",
-        "| --- | --- | --- | --- |",
-    ]
-    for source in sources:
-        artifact_guide.append(
-            "| "
-            f"{_oracle_table_cell(str(source.get('path', '')).strip())} | "
-            f"{_oracle_table_cell(str(source.get('role', '')).strip() or 'artifact')} | "
-            f"{_oracle_table_cell(str(source.get('status', '')).strip() or 'unknown')} | "
-            f"{_oracle_table_cell(str(source.get('reason', '')).strip() or 'Relevant continuation artifact.')} |"
+    active_stage = (
+        continuation_packet.get("active_stage")
+        if isinstance(continuation_packet.get("active_stage"), dict)
+        else {}
+    )
+    next_action = (
+        continuation_packet.get("next_action")
+        if isinstance(continuation_packet.get("next_action"), dict)
+        else {}
+    )
+    campaign = (
+        continuation_packet.get("campaign")
+        if isinstance(continuation_packet.get("campaign"), dict)
+        else {}
+    )
+    policy_and_risk = (
+        continuation_packet.get("policy_and_risk")
+        if isinstance(continuation_packet.get("policy_and_risk"), dict)
+        else {}
+    )
+    run_status = (
+        continuation_packet.get("run_status")
+        if isinstance(continuation_packet.get("run_status"), dict)
+        else {}
+    )
+    uat_status = (
+        continuation_packet.get("uat_status")
+        if isinstance(continuation_packet.get("uat_status"), dict)
+        else {}
+    )
+    blockers = (
+        [
+            str(item).strip()
+            for item in continuation_packet.get("top_blockers", [])
+            if str(item).strip()
+        ]
+        if isinstance(continuation_packet.get("top_blockers"), list)
+        else []
+    )
+    request_reason = _oracle_packet_request_reason(
+        handoff_payload,
+        continuation_packet,
+        diagnostics,
+    )
+    scope_kind = (
+        str(active_stage.get("scope_kind", "")).strip()
+        or str(handoff_payload.get("current_scope", "experiment")).strip()
+    )
+    scope_root = _oracle_packet_scope_root(repo_root, handoff_payload)
+    current_stage = (
+        str(active_stage.get("stage", "")).strip()
+        or str(handoff_payload.get("current_stage", "")).strip()
+    )
+    iteration_id = str(handoff_payload.get("iteration_id", "")).strip() or "-"
+    experiment_id = str(handoff_payload.get("experiment_id", "")).strip() or "-"
+    revision_label = (
+        str(campaign.get("champion_revision_label", "")).strip()
+        or "unversioned-worktree"
+    )
+    recommended_command = str(next_action.get("recommended_command", "")).strip() or "-"
+    safe_command = str(next_action.get("safe_command", "")).strip() or "-"
+    evidence_lines: list[str] = []
+    evidence_lines.extend(
+        _oracle_render_bullets(blockers, fallback="No explicit blockers were captured.")
+    )
+    if diagnostics:
+        evidence_lines.extend(
+            _oracle_render_bullets(
+                diagnostics,
+                fallback="No export diagnostics were recorded.",
+            )
+        )
+    effective_flags = policy_and_risk.get("effective_flags")
+    if isinstance(effective_flags, list):
+        evidence_lines.extend(
+            _oracle_render_bullets(
+                [f"Effective policy/risk flag: {item}" for item in effective_flags],
+                fallback="No effective policy or risk flags were recorded.",
+            )
+        )
+    if str(policy_and_risk.get("guardrail_breach", "")).strip():
+        evidence_lines.append(
+            "- Guardrail breach: "
+            + str(policy_and_risk.get("guardrail_breach", "")).strip()
+        )
+    if str(policy_and_risk.get("block_reason", "")).strip():
+        evidence_lines.append(
+            "- Blocking reason: " + str(policy_and_risk.get("block_reason", "")).strip()
+        )
+    if str(run_status.get("run_id", "")).strip():
+        evidence_lines.append(
+            "- Latest run: "
+            + ", ".join(
+                [
+                    f"run_id={str(run_status.get('run_id', '')).strip() or '-'}",
+                    f"manifest={str(run_status.get('manifest_status', '')).strip() or '-'}",
+                    f"metrics={str(run_status.get('metrics_status', '')).strip() or '-'}",
+                    f"sync={str(run_status.get('sync_status', '')).strip() or '-'}",
+                ]
+            )
+        )
+    if bool(uat_status.get("required", False)):
+        evidence_lines.append(
+            "- UAT: "
+            + ", ".join(
+                [
+                    f"required_by={str(uat_status.get('required_by', '')).strip() or 'unknown'}",
+                    f"status={str(uat_status.get('status', '')).strip() or 'unknown'}",
+                    f"pending={bool(uat_status.get('pending', False))}",
+                ]
+            )
+        )
+    if not evidence_lines:
+        evidence_lines.append(
+            "- No additional machine-generated evidence was available beyond the attached files."
         )
 
-    appendix_blocks = "\n\n".join(
-        str(source.get("appendix_block", "")).rstrip()
-        for source in sources
-        if str(source.get("appendix_block", "")).strip()
-    ).strip()
-    expert_review_lines = [
-        "- This is the canonical Autolab escalation packet for the current scope.",
-        "- The continuation packet and selected inline artifacts are rendered directly from current repo state.",
-        "- Any downstream Oracle reply is advisory only and must be checked against repo state and tests before behavior changes.",
+    project_context_lines = [
+        f"- scope_kind: `{scope_kind or 'unknown'}`",
+        f"- scope_root: `{scope_root or '.'}`",
+        f"- current_stage: `{current_stage or 'unknown'}`",
+        f"- iteration_id: `{iteration_id}`",
+        f"- experiment_id: `{experiment_id}`",
+        f"- revision_label: `{revision_label}`",
+        f"- recommended_next_command: `{recommended_command}`",
+        f"- safe_resume_command: `{safe_command}`",
     ]
-    if diagnostics:
-        expert_review_lines.append(
-            "- Export diagnostics: "
-            + "; ".join(str(item).strip() for item in diagnostics)
+    if campaign:
+        project_context_lines.extend(
+            [
+                f"- campaign_id: `{str(campaign.get('campaign_id', '')).strip() or '-'}`",
+                f"- campaign_status: `{str(campaign.get('status', '')).strip() or '-'}`",
+                f"- campaign_objective: `{str(campaign.get('objective_metric', '')).strip() or '-'} ({str(campaign.get('objective_mode', '')).strip() or '-'})`",
+                f"- champion_run_id: `{str(campaign.get('champion_run_id', '')).strip() or '-'}`",
+                f"- no_improvement_streak: `{campaign.get('no_improvement_streak', 0)}`",
+                f"- crash_streak: `{campaign.get('crash_streak', 0)}`",
+            ]
         )
-    else:
-        expert_review_lines.append("- Export diagnostics: none.")
+
+    source_blocks = "\n\n".join(
+        _oracle_render_source_block(source) for source in sources
+    ).strip()
     return "\n".join(
         [
-            "# Autolab Oracle",
+            "# Expert Review Handoff",
             "",
-            "## Summary",
+            "## Executive Summary",
             (
-                "Autolab packaged the current continuation packet and the minimum inline artifacts "
-                "needed for Oracle escalation."
+                f"This handoff covers the `{current_stage or 'unknown'}` stage for the "
+                f"`{scope_kind or 'unknown'}` scope `{scope_root or '.'}`."
+            ),
+            (
+                "External technical review is requested because "
+                f"{request_reason.rstrip('.')}."
+            ),
+            (
+                "The goal is to decide whether the current path is sound, what the most "
+                "likely root cause is, and what the next action should be without assuming repository access."
             ),
             "",
-            "## Continuation Packet",
-            "```json",
-            json.dumps(continuation_packet, indent=2, sort_keys=True),
+            "## Project Context",
+            *project_context_lines,
+            "",
+            "## Current Problem",
+            f"- primary_issue: {request_reason}",
+            *(
+                _oracle_render_bullets(
+                    blockers,
+                    fallback="No explicit blockers were captured in the current state.",
+                )
+            ),
+            *(
+                [
+                    "- current_best_known_state: "
+                    + (
+                        str(campaign.get("champion_run_id", "")).strip()
+                        or "No active champion run is recorded."
+                    )
+                ]
+                if campaign
+                else [
+                    "- current_best_known_state: No active campaign summary is recorded."
+                ]
+            ),
+            "",
+            "## Evidence and Constraints",
+            *evidence_lines,
+            "",
+            "## Relevant Files and Excerpts",
+            source_blocks or "No relevant files were available.",
+            "",
+            "## Requested Response Format",
+            "A free-form review is acceptable.",
+            "If convenient, use the following shape so the recommendation is easy to extract:",
+            "",
+            "```markdown",
+            "ReviewerVerdict: continue_search | switch_family | rethink_design | request_human_review | stop_campaign",
+            "",
+            "## Rationale",
+            "- bullet 1",
+            "- bullet 2",
+            "",
+            "## Recommended Actions",
+            "1. action 1",
+            "2. action 2",
+            "",
+            "## Risks",
+            "- risk 1",
+            "- risk 2",
             "```",
             "",
-            "## Expert Review",
-            *expert_review_lines,
-            "",
-            "## Recommended Next Steps",
-            "- Use this packet as the canonical evidence bundle for Oracle escalation.",
-            "- Keep the attached file set tight and verify any Oracle advice against repo state and tests.",
-            "",
-            "## Artifact Guide",
-            *artifact_guide,
-            "",
-            "## Appendices",
-            "",
-            appendix_blocks,
+            "## Instructions for Reviewer",
+            "Give a direct technical judgment based only on this packet.",
+            "State the most likely root cause, the best next action, and which `ReviewerVerdict` should be taken.",
+            "Be explicit about whether the current path should continue, switch idea family, return to design, request human review, or stop the campaign.",
+            "Call out the concrete design, code, experiment, and process changes you recommend next.",
+            "Identify the constraints, checks, or validation steps that should be added before the next attempt.",
+            "List the risks or failure modes the team may be underestimating.",
+            "Say what evidence is still missing and what should be gathered next if the current packet is not enough.",
+            "If you think the current approach is based on a bad premise, say so directly.",
+            "If you think the team is fooling itself, hiding uncertainty, or over-reading weak evidence, say that explicitly and explain why.",
+            "Do not soften the judgment for tone. Be candid, decisive, and specific.",
         ]
     ).rstrip()
-
-
-def _oracle_output_includes_source(output_text: str, source: dict[str, Any]) -> bool:
-    appendix_block = str(source.get("appendix_block", "")).strip()
-    if appendix_block and appendix_block in output_text:
-        return True
-    heading = str(source.get("appendix_heading", "")).strip()
-    snippet = str(source.get("appendix_snippet", "")).strip()
-    if heading and heading not in output_text:
-        return False
-    if snippet and snippet not in output_text:
-        return False
-    return bool(heading)
 
 
 def _validate_oracle_output(
     output_text: str,
     *,
+    repo_root: Path,
     sources: list[dict[str, Any]],
 ) -> str:
     required_sections = (
-        "# Autolab Oracle",
-        "## Summary",
-        "## Continuation Packet",
-        "## Expert Review",
-        "## Recommended Next Steps",
-        "## Artifact Guide",
-        "## Appendices",
+        "# Expert Review Handoff",
+        "## Executive Summary",
+        "## Project Context",
+        "## Current Problem",
+        "## Evidence and Constraints",
+        "## Relevant Files and Excerpts",
+        "## Requested Response Format",
+        "## Instructions for Reviewer",
     )
     for marker in required_sections:
         if marker not in output_text:
-            return f"oracle output missing required section '{marker}'"
+            return f"review handoff missing required section '{marker}'"
+    headings = re.findall(r"^## .+$", output_text, flags=re.MULTILINE)
+    if not headings or headings[-1].strip() != "## Instructions for Reviewer":
+        return "review handoff must end with '## Instructions for Reviewer'"
+    repo_root_text = str(repo_root.resolve(strict=False))
+    if repo_root_text and repo_root_text in output_text:
+        return "review handoff leaked an absolute repository path"
     for source in sources:
-        if not _oracle_output_includes_source(output_text, source):
-            return (
-                "oracle output omitted required appendix block for "
-                f"{str(source.get('path', '')).strip() or 'unknown artifact'}"
-            )
+        rendered_path = str(source.get("rendered_path", "")).strip()
+        if rendered_path and f"### `{rendered_path}`" not in output_text:
+            return f"review handoff omitted required evidence block for {rendered_path}"
+    if "OracleVerdict:" in output_text:
+        return "review handoff must request ReviewerVerdict, not OracleVerdict"
     return ""
 
 
@@ -5541,11 +6335,13 @@ def _apply_oracle_reply_text(
 ) -> dict[str, Any]:
     from autolab.config import _load_oracle_apply_policy
 
-    reply = parse_oracle_reply(raw_notes)
-    iteration_id = str(state.get("iteration_id", "")).strip()
-    experiment_id = str(state.get("experiment_id", "")).strip()
     current_stage = str(state.get("stage", "")).strip().lower()
-    scope_kind = "experiment" if iteration_id and experiment_id else "project_wide"
+    scope_kind = (
+        "experiment"
+        if str(state.get("iteration_id", "")).strip()
+        and str(state.get("experiment_id", "")).strip()
+        else "project_wide"
+    )
     current_oracle_epoch = _resolve_current_oracle_epoch(
         state_path=state_path,
         repo_root=repo_root,
@@ -5555,12 +6351,18 @@ def _apply_oracle_reply_text(
         scope_kind=scope_kind,
         stage=current_stage,
     )
-    context_resolution = resolve_context_sidecars(
-        repo_root,
-        iteration_id=iteration_id,
-        experiment_id=experiment_id,
-        scope_kind=scope_kind,
+    ingestion = _ingest_oracle_reply_text(
+        repo_root=repo_root,
+        state=state,
+        source_label=source_label,
+        raw_notes=raw_notes,
+        apply_policy=apply_policy,
     )
+    reply = ingestion["reply"]
+    iteration_id = str(ingestion["iteration_id"]).strip()
+    experiment_id = str(ingestion["experiment_id"]).strip()
+    scope_kind = str(ingestion["scope_kind"]).strip() or scope_kind
+    context_resolution = ingestion["context_resolution"]
     discuss_paths = resolve_sidecar_output_paths(
         repo_root,
         scope_kind=scope_kind,
@@ -5582,8 +6384,8 @@ def _apply_oracle_reply_text(
     if not isinstance(existing_research, dict):
         existing_research = None
 
-    active_campaign = _load_campaign(repo_root)
-    campaign_summary = _campaign_summary(active_campaign) if active_campaign else {}
+    active_campaign = ingestion["active_campaign"]
+    campaign_summary = ingestion["campaign_summary"]
     disfavored_family = _oracle_reply_disfavored_family(campaign_summary, reply)
 
     discuss_dependency_refs = build_sidecar_dependency_refs(
@@ -5597,19 +6399,11 @@ def _apply_oracle_reply_text(
         exclude_paths={_sidecar_relpath(repo_root, research_paths["json_path"])},
     )
 
-    discuss_updates = _oracle_reply_to_discuss_updates(reply, scope_kind=scope_kind)
-    research_questions = _oracle_reply_to_research_questions(reply)
-    campaign_feedback = _oracle_reply_to_campaign_feedback(reply)
-    plan_note = _oracle_reply_plan_note(reply)
-    todo_hints = _oracle_reply_to_todo_hints(
-        reply,
-        current_stage=current_stage,
-        allow_rewind_design=apply_policy.allow_rewind_design,
-        allow_request_human_review=apply_policy.allow_request_human_review,
-        allow_stop_campaign=apply_policy.allow_stop_campaign,
-    )
-    if reply.verdict == "stop_campaign" and not apply_policy.allow_stop_campaign:
-        campaign_feedback = [{**item, "signal": "none"} for item in campaign_feedback]
+    discuss_updates = ingestion["discuss_updates"]
+    research_questions = ingestion["research_questions"]
+    campaign_feedback = ingestion["campaign_feedback"]
+    plan_note = str(ingestion["plan_note"]).strip()
+    todo_hints = ingestion["todo_hints"]
 
     changed_files: list[Path] = []
     discuss_payload = _build_oracle_apply_sidecar_payload(
@@ -5711,15 +6505,7 @@ def _apply_oracle_reply_text(
         ignored_campaign_feedback = len(campaign_feedback)
 
     plan_approval_updated = False
-    if scope_kind == "experiment":
-        iteration_dir, _iteration_type = _resolve_iteration_directory(
-            repo_root,
-            iteration_id=iteration_id,
-            experiment_id=experiment_id,
-            require_exists=False,
-        )
-    else:
-        iteration_dir = None
+    iteration_dir = ingestion["iteration_dir"]
     if (
         plan_note
         and iteration_dir is not None
@@ -5772,7 +6558,9 @@ def _apply_oracle_reply_text(
         )
 
     changed_files = list(dict.fromkeys(changed_files))
-    summary = f"Applied Oracle verdict: {reply.verdict}"
+    summary = (
+        str(ingestion["summary"]).strip() or f"Applied Oracle verdict: {reply.verdict}"
+    )
     _persist_agent_result(
         repo_root,
         status="complete",
@@ -5790,7 +6578,8 @@ def _apply_oracle_reply_text(
             f"todo={todo_added} "
             f"campaign_feedback={campaign_feedback_added} "
             f"campaign_status={campaign_status or 'none'} "
-            f"plan_approval_note={plan_approval_updated}"
+            f"plan_approval_note={plan_approval_updated} "
+            f"ingestion_path={str(ingestion.get('ingestion_path', '')).strip() or 'unknown'}"
         ),
     )
     return {
@@ -5807,6 +6596,8 @@ def _apply_oracle_reply_text(
         "campaign_status": campaign_status,
         "handoff_warning": handoff_warning,
         "recommended_human_review": oracle_state["recommended_human_review"],
+        "ingestion_path": str(ingestion.get("ingestion_path", "")).strip() or "unknown",
+        "ingestion_command": str(ingestion.get("ingestion_command", "")).strip(),
     }
 
 
@@ -5856,6 +6647,9 @@ def _cmd_oracle_apply(args: argparse.Namespace) -> int:
     print(f"campaign_feedback_added: {result['campaign_feedback_added']}")
     print(f"ignored_campaign_feedback: {result['ignored_campaign_feedback']}")
     print(f"plan_approval_updated: {result['plan_approval_updated']}")
+    print(f"ingestion_path: {result['ingestion_path']}")
+    if result["ingestion_command"]:
+        print(f"ingestion_command: {result['ingestion_command']}")
     if result["campaign_status"]:
         print(f"campaign_status: {result['campaign_status']}")
     print(f"changed_files: {len(result['changed_files'])}")
@@ -5886,11 +6680,17 @@ def _export_oracle_document(
     )
     _ = timeout_seconds
     rendered_document = _render_oracle_document(
+        repo_root=repo_root,
+        handoff_payload=handoff_payload,
         continuation_packet=continuation_packet,
         sources=sources,
         diagnostics=diagnostics,
     )
-    validation_error = _validate_oracle_output(rendered_document, sources=sources)
+    validation_error = _validate_oracle_output(
+        rendered_document,
+        repo_root=repo_root,
+        sources=sources,
+    )
     if validation_error:
         raise RuntimeError(validation_error)
 
@@ -6448,7 +7248,28 @@ def _run_oracle_roundtrip_auto(
 
     if not oracle_policy.apply_on_success:
         try:
-            parsed_reply = parse_oracle_reply(reply_text)
+            current_state = _normalize_state(_load_state(state_path))
+            current_stage = str(current_state.get("stage", "")).strip().lower()
+            current_scope_kind = (
+                "experiment"
+                if str(current_state.get("iteration_id", "")).strip()
+                and str(current_state.get("experiment_id", "")).strip()
+                else "project_wide"
+            )
+            from autolab.config import _load_oracle_apply_policy
+
+            apply_policy = _load_oracle_apply_policy(
+                repo_root,
+                scope_kind=current_scope_kind,
+                stage=current_stage,
+            )
+            ingestion = _ingest_oracle_reply_text(
+                repo_root=repo_root,
+                state=current_state,
+                source_label=reply_relpath,
+                raw_notes=reply_text,
+                apply_policy=apply_policy,
+            )
         except ValueError as exc:
             finish_oracle_attempt(
                 repo_root,
@@ -6473,6 +7294,7 @@ def _run_oracle_roundtrip_auto(
                 source_count_value=source_count,
                 apply_status="not_applied",
             )
+        parsed_reply = ingestion["reply"]
         current_campaign = _load_campaign(repo_root)
         finish_oracle_attempt(
             repo_root,
@@ -6484,11 +7306,16 @@ def _run_oracle_roundtrip_auto(
             apply_status="not_applied",
             verdict=parsed_reply.verdict,
             suggested_next_action=parsed_reply.suggested_next_action,
-            recommended_human_review=parsed_reply.recommended_human_review,
+            recommended_human_review=bool(
+                parsed_reply.recommended_human_review
+                and apply_policy.allow_request_human_review
+            ),
             disfavored_family=_oracle_reply_disfavored_family(
                 _campaign_summary(current_campaign) if current_campaign else {},
                 parsed_reply,
-            ),
+            )
+            if apply_policy.allow_switch_family
+            else "",
         )
         _safe_refresh_handoff(state_path)
         return _result(

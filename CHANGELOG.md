@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.49] - 2026-03-09
+
+### Summary
+
+- Reworked `autolab oracle` into a neutral, self-contained expert-review handoff and updated the browser roundtrip prompt so external reviewers can reply in a less rigid format.
+- Added hybrid Oracle reply ingestion so `autolab oracle apply` and browser roundtrips accept either structured `ReviewerVerdict:` replies or free-form expert feedback via a configured local ingestion LLM, while keeping advisory-only apply semantics.
+
+<!-- autolab:range v1.2.48..v1.2.49 -->
+
 ## [1.2.48] - 2026-03-08
 
 ### Summary

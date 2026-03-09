@@ -152,6 +152,9 @@ class OracleTriggerConfig:
 
 @dataclass(frozen=True)
 class OracleApplyPolicyConfig:
+    ingestion_mode: str
+    llm_command: str
+    llm_timeout_seconds: float
     allow_continue_search: bool
     allow_switch_family: bool
     allow_rewind_design: bool

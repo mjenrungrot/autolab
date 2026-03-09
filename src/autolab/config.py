@@ -530,8 +530,21 @@ def _load_oracle_apply_policy(
     apply_cfg = result.merged.get("oracle_apply")
     if not isinstance(apply_cfg, dict):
         apply_cfg = {}
+    ingestion_mode = str(apply_cfg.get("ingestion_mode", "hybrid")).strip().lower()
+    if ingestion_mode not in {"hybrid", "strict_only", "llm_only"}:
+        ingestion_mode = "hybrid"
+    llm_command = str(apply_cfg.get("llm_command", "")).strip()
+    llm_timeout_seconds = _coerce_float(
+        apply_cfg.get("llm_timeout_seconds"),
+        default=300.0,
+    )
+    if llm_timeout_seconds <= 0:
+        llm_timeout_seconds = 300.0
 
     return OracleApplyPolicyConfig(
+        ingestion_mode=ingestion_mode,
+        llm_command=llm_command,
+        llm_timeout_seconds=llm_timeout_seconds,
         allow_continue_search=_coerce_bool(
             apply_cfg.get("allow_continue_search", True),
             default=True,

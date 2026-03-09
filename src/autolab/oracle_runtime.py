@@ -396,67 +396,17 @@ def build_oracle_roundtrip_request(
     handoff_payload: dict[str, Any],
     trigger_reason: str,
 ) -> str:
-    continuation_packet = handoff_payload.get("continuation_packet")
-    if not isinstance(continuation_packet, dict):
-        continuation_packet = {}
-    active_stage = continuation_packet.get("active_stage")
-    if not isinstance(active_stage, dict):
-        active_stage = {}
-    campaign = continuation_packet.get("campaign")
-    if not isinstance(campaign, dict):
-        campaign = {}
-    champion_parts = []
-    champion_run_id = str(campaign.get("champion_run_id", "")).strip()
-    if champion_run_id:
-        champion_parts.append(f"run_id={champion_run_id}")
-    champion_revision = str(campaign.get("champion_revision_label", "")).strip()
-    if champion_revision:
-        champion_parts.append(f"revision={champion_revision}")
-    champion_summary = ", ".join(champion_parts) or "none"
+    _ = (handoff_payload, trigger_reason)
+    verdicts = " | ".join(ORACLE_ALLOWED_VERDICTS)
     return "\n".join(
         [
-            "# Oracle Request",
+            "You are an external technical reviewer.",
             "",
-            "## Why Oracle is being asked",
-            "Autolab reached a stuck, uncertain, or contradictory state and is requesting expert opinion.",
-            "",
-            "## Current state",
-            f"- scope_kind: {str(active_stage.get('scope_kind', '')).strip() or str(handoff_payload.get('current_scope', '')).strip() or 'experiment'}",
-            f"- scope_root: {str(active_stage.get('scope_root', '')).strip() or str(handoff_payload.get('scope_root', '')).strip() or '-'}",
-            f"- current_stage: {str(active_stage.get('stage', '')).strip() or str(handoff_payload.get('current_stage', '')).strip() or '-'}",
-            f"- revision_label: {champion_revision or 'unversioned-worktree'}",
-            f"- campaign_id: {str(campaign.get('campaign_id', '')).strip() or 'none'}",
-            f"- champion_summary: {champion_summary}",
-            f"- trigger_reason: {str(trigger_reason).strip() or 'unspecified'}",
-            "",
-            "## Evidence",
-            "Use the attached `oracle.md` file as the canonical Autolab packet for this request.",
-            "",
-            "## Questions",
-            "1. What is the most likely root cause?",
-            "2. What is the best next action?",
-            "3. Should Autolab:",
-            "   - continue current search",
-            "   - switch idea family",
-            "   - rethink design",
-            "   - request human review",
-            "   - stop this campaign",
-            "4. What constraints or checks should be added?",
-            "",
-            "## Reply format",
-            "OracleVerdict: continue_search | switch_family | rethink_design | request_human_review | stop_campaign",
-            "",
-            "## Rationale",
-            "- bullet 1",
-            "- bullet 2",
-            "",
-            "## Recommended Actions",
-            "1. ...",
-            "2. ...",
-            "",
-            "## Risks",
-            "- risk 1",
-            "- risk 2",
+            "Review the attached handoff packet only.",
+            "Do not browse the web or assume repository access outside the packet.",
+            "A free-form review is acceptable.",
+            f"If convenient, include a clear recommendation among: {verdicts}.",
+            "Answer candidly and directly.",
         ]
     )
 
@@ -488,15 +438,15 @@ def _parse_markdown_list(section_text: str) -> tuple[str, ...]:
 
 def parse_oracle_reply(reply_text: str) -> OracleReply:
     verdict_match = re.search(
-        r"^OracleVerdict:\s*(?P<verdict>[A-Za-z_]+)\s*$",
+        r"^ReviewerVerdict:\s*(?P<verdict>[A-Za-z_]+)\s*$",
         str(reply_text or ""),
         flags=re.MULTILINE,
     )
     if verdict_match is None:
-        raise ValueError("reply is missing required OracleVerdict line")
+        raise ValueError("reply is missing required ReviewerVerdict line")
     verdict = str(verdict_match.group("verdict") or "").strip().lower()
     if verdict not in ORACLE_ALLOWED_VERDICTS:
-        raise ValueError(f"unsupported OracleVerdict '{verdict}'")
+        raise ValueError(f"unsupported ReviewerVerdict '{verdict}'")
     rationale = _parse_markdown_list(_extract_markdown_section(reply_text, "Rationale"))
     recommended_actions = _parse_markdown_list(
         _extract_markdown_section(reply_text, "Recommended Actions")

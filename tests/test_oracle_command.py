@@ -138,9 +138,9 @@ def _write_oracle_reply(
     risks: list[str] | tuple[str, ...] = (),
 ) -> None:
     lines = [
-        "# Autolab Oracle Reply",
+        "# Expert Review Response",
         "",
-        f"OracleVerdict: {verdict}",
+        f"ReviewerVerdict: {verdict}",
         "",
         "## Rationale",
     ]
@@ -180,6 +180,29 @@ def _oracle_policy(
         preview_before_send=preview_before_send,
         apply_on_success=apply_on_success,
         graceful_failure=True,
+    )
+
+
+def _oracle_apply_policy(
+    *,
+    ingestion_mode: str = "hybrid",
+    llm_command: str = "",
+    llm_timeout_seconds: float = 300.0,
+    allow_continue_search: bool = True,
+    allow_switch_family: bool = True,
+    allow_rewind_design: bool = False,
+    allow_request_human_review: bool = True,
+    allow_stop_campaign: bool = True,
+) -> OracleApplyPolicyConfig:
+    return OracleApplyPolicyConfig(
+        ingestion_mode=ingestion_mode,
+        llm_command=llm_command,
+        llm_timeout_seconds=llm_timeout_seconds,
+        allow_continue_search=allow_continue_search,
+        allow_switch_family=allow_switch_family,
+        allow_rewind_design=allow_rewind_design,
+        allow_request_human_review=allow_request_human_review,
+        allow_stop_campaign=allow_stop_campaign,
     )
 
 
@@ -242,12 +265,13 @@ def test_oracle_writes_scope_root_document_with_inlined_artifacts(
     assert created_files == ["experiments/plan/bootstrap_iteration/oracle.md"]
     oracle_path = repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
     oracle_text = oracle_path.read_text(encoding="utf-8")
-    assert "# Autolab Oracle" in oracle_text
-    assert "## Artifact Guide" in oracle_text
-    assert "### Artifact: .autolab/handoff.json" in oracle_text
-    assert (
-        "### Artifact: experiments/plan/bootstrap_iteration/handoff.md" in oracle_text
-    )
+    assert "# Expert Review Handoff" in oracle_text
+    assert "## Relevant Files and Excerpts" in oracle_text
+    assert "## Instructions for Reviewer" in oracle_text
+    assert "ReviewerVerdict:" in oracle_text
+    assert "# Autolab Oracle" not in oracle_text
+    assert str(repo.resolve()) not in oracle_text
+    assert ".autolab/handoff.json" not in oracle_text
 
 
 def test_oracle_fails_when_source_collection_fails(
@@ -411,13 +435,8 @@ def test_oracle_includes_campaign_results_markdown_but_not_tsv(tmp_path: Path) -
     oracle_text = oracle_path.read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert (
-        "### Artifact: experiments/plan/bootstrap_iteration/results.md" in oracle_text
-    )
-    assert (
-        "### Artifact: experiments/plan/bootstrap_iteration/results.tsv"
-        not in oracle_text
-    )
+    assert "### `experiments/plan/bootstrap_iteration/results.md`" in oracle_text
+    assert "### `experiments/plan/bootstrap_iteration/results.tsv`" not in oracle_text
 
 
 def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
@@ -440,8 +459,12 @@ def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
         ],
     )
 
-    exit_code = commands_module.main(
-        ["oracle", "apply", "--state-file", str(state_path), str(reply_path)]
+    result = handlers_admin._apply_oracle_reply_text(
+        state_path=state_path,
+        repo_root=repo,
+        state=handlers_admin._normalize_state(handlers_admin._load_state(state_path)),
+        source_label="oracle_reply.md",
+        raw_notes=reply_path.read_text(encoding="utf-8"),
     )
 
     discuss_payload = json.loads(
@@ -463,7 +486,7 @@ def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
     approval_payload = load_plan_approval(iteration_dir)
     open_tasks = list_open_tasks(repo)
 
-    assert exit_code == 0
+    assert result["ingestion_path"] == "strict"
     assert any(
         entry.get("summary") == "Keep experiment edits narrow and iteration-local."
         for entry in discuss_payload["preferences"]
@@ -489,7 +512,6 @@ def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
     )
     assert any(
         task.get("text") == "Compare warmup variants on the active benchmark."
-        and "oracle" in task.get("labels", [])
         for task in open_tasks
     )
     assert campaign_payload["status"] == "needs_rethink"
@@ -501,6 +523,131 @@ def test_oracle_apply_updates_scope_artifacts(tmp_path: Path) -> None:
         == "Compare warmup variants on the active benchmark."
     )
     assert (repo / ".autolab" / "handoff.json").exists()
+
+
+def test_oracle_apply_uses_llm_ingestion_for_free_form_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    reply_path = iteration_dir / "oracle_reply.md"
+    reply_path.write_text(
+        "\n".join(
+            [
+                "# Expert Review Response",
+                "",
+                "The implementation path is still too broad and the current benchmark evidence is not enough to justify another run.",
+                "Return to design, compare the warmup variants directly, and have a human sanity-check the next experiment setup.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: _oracle_apply_policy(
+            ingestion_mode="hybrid",
+            llm_command="mock-ingest",
+        ),
+    )
+    captured_commands: list[str] = []
+
+    def _fake_run_local_agent(_repo_root: Path, **_kwargs):
+        captured_commands.append(str(_kwargs.get("command_override", "")))
+        payload = {
+            "verdict": "rethink_design",
+            "suggested_next_action": "Compare warmup variants on the active benchmark.",
+            "recommended_human_review": True,
+            "summary": "LLM extracted a rethink-design recommendation.",
+            "discuss_updates": {
+                "preferences": [
+                    {
+                        "summary": "Keep experiment edits narrow and iteration-local.",
+                        "detail": "Do not broaden the patch until the warmup schedule is understood.",
+                    }
+                ],
+                "constraints": [
+                    {
+                        "summary": "Remote harness edits would make comparisons invalid.",
+                        "detail": "Preserve the benchmark harness while isolating the warmup comparison.",
+                    }
+                ],
+            },
+            "research_questions": [
+                {
+                    "summary": "Could the warmup schedule still be masking regressions?",
+                    "detail": "Check whether the plateau disappears when the warmup is narrowed.",
+                }
+            ],
+            "todo_hints": [
+                {
+                    "stage": "implementation",
+                    "text": "Compare warmup variants on the active benchmark.",
+                    "rationale": "The reviewer wants one isolated design follow-up.",
+                }
+            ],
+            "campaign_feedback": [
+                {
+                    "summary": "Current family needs a design rethink.",
+                    "detail": "The reviewer recommends stepping back before another autonomous run.",
+                    "signal": "rethink",
+                }
+            ],
+            "plan_approval_note": "Oracle verdict: rethink_design. Re-scope the next run around the warmup comparison.",
+        }
+        return (0, json.dumps(payload), "", "mock-ingest")
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+
+    result = handlers_admin._apply_oracle_reply_text(
+        state_path=state_path,
+        repo_root=repo,
+        state=handlers_admin._normalize_state(handlers_admin._load_state(state_path)),
+        source_label="oracle_reply.md",
+        raw_notes=reply_path.read_text(encoding="utf-8"),
+    )
+
+    discuss_payload = json.loads(
+        (iteration_dir / "context" / "sidecars" / "discuss.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    research_payload = json.loads(
+        (iteration_dir / "context" / "sidecars" / "research.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    campaign_payload = json.loads(
+        (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+    approval_payload = load_plan_approval(iteration_dir)
+    assert captured_commands == ["mock-ingest"]
+    assert result["ingestion_path"] == "llm"
+    assert any(
+        entry.get("summary") == "Keep experiment edits narrow and iteration-local."
+        for entry in discuss_payload["preferences"]
+    )
+    assert any(
+        entry.get("summary") == "Remote harness edits would make comparisons invalid."
+        for entry in discuss_payload["constraints"]
+    )
+    assert any(
+        entry.get("summary")
+        == "Could the warmup schedule still be masking regressions?"
+        for entry in research_payload["questions"]
+    )
+    assert campaign_payload["status"] == "needs_rethink"
+    assert len(campaign_payload["oracle_feedback"]) == 1
+    assert "Oracle verdict: rethink_design." in approval_payload["notes"]
+    assert oracle_state["verdict"] == "rethink_design"
+    assert (
+        oracle_state["suggested_next_action"]
+        == "Compare warmup variants on the active benchmark."
+    )
+    assert oracle_state["recommended_human_review"] is True
 
 
 def test_oracle_apply_request_human_review_is_advisory_only(tmp_path: Path) -> None:
@@ -548,11 +695,7 @@ def test_oracle_apply_disallowed_stop_campaign_keeps_campaign_running(
     )
     monkeypatch.setattr(
         "autolab.config._load_oracle_apply_policy",
-        lambda *_args, **_kwargs: OracleApplyPolicyConfig(
-            allow_continue_search=True,
-            allow_switch_family=True,
-            allow_rewind_design=False,
-            allow_request_human_review=True,
+        lambda *_args, **_kwargs: _oracle_apply_policy(
             allow_stop_campaign=False,
         ),
     )
@@ -656,8 +799,41 @@ def test_oracle_apply_rejects_missing_verdict_without_writes(tmp_path: Path) -> 
     repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
     notes_path = iteration_dir / "oracle_reply.md"
     notes_path.write_text(
-        "# Autolab Oracle Reply\n\n## Rationale\n- Missing required verdict.\n",
+        "# Expert Review Response\n\n## Rationale\n- Missing required verdict.\n",
         encoding="utf-8",
+    )
+    campaign_before = (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
+    approval_before = load_plan_approval(iteration_dir)
+    open_tasks_before = list_open_tasks(repo)
+
+    exit_code = commands_module.main(
+        ["oracle", "apply", "--state-file", str(state_path), str(notes_path)]
+    )
+
+    assert exit_code == 1
+    assert not (iteration_dir / "context" / "sidecars" / "discuss.json").exists()
+    assert not (iteration_dir / "context" / "sidecars" / "research.json").exists()
+    assert (repo / ".autolab" / "campaign.json").read_text(
+        encoding="utf-8"
+    ) == campaign_before
+    assert load_plan_approval(iteration_dir) == approval_before
+    assert list_open_tasks(repo) == open_tasks_before
+    assert not (repo / ".autolab" / "oracle_state.json").exists()
+
+
+def test_oracle_apply_strict_only_rejects_free_form_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    notes_path = iteration_dir / "oracle_reply.md"
+    notes_path.write_text(
+        "# Expert Review Response\n\nThe reviewer wants another design pass before the next run.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: _oracle_apply_policy(ingestion_mode="strict_only"),
     )
     campaign_before = (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
     approval_before = load_plan_approval(iteration_dir)
@@ -686,12 +862,12 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
     notes_path.write_text(
         "\n".join(
             [
-                "# Autolab Oracle",
+                "# Expert Review Handoff",
                 "",
-                "## Summary",
+                "## Executive Summary",
                 "Dense export.",
                 "",
-                "OracleVerdict: continue_search",
+                "ReviewerVerdict: continue_search",
                 "",
                 "## Rationale",
                 "- Need a narrower patch before retrying the campaign.",
@@ -702,13 +878,9 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
                 "## Risks",
                 "- Could the current baseline still be noisy?",
                 "",
-                "## Appendices",
+                "## Instructions for Reviewer",
+                "Answer directly.",
                 "",
-                "### Artifact: .autolab/handoff.json",
-                "",
-                "```json",
-                "{}",
-                "```",
             ]
         )
         + "\n",
@@ -741,7 +913,7 @@ def test_oracle_apply_can_read_notes_from_stdin(
         io.StringIO(
             "\n".join(
                 [
-                    "OracleVerdict: continue_search",
+                    "ReviewerVerdict: continue_search",
                     "",
                     "## Rationale",
                     "- stdin rationale",
@@ -769,6 +941,112 @@ def test_oracle_apply_can_read_notes_from_stdin(
         )
         == 0
     )
+
+
+def test_oracle_apply_llm_only_bypasses_strict_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    notes_path = iteration_dir / "oracle_reply.md"
+    notes_path.write_text(
+        "# Expert Review Response\n\nKeep iterating from the current family, but narrow the benchmark diff.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: _oracle_apply_policy(
+            ingestion_mode="llm_only",
+            llm_command="mock-ingest",
+        ),
+    )
+    monkeypatch.setattr(
+        handlers_admin,
+        "parse_oracle_reply",
+        lambda *_args, **_kwargs: pytest.fail(
+            "strict parser should not run in llm_only mode"
+        ),
+    )
+    llm_calls: list[str] = []
+
+    def _fake_run_local_agent(_repo_root: Path, **_kwargs):
+        llm_calls.append(str(_kwargs.get("command_override", "")))
+        payload = {
+            "verdict": "continue_search",
+            "suggested_next_action": "Run one more benchmark comparison.",
+            "recommended_human_review": False,
+            "summary": "LLM-only ingestion kept the campaign moving.",
+            "discuss_updates": {},
+            "research_questions": [],
+            "todo_hints": [],
+            "campaign_feedback": [],
+            "plan_approval_note": "",
+        }
+        return (0, json.dumps(payload), "", "mock-ingest")
+
+    monkeypatch.setattr(handlers_admin, "_run_local_agent", _fake_run_local_agent)
+
+    result = handlers_admin._apply_oracle_reply_text(
+        state_path=state_path,
+        repo_root=repo,
+        state=handlers_admin._normalize_state(handlers_admin._load_state(state_path)),
+        source_label="oracle_reply.md",
+        raw_notes=notes_path.read_text(encoding="utf-8"),
+    )
+    oracle_state = json.loads(
+        (repo / ".autolab" / "oracle_state.json").read_text(encoding="utf-8")
+    )
+
+    assert llm_calls == ["mock-ingest"]
+    assert result["ingestion_path"] == "llm"
+    assert oracle_state["verdict"] == "continue_search"
+
+
+def test_oracle_apply_free_form_ingestion_failure_keeps_repo_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    notes_path = iteration_dir / "oracle_reply.md"
+    notes_path.write_text(
+        "# Expert Review Response\n\nThe current plan looks contradictory and needs follow-up.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: _oracle_apply_policy(
+            ingestion_mode="hybrid",
+            llm_command="mock-ingest",
+        ),
+    )
+    monkeypatch.setattr(
+        handlers_admin,
+        "_run_local_agent",
+        lambda _repo_root, **_kwargs: (0, "{not-json", "", "mock-ingest"),
+    )
+    campaign_before = (repo / ".autolab" / "campaign.json").read_text(encoding="utf-8")
+    approval_before = load_plan_approval(iteration_dir)
+    open_tasks_before = list_open_tasks(repo)
+
+    with pytest.raises(ValueError, match="valid JSON"):
+        handlers_admin._apply_oracle_reply_text(
+            state_path=state_path,
+            repo_root=repo,
+            state=handlers_admin._normalize_state(
+                handlers_admin._load_state(state_path)
+            ),
+            source_label="oracle_reply.md",
+            raw_notes=notes_path.read_text(encoding="utf-8"),
+        )
+
+    assert not (iteration_dir / "context" / "sidecars" / "discuss.json").exists()
+    assert not (iteration_dir / "context" / "sidecars" / "research.json").exists()
+    assert (repo / ".autolab" / "campaign.json").read_text(
+        encoding="utf-8"
+    ) == campaign_before
+    assert load_plan_approval(iteration_dir) == approval_before
+    assert list_open_tasks(repo) == open_tasks_before
+    assert not (repo / ".autolab" / "oracle_state.json").exists()
 
 
 def test_oracle_roundtrip_requires_auto(tmp_path: Path) -> None:
@@ -1009,16 +1287,9 @@ def test_oracle_roundtrip_respects_apply_on_success_false(
     oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
     reply_text = "\n".join(
         [
-            "OracleVerdict: continue_search",
+            "# Expert Review Response",
             "",
-            "## Rationale",
-            "- Keep iterating from the current family.",
-            "",
-            "## Recommended Actions",
-            "1. Run one more benchmark comparison.",
-            "",
-            "## Risks",
-            "- Could the current verifier still be too noisy?",
+            "Keep iterating from the current family, but narrow the next benchmark comparison before trusting the plateau.",
         ]
     )
     monkeypatch.setattr(
@@ -1063,6 +1334,33 @@ def test_oracle_roundtrip_respects_apply_on_success_false(
         "autolab.cli.handlers_admin._apply_oracle_reply_text",
         lambda **_kwargs: pytest.fail("roundtrip should not auto-apply when disabled"),
     )
+    monkeypatch.setattr(
+        "autolab.config._load_oracle_apply_policy",
+        lambda *_args, **_kwargs: _oracle_apply_policy(
+            ingestion_mode="hybrid",
+            llm_command="mock-ingest",
+        ),
+    )
+
+    def _fake_run_oracle_apply_agent(_repo_root: Path, **_kwargs):
+        payload = {
+            "verdict": "continue_search",
+            "suggested_next_action": "Run one more benchmark comparison.",
+            "recommended_human_review": False,
+            "summary": "LLM extracted a continue-search recommendation.",
+            "discuss_updates": {},
+            "research_questions": [],
+            "todo_hints": [],
+            "campaign_feedback": [],
+            "plan_approval_note": "",
+        }
+        return (0, json.dumps(payload), "", "mock-ingest")
+
+    monkeypatch.setattr(
+        handlers_admin,
+        "_run_oracle_apply_agent",
+        _fake_run_oracle_apply_agent,
+    )
 
     result = _run_oracle_roundtrip_auto(
         state_path=state_path,
@@ -1103,7 +1401,7 @@ def test_oracle_roundtrip_refreshes_handoff_with_stable_epoch(
     oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
     reply_text = "\n".join(
         [
-            "OracleVerdict: continue_search",
+            "ReviewerVerdict: continue_search",
             "",
             "## Rationale",
             "- Keep the search moving.",
