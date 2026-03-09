@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.51] - 2026-03-09
+
+### Summary
+
+- Hardened `autolab oracle roundtrip` to start fresh browser sessions, require manual-login browser support, expose a browser-shaped `--dry-run-full` preview/debug path, and recommend that preview command when live Oracle launch fails.
+- Improved structured Oracle reply ingestion so nested recommended-action bullets stay grouped instead of exploding into separate TODO items during advisory apply.
+
+<!-- autolab:range v1.2.50..v1.2.51 -->
+
 ## [1.2.50] - 2026-03-09
 
 ### Summary

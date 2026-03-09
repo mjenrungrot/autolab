@@ -424,15 +424,38 @@ def _extract_markdown_section(markdown_text: str, heading: str) -> str:
 
 def _parse_markdown_list(section_text: str) -> tuple[str, ...]:
     items: list[str] = []
+    current_item_parts: list[str] = []
     for raw_line in str(section_text or "").splitlines():
-        text = raw_line.strip()
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        numbered_match = re.match(r"^(?P<number>\d+)\.\s+(?P<text>.+)$", stripped)
+        if numbered_match is not None:
+            if current_item_parts:
+                items.append(_normalize_space(" ".join(current_item_parts)))
+            current_item_parts = [str(numbered_match.group("text") or "").strip()]
+            continue
+        bullet_match = re.match(r"^[-*]\s+(?P<text>.+)$", stripped)
+        if bullet_match is not None:
+            bullet_text = _normalize_space(
+                str(bullet_match.group("text") or "").strip()
+            )
+            if not bullet_text:
+                continue
+            if current_item_parts:
+                current_item_parts.append(f"Substeps: {bullet_text}")
+            else:
+                items.append(bullet_text)
+            continue
+        text = _normalize_space(stripped)
         if not text:
             continue
-        text = re.sub(r"^[-*]\s+", "", text)
-        text = re.sub(r"^\d+\.\s+", "", text)
-        text = _normalize_space(text)
-        if text:
+        if current_item_parts:
+            current_item_parts.append(text)
+        else:
             items.append(text)
+    if current_item_parts:
+        items.append(_normalize_space(" ".join(current_item_parts)))
     return tuple(items)
 
 

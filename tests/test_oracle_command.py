@@ -13,10 +13,11 @@ from autolab.campaign import _refresh_campaign_results
 from autolab.cli.handlers_admin import (
     _build_oracle_browser_argv,
     _run_oracle_roundtrip_auto,
+    _run_oracle_roundtrip_dry_run_full,
 )
 from autolab.cli.handlers_run import _auto_oracle_trigger_reason
 from autolab.models import OracleApplyPolicyConfig, OraclePolicyConfig, RunOutcome
-from autolab.oracle_runtime import oracle_packet_fingerprint
+from autolab.oracle_runtime import oracle_packet_fingerprint, parse_oracle_reply
 from autolab.plan_approval import load_plan_approval
 from autolab.todo_sync import list_open_tasks
 
@@ -902,6 +903,84 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
     )
 
 
+def test_parse_oracle_reply_keeps_nested_recommended_actions_grouped() -> None:
+    reply = parse_oracle_reply(
+        "\n".join(
+            [
+                "ReviewerVerdict: rethink_design",
+                "",
+                "## Rationale",
+                "- The packet is incomplete.",
+                "",
+                "## Recommended Actions",
+                "1. Replace hypothesis.md with an actual falsifiable hypothesis:",
+                "   * intervention/change being tested",
+                "   * baseline",
+                "2. Reconstruct the missing planning artifacts before any further run:",
+                "   * plan_graph.json",
+                "   * plan_execution_summary.json",
+                "",
+                "## Risks",
+                "- False progress.",
+            ]
+        )
+    )
+
+    assert reply.recommended_actions == (
+        "Replace hypothesis.md with an actual falsifiable hypothesis: Substeps: intervention/change being tested Substeps: baseline",
+        "Reconstruct the missing planning artifacts before any further run: Substeps: plan_graph.json Substeps: plan_execution_summary.json",
+    )
+
+
+def test_oracle_apply_groups_nested_recommendations_into_single_todos(
+    tmp_path: Path,
+) -> None:
+    repo, state_path, iteration_dir = _init_oracle_apply_repo(tmp_path)
+    notes_path = iteration_dir / "oracle_nested_reply.md"
+    notes_path.write_text(
+        "\n".join(
+            [
+                "ReviewerVerdict: rethink_design",
+                "",
+                "## Rationale",
+                "- The packet is incomplete.",
+                "",
+                "## Recommended Actions",
+                "1. Replace hypothesis.md with an actual falsifiable hypothesis:",
+                "   * intervention/change being tested",
+                "   * baseline",
+                "2. Reconstruct the missing planning artifacts before any further run:",
+                "   * plan_graph.json",
+                "   * plan_execution_summary.json",
+                "",
+                "## Risks",
+                "- False progress.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        commands_module.main(
+            ["oracle", "apply", "--state-file", str(state_path), str(notes_path)]
+        )
+        == 0
+    )
+
+    todo_text = (repo / "docs" / "todo.md").read_text(encoding="utf-8")
+    assert (
+        "- [stage:implementation] Replace hypothesis.md with an actual falsifiable hypothesis: Substeps: intervention/change being tested Substeps: baseline"
+        in todo_text
+    )
+    assert (
+        "- [stage:implementation] Reconstruct the missing planning artifacts before any further run: Substeps: plan_graph.json Substeps: plan_execution_summary.json"
+        in todo_text
+    )
+    assert "- [stage:implementation] intervention/change being tested" not in todo_text
+    assert "- [stage:implementation] plan_graph.json" not in todo_text
+
+
 def test_oracle_export_validation_rejects_template_heading(tmp_path: Path) -> None:
     validation_error = handlers_admin._validate_oracle_output(
         "\n".join(
@@ -1087,7 +1166,7 @@ def test_oracle_apply_free_form_ingestion_failure_keeps_repo_unchanged(
     assert not (repo / ".autolab" / "oracle_state.json").exists()
 
 
-def test_oracle_roundtrip_requires_auto(tmp_path: Path) -> None:
+def test_oracle_roundtrip_requires_mode(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     state_path = repo / ".autolab" / "state.json"
@@ -1102,6 +1181,79 @@ def test_oracle_roundtrip_requires_auto(tmp_path: Path) -> None:
         commands_module.main(["oracle", "roundtrip", "--state-file", str(state_path)])
         == 1
     )
+
+
+def test_oracle_roundtrip_runs_dry_run_full_path_when_requested(
+    tmp_path: Path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    captured: dict[str, str] = {}
+
+    def _fake_run_oracle_roundtrip_dry_run_full(
+        *,
+        state_path: Path,
+        repo_root: Path,
+        output_path: Path | None = None,
+    ) -> dict[str, object]:
+        captured["state_path"] = str(state_path)
+        captured["repo_root"] = str(repo_root)
+        captured["output_path"] = str(output_path) if output_path is not None else ""
+        return {
+            "exit_code": 0,
+            "attempted": False,
+            "status": "preview_succeeded",
+            "failure_reason": "",
+            "output_path": str(
+                repo_root / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+            ),
+            "reply_path": "",
+            "export_command": "autolab oracle",
+            "browser_command": "",
+            "preview_command": "oracle --engine browser --dry-run full --prompt 'test' --file oracle.md",
+            "source_count": 3,
+            "apply_status": "",
+            "preview_output": "# preview bundle",
+        }
+
+    monkeypatch.setattr(
+        commands_module,
+        "_run_oracle_roundtrip_dry_run_full",
+        _fake_run_oracle_roundtrip_dry_run_full,
+    )
+
+    output_path = repo / "custom_oracle.md"
+    assert (
+        commands_module.main(
+            [
+                "oracle",
+                "roundtrip",
+                "--state-file",
+                str(state_path),
+                "--dry-run-full",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out
+    assert captured["state_path"] == str(state_path.resolve())
+    assert captured["repo_root"] == str(repo.resolve())
+    assert captured["output_path"] == str(output_path)
+    assert "oracle_preview_command: oracle --engine browser" in printed
+    assert "--dry-run full" in printed
+    assert "preview_output:" in printed
 
 
 def test_oracle_roundtrip_runs_auto_path_when_enabled(
@@ -1142,6 +1294,7 @@ def test_oracle_roundtrip_runs_auto_path_when_enabled(
             "reply_path": str(repo_root / ".autolab" / "oracle_last_response.md"),
             "export_command": "autolab oracle",
             "browser_command": "oracle --engine browser",
+            "preview_command": "oracle --engine browser --dry-run full --prompt 'test' --file oracle.md",
             "source_count": 3,
             "apply_status": "applied",
         }
@@ -1173,6 +1326,107 @@ def test_oracle_roundtrip_runs_auto_path_when_enabled(
     assert captured["output_path"] == str(output_path)
 
 
+def test_oracle_roundtrip_recommends_dry_run_full_when_auto_fails(
+    tmp_path: Path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    monkeypatch.setattr(
+        commands_module,
+        "_run_oracle_roundtrip_auto",
+        lambda **_kwargs: {
+            "exit_code": 1,
+            "attempted": True,
+            "status": "launch_failed",
+            "failure_reason": "browser launch failed",
+            "output_path": str(
+                repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+            ),
+            "reply_path": "",
+            "export_command": "autolab oracle",
+            "browser_command": "oracle --engine browser",
+            "preview_command": "oracle --engine browser --dry-run full --prompt 'test' --file oracle.md",
+            "source_count": 3,
+            "apply_status": "",
+        },
+    )
+
+    assert (
+        commands_module.main(
+            ["oracle", "roundtrip", "--state-file", str(state_path), "--auto"]
+        )
+        == 1
+    )
+    printed = capsys.readouterr().out
+    assert "recommended_debug_command: oracle --engine browser" in printed
+    assert "--dry-run full" in printed
+
+
+def test_oracle_roundtrip_dry_run_full_runs_preview_without_reply_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    oracle_output_path = (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+    )
+    oracle_output_path.parent.mkdir(parents=True, exist_ok=True)
+    oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        lambda **_kwargs: (oracle_output_path, 1, "autolab oracle"),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.shutil.which",
+        lambda _name: "/usr/local/bin/oracle",
+    )
+
+    captured: dict[str, list[str]] = {}
+
+    def _fake_run_oracle_browser_cli(*, argv: list[str], **_kwargs):
+        captured["argv"] = list(argv)
+        return (0, "# full preview bundle", "", "oracle --dry-run full")
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._run_oracle_browser_cli",
+        _fake_run_oracle_browser_cli,
+    )
+
+    result = _run_oracle_roundtrip_dry_run_full(
+        state_path=state_path,
+        repo_root=repo,
+    )
+
+    assert result["status"] == "preview_succeeded"
+    assert result["attempted"] is False
+    assert result["reply_path"] == ""
+    assert result["preview_output"] == "# full preview bundle"
+    assert captured["argv"][:3] == ["oracle", "--engine", "browser"]
+    assert "--dry-run" in captured["argv"]
+    assert "full" in captured["argv"]
+    assert "--write-output" in captured["argv"]
+    assert "--files-report" not in captured["argv"]
+
+
 def test_build_oracle_browser_argv_uses_prompt_and_output_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1198,7 +1452,7 @@ def test_build_oracle_browser_argv_uses_prompt_and_output_flags(
     argv, _display = _build_oracle_browser_argv(
         prompt_text="Review the attached oracle packet.",
         oracle_bundle_path=bundle_path,
-        preview=False,
+        preview_mode="",
         reply_output_path=reply_path,
         timeout_seconds=3600.0,
         browser_model_strategy="current",
@@ -1209,12 +1463,75 @@ def test_build_oracle_browser_argv_uses_prompt_and_output_flags(
 
     assert "--prompt" in argv
     assert "--prompt-file" not in argv
+    assert "--browser-model-strategy" not in argv
     assert "--browser-manual-login" in argv
     assert "--browser-auto-reattach-delay" in argv
     assert "--browser-auto-reattach-interval" in argv
     assert "--browser-auto-reattach-timeout" in argv
     assert "--write-output" in argv
     assert "--wait" in argv
+
+
+def test_build_oracle_browser_argv_preserves_non_current_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "oracle.md"
+    bundle_path.write_text("# Oracle\n", encoding="utf-8")
+    supported_flags = {
+        "--browser-model-strategy",
+        "--browser-manual-login",
+    }
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: flag in supported_flags,
+    )
+
+    argv, _display = _build_oracle_browser_argv(
+        prompt_text="Review the attached oracle packet.",
+        oracle_bundle_path=bundle_path,
+        preview_mode="",
+        reply_output_path=None,
+        timeout_seconds=3600.0,
+        browser_model_strategy="ignore",
+        browser_auto_reattach_delay="30s",
+        browser_auto_reattach_interval="2m",
+        browser_auto_reattach_timeout="2m",
+    )
+
+    assert "--browser-model-strategy" in argv
+    strategy_index = argv.index("--browser-model-strategy") + 1
+    assert argv[strategy_index] == "ignore"
+
+
+def test_build_oracle_browser_argv_supports_dry_run_full_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle_path = tmp_path / "oracle.md"
+    bundle_path.write_text("# Oracle\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda _flag: False,
+    )
+
+    argv, _display = _build_oracle_browser_argv(
+        prompt_text="Review the attached oracle packet.",
+        oracle_bundle_path=bundle_path,
+        preview_mode="full",
+        reply_output_path=None,
+        timeout_seconds=60.0,
+        browser_model_strategy="current",
+        browser_auto_reattach_delay="30s",
+        browser_auto_reattach_interval="2m",
+        browser_auto_reattach_timeout="2m",
+    )
+
+    assert argv[:3] == ["oracle", "--engine", "browser"]
+    assert "--dry-run" in argv
+    assert "full" in argv
+    assert "--files-report" not in argv
+    assert "--engine" in argv
 
 
 def test_oracle_cli_supports_hidden_browser_flags_from_debug_help(
@@ -1353,8 +1670,19 @@ def test_oracle_roundtrip_respects_apply_on_success_false(
         "autolab.cli.handlers_admin._oracle_cli_supports_flag",
         lambda flag: (
             flag
-            in {"--browser-model-strategy", "--timeout", "--wait", "--write-output"}
+            in {
+                "--browser-manual-login",
+                "--timeout",
+                "--wait",
+                "--write-output",
+            }
         ),
+    )
+    resets: list[str] = []
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._reset_oracle_browser_session",
+        lambda: resets.append("reset"),
     )
 
     def _fake_run_oracle_browser_cli(*, argv: list[str], **_kwargs):
@@ -1413,6 +1741,7 @@ def test_oracle_roundtrip_respects_apply_on_success_false(
     assert result["apply_status"] == "not_applied"
     assert oracle_state["verdict"] == "continue_search"
     assert oracle_state["auto"]["apply_status"] == "not_applied"
+    assert resets == ["reset", "reset"]
     assert not (
         repo / "experiments" / "plan" / "bootstrap_iteration" / "context"
     ).exists()
@@ -1474,8 +1803,19 @@ def test_oracle_roundtrip_refreshes_handoff_with_stable_epoch(
         "autolab.cli.handlers_admin._oracle_cli_supports_flag",
         lambda flag: (
             flag
-            in {"--browser-model-strategy", "--timeout", "--wait", "--write-output"}
+            in {
+                "--browser-manual-login",
+                "--timeout",
+                "--wait",
+                "--write-output",
+            }
         ),
+    )
+    resets: list[str] = []
+
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._reset_oracle_browser_session",
+        lambda: resets.append("reset"),
     )
 
     def _fake_run_oracle_browser_cli(*, argv: list[str], **_kwargs):
@@ -1507,6 +1847,63 @@ def test_oracle_roundtrip_refreshes_handoff_with_stable_epoch(
     assert continuation["oracle_auto_status"] == "succeeded"
     assert continuation["oracle_verdict"] == "continue_search"
     assert continuation["oracle_epoch"] == oracle_state["current_epoch"]
+    assert resets == ["reset", "reset"]
+
+
+def test_oracle_roundtrip_requires_manual_login_flag_support(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    state_path = repo / ".autolab" / "state.json"
+    assert (
+        commands_module.main(
+            ["init", "--state-file", str(state_path), "--no-interactive"]
+        )
+        == 0
+    )
+
+    oracle_output_path = (
+        repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
+    )
+    oracle_output_path.parent.mkdir(parents=True, exist_ok=True)
+    oracle_output_path.write_text("# Oracle\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_stage_auto_allowed",
+        lambda *_args, **_kwargs: (True, _oracle_policy()),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._export_oracle_document",
+        lambda **_kwargs: (oracle_output_path, 1, "internal-render"),
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.shutil.which",
+        lambda _name: "/usr/local/bin/oracle",
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin.oracle_profile_ready",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._oracle_cli_supports_flag",
+        lambda flag: flag in {"--timeout", "--wait", "--write-output"},
+    )
+    monkeypatch.setattr(
+        "autolab.cli.handlers_admin._run_oracle_browser_cli",
+        lambda **_kwargs: pytest.fail(
+            "browser CLI should not run without manual-login support"
+        ),
+    )
+
+    result = _run_oracle_roundtrip_auto(
+        state_path=state_path,
+        repo_root=repo,
+        trigger_reason="manual automation request",
+    )
+
+    assert result["status"] == "unavailable"
+    assert "manual-login" in result["failure_reason"]
 
 
 def test_auto_oracle_trigger_ignores_stale_guardrail_breach(

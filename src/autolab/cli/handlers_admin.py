@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 import math
+import os
 import re
+import signal
+import time
 
+from autolab.config import _load_oracle_policy
 from autolab.campaign import (
     _append_campaign_oracle_feedback,
     _campaign_build_morning_report_payload,
@@ -6813,11 +6817,104 @@ def _oracle_cli_supports_flag(flag: str) -> bool:
     return flag in _oracle_cli_help_text()
 
 
+def _oracle_browser_profile_dir() -> Path:
+    oracle_home = Path(os.environ.get("ORACLE_HOME_DIR", "~/.oracle")).expanduser()
+    return oracle_home / "browser-profile"
+
+
+def _oracle_browser_process_ids() -> list[int]:
+    profile_dir = _oracle_browser_profile_dir()
+    profile_text = str(profile_dir).strip()
+    if not profile_text:
+        return []
+    try:
+        process = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except Exception:
+        return []
+    current_pid = os.getpid()
+    browser_tokens = ("chrome", "chromium", "msedge", "edge")
+    pids: list[int] = []
+    for raw_line in str(process.stdout or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower_line = line.lower()
+        if profile_text not in line or not any(
+            token in lower_line for token in browser_tokens
+        ):
+            continue
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if pid <= 0 or pid == current_pid:
+            continue
+        pids.append(pid)
+    return pids
+
+
+def _oracle_browser_process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _reset_oracle_browser_session() -> None:
+    pids = _oracle_browser_process_ids()
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+    if pids:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not any(_oracle_browser_process_is_alive(pid) for pid in pids):
+                break
+            time.sleep(0.1)
+        for pid in pids:
+            if not _oracle_browser_process_is_alive(pid):
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                continue
+    profile_dir = _oracle_browser_profile_dir()
+    stale_entries = (
+        "DevToolsActivePort",
+        "SingletonCookie",
+        "SingletonLock",
+        "SingletonSocket",
+    )
+    for entry in stale_entries:
+        target = profile_dir / entry
+        try:
+            if target.exists():
+                target.unlink()
+        except OSError:
+            continue
+
+
 def _build_oracle_browser_argv(
     *,
     prompt_text: str,
     oracle_bundle_path: Path,
-    preview: bool,
+    preview_mode: str,
     reply_output_path: Path | None,
     timeout_seconds: float,
     browser_model_strategy: str,
@@ -6825,33 +6922,35 @@ def _build_oracle_browser_argv(
     browser_auto_reattach_interval: str,
     browser_auto_reattach_timeout: str,
 ) -> tuple[list[str], str]:
-    argv = ["oracle"]
-    if preview:
-        argv.extend(["--dry-run", "summary", "--files-report"])
-    else:
-        argv.extend(["--engine", "browser"])
-        if _oracle_cli_supports_flag("--browser-model-strategy"):
-            argv.extend(["--browser-model-strategy", browser_model_strategy])
-        if _oracle_cli_supports_flag("--browser-manual-login"):
-            argv.append("--browser-manual-login")
-        if _oracle_cli_supports_flag("--browser-auto-reattach-delay"):
-            argv.extend(["--browser-auto-reattach-delay", browser_auto_reattach_delay])
-        if _oracle_cli_supports_flag("--browser-auto-reattach-interval"):
-            argv.extend(
-                ["--browser-auto-reattach-interval", browser_auto_reattach_interval]
-            )
-        if _oracle_cli_supports_flag("--browser-auto-reattach-timeout"):
-            argv.extend(
-                ["--browser-auto-reattach-timeout", browser_auto_reattach_timeout]
-            )
-        if _oracle_cli_supports_flag("--timeout"):
-            argv.extend(["--timeout", f"{max(1, int(timeout_seconds))}"])
-        if _oracle_cli_supports_flag("--wait"):
-            argv.append("--wait")
-        if reply_output_path is not None and _oracle_cli_supports_flag(
-            "--write-output"
-        ):
-            argv.extend(["--write-output", str(reply_output_path)])
+    argv = ["oracle", "--engine", "browser"]
+    normalized_strategy = str(browser_model_strategy).strip().lower()
+    if (
+        normalized_strategy
+        and normalized_strategy != "current"
+        and _oracle_cli_supports_flag("--browser-model-strategy")
+    ):
+        argv.extend(["--browser-model-strategy", browser_model_strategy])
+    if _oracle_cli_supports_flag("--browser-manual-login"):
+        argv.append("--browser-manual-login")
+    if _oracle_cli_supports_flag("--browser-auto-reattach-delay"):
+        argv.extend(["--browser-auto-reattach-delay", browser_auto_reattach_delay])
+    if _oracle_cli_supports_flag("--browser-auto-reattach-interval"):
+        argv.extend(
+            ["--browser-auto-reattach-interval", browser_auto_reattach_interval]
+        )
+    if _oracle_cli_supports_flag("--browser-auto-reattach-timeout"):
+        argv.extend(["--browser-auto-reattach-timeout", browser_auto_reattach_timeout])
+    if _oracle_cli_supports_flag("--timeout"):
+        argv.extend(["--timeout", f"{max(1, int(timeout_seconds))}"])
+    if _oracle_cli_supports_flag("--wait"):
+        argv.append("--wait")
+    if reply_output_path is not None and _oracle_cli_supports_flag("--write-output"):
+        argv.extend(["--write-output", str(reply_output_path)])
+    normalized_preview_mode = str(preview_mode or "").strip().lower()
+    if normalized_preview_mode:
+        argv.extend(["--dry-run", normalized_preview_mode])
+        if normalized_preview_mode == "summary":
+            argv.append("--files-report")
     argv.extend(
         [
             "--prompt",
@@ -6898,6 +6997,165 @@ def _run_oracle_browser_cli(
     )
 
 
+def _run_oracle_roundtrip_dry_run_full(
+    *,
+    state_path: Path,
+    repo_root: Path,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    def _result(
+        *,
+        exit_code: int,
+        status: str,
+        failure_reason: str,
+        output_path_text: str,
+        export_command_text: str,
+        preview_command_text: str,
+        source_count_value: int,
+        preview_output_text: str,
+    ) -> dict[str, Any]:
+        return {
+            "exit_code": exit_code,
+            "attempted": False,
+            "status": status,
+            "failure_reason": failure_reason,
+            "output_path": output_path_text,
+            "reply_path": "",
+            "export_command": export_command_text,
+            "browser_command": "",
+            "preview_command": preview_command_text,
+            "source_count": source_count_value,
+            "apply_status": "",
+            "preview_output": preview_output_text,
+        }
+
+    try:
+        handoff_payload = refresh_handoff(state_path).payload
+    except Exception as exc:
+        return _result(
+            exit_code=1,
+            status="preview_failed",
+            failure_reason=f"failed to refresh handoff before oracle export: {exc}",
+            output_path_text="",
+            export_command_text="",
+            preview_command_text="",
+            source_count_value=0,
+            preview_output_text="",
+        )
+    continuation_packet = handoff_payload.get("continuation_packet")
+    if not isinstance(continuation_packet, dict):
+        return _result(
+            exit_code=1,
+            status="preview_failed",
+            failure_reason="handoff continuation_packet is missing",
+            output_path_text="",
+            export_command_text="",
+            preview_command_text="",
+            source_count_value=0,
+            preview_output_text="",
+        )
+    try:
+        output_oracle_resolved, source_count, export_command = _export_oracle_document(
+            state_path=state_path,
+            repo_root=repo_root,
+            timeout_seconds=240.0,
+            output_path=output_path,
+            handoff_payload=handoff_payload,
+        )
+    except Exception as exc:
+        return _result(
+            exit_code=1,
+            status="preview_failed",
+            failure_reason=str(exc),
+            output_path_text="",
+            export_command_text="",
+            preview_command_text="",
+            source_count_value=0,
+            preview_output_text="",
+        )
+    output_oracle_path = str(output_oracle_resolved)
+    if not shutil.which("oracle"):
+        return _result(
+            exit_code=1,
+            status="unavailable",
+            failure_reason="oracle executable is not available on PATH",
+            output_path_text=output_oracle_path,
+            export_command_text=export_command,
+            preview_command_text="",
+            source_count_value=source_count,
+            preview_output_text="",
+        )
+    active_stage = continuation_packet.get("active_stage")
+    if not isinstance(active_stage, dict):
+        active_stage = {}
+    scope_kind = str(active_stage.get("scope_kind", "")).strip() or "experiment"
+    stage_name = str(active_stage.get("stage", "")).strip() or "hypothesis"
+    oracle_policy = _load_oracle_policy(
+        repo_root,
+        scope_kind=scope_kind,
+        stage=stage_name,
+    )
+    request_text = build_oracle_roundtrip_request(
+        handoff_payload=handoff_payload,
+        trigger_reason="manual dry-run full preview",
+    )
+    preview_timeout_seconds = min(float(oracle_policy.timeout_minutes) * 60.0, 300.0)
+    reply_capture_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".md",
+            prefix="autolab_oracle_response_",
+            delete=False,
+        ) as handle:
+            reply_capture_path = Path(handle.name)
+        preview_argv, preview_command = _build_oracle_browser_argv(
+            prompt_text=request_text,
+            oracle_bundle_path=output_oracle_resolved,
+            preview_mode="full",
+            reply_output_path=reply_capture_path,
+            timeout_seconds=preview_timeout_seconds,
+            browser_model_strategy=oracle_policy.browser_model_strategy,
+            browser_auto_reattach_delay=oracle_policy.browser_auto_reattach_delay,
+            browser_auto_reattach_interval=oracle_policy.browser_auto_reattach_interval,
+            browser_auto_reattach_timeout=oracle_policy.browser_auto_reattach_timeout,
+        )
+        preview_code, preview_stdout, preview_stderr, preview_command = (
+            _run_oracle_browser_cli(
+                repo_root=repo_root,
+                argv=preview_argv,
+                timeout_seconds=preview_timeout_seconds,
+            )
+        )
+    finally:
+        if reply_capture_path is not None:
+            try:
+                reply_capture_path.unlink()
+            except Exception:
+                pass
+    if preview_code != 0:
+        detail = preview_stderr.strip() or preview_stdout.strip() or "preview failed"
+        return _result(
+            exit_code=1,
+            status="preview_failed",
+            failure_reason=detail,
+            output_path_text=output_oracle_path,
+            export_command_text=export_command,
+            preview_command_text=preview_command,
+            source_count_value=source_count,
+            preview_output_text="",
+        )
+    return _result(
+        exit_code=0,
+        status="preview_succeeded",
+        failure_reason="",
+        output_path_text=output_oracle_path,
+        export_command_text=export_command,
+        preview_command_text=preview_command,
+        source_count_value=source_count,
+        preview_output_text=preview_stdout,
+    )
+
+
 def _run_oracle_roundtrip_auto(
     *,
     state_path: Path,
@@ -6915,6 +7173,7 @@ def _run_oracle_roundtrip_auto(
         reply_path_text: str,
         export_command_text: str,
         browser_command_text: str,
+        preview_command_text: str = "",
         source_count_value: int,
         apply_status: str,
     ) -> dict[str, Any]:
@@ -6927,6 +7186,7 @@ def _run_oracle_roundtrip_auto(
             "reply_path": reply_path_text,
             "export_command": export_command_text,
             "browser_command": browser_command_text,
+            "preview_command": preview_command_text,
             "source_count": source_count_value,
             "apply_status": apply_status,
         }
@@ -7096,6 +7356,31 @@ def _run_oracle_roundtrip_auto(
             source_count_value=source_count,
             apply_status="",
         )
+    if (
+        oracle_policy.browser_manual_login_profile_required
+        and not _oracle_cli_supports_flag("--browser-manual-login")
+    ):
+        finish_oracle_attempt(
+            repo_root,
+            epoch=epoch,
+            eligible=True,
+            status="unavailable",
+            trigger_reason=trigger_reason,
+            failure_reason="installed oracle CLI does not support --browser-manual-login",
+        )
+        _safe_refresh_handoff(state_path)
+        return _result(
+            exit_code=1,
+            attempted=True,
+            status="unavailable",
+            failure_reason="installed oracle CLI does not support --browser-manual-login",
+            output_path_text=output_oracle_path,
+            reply_path_text="",
+            export_command_text=export_command,
+            browser_command_text="",
+            source_count_value=source_count,
+            apply_status="",
+        )
 
     start_oracle_attempt(
         repo_root,
@@ -7108,15 +7393,34 @@ def _run_oracle_roundtrip_auto(
         trigger_reason=trigger_reason,
     )
     browser_command = ""
+    debug_preview_command = ""
     timeout_seconds = float(oracle_policy.timeout_minutes) * 60.0
     reply_capture_path: Path | None = None
+    browser_session_started = False
     try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".md",
+            prefix="autolab_oracle_response_",
+            delete=False,
+        ) as handle:
+            reply_capture_path = Path(handle.name)
+        _, debug_preview_command = _build_oracle_browser_argv(
+            prompt_text=request_text,
+            oracle_bundle_path=Path(output_oracle_path),
+            preview_mode="full",
+            reply_output_path=reply_capture_path,
+            timeout_seconds=min(timeout_seconds, 300.0),
+            browser_model_strategy=oracle_policy.browser_model_strategy,
+            browser_auto_reattach_delay=oracle_policy.browser_auto_reattach_delay,
+            browser_auto_reattach_interval=oracle_policy.browser_auto_reattach_interval,
+            browser_auto_reattach_timeout=oracle_policy.browser_auto_reattach_timeout,
+        )
         if oracle_policy.preview_before_send:
             preview_argv, preview_display = _build_oracle_browser_argv(
                 prompt_text=request_text,
                 oracle_bundle_path=Path(output_oracle_path),
-                preview=True,
-                reply_output_path=None,
+                preview_mode="summary",
+                reply_output_path=reply_capture_path,
                 timeout_seconds=min(timeout_seconds, 300.0),
                 browser_model_strategy=oracle_policy.browser_model_strategy,
                 browser_auto_reattach_delay=oracle_policy.browser_auto_reattach_delay,
@@ -7152,20 +7456,15 @@ def _run_oracle_roundtrip_auto(
                     reply_path_text="",
                     export_command_text=export_command,
                     browser_command_text=preview_display,
+                    preview_command_text=debug_preview_command,
                     source_count_value=source_count,
                     apply_status="",
                 )
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".md",
-            prefix="autolab_oracle_response_",
-            delete=False,
-        ) as handle:
-            reply_capture_path = Path(handle.name)
         browser_argv, browser_command = _build_oracle_browser_argv(
             prompt_text=request_text,
             oracle_bundle_path=Path(output_oracle_path),
-            preview=False,
+            preview_mode="",
             reply_output_path=reply_capture_path,
             timeout_seconds=timeout_seconds,
             browser_model_strategy=oracle_policy.browser_model_strategy,
@@ -7173,6 +7472,8 @@ def _run_oracle_roundtrip_auto(
             browser_auto_reattach_interval=oracle_policy.browser_auto_reattach_interval,
             browser_auto_reattach_timeout=oracle_policy.browser_auto_reattach_timeout,
         )
+        _reset_oracle_browser_session()
+        browser_session_started = True
         run_code, run_stdout, run_stderr, browser_command = _run_oracle_browser_cli(
             repo_root=repo_root,
             argv=browser_argv,
@@ -7195,6 +7496,11 @@ def _run_oracle_roundtrip_auto(
                 reply_capture_path.unlink()
             except Exception:
                 pass
+        if browser_session_started:
+            try:
+                _reset_oracle_browser_session()
+            except Exception:
+                pass
 
     if run_code == 124:
         finish_oracle_attempt(
@@ -7215,6 +7521,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text="",
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="",
         )
@@ -7247,6 +7554,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text="",
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="",
         )
@@ -7269,6 +7577,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text="",
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="",
         )
@@ -7321,6 +7630,7 @@ def _run_oracle_roundtrip_auto(
                 reply_path_text=str(reply_path),
                 export_command_text=export_command,
                 browser_command_text=browser_command,
+                preview_command_text=debug_preview_command,
                 source_count_value=source_count,
                 apply_status="not_applied",
             )
@@ -7357,6 +7667,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text=str(reply_path),
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="not_applied",
         )
@@ -7390,6 +7701,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text=str(reply_path),
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="not_applied",
         )
@@ -7414,6 +7726,7 @@ def _run_oracle_roundtrip_auto(
             reply_path_text=str(reply_path),
             export_command_text=export_command,
             browser_command_text=browser_command,
+            preview_command_text=debug_preview_command,
             source_count_value=source_count,
             apply_status="failed",
         )
@@ -7448,15 +7761,24 @@ def _run_oracle_roundtrip_auto(
         reply_path_text=str(reply_path),
         export_command_text=export_command,
         browser_command_text=browser_command,
+        preview_command_text=debug_preview_command,
         source_count_value=source_count,
         apply_status=apply_status,
     )
 
 
 def _cmd_oracle_roundtrip(args: argparse.Namespace) -> int:
-    if not bool(getattr(args, "auto", False)):
+    run_auto = bool(getattr(args, "auto", False))
+    dry_run_full = bool(getattr(args, "dry_run_full", False))
+    if run_auto and dry_run_full:
         print(
-            "autolab oracle roundtrip: ERROR --auto is required for this command",
+            "autolab oracle roundtrip: ERROR choose only one of --auto or --dry-run-full",
+            file=sys.stderr,
+        )
+        return 1
+    if not run_auto and not dry_run_full:
+        print(
+            "autolab oracle roundtrip: ERROR --auto or --dry-run-full is required for this command",
             file=sys.stderr,
         )
         return 1
@@ -7464,12 +7786,19 @@ def _cmd_oracle_roundtrip(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_root(state_path)
     output_text = str(getattr(args, "output", "") or "").strip()
     requested_output_path = Path(output_text).expanduser() if output_text else None
-    result = _run_oracle_roundtrip_auto(
-        state_path=state_path,
-        repo_root=repo_root,
-        trigger_reason="manual automation request",
-        output_path=requested_output_path,
-    )
+    if dry_run_full:
+        result = _run_oracle_roundtrip_dry_run_full(
+            state_path=state_path,
+            repo_root=repo_root,
+            output_path=requested_output_path,
+        )
+    else:
+        result = _run_oracle_roundtrip_auto(
+            state_path=state_path,
+            repo_root=repo_root,
+            trigger_reason="manual automation request",
+            output_path=requested_output_path,
+        )
     print("autolab oracle roundtrip")
     print(f"state_file: {state_path}")
     print(f"status: {result['status']}")
@@ -7480,8 +7809,16 @@ def _cmd_oracle_roundtrip(args: argparse.Namespace) -> int:
     print(f"apply_status: {result['apply_status'] or 'not_applied'}")
     print(f"oracle_export_command: {result['export_command'] or '-'}")
     print(f"oracle_browser_command: {result['browser_command'] or '-'}")
+    if result.get("preview_command"):
+        print(f"oracle_preview_command: {result['preview_command']}")
     if result["failure_reason"]:
         print(f"failure_reason: {result['failure_reason']}")
+        if result.get("preview_command"):
+            print(f"recommended_debug_command: {result['preview_command']}")
+    preview_output = str(result.get("preview_output", "")).strip()
+    if preview_output:
+        print("preview_output:")
+        print(preview_output)
     return int(result["exit_code"])
 
 

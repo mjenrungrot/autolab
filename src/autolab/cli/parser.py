@@ -947,6 +947,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Run the unattended browser-only Oracle automation path.",
     )
+    oracle_roundtrip.add_argument(
+        "--dry-run-full",
+        action="store_true",
+        default=False,
+        help="Run `oracle --dry-run full` against the generated handoff packet without sending a browser request.",
+    )
     oracle_roundtrip.set_defaults(handler=_cmd_oracle_roundtrip)
 
     handoff = subparsers.add_parser(
