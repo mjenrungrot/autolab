@@ -6057,6 +6057,15 @@ def _oracle_render_bullets(items: list[str], *, fallback: str) -> list[str]:
     return [f"- {item}" for item in cleaned]
 
 
+def _oracle_packet_title(request_reason: str) -> str:
+    title = _normalize_space(str(request_reason or ""))
+    if title.endswith((".", ":")):
+        title = title[:-1].rstrip()
+    if title:
+        return title
+    return "The current state needs outside technical judgment before the next decision"
+
+
 def _render_oracle_document(
     *,
     repo_root: Path,
@@ -6109,6 +6118,7 @@ def _render_oracle_document(
         continuation_packet,
         diagnostics,
     )
+    title = _oracle_packet_title(request_reason)
     scope_kind = (
         str(active_stage.get("scope_kind", "")).strip()
         or str(handoff_payload.get("current_scope", "experiment")).strip()
@@ -6209,7 +6219,7 @@ def _render_oracle_document(
     ).strip()
     return "\n".join(
         [
-            "# Expert Review Handoff",
+            f"# {title}",
             "",
             "## Executive Summary",
             (
@@ -6297,8 +6307,28 @@ def _validate_oracle_output(
     repo_root: Path,
     sources: list[dict[str, Any]],
 ) -> str:
+    first_line = ""
+    for raw_line in str(output_text or "").splitlines():
+        stripped = raw_line.strip()
+        if stripped:
+            first_line = stripped
+            break
+    if not first_line.startswith("# "):
+        return "review handoff must start with '# <request title>'"
+    title = _normalize_space(first_line[2:])
+    if not title:
+        return "review handoff title must not be empty"
+    normalized_title = title.rstrip(" .:").strip().lower()
+    if normalized_title in {
+        "expert review handoff",
+        "oracle request",
+        "review request",
+        "autolab oracle",
+    }:
+        return (
+            "review handoff title must use the actual request, not a template heading"
+        )
     required_sections = (
-        "# Expert Review Handoff",
         "## Executive Summary",
         "## Project Context",
         "## Current Problem",

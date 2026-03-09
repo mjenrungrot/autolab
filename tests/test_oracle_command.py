@@ -265,11 +265,11 @@ def test_oracle_writes_scope_root_document_with_inlined_artifacts(
     assert created_files == ["experiments/plan/bootstrap_iteration/oracle.md"]
     oracle_path = repo / "experiments" / "plan" / "bootstrap_iteration" / "oracle.md"
     oracle_text = oracle_path.read_text(encoding="utf-8")
-    assert "# Expert Review Handoff" in oracle_text
+    assert oracle_text.splitlines()[0] == "# plan_graph.json unavailable"
     assert "## Relevant Files and Excerpts" in oracle_text
     assert "## Instructions for Reviewer" in oracle_text
     assert "ReviewerVerdict:" in oracle_text
-    assert "# Autolab Oracle" not in oracle_text
+    assert "# Expert Review Handoff" not in oracle_text
     assert str(repo.resolve()) not in oracle_text
     assert ".autolab/handoff.json" not in oracle_text
 
@@ -862,7 +862,7 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
     notes_path.write_text(
         "\n".join(
             [
-                "# Expert Review Handoff",
+                "# plan_graph.json unavailable",
                 "",
                 "## Executive Summary",
                 "Dense export.",
@@ -899,6 +899,44 @@ def test_oracle_apply_extracts_review_sections_from_export_markdown(
             ]
         )
         == 0
+    )
+
+
+def test_oracle_export_validation_rejects_template_heading(tmp_path: Path) -> None:
+    validation_error = handlers_admin._validate_oracle_output(
+        "\n".join(
+            [
+                "# Expert Review Handoff",
+                "",
+                "## Executive Summary",
+                "summary",
+                "",
+                "## Project Context",
+                "- context",
+                "",
+                "## Current Problem",
+                "- issue",
+                "",
+                "## Evidence and Constraints",
+                "- evidence",
+                "",
+                "## Relevant Files and Excerpts",
+                "none",
+                "",
+                "## Requested Response Format",
+                "free-form is acceptable",
+                "",
+                "## Instructions for Reviewer",
+                "be candid",
+            ]
+        ),
+        repo_root=tmp_path,
+        sources=[],
+    )
+
+    assert (
+        validation_error
+        == "review handoff title must use the actual request, not a template heading"
     )
 
 

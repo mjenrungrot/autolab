@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.50] - 2026-03-09
+
+### Summary
+
+- Changed `autolab oracle` handoff exports to start with the actual request title instead of a generic template heading, and tightened validation/tests around reviewer-facing packet titles.
+
+<!-- autolab:range v1.2.49..v1.2.50 -->
+
 ## [1.2.49] - 2026-03-09
 
 ### Summary
